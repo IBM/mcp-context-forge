@@ -364,7 +364,7 @@ class TestA2AViewModal:
 
         # View first agent - get name from table
         first_row = agents_page.get_agent_row(0)
-        first_name = first_row.locator("td").nth(2).text_content().strip()
+        first_name = first_row.locator("td").nth(3).text_content().strip()
         _open_view_modal(agents_page, 0)
         details = agents_page.page.locator("#agent-details")
         expect(details).to_contain_text(first_name)
@@ -372,7 +372,7 @@ class TestA2AViewModal:
 
         # View second agent
         second_row = agents_page.get_agent_row(1)
-        second_name = second_row.locator("td").nth(2).text_content().strip()
+        second_name = second_row.locator("td").nth(3).text_content().strip()
         _open_view_modal(agents_page, 1)
         expect(details).to_contain_text(second_name)
         _close_view_modal(agents_page)
@@ -567,7 +567,7 @@ class TestA2AEditModal:
 
         # Get original name from table
         first_row = agents_page.get_agent_row(0)
-        original_name = first_row.locator("td").nth(2).text_content().strip()
+        original_name = first_row.locator("td").nth(3).text_content().strip()
 
         _open_edit_modal(agents_page, 0)
 
@@ -588,7 +588,7 @@ class TestA2AEditModal:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        current_name = first_row.locator("td").nth(2).text_content().strip()
+        current_name = first_row.locator("td").nth(3).text_content().strip()
         assert current_name == original_name, (
             f"Name should be unchanged after Cancel: expected '{original_name}', "
             f"got '{current_name}'"
@@ -1016,8 +1016,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Name is in column index 2
-        name_cell = first_row.locator("td").nth(2)
+        # Name is in column index 3 (after Actions, S.No., Agent ID)
+        name_cell = first_row.locator("td").nth(3)
         name_text = name_cell.text_content().strip()
         assert len(name_text) > 0, "Agent name should not be empty"
 
@@ -1028,8 +1028,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Endpoint is in column index 4
-        endpoint_cell = first_row.locator("td").nth(4)
+        # Endpoint is in column index 5 (after Actions, S.No., Agent ID, Name, Description)
+        endpoint_cell = first_row.locator("td").nth(5)
         endpoint_text = endpoint_cell.text_content().strip()
         assert len(endpoint_text) > 0, "Endpoint URL should not be empty"
         assert "://" in endpoint_text, (
@@ -1043,8 +1043,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Description is in column index 3
-        desc_cell = first_row.locator("td").nth(3)
+        # Description is in column index 4 (after Actions, S.No., Agent ID, Name)
+        desc_cell = first_row.locator("td").nth(4)
         # Description may be empty but the cell should exist
         expect(desc_cell).to_be_attached()
 
@@ -1055,8 +1055,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Tags column is at index 5
-        tags_cell = first_row.locator("td").nth(5)
+        # Tags column is at index 6 (after Actions, S.No., Agent ID, Name, Description, Endpoint)
+        tags_cell = first_row.locator("td").nth(6)
 
         # Check if there are any tag badges (spans with inline-flex styling)
         tag_badges = tags_cell.locator("span")
@@ -1074,8 +1074,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Visibility is the last column, index 11
-        visibility_cell = first_row.locator("td").nth(11)
+        # Visibility is the last column, index 12
+        visibility_cell = first_row.locator("td").nth(12)
         visibility_text = visibility_cell.text_content().strip()
         assert visibility_text in [
             "Public",

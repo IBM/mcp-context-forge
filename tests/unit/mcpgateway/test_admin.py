@@ -440,6 +440,7 @@ class TestAdminServerRoutes:
         # Mock team service
         mock_team_service = AsyncMock()
         mock_team_service.get_user_teams = AsyncMock(return_value=[])
+
         mock_team_service_class.return_value = mock_team_service
 
         # Setup servers with different states
@@ -2126,6 +2127,7 @@ class TestAdminPromptRoutes:
         # Mock team service
         mock_team_service = AsyncMock()
         mock_team_service.get_user_teams = AsyncMock(return_value=[])
+
         mock_team_service_class.return_value = mock_team_service
 
         # Mock prompt object with model_dump method
@@ -2390,6 +2392,7 @@ class TestAdminGatewayRoutes:
         # Mock team service
         mock_team_service = AsyncMock()
         mock_team_service.get_user_teams = AsyncMock(return_value=[])
+
         mock_team_service_class.return_value = mock_team_service
 
         # Create a mock gateway object with model_dump method
@@ -3736,15 +3739,18 @@ class TestAdminUIRoute:
         mock_gateways.return_value = []
         mock_roots.return_value = []
 
-        with pytest.raises(HTTPException) as exc_info:
-            await admin_ui(
-                request=mock_request,
-                team_id="not-a-team",
-                include_inactive=False,
-                db=mock_db,
-                user={"email": "admin@example.com", "db": mock_db},
-            )
-        assert exc_info.value.status_code == 403
+        # Non-admin requesting a team they don't belong to: selected_team_id silently reset to None
+        response = await admin_ui(
+            request=mock_request,
+            team_id="not-a-team",
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "db": mock_db},
+        )
+        assert isinstance(response, HTMLResponse)
+        template_call = mock_request.app.state.templates.TemplateResponse.call_args
+        context = template_call[0][2]
+        assert context["selected_team_id"] is None
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
@@ -5543,6 +5549,260 @@ class TestAdminUIMainEndpoint:
         assert context["a2a_agents"] == []  # Should be empty list when A2A disabled
 
 
+class TestAdminNonMemberTeamBanner:
+    """Test the admin non-member team banner feature."""
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_viewing_non_member_team_flag_true(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Test that admin_viewing_non_member_team flag is True when admin selects non-member team."""
+
+        class _Team:
+            def __init__(self, team_id: str, name: str):
+                self.id = team_id
+                self.name = name
+                self.type = "organization"
+                self.is_personal = False
+
+        # Admin user's teams (they are member of team-1 only)
+        user_teams = [_Team("team-1", "Team One")]
+
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=user_teams)
+        team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-1": 2})
+        team_service.get_user_roles_batch = MagicMock(return_value={"team-1": "member"})
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(settings, "email_auth_enabled", True)
+
+        # Mock service responses
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+
+        # Admin user with team-scoped token selecting team-2 (which they are NOT a member of)
+        # token_teams must be set (non-None) so the unrestricted-admin bypass does NOT skip the check
+        response = await admin_ui(
+            request=mock_request,
+            team_id="team-2",
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True, "token_teams": ["team-1"], "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        template_call = mock_request.app.state.templates.TemplateResponse.call_args
+        context = template_call[0][2]
+
+        # Verify the flag is True (admin viewing non-member team) and content defaults to All Teams
+        assert context["admin_viewing_non_member_team"] is True
+        assert context["is_admin"] is True
+        assert context["selected_team_id"] is None
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_viewing_member_team_flag_false(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Test that admin_viewing_non_member_team flag is False when admin selects their own team."""
+
+        class _Team:
+            def __init__(self, team_id: str, name: str):
+                self.id = team_id
+                self.name = name
+                self.type = "organization"
+                self.is_personal = False
+
+        # Admin user's teams
+        user_teams = [_Team("team-1", "Team One")]
+
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=user_teams)
+        team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-1": 2})
+        team_service.get_user_roles_batch = MagicMock(return_value={"team-1": "owner"})
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(settings, "email_auth_enabled", True)
+
+        # Mock service responses
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+
+        # Admin user selecting team-1 (which they ARE a member of)
+        response = await admin_ui(
+            request=mock_request,
+            team_id="team-1",
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True, "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        template_call = mock_request.app.state.templates.TemplateResponse.call_args
+        context = template_call[0][2]
+
+        # Verify the flag is False (admin viewing their own team)
+        assert context["admin_viewing_non_member_team"] is False
+        assert context["is_admin"] is True
+        assert context["selected_team_id"] == "team-1"
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_non_admin_viewing_team_flag_false(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Test that admin_viewing_non_member_team flag is False for non-admin users."""
+
+        class _Team:
+            def __init__(self, team_id: str, name: str):
+                self.id = team_id
+                self.name = name
+                self.type = "organization"
+                self.is_personal = False
+
+        user_teams = [_Team("team-1", "Team One")]
+
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=user_teams)
+        team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-1": 2})
+        team_service.get_user_roles_batch = MagicMock(return_value={"team-1": "member"})
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(settings, "email_auth_enabled", True)
+
+        # Mock service responses
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+
+        # Non-admin user (is_admin=False)
+        response = await admin_ui(
+            request=mock_request,
+            team_id="team-1",
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "user@example.com", "is_admin": False, "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        template_call = mock_request.app.state.templates.TemplateResponse.call_args
+        context = template_call[0][2]
+
+        # Verify the flag is False (non-admin user)
+        assert context["admin_viewing_non_member_team"] is False
+        assert context["is_admin"] is False
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_no_team_selected_flag_false(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Test that admin_viewing_non_member_team flag is False when no team is selected."""
+
+        class _Team:
+            def __init__(self, team_id: str, name: str):
+                self.id = team_id
+                self.name = name
+                self.type = "organization"
+                self.is_personal = False
+
+        user_teams = [_Team("team-1", "Team One")]
+
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=user_teams)
+        team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-1": 2})
+        team_service.get_user_roles_batch = MagicMock(return_value={"team-1": "member"})
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(settings, "email_auth_enabled", True)
+
+        # Mock service responses
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+
+        # Admin user with no team selected (team_id=None)
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True, "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        template_call = mock_request.app.state.templates.TemplateResponse.call_args
+        context = template_call[0][2]
+
+        # Verify the flag is False (no team selected)
+        assert context["admin_viewing_non_member_team"] is False
+        assert context["is_admin"] is True
+        assert context["selected_team_id"] is None
+
+
 class TestSetLoggingService:
     """Test the logging service setup functionality."""
 
@@ -5805,6 +6065,7 @@ async def test_admin_list_teams_admin_view(monkeypatch, mock_request, mock_db, a
     team_service = MagicMock()
     team_service.list_teams = AsyncMock(return_value={"data": [team], "pagination": pagination, "links": links})
     team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-1": 3})
+
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_list_teams(request=mock_request, page=1, per_page=5, q="t", db=mock_db, user={"email": "u@example.com", "db": mock_db})
@@ -5823,6 +6084,7 @@ async def test_admin_list_teams_non_admin_view(monkeypatch, mock_request, mock_d
     team_service = MagicMock()
     team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="t1"), SimpleNamespace(id="t2")])
     team_service.get_member_counts_batch_cached = AsyncMock(return_value={"t1": 1, "t2": 2})
+
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_list_teams(request=mock_request, page=1, per_page=5, q=None, db=mock_db, user={"email": "u@example.com", "db": mock_db})
@@ -6054,7 +6316,7 @@ async def test_admin_add_team_members_view_exception(monkeypatch, mock_request, 
 async def test_admin_get_team_edit_success(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     team_service = MagicMock()
-    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private"))
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
@@ -6138,12 +6400,82 @@ async def test_admin_update_team_success(monkeypatch, mock_db, allow_permission)
     request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private"}))
 
     team_service = MagicMock()
-    team_service.update_team = AsyncMock(return_value=None)
+    team_service.update_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.headers.get("HX-Trigger") is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_rejected_personal_team_htmx(monkeypatch, mock_db, allow_permission):
+    """update_team returning False (personal team) must surface an error, not false success."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": "/root"}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "My Team", "description": "Desc", "visibility": "private"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(return_value=False)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    assert response.status_code == 400
+    assert "cannot be updated" in response.body.decode().lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_rejected_personal_team_redirect(monkeypatch, mock_db, allow_permission):
+    """update_team returning False with non-HTMX request redirects with error."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": "/root"}
+    request.headers = {}
+    request.form = AsyncMock(return_value=FakeForm({"name": "My Team", "description": "Desc", "visibility": "private"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(return_value=False)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert "error" in str(response.headers.get("location", "")).lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_get_team_edit_blocks_other_personal_team(monkeypatch, mock_request, mock_db, allow_permission):
+    """Editing another user's personal team must return 403."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(
+        id="team-personal", name="other-personal", slug="other-personal",
+        description="", visibility="private", is_personal=True, created_by="other@example.com",
+    ))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_get_team_edit("team-personal", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    assert response.status_code == 403
+    assert "cannot be edited" in response.body.decode().lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_get_team_edit_blocks_own_personal_team(monkeypatch, mock_request, mock_db, allow_permission):
+    """Editing your own personal team is also blocked (service rejects all personal team updates)."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(
+        id="team-personal", name="my-personal", slug="my-personal",
+        description="", visibility="private", is_personal=True, created_by="admin@example.com",
+    ))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_get_team_edit("team-personal", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    assert response.status_code == 403
+    assert "cannot be edited" in response.body.decode().lower()
 
 
 @pytest.mark.asyncio
@@ -6234,7 +6566,7 @@ async def test_admin_update_team_success_redirect(monkeypatch, mock_db, allow_pe
     request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private"}))
 
     team_service = MagicMock()
-    team_service.update_team = AsyncMock(return_value=None)
+    team_service.update_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
@@ -6740,12 +7072,28 @@ async def test_admin_delete_team_success(monkeypatch, mock_db, allow_permission)
     request = MagicMock(spec=Request)
     team_service = MagicMock()
     team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One"))
-    team_service.delete_team = AsyncMock(return_value=None)
+    team_service.delete_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_delete_team("team-1", request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "deleted successfully" in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_team_rejected_personal_team(monkeypatch, mock_db, allow_permission):
+    """delete_team returning False (personal team) must surface an error, not false success."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-personal", name="Personal Team"))
+    team_service.delete_team = AsyncMock(return_value=False)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_delete_team("team-personal", request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    assert response.status_code == 400
+    assert "cannot be deleted" in response.body.decode().lower()
 
 
 @pytest.mark.asyncio
@@ -6790,6 +7138,7 @@ async def test_admin_teams_partial_html_controls_admin(monkeypatch, mock_request
     team_service.discover_public_teams = AsyncMock(return_value=[])
     team_service.get_pending_join_requests_batch.return_value = {}
     team_service.list_teams = AsyncMock(return_value={"data": [team], "pagination": pagination, "links": links})
+
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_teams_partial_html(
@@ -6822,6 +7171,7 @@ async def test_admin_teams_partial_html_selector_public(monkeypatch, mock_reques
     team_service.discover_public_teams = AsyncMock(return_value=[public_team])
     team_service.get_pending_join_requests_batch.return_value = {}
     team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-2": 5})
+
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_teams_partial_html(
@@ -6911,6 +7261,7 @@ async def test_admin_teams_partial_html_admin_relationship_none(monkeypatch, moc
     team_service.get_pending_join_requests_batch.return_value = {}
     team_service.list_teams = AsyncMock(return_value={"data": [other_team], "pagination": pagination, "links": links})
     team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-2": 0})
+
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_teams_partial_html(
@@ -14390,6 +14741,7 @@ class TestTeamLookups:
 
         ts = MagicMock()
         ts.get_all_team_ids = AsyncMock(return_value=["id-1", "id-2"])
+
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "admin@test.com"})
@@ -14406,6 +14758,7 @@ class TestTeamLookups:
         team1 = SimpleNamespace(id="t1", name="Team1", slug="team1", is_active=True, visibility="public")
         ts = MagicMock()
         ts.get_user_teams = AsyncMock(return_value=[team1])
+
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "user@test.com"})
@@ -14451,6 +14804,7 @@ class TestTeamLookups:
         team = SimpleNamespace(id="t1", name="Alpha", slug="alpha", description="desc", visibility="public", is_active=True)
         ts = MagicMock()
         ts.list_teams = AsyncMock(return_value={"data": [team]})
+
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_search_teams(q="Alpha", include_inactive=False, limit=10, visibility=None, db=mock_db, user={"email": "admin@test.com"})
@@ -14470,6 +14824,7 @@ class TestTeamLookups:
         team3 = SimpleNamespace(id="t3", name="Zzz Team", slug="zzz", description="", visibility="public", is_active=True)
         ts = MagicMock()
         ts.get_user_teams = AsyncMock(return_value=[team1, team2, team3])
+
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_search_teams(q="zzz", include_inactive=False, limit=10, visibility="public", db=mock_db, user={"email": "user@test.com"})
@@ -19185,3 +19540,755 @@ async def test_admin_search_prompts_include_public_adds_visibility_condition(mon
         db=mock_db, user={"email": "user@example.com", "db": mock_db},
     )
     assert response is not None
+
+
+
+@pytest.mark.asyncio
+class TestAdminTeamVisibilitySecurity:
+    """
+    Regression tests for admin team visibility security issue.
+
+    Tests that admin users cannot see personal teams of other users or private teams
+    they are not members of. This addresses the security vulnerability where admins
+    could view all teams including personal workspaces.
+
+    Security Invariants:
+    - Admin users should only see teams they are members of, plus discoverable public teams
+    - Personal teams of other users should NEVER be exposed to admins
+    - Private teams the admin is not a member of should NOT be visible to admins
+    """
+
+    @pytest.fixture
+    def mock_admin_user(self):
+        """Create a mock admin user."""
+        from mcpgateway.db import EmailUser
+        user = MagicMock(spec=EmailUser)
+        user.email = "admin@example.com"
+        user.is_admin = True
+        user.is_active = True
+        return user
+
+    @pytest.fixture
+    def mock_regular_user(self):
+        """Create a mock regular user."""
+        from mcpgateway.db import EmailUser
+        user = MagicMock(spec=EmailUser)
+        user.email = "user@example.com"
+        user.is_admin = False
+        user.is_active = True
+        return user
+
+    @pytest.fixture
+    def mock_personal_team(self):
+        """Create a mock personal team."""
+        from mcpgateway.db import EmailTeam
+        team = MagicMock(spec=EmailTeam)
+        team.id = "personal-team-id"
+        team.name = "user@example.com"
+        team.slug = "user-example-com"
+        team.description = "Personal workspace"
+        team.created_by = "user@example.com"
+        team.is_personal = True
+        team.visibility = "private"
+        team.is_active = True
+        return team
+
+    @pytest.fixture
+    def mock_private_team(self):
+        """Create a mock private team."""
+        from mcpgateway.db import EmailTeam
+        team = MagicMock(spec=EmailTeam)
+        team.id = "private-team-id"
+        team.name = "Private Team"
+        team.slug = "private-team"
+        team.description = "A private team"
+        team.created_by = "user@example.com"
+        team.is_personal = False
+        team.visibility = "private"
+        team.is_active = True
+        return team
+
+    @pytest.fixture
+    def mock_public_team(self):
+        """Create a mock public team."""
+        from mcpgateway.db import EmailTeam
+        team = MagicMock(spec=EmailTeam)
+        team.id = "public-team-id"
+        team.name = "Public Team"
+        team.slug = "public-team"
+        team.description = "A public team"
+        team.created_by = "user@example.com"
+        team.is_personal = False
+        team.visibility = "public"
+        team.is_active = True
+        return team
+
+    async def test_admin_teams_partial_excludes_personal_teams(self, monkeypatch, mock_admin_user, mock_personal_team, mock_public_team):
+        """Admin should NOT see other users' personal teams via admin_teams_partial_html.
+
+        The service layer handles personal team inclusion via personal_owner_email,
+        so only the admin's own personal team is included (not other users').
+        """
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True)
+
+        mock_request = MagicMock()
+        mock_request.app.state.templates.TemplateResponse = MagicMock()
+        mock_request.url.path = "/admin/teams/partial"
+
+        mock_db = MagicMock()
+
+        # Mock auth service to return admin user
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        # Mock team service - list_teams should be called with include_personal=False and personal_owner_email
+        mock_team_service = MagicMock()
+        mock_team_service.get_user_teams = AsyncMock(return_value=[])
+        mock_team_service.discover_public_teams = AsyncMock(return_value=[mock_public_team])
+        mock_team_service.get_user_roles_batch = MagicMock(return_value={})
+        mock_team_service.get_pending_join_requests_batch = MagicMock(return_value={})
+        mock_team_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+
+        mock_team_service.list_teams = AsyncMock(return_value={
+            "data": [mock_public_team],
+            "pagination": MagicMock(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+            "links": None
+        })
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"), \
+             patch("mcpgateway.admin._resolve_root_path", return_value=""):
+
+            await admin_teams_partial_html(
+                request=mock_request,
+                page=1,
+                per_page=50,
+                include_inactive=False,
+                visibility=None,
+                render=None,
+                q=None,
+                relationship=None,
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db}
+            )
+
+            # Verify list_teams was called with include_personal=False and personal_owner_email
+            mock_team_service.list_teams.assert_called_once()
+            call_kwargs = mock_team_service.list_teams.call_args[1]
+            assert call_kwargs["include_personal"] is False, "Admin should not see other users' personal teams"
+            assert call_kwargs["personal_owner_email"] == "admin@example.com", "Admin's own personal team should be included via service layer"
+
+    async def test_admin_get_all_team_ids_excludes_personal_teams(self, monkeypatch, mock_admin_user, mock_personal_team):
+        """Admin should NOT see other users' personal teams via admin_get_all_team_ids.
+
+        The service layer handles personal team inclusion via personal_owner_email,
+        so only the admin's own personal team is included (not other users').
+        """
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        mock_team_service = MagicMock()
+        mock_team_service.get_all_team_ids = AsyncMock(return_value=["public-team-id"])
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"):
+
+            await admin_get_all_team_ids(
+                include_inactive=False,
+                visibility=None,
+                q=None,
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db}
+            )
+
+            # Verify get_all_team_ids was called with include_personal=False and personal_owner_email
+            mock_team_service.get_all_team_ids.assert_called_once()
+            call_kwargs = mock_team_service.get_all_team_ids.call_args[1]
+            assert call_kwargs["include_personal"] is False, "Admin should not see other users' personal teams"
+            assert call_kwargs["personal_owner_email"] == "admin@example.com", "Admin's own personal team should be included via service layer"
+
+    async def test_admin_search_teams_excludes_personal_teams(self, monkeypatch, mock_admin_user, mock_public_team):
+        """Admin should NOT see other users' personal teams via admin_search_teams.
+
+        The service layer handles personal team inclusion via personal_owner_email,
+        so only the admin's own personal team is included (not other users').
+        """
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        mock_team_service = MagicMock()
+        mock_team_service.list_teams = AsyncMock(return_value={
+            "data": [mock_public_team],
+            "pagination": MagicMock(),
+            "links": None
+        })
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"), \
+             patch("mcpgateway.admin._normalize_search_query", return_value="test"):
+
+            await admin_search_teams(
+                q="test",
+                include_inactive=False,
+                limit=50,
+                visibility=None,
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db}
+            )
+
+            # Verify list_teams was called with include_personal=False and personal_owner_email
+            mock_team_service.list_teams.assert_called_once()
+            call_kwargs = mock_team_service.list_teams.call_args[1]
+            assert call_kwargs["include_personal"] is False, "Admin should not see other users' personal teams"
+            assert call_kwargs["personal_owner_email"] == "admin@example.com", "Admin's own personal team should be included via service layer"
+
+    async def test_admin_list_teams_excludes_personal_teams(self, monkeypatch, mock_admin_user, mock_public_team):
+        """Admin should NOT see other users' personal teams via admin_list_teams.
+
+        The service layer handles personal team inclusion via personal_owner_email,
+        so only the admin's own personal team is included (not other users').
+        """
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True)
+
+        mock_request = MagicMock()
+        mock_request.app.state.templates.TemplateResponse = MagicMock()
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        mock_team_service = MagicMock()
+        mock_team_service.list_teams = AsyncMock(return_value={
+            "data": [mock_public_team],
+            "pagination": MagicMock(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+            "links": None
+        })
+        mock_team_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"), \
+             patch("mcpgateway.admin._resolve_root_path", return_value=""):
+
+            await admin_list_teams(
+                request=mock_request,
+                page=1,
+                per_page=50,
+                q=None,
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db},
+                unified=False
+            )
+
+            # Verify list_teams was called with include_personal=False and personal_owner_email
+            mock_team_service.list_teams.assert_called_once()
+            call_kwargs = mock_team_service.list_teams.call_args[1]
+            assert call_kwargs["include_personal"] is False, "Admin should not see other users' personal teams"
+            assert call_kwargs["personal_owner_email"] == "admin@example.com", "Admin's own personal team should be included via service layer"
+
+    async def test_non_admin_can_see_own_personal_team(self, monkeypatch, mock_regular_user, mock_personal_team):
+        """Non-admin users should still see their own personal team."""
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True)
+
+        mock_request = MagicMock()
+        mock_request.app.state.templates.TemplateResponse = MagicMock()
+        mock_request.url.path = "/admin/teams/partial"
+
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_regular_user)
+
+        mock_team_service = MagicMock()
+        # Non-admin gets their teams via get_user_teams which includes personal
+        mock_team_service.get_user_teams = AsyncMock(return_value=[mock_personal_team])
+        mock_team_service.discover_public_teams = AsyncMock(return_value=[])
+        mock_team_service.get_user_roles_batch = MagicMock(return_value={"personal-team-id": "owner"})
+        mock_team_service.get_pending_join_requests_batch = MagicMock(return_value={})
+        mock_team_service.get_member_counts_batch_cached = AsyncMock(return_value={"personal-team-id": 1})
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="user@example.com"), \
+             patch("mcpgateway.admin._resolve_root_path", return_value=""):
+
+            await admin_teams_partial_html(
+                request=mock_request,
+                page=1,
+                per_page=50,
+                include_inactive=False,
+                visibility=None,
+                render=None,
+                q=None,
+                relationship=None,
+                db=mock_db,
+                user={"email": "user@example.com", "db": mock_db}
+            )
+
+            # Verify get_user_teams was called with include_personal=True for non-admin
+            mock_team_service.get_user_teams.assert_called_once()
+            call_kwargs = mock_team_service.get_user_teams.call_args[1]
+            assert call_kwargs["include_personal"] is True, "Non-admin should see their own personal team"
+
+    async def test_admin_can_see_own_personal_team(self, monkeypatch, mock_admin_user):
+        """Admin users SHOULD see their own personal team (regression test for fix)."""
+        from mcpgateway.db import EmailTeam
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True)
+
+        # Create admin's personal team
+        admin_personal_team = MagicMock(spec=EmailTeam)
+        admin_personal_team.id = "admin-personal-team-id"
+        admin_personal_team.name = "admin@example.com"
+        admin_personal_team.slug = "admin-example-com"
+        admin_personal_team.description = "Admin's personal workspace"
+        admin_personal_team.created_by = "admin@example.com"
+        admin_personal_team.is_personal = True
+        admin_personal_team.visibility = "private"
+        admin_personal_team.is_active = True
+
+        mock_request = MagicMock()
+        mock_request.app.state.templates.TemplateResponse = MagicMock()
+        mock_request.url.path = "/admin/teams/partial"
+
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        mock_team_service = MagicMock()
+        mock_team_service.get_user_teams = AsyncMock(return_value=[])
+        mock_team_service.discover_public_teams = AsyncMock(return_value=[])
+        mock_team_service.get_user_roles_batch = MagicMock(return_value={})
+        mock_team_service.get_pending_join_requests_batch = MagicMock(return_value={})
+        mock_team_service.get_member_counts_batch_cached = AsyncMock(return_value={"admin-personal-team-id": 1})
+
+        # list_teams returns empty (no non-personal teams)
+        mock_team_service.list_teams = AsyncMock(return_value={
+            "data": [],
+            "pagination": MagicMock(page=1, per_page=50, total_items=0, total_pages=0, has_next=False, has_prev=False),
+            "links": None
+        })
+
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"), \
+             patch("mcpgateway.admin._resolve_root_path", return_value=""):
+
+            await admin_teams_partial_html(
+                request=mock_request,
+                page=1,
+                per_page=50,
+                include_inactive=False,
+                visibility=None,
+                render=None,
+                q=None,
+                relationship=None,
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db}
+            )
+
+            # Verify list_teams was called with include_personal=False and personal_owner_email
+            # (service layer handles including admin's own personal team via SQL query)
+            mock_team_service.list_teams.assert_called_once()
+            call_kwargs = mock_team_service.list_teams.call_args[1]
+            assert call_kwargs["include_personal"] is False, "Should not include other users' personal teams"
+            assert call_kwargs["personal_owner_email"] == "admin@example.com", "Admin's personal team included via service layer"
+
+    async def test_admin_teams_partial_excludes_other_personal_teams(self, monkeypatch, mock_admin_user, mock_private_team, mock_public_team):
+        """Admin listing excludes other users' personal teams (include_personal=False with personal_owner_email)."""
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True)
+
+        mock_request = MagicMock()
+        mock_request.app.state.templates.TemplateResponse = MagicMock()
+        mock_request.url.path = "/admin/teams/partial"
+
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        mock_team_service = MagicMock()
+        # Admin is not a member of any teams
+        mock_team_service.get_user_teams = AsyncMock(return_value=[])
+        # Only public teams are discoverable
+        mock_team_service.discover_public_teams = AsyncMock(return_value=[mock_public_team])
+        mock_team_service.get_user_roles_batch = MagicMock(return_value={})
+        mock_team_service.get_pending_join_requests_batch = MagicMock(return_value={})
+        mock_team_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+
+
+        # list_teams should only return public teams, not private ones
+        mock_team_service.list_teams = AsyncMock(return_value={
+            "data": [mock_public_team],  # Only public team, NO private teams
+            "pagination": MagicMock(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+            "links": None
+        })
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"), \
+             patch("mcpgateway.admin._resolve_root_path", return_value=""):
+
+            await admin_teams_partial_html(
+                request=mock_request,
+                page=1,
+                per_page=50,
+                include_inactive=False,
+                visibility=None,
+                render=None,
+                q=None,
+                relationship=None,
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db}
+            )
+
+            # Verify the returned data does not include private teams
+            mock_team_service.list_teams.assert_called_once()
+            call_kwargs = mock_team_service.list_teams.call_args[1]
+            assert call_kwargs["include_personal"] is False
+
+            # The service layer should handle filtering private teams based on membership
+            # This test verifies the admin endpoint doesn't bypass that filtering
+
+
+
+class TestAdminPersonalTeamFiltering:
+    """Test suite for admin personal team filtering via service-layer personal_owner_email.
+
+    Personal team inclusion/exclusion is now handled by the service layer via the
+    personal_owner_email parameter. Admin endpoints pass the admin's email so the
+    service query includes their personal team while excluding other users' personal teams.
+    Filtering (active, visibility, search) is applied uniformly by the SQL query.
+    """
+
+    @pytest.fixture
+    def mock_admin_user(self):
+        """Create mock admin user."""
+        user = MagicMock()
+        user.email = "admin@example.com"
+        user.is_admin = True
+        user.is_active = True
+        return user
+
+    @pytest.fixture
+    def mock_personal_team(self):
+        """Create mock personal team for admin."""
+        team = MagicMock()
+        team.id = "personal-team-123"
+        team.name = "admin@example.com"
+        team.slug = "admin-example-com"
+        team.description = "Personal team"
+        team.is_personal = True
+        team.is_active = True
+        team.visibility = "private"
+        team.created_by = "admin@example.com"
+        return team
+
+    # Tests for admin_get_all_team_ids
+    @pytest.mark.asyncio
+    async def test_admin_get_all_team_ids_passes_personal_owner_email(self, mock_admin_user):
+        """admin_get_all_team_ids passes personal_owner_email to the service layer."""
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        mock_team_service = MagicMock()
+        mock_team_service.get_all_team_ids = AsyncMock(return_value=["team1", "team2", "personal-team-123"])
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"):
+
+            result = await admin_get_all_team_ids(
+                include_inactive=False,
+                visibility=None,
+                q=None,
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db}
+            )
+
+            # Verify service was called with personal_owner_email
+            mock_team_service.get_all_team_ids.assert_called_once()
+            call_kwargs = mock_team_service.get_all_team_ids.call_args[1]
+            assert call_kwargs["personal_owner_email"] == "admin@example.com"
+            assert call_kwargs["include_personal"] is False
+            # Result from service is returned directly
+            assert result["count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_admin_get_all_team_ids_forwards_filters(self, mock_admin_user):
+        """admin_get_all_team_ids forwards all filters to the service layer."""
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        mock_team_service = MagicMock()
+        mock_team_service.get_all_team_ids = AsyncMock(return_value=["team1"])
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"):
+
+            await admin_get_all_team_ids(
+                include_inactive=True,
+                visibility="public",
+                q="search",
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db}
+            )
+
+            call_kwargs = mock_team_service.get_all_team_ids.call_args[1]
+            assert call_kwargs["include_inactive"] is True
+            assert call_kwargs["visibility_filter"] == "public"
+            assert call_kwargs["search_query"] == "search"
+            assert call_kwargs["personal_owner_email"] == "admin@example.com"
+
+    # Tests for admin_search_teams
+    @pytest.mark.asyncio
+    async def test_admin_search_teams_passes_personal_owner_email(self, mock_admin_user):
+        """admin_search_teams passes personal_owner_email to the service layer."""
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        mock_team_service = MagicMock()
+        mock_team_service.list_teams = AsyncMock(return_value={
+            "data": [MagicMock(id="team1")],
+            "pagination": MagicMock(),
+            "links": None
+        })
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"), \
+             patch("mcpgateway.admin._normalize_search_query", return_value="admin"):
+
+            await admin_search_teams(
+                q="admin",
+                include_inactive=False,
+                limit=50,
+                visibility=None,
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db}
+            )
+
+            call_kwargs = mock_team_service.list_teams.call_args[1]
+            assert call_kwargs["personal_owner_email"] == "admin@example.com"
+            assert call_kwargs["include_personal"] is False
+
+    @pytest.mark.asyncio
+    async def test_admin_search_teams_forwards_filters(self, mock_admin_user):
+        """admin_search_teams forwards all filters to the service layer."""
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        mock_team_service = MagicMock()
+        mock_team_service.list_teams = AsyncMock(return_value={
+            "data": [],
+            "pagination": MagicMock(),
+            "links": None
+        })
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"), \
+             patch("mcpgateway.admin._normalize_search_query", return_value="test"):
+
+            await admin_search_teams(
+                q="test",
+                include_inactive=True,
+                limit=25,
+                visibility="public",
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db}
+            )
+
+            call_kwargs = mock_team_service.list_teams.call_args[1]
+            assert call_kwargs["include_inactive"] is True
+            assert call_kwargs["visibility_filter"] == "public"
+            assert call_kwargs["search_query"] == "test"
+            assert call_kwargs["per_page"] == 25
+
+    # Tests for admin_teams_partial_html
+    @pytest.mark.asyncio
+    async def test_admin_teams_partial_html_passes_personal_owner_email(self, monkeypatch, mock_admin_user):
+        """admin_teams_partial_html passes personal_owner_email to the service layer."""
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True)
+
+        mock_request = MagicMock()
+        mock_request.app.state.templates.TemplateResponse = MagicMock(return_value=HTMLResponse(content=""))
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        mock_team_service = MagicMock()
+        mock_team_service.list_teams = AsyncMock(return_value={
+            "data": [MagicMock(id="team1")],
+            "pagination": MagicMock(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+            "links": None
+        })
+        mock_team_service.get_user_teams = AsyncMock(return_value=[])
+        mock_team_service.discover_public_teams = AsyncMock(return_value=[])
+        mock_team_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"), \
+             patch("mcpgateway.admin._get_user_team_roles", return_value={}):
+
+            result = await admin_teams_partial_html(
+                request=mock_request,
+                page=1,
+                per_page=50,
+                include_inactive=False,
+                visibility=None,
+                relationship=None,
+                q=None,
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db}
+            )
+
+            assert isinstance(result, HTMLResponse)
+            call_kwargs = mock_team_service.list_teams.call_args[1]
+            assert call_kwargs["personal_owner_email"] == "admin@example.com"
+            assert call_kwargs["include_personal"] is False
+
+    @pytest.mark.asyncio
+    async def test_admin_teams_partial_html_forwards_filters(self, monkeypatch, mock_admin_user):
+        """admin_teams_partial_html forwards all filters to the service layer."""
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True)
+
+        mock_request = MagicMock()
+        mock_request.app.state.templates.TemplateResponse = MagicMock(return_value=HTMLResponse(content=""))
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        mock_team_service = MagicMock()
+        mock_team_service.list_teams = AsyncMock(return_value={
+            "data": [],
+            "pagination": MagicMock(page=2, per_page=10, total_items=0, total_pages=0, has_next=False, has_prev=True),
+            "links": None
+        })
+        mock_team_service.get_user_teams = AsyncMock(return_value=[])
+        mock_team_service.discover_public_teams = AsyncMock(return_value=[])
+        mock_team_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"), \
+             patch("mcpgateway.admin._get_user_team_roles", return_value={}):
+
+            await admin_teams_partial_html(
+                request=mock_request,
+                page=2,
+                per_page=10,
+                include_inactive=True,
+                visibility="public",
+                relationship=None,
+                q="search",
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db}
+            )
+
+            call_kwargs = mock_team_service.list_teams.call_args[1]
+            assert call_kwargs["page"] == 2
+            assert call_kwargs["per_page"] == 10
+            assert call_kwargs["include_inactive"] is True
+            assert call_kwargs["visibility_filter"] == "public"
+            assert call_kwargs["search_query"] == "search"
+
+    # Tests for admin_list_teams
+    @pytest.mark.asyncio
+    async def test_admin_list_teams_passes_personal_owner_email(self, monkeypatch, mock_admin_user):
+        """admin_list_teams passes personal_owner_email to the service layer."""
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True)
+
+        mock_request = MagicMock()
+        mock_request.app.state.templates.TemplateResponse = MagicMock()
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        mock_team_service = MagicMock()
+        mock_team_service.list_teams = AsyncMock(return_value={
+            "data": [MagicMock(id="team1")],
+            "pagination": MagicMock(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+            "links": None
+        })
+        mock_team_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"), \
+             patch("mcpgateway.admin._resolve_root_path", return_value=""):
+
+            await admin_list_teams(
+                request=mock_request,
+                page=1,
+                per_page=50,
+                q=None,
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db},
+                unified=False
+            )
+
+            call_kwargs = mock_team_service.list_teams.call_args[1]
+            assert call_kwargs["personal_owner_email"] == "admin@example.com"
+            assert call_kwargs["include_personal"] is False
+
+    @pytest.mark.asyncio
+    async def test_admin_list_teams_forwards_search_query(self, monkeypatch, mock_admin_user):
+        """admin_list_teams forwards search query to the service layer."""
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True)
+
+        mock_request = MagicMock()
+        mock_request.app.state.templates.TemplateResponse = MagicMock(return_value=HTMLResponse(content=""))
+        mock_db = MagicMock()
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        mock_team_service = MagicMock()
+        mock_team_service.list_teams = AsyncMock(return_value={
+            "data": [],
+            "pagination": MagicMock(page=1, per_page=50, total_items=0, total_pages=0, has_next=False, has_prev=False),
+            "links": None
+        })
+        mock_team_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+
+        with patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service), \
+             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service), \
+             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"), \
+             patch("mcpgateway.admin._resolve_root_path", return_value=""):
+
+            result = await admin_list_teams(
+                request=mock_request,
+                page=1,
+                per_page=50,
+                q="nomatch",
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db},
+                unified=False
+            )
+
+            assert isinstance(result, HTMLResponse)
+            call_kwargs = mock_team_service.list_teams.call_args[1]
+            assert call_kwargs["search_query"] == "nomatch"
+            assert call_kwargs["personal_owner_email"] == "admin@example.com"
