@@ -53,8 +53,6 @@ pub async fn test_streamer_post() -> Result<(), Box<dyn std::error::Error>> {
         &format!("{url}/mcp/"),
         "--auth",
         mcp_auth.unwrap(),
-        "--tls-cert",
-        "/dev/null",
     ]);
 
     let http_client = get_http_client(&config).await.map_err(|e| e.clone())?;
