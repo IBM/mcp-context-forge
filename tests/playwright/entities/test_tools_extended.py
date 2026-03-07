@@ -77,6 +77,7 @@ class TestToolsTableStructure:
         expected_columns = [
             "Actions",
             "S. No.",
+            "Tool ID",
             "Source",
             "Name",
             "Request Type",
@@ -345,9 +346,9 @@ class TestToolsViewModal:
         tools_page.wait_for_tools_table_loaded()
         _skip_if_no_tools(tools_page)
 
-        # Get description from table
+        # Get description from table (shifted +1 after Tool ID insertion)
         first_row = tools_page.get_tool_row(0)
-        description = first_row.locator("td").nth(5).text_content().strip()
+        description = first_row.locator("td").nth(6).text_content().strip()
 
         tools_page.open_tool_view_modal(0)
 
@@ -403,8 +404,8 @@ class TestToolsViewModal:
 
         # Get the name from the table - Name column varies by row structure
         first_row = tools_page.get_tool_row(0)
-        # Name is in column index 3 (Actions=0, S.No.=1, Source=2, Name=3)
-        tool_name = first_row.locator("td").nth(3).text_content().strip()
+        # Name is in column index 4 (Actions=0, S.No.=1, ToolID=2, Source=3, Name=4)
+        tool_name = first_row.locator("td").nth(4).text_content().strip()
 
         tools_page.open_tool_view_modal(0)
         # Tool details should mention the tool name

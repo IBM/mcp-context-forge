@@ -1291,7 +1291,7 @@ class TestGatewayTableDisplay:
         gateways_page.wait_for_gateways_table_loaded()
 
         table = gateways_page.gateways_table
-        expected_columns = ["Actions", "S. No.", "Name", "URL", "Tags", "Status", "Last Seen", "Owner", "Team", "Visibility"]
+        expected_columns = ["Actions", "S. No.", "Gateway ID", "Name", "URL", "Tags", "Status", "Last Seen", "Owner", "Team", "Visibility"]
 
         for col in expected_columns:
             expect(table.locator(f'th:has-text("{col}")')).to_be_visible()
@@ -1313,7 +1313,8 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        owner = first_row.locator("td").nth(7).text_content().strip()
+        # Owner column index shifted +1 after Gateway ID insertion (Actions=0, S.No.=1, GatewayID=2, Name=3, URL=4, Tags=5, Status=6, LastSeen=7, Owner=8)
+        owner = first_row.locator("td").nth(8).text_content().strip()
         # Owner should be an email or "None"
         assert "@" in owner or owner == "None", f"Unexpected owner value: '{owner}'"
 
@@ -1335,7 +1336,8 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        last_seen = first_row.locator("td").nth(6).text_content().strip()
+        # LastSeen column index shifted +1 after Gateway ID insertion
+        last_seen = first_row.locator("td").nth(7).text_content().strip()
         # Should contain a date-like pattern or "N/A"
         assert len(last_seen) > 0, "Last seen cell should not be empty"
 
@@ -1346,7 +1348,8 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        status_cell = first_row.locator("td").nth(5)
+        # Status column index shifted +1 after Gateway ID insertion
+        status_cell = first_row.locator("td").nth(6)
         status_text = status_cell.text_content().strip()
         assert status_text in ("Active", "Inactive"), f"Unexpected status: '{status_text}'"
 
