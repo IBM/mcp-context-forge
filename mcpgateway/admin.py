@@ -6860,7 +6860,7 @@ async def admin_users_partial_html(
                     "password_change_required": user_obj.password_change_required,
                     "failed_login_attempts": int(getattr(user_obj, "failed_login_attempts", 0) or 0),
                     "locked_until": getattr(user_obj, "locked_until", None),
-                    "is_locked": bool(getattr(user_obj, "locked_until", None) and getattr(user_obj, "locked_until", None) > utc_now()),
+                    "is_locked": user_obj.is_account_locked(),
                     "is_current_user": is_current_user,
                     "is_last_admin": is_last_admin,
                 }
