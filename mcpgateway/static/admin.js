@@ -6484,15 +6484,11 @@ async function viewServer(serverId) {
 
             // Server ID field with copy button
             const serverIdP = document.createElement("p");
-            serverIdP.className = "text-sm";
             const serverIdStrong = document.createElement("strong");
             serverIdStrong.textContent = "Server ID: ";
-            serverIdStrong.className =
-                "font-medium text-gray-700 dark:text-gray-300";
             serverIdP.appendChild(serverIdStrong);
             const serverIdSpan = document.createElement("span");
-            serverIdSpan.className =
-                "font-mono text-gray-600 dark:text-gray-400";
+            serverIdSpan.className = "font-mono text-sm";
             serverIdSpan.textContent = server.id;
             serverIdP.appendChild(serverIdSpan);
             serverIdP.appendChild(makeCopyIdButton(server.id));
