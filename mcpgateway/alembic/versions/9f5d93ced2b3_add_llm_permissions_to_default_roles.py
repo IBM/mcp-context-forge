@@ -2,7 +2,7 @@
 """Add LLM permissions to default RBAC roles.
 
 Revision ID: 9f5d93ced2b3
-Revises: y8i9j0k1l2m3
+Revises: y8j9k0l1m2n3
 Create Date: 2026-02-23 11:09:14.709030
 
 Backfills default role permission sets so existing deployments receive:

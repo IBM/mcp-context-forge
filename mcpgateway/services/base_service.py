@@ -5,13 +5,14 @@
 
 # Standard
 from abc import ABC
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 # Third-Party
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.db import EmailTeam
 from mcpgateway.services.team_management_service import TeamManagementService
 
 
@@ -131,3 +132,109 @@ class BaseService(ABC):
             access_conditions.append(and_(model_cls.team_id.in_(token_teams), model_cls.visibility.in_(["team", "public"])))
 
         return query.where(or_(*access_conditions))
+
+    @staticmethod
+    async def check_item_access(
+        visibility: str,
+        item_team_id: Optional[str],
+        item_owner_email: Optional[str],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        db: Optional[Session] = None,
+    ) -> bool:
+        """Check if a user has access to a single item based on visibility rules.
+
+        Unified per-item access check for all visibility-scoped resources
+        (tools, resources, prompts, agents). For query-level filtering of
+        list operations, use _apply_access_control() instead.
+
+        Access rules:
+        - public: accessible by everyone
+        - admin bypass: token_teams=None AND user_email=None → unrestricted
+        - no user context (but not admin) → deny non-public items
+        - public-only token (token_teams=[]) → deny non-public items
+        - private: accessible only by owner (owner_email matches user_email)
+        - team: accessible by team members (item_team_id in token_teams)
+
+        Args:
+            visibility: Item visibility level (public, team, private).
+            item_team_id: Team ID assigned to the item, if any.
+            item_owner_email: Email of the item owner, if any.
+            user_email: Requesting user's email. None = no user context.
+            token_teams: Teams from JWT via normalize_token_teams().
+                None = admin bypass, [] = public-only, [...] = team-scoped.
+            db: Optional database session for team membership lookup when
+                token_teams is not available (fallback path).
+
+        Returns:
+            True if access is allowed, False otherwise.
+        """
+        if visibility == "public":
+            return True
+
+        # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
+        if token_teams is None and user_email is None:
+            return True
+
+        # No user context (but not admin) → deny non-public items
+        if not user_email:
+            return False
+
+        # Public-only tokens (empty teams array) can ONLY access public items
+        if token_teams is not None and len(token_teams) == 0:
+            return False  # Already checked public above
+
+        # Owner can access their own private items
+        if visibility == "private" and item_owner_email and item_owner_email == user_email:
+            return True
+
+        # Team items: check team membership
+        if item_team_id:
+            if token_teams is not None:
+                team_ids = token_teams
+            elif db is not None:
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+            else:
+                return False
+
+            if visibility in ("team", "public") and item_team_id in team_ids:
+                return True
+
+        return False
+
+    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
+        """Retrieve the team name given a team ID.
+
+        Args:
+            db: Database session for querying teams.
+            team_id: The ID of the team.
+
+        Returns:
+            The name of the team if found, otherwise None.
+        """
+        if not team_id:
+            return None
+        team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+        db.commit()  # Release transaction to avoid idle-in-transaction
+        return team.name if team else None
+
+    def _batch_get_team_names(self, db: Session, team_ids: List[str]) -> Dict[str, str]:
+        """Batch retrieve team names for multiple team IDs.
+
+        Fetches team names in a single query to avoid N+1 issues
+        when converting multiple items to schemas in list operations.
+
+        Args:
+            db: Database session for querying teams.
+            team_ids: List of team IDs to look up.
+
+        Returns:
+            Mapping of team_id -> team_name for active teams.
+        """
+        if not team_ids:
+            return {}
+        teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
+        db.commit()  # Release transaction to avoid idle-in-transaction
+        return {team.id: team.name for team in teams}

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=cyclic-import
 """Location: ./mcpgateway/toolops/utils/llm_util.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0

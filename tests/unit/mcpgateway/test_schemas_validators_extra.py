@@ -325,6 +325,23 @@ def test_a2a_agent_auth_processing_and_read_masking(monkeypatch):
     assert basic.auth_password == "pass"
 
 
+def test_a2a_agent_type_normalization_accepts_common_aliases():
+    agent = A2AAgentCreate(name="agent", endpoint_url="http://agent.example.com", agent_type="a2a")
+    assert agent.agent_type == "a2a-jsonrpc"
+
+    agent = A2AAgentCreate(name="agent", endpoint_url="http://agent.example.com", agent_type="a2a_jsonrpc")
+    assert agent.agent_type == "a2a-jsonrpc"
+
+    agent = A2AAgentCreate(name="agent", endpoint_url="http://agent.example.com", agent_type="rest_passthrough")
+    assert agent.agent_type == "rest-passthrough"
+
+    agent = A2AAgentCreate(name="agent", endpoint_url="http://agent.example.com", agent_type="openai")
+    assert agent.agent_type == "rest-passthrough"
+
+    agent = A2AAgentCreate(name="agent", endpoint_url="http://agent.example.com", agent_type="anthropic")
+    assert agent.agent_type == "rest-passthrough"
+
+
 def test_tool_update_auth_and_request_type():
     values = ToolUpdate.assemble_auth({"auth_type": "basic", "auth_username": "u", "auth_password": "p"})
     decoded = decode_auth(values["auth"]["auth_value"])

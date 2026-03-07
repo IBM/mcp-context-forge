@@ -749,66 +749,25 @@ class ToolService(BaseService):
     ) -> bool:
         """Check if user has access to a tool based on visibility rules.
 
-        Implements the same access control logic as list_tools() for consistency.
-
-        Access Rules:
-        - Public tools: Accessible by all authenticated users
-        - Team tools: Accessible by team members (team_id in user's teams)
-        - Private tools: Accessible only by owner (owner_email matches)
+        Delegates to BaseService.check_item_access for unified access control.
 
         Args:
             db: Database session for team membership lookup if needed.
             tool_payload: Tool data dict with visibility, team_id, owner_email.
             user_email: Email of the requesting user (None = unauthenticated).
             token_teams: List of team IDs from token.
-                - None = unrestricted admin access
-                - [] = public-only token
-                - [...] = team-scoped token
 
         Returns:
             True if access is allowed, False otherwise.
         """
-        visibility = tool_payload.get("visibility", "public")
-        tool_team_id = tool_payload.get("team_id")
-        tool_owner_email = tool_payload.get("owner_email")
-
-        # Public tools are accessible by everyone
-        if visibility == "public":
-            return True
-
-        # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
-        # This happens when is_admin=True and no team scoping in token
-        if token_teams is None and user_email is None:
-            return True
-
-        # No user context (but not admin) = deny access to non-public tools
-        if not user_email:
-            return False
-
-        # Public-only tokens (empty teams array) can ONLY access public tools
-        is_public_only_token = token_teams is not None and len(token_teams) == 0
-        if is_public_only_token:
-            return False  # Already checked public above
-
-        # Owner can access their own private tools
-        if visibility == "private" and tool_owner_email and tool_owner_email == user_email:
-            return True
-
-        # Team tools: check team membership (matches list_tools behavior)
-        if tool_team_id:
-            # Use token_teams if provided, otherwise look up from DB
-            if token_teams is not None:
-                team_ids = token_teams
-            else:
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                team_ids = [team.id for team in user_teams]
-
-            # Team/public visibility allows access if user is in the team
-            if visibility in ["team", "public"] and tool_team_id in team_ids:
-                return True
-
-        return False
+        return await self.check_item_access(
+            visibility=tool_payload.get("visibility", "public"),
+            item_team_id=tool_payload.get("team_id"),
+            item_owner_email=tool_payload.get("owner_email"),
+            user_email=user_email,
+            token_teams=token_teams,
+            db=db,
+        )
 
     def convert_tool_to_read(
         self,
@@ -2783,7 +2742,8 @@ class ToolService(BaseService):
             ToolInvocationError: If invocation fails.
             ToolTimeoutError: If tool invocation times out.
             PluginViolationError: If plugin blocks tool invocation.
-            PluginError: If encounters issue with plugin
+            PluginError: If encounters issue with plugin.
+            ToolError: If A2A agent authentication resolution fails.
 
         Examples:
             >>> # Note: This method requires extensive mocking of SQLAlchemy models,
@@ -3093,8 +3053,9 @@ class ToolService(BaseService):
         a2a_agent_type: Optional[str] = None
         a2a_agent_protocol_version: Optional[str] = None
         a2a_agent_auth_type: Optional[str] = None
-        a2a_agent_auth_value: Optional[str] = None
+        a2a_agent_auth_value: Optional[Any] = None
         a2a_agent_auth_query_params: Optional[Dict[str, str]] = None
+        a2a_agent_oauth_config: Optional[Dict[str, Any]] = None
 
         if tool_integration_type == "A2A" and "a2a_agent_id" in tool_annotations:
             a2a_agent_id = tool_annotations.get("a2a_agent_id")
@@ -3119,6 +3080,7 @@ class ToolService(BaseService):
             a2a_agent_auth_type = a2a_agent.auth_type
             a2a_agent_auth_value = a2a_agent.auth_value
             a2a_agent_auth_query_params = a2a_agent.auth_query_params
+            a2a_agent_oauth_config = a2a_agent.oauth_config
 
         # ═══════════════════════════════════════════════════════════════════════════
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
@@ -3842,125 +3804,180 @@ class ToolService(BaseService):
 
                 elif tool_integration_type == "A2A" and a2a_agent_endpoint_url:
                     # A2A tool invocation using pre-extracted agent data (extracted in Phase 2 before db.close())
-                    headers = {"Content-Type": "application/json"}
+                    # First-Party
+                    from mcpgateway.schemas import normalize_a2a_agent_type  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.a2a_dispatcher import dispatch_a2a_transport, prepare_rpc_params, resolve_a2a_auth  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.a2a_service import A2A_VERSION_HEADER, A2AAgentService  # pylint: disable=import-outside-toplevel
 
-                    # Plugin hook: tool pre-invoke for A2A
-                    if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
-                        if tool_metadata:
-                            global_context.metadata[TOOL_METADATA] = tool_metadata
-                        pre_result, context_table = await self._plugin_manager.invoke_hook(
-                            ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
-                            global_context=global_context,
-                            local_contexts=context_table,
-                            violations_as_exceptions=True,
-                        )
-                        if pre_result.modified_payload:
-                            payload = pre_result.modified_payload
-                            name = payload.name
-                            arguments = payload.args
-                            if payload.headers is not None:
-                                headers = payload.headers.model_dump()
+                    a2a_helper = A2AAgentService()
+                    normalized_agent_type = normalize_a2a_agent_type(a2a_agent_type)
+                    correlation_id = get_correlation_id()
 
-                    # Build request data based on agent type
-                    endpoint_url = a2a_agent_endpoint_url
-                    if a2a_agent_type in ["generic", "jsonrpc"] or endpoint_url.endswith("/"):
-                        # JSONRPC agents: Convert flat query to nested message structure
-                        params = None
-                        if isinstance(arguments, dict) and "query" in arguments and isinstance(arguments["query"], str):
-                            message_id = f"admin-test-{int(time.time())}"
-                            # A2A v0.3.x: message.parts use "kind" (not "type").
-                            params = {
-                                "message": {
-                                    "kind": "message",
-                                    "messageId": message_id,
-                                    "role": "user",
-                                    "parts": [{"kind": "text", "text": arguments["query"]}],
-                                }
-                            }
-                            method = arguments.get("method", "message/send")
-                        else:
-                            params = arguments.get("params", arguments) if isinstance(arguments, dict) else arguments
-                            method = arguments.get("method", "message/send") if isinstance(arguments, dict) else "message/send"
-                        request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
-                    else:
-                        # Custom agents: Pass parameters directly
-                        params = arguments if isinstance(arguments, dict) else {}
-                        request_data = {"interaction_type": params.get("interaction_type", "query"), "parameters": params, "protocol_version": a2a_agent_protocol_version}
-
-                    # Add authentication
-                    if a2a_agent_auth_type == "api_key" and a2a_agent_auth_value:
-                        headers["Authorization"] = f"Bearer {a2a_agent_auth_value}"
-                    elif a2a_agent_auth_type == "bearer" and a2a_agent_auth_value:
-                        headers["Authorization"] = f"Bearer {a2a_agent_auth_value}"
-                    elif a2a_agent_auth_type == "query_param" and a2a_agent_auth_query_params:
-                        auth_query_params_decrypted: dict[str, str] = {}
-                        for param_key, encrypted_value in a2a_agent_auth_query_params.items():
-                            if encrypted_value:
-                                try:
-                                    decrypted = decode_auth(encrypted_value)
-                                    auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
-                                except Exception:
-                                    logger.debug(f"Failed to decrypt query param for key '{param_key}'")
-                        if auth_query_params_decrypted:
-                            endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params_decrypted)
-
-                    # Make HTTP request with timeout enforcement
-                    logger.info(f"Calling A2A agent '{a2a_agent_name}' at {endpoint_url}")
-                    a2a_start_time = time.time()
+                    # Resolve auth using shared dispatcher.
+                    oauth_failed = False
                     try:
-                        http_response = await asyncio.wait_for(self._http_client.post(endpoint_url, json=request_data, headers=headers), timeout=effective_timeout)
-                    except (asyncio.TimeoutError, httpx.TimeoutException):
-                        a2a_elapsed_ms = (time.time() - a2a_start_time) * 1000
-                        structured_logger.log(
-                            level="WARNING",
-                            message=f"A2A tool invocation timed out: {name}",
-                            component="tool_service",
-                            correlation_id=get_correlation_id(),
-                            duration_ms=a2a_elapsed_ms,
-                            metadata={"event": "tool_timeout", "tool_name": name, "a2a_agent": a2a_agent_name, "timeout_seconds": effective_timeout},
+                        auth_ctx = await resolve_a2a_auth(
+                            endpoint_url=a2a_agent_endpoint_url,
+                            auth_type=a2a_agent_auth_type,
+                            auth_value=a2a_agent_auth_value,
+                            auth_query_params=a2a_agent_auth_query_params,
+                            oauth_config=a2a_agent_oauth_config,
+                            agent_name=a2a_agent_name,
+                            error_cls=ToolError,
                         )
-
-                        # Increment timeout counter
-                        try:
-                            # First-Party
-                            from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
-
-                            tool_timeout_counter.labels(tool_name=name).inc()
-                        except Exception as exc:
-                            logger.debug("Failed to increment tool_timeout_counter for %s: %s", name, exc, exc_info=True)
-
-                        # Trigger circuit breaker on timeout
-                        if self._plugin_manager:
-                            if context_table:
-                                for ctx in context_table.values():
-                                    ctx.set_state("cb_timeout_failure", True)
-
-                            if self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
-                                timeout_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation timed out after {effective_timeout}s")], is_error=True)
-                                await self._plugin_manager.invoke_hook(
-                                    ToolHookType.TOOL_POST_INVOKE,
-                                    payload=ToolPostInvokePayload(name=name, result=timeout_error_result.model_dump(by_alias=True)),
-                                    global_context=global_context,
-                                    local_contexts=context_table,
-                                    violations_as_exceptions=False,
-                                )
-
-                        raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
-
-                    if http_response.status_code == 200:
-                        response_data = http_response.json()
-                        if isinstance(response_data, dict) and "response" in response_data:
-                            val = response_data["response"]
-                            content = [TextContent(type="text", text=val if isinstance(val, str) else orjson.dumps(val).decode())]
+                    except ToolError as auth_exc:
+                        if a2a_agent_auth_type == "oauth":
+                            tool_result = ToolResult(content=[TextContent(type="text", text=str(auth_exc))], is_error=True)
+                            success = False
+                            oauth_failed = True
+                            auth_ctx = None
                         else:
-                            content = [TextContent(type="text", text=response_data if isinstance(response_data, str) else orjson.dumps(response_data).decode())]
-                        tool_result = ToolResult(content=content, is_error=False)
-                        success = True
-                    else:
-                        error_message = f"HTTP {http_response.status_code}: {http_response.text}"
-                        content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
-                        tool_result = ToolResult(content=content, is_error=True)
+                            raise
+
+                    if not oauth_failed:
+                        # Build headers from auth context + tool headers + passthrough.
+                        headers = dict(tool_headers or {})
+                        headers.setdefault("Content-Type", "application/json")
+                        headers.update(auth_ctx.headers)
+                        if normalized_agent_type == "a2a-rest":
+                            headers["A2A-Version"] = A2A_VERSION_HEADER
+                        if correlation_id:
+                            headers["X-Correlation-ID"] = correlation_id
+
+                        if request_headers:
+                            merged_headers = compute_passthrough_headers_cached(
+                                request_headers,
+                                headers,
+                                passthrough_allowed,
+                                gateway_auth_type=None,
+                                gateway_passthrough_headers=None,
+                            )
+                            if merged_headers:
+                                headers = merged_headers
+
+                        # Plugin hook: tool pre-invoke for A2A (after auth/passthrough headers are computed)
+                        if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
+                            if tool_metadata:
+                                global_context.metadata[TOOL_METADATA] = tool_metadata
+                            pre_result, context_table = await self._plugin_manager.invoke_hook(
+                                ToolHookType.TOOL_PRE_INVOKE,
+                                payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
+                                global_context=global_context,
+                                local_contexts=context_table,
+                                violations_as_exceptions=True,
+                            )
+                            if pre_result.modified_payload:
+                                payload = pre_result.modified_payload
+                                name = payload.name
+                                arguments = payload.args
+                                if payload.headers is not None:
+                                    headers = payload.headers.model_dump()
+
+                        # Prepare RPC params using shared dispatcher.
+                        rpc_method, rpc_params = prepare_rpc_params(arguments, normalized_agent_type, a2a_helper.normalize_message_parts_to_kind)
+
+                    # Make outbound call with timeout enforcement.
+                    http_response = None
+                    if not oauth_failed:
+                        endpoint_url = auth_ctx.endpoint_url
+                        logger.info("Calling A2A agent '%s' (%s) at %s", a2a_agent_name, normalized_agent_type, endpoint_url)
+                        a2a_start_time = time.time()
+                        try:
+                            dispatch_result = await dispatch_a2a_transport(
+                                endpoint_url=endpoint_url,
+                                normalized_agent_type=normalized_agent_type,
+                                rpc_method=rpc_method,
+                                rpc_params=rpc_params,
+                                headers=headers,
+                                auth_headers=auth_ctx.headers,
+                                http_client=self._http_client,
+                                parameters=arguments,
+                                interaction_type="tool_invoke",
+                                protocol_version=a2a_agent_protocol_version,
+                                correlation_id=correlation_id,
+                                build_rest_request_fn=a2a_helper.build_rest_request,
+                                invoke_grpc_fn=a2a_helper.invoke_a2a_grpc,
+                                timeout=effective_timeout,
+                            )
+                            if dispatch_result.grpc_data is not None:
+                                content_text = str(dispatch_result.grpc_data)
+                                tool_result = ToolResult(content=[TextContent(type="text", text=content_text)], is_error=False)
+                                success = True
+                                http_response = None
+                            else:
+                                http_response = dispatch_result.http_response
+                        except (asyncio.TimeoutError, httpx.TimeoutException):
+                            a2a_elapsed_ms = (time.time() - a2a_start_time) * 1000
+                            structured_logger.log(
+                                level="WARNING",
+                                message=f"A2A tool invocation timed out: {name}",
+                                component="tool_service",
+                                correlation_id=get_correlation_id(),
+                                duration_ms=a2a_elapsed_ms,
+                                metadata={"event": "tool_timeout", "tool_name": name, "a2a_agent": a2a_agent_name, "timeout_seconds": effective_timeout},
+                            )
+
+                            # Increment timeout counter
+                            try:
+                                # First-Party
+                                from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
+
+                                tool_timeout_counter.labels(tool_name=name).inc()
+                            except Exception as exc:
+                                logger.debug("Failed to increment tool_timeout_counter for %s: %s", name, exc, exc_info=True)
+
+                            # Trigger circuit breaker on timeout
+                            if self._plugin_manager:
+                                if context_table:
+                                    for ctx in context_table.values():
+                                        ctx.set_state("cb_timeout_failure", True)
+
+                                if self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
+                                    timeout_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation timed out after {effective_timeout}s")], is_error=True)
+                                    await self._plugin_manager.invoke_hook(
+                                        ToolHookType.TOOL_POST_INVOKE,
+                                        payload=ToolPostInvokePayload(name=name, result=timeout_error_result.model_dump(by_alias=True)),
+                                        global_context=global_context,
+                                        local_contexts=context_table,
+                                        violations_as_exceptions=False,
+                                    )
+
+                            raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+
+                    if http_response is not None:
+                        try:
+                            response_payload: Any = http_response.json()
+                        except ValueError:
+                            response_payload = {"raw": http_response.text}
+
+                        if 200 <= http_response.status_code < 300:
+                            if normalized_agent_type == "a2a-jsonrpc":
+                                jsonrpc_error = a2a_helper.extract_jsonrpc_error_message(response_payload)
+                                if jsonrpc_error:
+                                    content = [TextContent(type="text", text=f"A2A agent error: {jsonrpc_error}")]
+                                    tool_result = ToolResult(content=content, is_error=True)
+                                    success = False
+                                else:
+                                    if isinstance(response_payload, dict) and "result" in response_payload:
+                                        response_data = response_payload["result"]
+                                    else:
+                                        response_data = response_payload
+                                    val = response_data.get("response") if isinstance(response_data, dict) and "response" in response_data else response_data
+                                    content_text = val if isinstance(val, str) else orjson.dumps(val).decode()
+                                    tool_result = ToolResult(content=[TextContent(type="text", text=content_text)], is_error=False)
+                                    success = True
+                            else:
+                                response_data = response_payload
+                                val = response_data.get("response") if isinstance(response_data, dict) and "response" in response_data else response_data
+                                content_text = val if isinstance(val, str) else orjson.dumps(val).decode()
+                                tool_result = ToolResult(content=[TextContent(type="text", text=content_text)], is_error=False)
+                                success = True
+                        else:
+                            jsonrpc_error = a2a_helper.extract_jsonrpc_error_message(response_payload)
+                            raw_error = jsonrpc_error or f"HTTP {http_response.status_code}: {http_response.text}"
+                            content = [TextContent(type="text", text=f"A2A agent error: {raw_error}")]
+                            tool_result = ToolResult(content=content, is_error=True)
+                            success = False
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
 
@@ -4978,80 +4995,74 @@ class ToolService(BaseService):
         Raises:
             Exception: If the call fails.
         """
-        logger.info(f"Calling A2A agent '{agent.name}' at {agent.endpoint_url} with arguments: {parameters}")
+        logger.info("Calling A2A agent '%s' at %s with arguments: %s", agent.name, agent.endpoint_url, parameters)
 
-        # Build request data based on agent type
-        if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
-            # JSONRPC agents: Convert flat query to nested message structure
-            params = None
-            if isinstance(parameters, dict) and "query" in parameters and isinstance(parameters["query"], str):
-                # Build the nested message object for JSONRPC protocol
-                message_id = f"admin-test-{int(time.time())}"
-                # A2A v0.3.x: message.parts use "kind" (not "type").
-                params = {
-                    "message": {
-                        "kind": "message",
-                        "messageId": message_id,
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": parameters["query"]}],
-                    }
-                }
-                method = parameters.get("method", "message/send")
-            else:
-                # Already in correct format or unknown, pass through
-                params = parameters.get("params", parameters)
-                method = parameters.get("method", "message/send")
-
-            try:
-                request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
-                logger.info(f"invoke tool JSONRPC request_data prepared: {request_data}")
-            except Exception as e:
-                logger.error(f"Error preparing JSONRPC request data: {e}")
-                raise
-        else:
-            # Custom agents: Pass parameters directly without JSONRPC message conversion
-            # Custom agents expect flat fields like {"query": "...", "message": "..."}
-            params = parameters if isinstance(parameters, dict) else {}
-            logger.info(f"invoke tool Using custom A2A format for A2A agent '{params}'")
-            request_data = {"interaction_type": params.get("interaction_type", "query"), "parameters": params, "protocol_version": agent.protocol_version}
-        logger.info(f"invoke tool request_data prepared: {request_data}")
-        # Make HTTP request to the agent endpoint using shared HTTP client
         # First-Party
+        from mcpgateway.schemas import normalize_a2a_agent_type  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.a2a_dispatcher import build_dispatch_headers, dispatch_a2a_transport, prepare_rpc_params, resolve_a2a_auth  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.a2a_service import A2A_VERSION_HEADER, A2AAgentService  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
+        a2a_helper = A2AAgentService()
+        normalized_agent_type = normalize_a2a_agent_type(getattr(agent, "agent_type", None))
+        correlation_id = get_correlation_id()
+
+        # Resolve auth using shared dispatcher.
+        auth_ctx = await resolve_a2a_auth(
+            endpoint_url=agent.endpoint_url,
+            auth_type=getattr(agent, "auth_type", None),
+            auth_value=getattr(agent, "auth_value", None),
+            auth_query_params=getattr(agent, "auth_query_params", None),
+            oauth_config=getattr(agent, "oauth_config", None),
+            agent_name=agent.name,
+            error_cls=ToolError,
+            fallback_raw_auth=True,
+        )
+
+        # Build headers and prepare RPC params using shared dispatcher.
+        headers = build_dispatch_headers(auth_ctx.headers, normalized_agent_type, A2A_VERSION_HEADER, correlation_id)
+        rpc_method, rpc_params = prepare_rpc_params(parameters, normalized_agent_type, a2a_helper.normalize_message_parts_to_kind)
+
+        # Dispatch using shared transport logic.
         client = await get_http_client()
-        headers = {"Content-Type": "application/json"}
+        result = await dispatch_a2a_transport(
+            endpoint_url=auth_ctx.endpoint_url,
+            normalized_agent_type=normalized_agent_type,
+            rpc_method=rpc_method,
+            rpc_params=rpc_params,
+            headers=headers,
+            auth_headers=auth_ctx.headers,
+            http_client=client,
+            parameters=parameters,
+            interaction_type="tool_invoke",
+            protocol_version=getattr(agent, "protocol_version", None),
+            correlation_id=correlation_id,
+            build_rest_request_fn=a2a_helper.build_rest_request,
+            invoke_grpc_fn=a2a_helper.invoke_a2a_grpc,
+        )
 
-        # Determine the endpoint URL (may be modified for query_param auth)
-        endpoint_url = agent.endpoint_url
+        # gRPC returns data directly.
+        if result.grpc_data is not None:
+            return result.grpc_data
 
-        # Add authentication if configured
-        if agent.auth_type == "api_key" and agent.auth_value:
-            headers["Authorization"] = f"Bearer {agent.auth_value}"
-        elif agent.auth_type == "bearer" and agent.auth_value:
-            headers["Authorization"] = f"Bearer {agent.auth_value}"
-        elif agent.auth_type == "query_param" and agent.auth_query_params:
-            # Handle query parameter authentication (imports at top: decode_auth, apply_query_param_auth, sanitize_url_for_logging)
-            auth_query_params_decrypted: dict[str, str] = {}
-            for param_key, encrypted_value in agent.auth_query_params.items():
-                if encrypted_value:
-                    try:
-                        decrypted = decode_auth(encrypted_value)
-                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
-                    except Exception:
-                        logger.debug(f"Failed to decrypt query param for key '{param_key}'")
-            if auth_query_params_decrypted:
-                endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params_decrypted)
-                # Log sanitized URL to avoid credential leakage
-                sanitized_url = sanitize_url_for_logging(endpoint_url, auth_query_params_decrypted)
-                logger.debug(f"Applied query param auth to A2A agent endpoint: {sanitized_url}")
+        # Parse HTTP response.
+        http_response = result.http_response
+        try:
+            response_payload = http_response.json()
+        except ValueError:
+            response_payload = {"raw": http_response.text}
 
-        http_response = await client.post(endpoint_url, json=request_data, headers=headers)
+        if 200 <= http_response.status_code < 300:
+            if normalized_agent_type == "a2a-jsonrpc":
+                jsonrpc_error = a2a_helper.extract_jsonrpc_error_message(response_payload)
+                if jsonrpc_error:
+                    raise Exception(jsonrpc_error)
+                if isinstance(response_payload, dict) and response_payload.get("jsonrpc") == "2.0" and "result" in response_payload:
+                    return response_payload["result"]
+            return response_payload
 
-        if http_response.status_code == 200:
-            return http_response.json()
-
-        raise Exception(f"HTTP {http_response.status_code}: {http_response.text}")
+        jsonrpc_error = a2a_helper.extract_jsonrpc_error_message(response_payload)
+        raise Exception(jsonrpc_error or f"HTTP {http_response.status_code}: {http_response.text}")
 
 
 # Lazy singleton - created on first access, not at module import time.

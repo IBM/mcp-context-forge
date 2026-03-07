@@ -34,6 +34,8 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _adjust_pagination_for_conversion_failures,
     _build_admin_redirect,
     _escape_like,
+    _build_admin_a2a_test_payload,
+    _format_a2a_agent_type_label,
     _generate_unified_teams_view,
     _get_latency_heatmap_postgresql,
     _get_latency_heatmap_python,
@@ -44,6 +46,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _get_timeseries_metrics_python,
     _get_user_team_ids,
     _get_user_team_roles,
+    _normalize_a2a_agent_type,
     _normalize_search_query,
     _normalize_team_id,
     _normalize_ui_hide_values,
@@ -4389,6 +4392,7 @@ class TestA2AAgentManagement:
         # Mock agent and invocation
         mock_agent = MagicMock()
         mock_agent.name = "Test Agent"
+        mock_agent.agent_type = "a2a-jsonrpc"
         mock_get_agent.return_value = mock_agent
 
         mock_invoke_agent.return_value = {"result": "success", "message": "Test completed"}
@@ -4404,6 +4408,9 @@ class TestA2AAgentManagement:
         assert "result" in body
         mock_get_agent.assert_called_with(mock_db, "agent-1")
         mock_invoke_agent.assert_called_once()
+        params = mock_invoke_agent.call_args.args[2]
+        assert params["method"] == "SendMessage"
+        assert params["params"]["message"]["parts"][0]["text"]
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_disabled(self, monkeypatch, mock_request, mock_db, allow_permission):
@@ -4443,6 +4450,38 @@ class TestA2AAgentManagement:
         params = service.invoke_agent.call_args.args[2]
         assert params["query"] == "hi"
         assert params["test"] is True
+
+    @pytest.mark.asyncio
+    async def test_admin_test_a2a_agent_custom_ignores_trailing_slash(self, monkeypatch, mock_request, mock_db, allow_permission):
+        """Custom format should not switch to JSON-RPC based on endpoint slash."""
+        service = MagicMock()
+        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="custom", endpoint_url="http://agent.example.com/"))
+        service.invoke_agent = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin._read_request_json", AsyncMock(return_value={"query": "hi"}), raising=True)
+
+        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        params = service.invoke_agent.call_args.args[2]
+        assert params["query"] == "hi"
+        assert "params" not in params
+        assert "method" not in params
+
+    @pytest.mark.asyncio
+    async def test_admin_test_a2a_agent_rest_payload_branch(self, monkeypatch, mock_request, mock_db, allow_permission):
+        """REST A2A format should use message payload with parts.kind."""
+        service = MagicMock()
+        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="a2a-rest", endpoint_url="http://agent.example.com/api"))
+        service.invoke_agent = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin._read_request_json", AsyncMock(return_value={"query": "hi"}), raising=True)
+
+        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        params = service.invoke_agent.call_args.args[2]
+        assert params["message"]["parts"][0] == {"text": "hi"}
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_exception_handler(self, monkeypatch, mock_request, mock_db, allow_permission):
@@ -10131,6 +10170,38 @@ class TestAdminAdditionalCoverage:
         assert response.status_code == 200
         mock_service.register_agent.assert_called_once()
 
+    async def test_admin_add_a2a_agent_normalizes_legacy_type(self, monkeypatch, mock_request, mock_db):
+        """Legacy agent types are normalized to new admin protocol types."""
+        monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+        mock_service = MagicMock()
+        mock_service.register_agent = AsyncMock()
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", mock_service)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            MagicMock(
+                return_value={
+                    "created_by": "user",
+                    "created_from_ip": "127.0.0.1",
+                    "created_via": "ui",
+                    "created_user_agent": "test",
+                    "import_batch_id": None,
+                    "federation_source": None,
+                }
+            ),
+        )
+
+        form_data = FakeForm({"name": "Agent One", "endpoint_url": "http://example.com/agent", "agent_type": "openai"})
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        response = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        assert response.status_code == 200
+        created = mock_service.register_agent.call_args.args[1]
+        assert created.agent_type == "rest-passthrough"
+
     async def test_admin_edit_a2a_agent_success(self, monkeypatch, mock_request, mock_db):
         """Edit A2A agent successfully with oauth config."""
         mock_service = MagicMock()
@@ -10163,6 +10234,28 @@ class TestAdminAdditionalCoverage:
         response = await admin_edit_a2a_agent("agent-1", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
         assert response.status_code == 200
         mock_service.update_agent.assert_called_once()
+
+    async def test_admin_edit_a2a_agent_normalizes_legacy_type(self, monkeypatch, mock_request, mock_db):
+        """Edit flow normalizes legacy type values before update."""
+        mock_service = MagicMock()
+        mock_service.update_agent = AsyncMock()
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", mock_service)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            MagicMock(return_value={"modified_by": "user", "modified_from_ip": "127.0.0.1", "modified_via": "ui", "modified_user_agent": "test"}),
+        )
+
+        form_data = FakeForm({"name": "Agent Updated", "endpoint_url": "http://example.com/agent", "agent_type": "generic"})
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        response = await admin_edit_a2a_agent("agent-1", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        assert response.status_code == 200
+        updated = mock_service.update_agent.call_args.kwargs["agent_data"]
+        assert updated.agent_type == "a2a-jsonrpc"
 
     async def test_admin_search_a2a_agents_access_filtering(self, monkeypatch, mock_db):
         """Search A2A agents with team access filters."""
@@ -13432,6 +13525,31 @@ async def test_admin_edit_a2a_agent_error_handlers(monkeypatch, mock_db):
 
 class TestUtilityFunctions:
     """Tests for utility functions in admin module."""
+
+    def test_normalize_a2a_agent_type_legacy_and_canonical(self):
+        assert _normalize_a2a_agent_type("generic") == "a2a-jsonrpc"
+        assert _normalize_a2a_agent_type("openai") == "rest-passthrough"
+        assert _normalize_a2a_agent_type("a2a-rest") == "a2a-rest"
+
+    def test_format_a2a_agent_type_label(self):
+        assert _format_a2a_agent_type_label("a2a-grpc") == "A2A Protocol (gRPC)"
+        assert _format_a2a_agent_type_label("jsonrpc") == "A2A Protocol (JSON-RPC 2.0)"
+        assert "Legacy: unknown-x" in _format_a2a_agent_type_label("unknown-x")
+
+    def test_build_admin_a2a_test_payload_v1_format(self):
+        payload = _build_admin_a2a_test_payload("a2a-jsonrpc", "hello", now_ts=12345)
+        assert payload["method"] == "SendMessage"
+        assert "kind" not in payload["params"]["message"]
+        assert payload["params"]["message"]["parts"][0] == {"text": "hello"}
+        assert payload["params"]["message"]["messageId"] == "admin-test-12345"
+
+    def test_build_admin_a2a_test_payload_for_rest_and_custom(self):
+        rest_payload = _build_admin_a2a_test_payload("a2a-rest", "hello", now_ts=9)
+        assert rest_payload["message"]["parts"][0]["text"] == "hello"
+
+        custom_payload = _build_admin_a2a_test_payload("custom", "hello", now_ts=9)
+        assert custom_payload["query"] == "hello"
+        assert custom_payload["message"] == "hello"
 
     def test_normalize_team_id_none(self):
         assert _normalize_team_id(None) is None

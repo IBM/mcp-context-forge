@@ -541,7 +541,7 @@ class TestResourceListing:
         team.id = "team-1"
 
         with (
-            patch("mcpgateway.services.team_management_service.TeamManagementService") as MockTMS,
+            patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS,
             patch.object(resource_service, "convert_resource_to_read", side_effect=[ValueError("bad"), "ok"]),
         ):
             mock_ts = MagicMock()
@@ -2840,7 +2840,7 @@ class TestListResourcesForUser:
 
         resource_service.convert_resource_to_read = MagicMock(return_value="converted")
 
-        with patch("mcpgateway.services.team_management_service.TeamManagementService") as MockTMS:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS:
             mock_ts = MagicMock()
             mock_ts.get_user_teams = AsyncMock(return_value=[])
             MockTMS.return_value = mock_ts
@@ -2853,7 +2853,7 @@ class TestListResourcesForUser:
     async def test_team_filtering_no_access(self, resource_service):
         db = MagicMock()
 
-        with patch("mcpgateway.services.team_management_service.TeamManagementService") as MockTMS:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS:
             mock_ts = MagicMock()
             mock_ts.get_user_teams = AsyncMock(return_value=[])
             MockTMS.return_value = mock_ts
@@ -2895,7 +2895,7 @@ class TestListResourcesForUser:
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
 
-        with patch("mcpgateway.services.team_management_service.TeamManagementService") as MockTMS:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS:
             mock_ts = MagicMock()
             mock_ts.get_user_teams = AsyncMock(return_value=[])
             MockTMS.return_value = mock_ts
@@ -2913,7 +2913,7 @@ class TestListResourcesForUser:
 
         resource_service.convert_resource_to_read = MagicMock(side_effect=ValueError("bad"))
 
-        with patch("mcpgateway.services.team_management_service.TeamManagementService") as MockTMS:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS:
             mock_ts = MagicMock()
             mock_ts.get_user_teams = AsyncMock(return_value=[])
             MockTMS.return_value = mock_ts
@@ -4104,7 +4104,7 @@ class TestResourceServiceCoverageEdges:
         resource.owner_email = "owner@test.com"
         resource.team_id = "team-1"
 
-        with patch("mcpgateway.services.team_management_service.TeamManagementService") as MockTMS:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS:
             inst = MagicMock()
             inst.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-1")])
             MockTMS.return_value = inst
@@ -4193,7 +4193,7 @@ class TestResourceServiceCoverageEdges:
         db.execute.return_value.scalars.return_value.all.return_value = [res]
 
         with (
-            patch("mcpgateway.services.team_management_service.TeamManagementService") as MockTMS,
+            patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS,
             patch.object(svc, "convert_resource_to_read", return_value="converted"),
         ):
             inst = MagicMock()

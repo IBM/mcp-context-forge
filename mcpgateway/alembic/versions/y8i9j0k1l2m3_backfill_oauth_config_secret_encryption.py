@@ -2,7 +2,7 @@
 """Backfill oauth_config secret encryption for gateway/server/a2a rows.
 
 Revision ID: y8i9j0k1l2m3
-Revises: x7h8i9j0k1l2
+Revises: a1b2c3d4e5f6
 Create Date: 2026-02-23 08:10:00.000000
 """
 
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "y8i9j0k1l2m3"
-down_revision: Union[str, Sequence[str], None] = "x7h8i9j0k1l2"
+down_revision: Union[str, Sequence[str], None] = "a1b2c3d4e5f6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

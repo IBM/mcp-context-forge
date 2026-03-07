@@ -2820,6 +2820,46 @@ class TestA2AAgentEndpoints:
         mock_service.delete_agent.assert_called_once()
 
     @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_card(self, mock_service, test_client, auth_headers):
+        """Test fetching an upstream Agent Card."""
+        mock_service.get_agent_card = AsyncMock(return_value={"name": "agent-1", "url": "https://agent.example.com"})
+        response = test_client.get("/a2a/agent-1/card", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["name"] == "agent-1"
+        mock_service.get_agent_card.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_set_a2a_task_push_notification_config(self, mock_service, test_client, auth_headers):
+        """Test creating/updating task push-notification config."""
+        mock_service.set_task_push_notification_config = AsyncMock(return_value={"name": "tasks/t1/pushNotificationConfigs/c1"})
+        response = test_client.post(
+            "/a2a/agent-1/tasks/t1/pushNotificationConfigs",
+            json={"configId": "c1", "config": {"pushNotificationConfig": {"id": "c1", "url": "https://webhook.example.com"}}},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["name"] == "tasks/t1/pushNotificationConfigs/c1"
+        mock_service.set_task_push_notification_config.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_list_get_delete_a2a_task_push_notification_configs(self, mock_service, test_client, auth_headers):
+        """Test list/get/delete task push-notification config proxy routes."""
+        mock_service.list_task_push_notification_configs = AsyncMock(return_value={"configs": [{"name": "tasks/t1/pushNotificationConfigs/c1"}]})
+        mock_service.get_task_push_notification_config = AsyncMock(return_value={"name": "tasks/t1/pushNotificationConfigs/c1"})
+        mock_service.delete_task_push_notification_config = AsyncMock(return_value={})
+
+        list_response = test_client.get("/a2a/agent-1/tasks/t1/pushNotificationConfigs?page_size=10&page_token=start", headers=auth_headers)
+        get_response = test_client.get("/a2a/agent-1/tasks/t1/pushNotificationConfigs/c1", headers=auth_headers)
+        delete_response = test_client.delete("/a2a/agent-1/tasks/t1/pushNotificationConfigs/c1", headers=auth_headers)
+
+        assert list_response.status_code == 200
+        assert get_response.status_code == 200
+        assert delete_response.status_code == 200
+        mock_service.list_task_push_notification_configs.assert_called_once()
+        mock_service.get_task_push_notification_config.assert_called_once()
+        mock_service.delete_task_push_notification_config.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
     def test_invoke_a2a_agent(self, mock_service, test_client, auth_headers):
         """Test invoking A2A agent."""
         mock_service.invoke_agent = AsyncMock(return_value={"response": "Agent response", "status": "success"})
@@ -2830,6 +2870,102 @@ class TestA2AAgentEndpoints:
         )
         assert response.status_code == 200
         mock_service.invoke_agent.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_send_a2a_message(self, mock_service, test_client, auth_headers):
+        """Test message/send route proxies to service."""
+        mock_service.send_message = AsyncMock(return_value={"id": "task-1", "status": {"state": "completed"}})
+        response = test_client.post(
+            "/a2a/agent-1/message/send",
+            json={"message": {"role": "user", "parts": [{"kind": "text", "text": "hello"}]}},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["id"] == "task-1"
+        mock_service.send_message.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_send_a2a_message_agent_not_found(self, mock_service, test_client, auth_headers):
+        """Test message/send returns 404 for unknown agent."""
+        from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+
+        mock_service.send_message = AsyncMock(side_effect=A2AAgentNotFoundError("not found"))
+        response = test_client.post("/a2a/nonexistent/message/send", json={}, headers=auth_headers)
+        assert response.status_code == 404
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_stream_a2a_message(self, mock_service, test_client, auth_headers):
+        """Test message/stream route returns streaming response."""
+
+        async def _fake_stream():
+            yield b"event: message\ndata: {}\n\n"
+
+        mock_service.stream_message = AsyncMock(return_value=_fake_stream())
+        response = test_client.post(
+            "/a2a/agent-1/message/stream",
+            json={"message": {"role": "user", "parts": [{"kind": "text", "text": "hi"}]}},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_list_a2a_tasks(self, mock_service, test_client, auth_headers):
+        """Test tasks/list route proxies to service."""
+        mock_service.list_tasks = AsyncMock(return_value={"tasks": [{"id": "t1", "status": {"state": "completed"}}]})
+        response = test_client.get("/a2a/agent-1/tasks?state=completed&limit=10", headers=auth_headers)
+        assert response.status_code == 200
+        assert "tasks" in response.json()
+        mock_service.list_tasks.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_task(self, mock_service, test_client, auth_headers):
+        """Test tasks/get route proxies to service."""
+        mock_service.get_task = AsyncMock(return_value={"id": "t1", "status": {"state": "completed"}})
+        response = test_client.get("/a2a/agent-1/tasks/t1", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["id"] == "t1"
+        mock_service.get_task.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_cancel_a2a_task(self, mock_service, test_client, auth_headers):
+        """Test tasks/cancel route proxies to service."""
+        mock_service.cancel_task = AsyncMock(return_value={"id": "t1", "status": {"state": "canceled"}})
+        response = test_client.post("/a2a/agent-1/tasks/t1/cancel", json={}, headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["status"]["state"] == "canceled"
+        mock_service.cancel_task.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_subscribe_a2a_task(self, mock_service, test_client, auth_headers):
+        """Test tasks/subscribe route returns streaming response."""
+
+        async def _fake_stream():
+            yield b"event: status\ndata: {}\n\n"
+
+        mock_service.subscribe_task = AsyncMock(return_value=_fake_stream())
+        response = test_client.post("/a2a/agent-1/tasks/t1/subscribe", json={}, headers=auth_headers)
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_a2a_service_unavailable_returns_503(self, mock_service, test_client, auth_headers):
+        """All A2A v0.3 routes return 503 when service is None."""
+        # Patch the service attribute to None in each route
+        import mcpgateway.main as main_module
+
+        original = main_module.a2a_service
+        main_module.a2a_service = None
+        try:
+            assert test_client.post("/a2a/agent-1/message/send", json={}, headers=auth_headers).status_code == 503
+            assert test_client.post("/a2a/agent-1/message/stream", json={}, headers=auth_headers).status_code == 503
+            assert test_client.get("/a2a/agent-1/tasks", headers=auth_headers).status_code == 503
+            assert test_client.get("/a2a/agent-1/tasks/t1", headers=auth_headers).status_code == 503
+            assert test_client.post("/a2a/agent-1/tasks/t1/cancel", json={}, headers=auth_headers).status_code == 503
+            assert test_client.post("/a2a/agent-1/tasks/t1/subscribe", json={}, headers=auth_headers).status_code == 503
+            assert test_client.get("/a2a/agent-1/card", headers=auth_headers).status_code == 503
+        finally:
+            main_module.a2a_service = original
 
 
 # ----------------------------------------------------- #
@@ -3755,3 +3891,73 @@ class TestTeamScopedListVisibility:
         call_kwargs = mock_service.list_agents.call_args.kwargs
         assert call_kwargs["team_id"] is None
         assert call_kwargs["token_teams"] == ["team-1"]
+
+
+# ----------------------------------------------------- #
+# A2A Invoke Deny-Path Tests                            #
+# ----------------------------------------------------- #
+class TestA2AInvokeDenyPaths:
+    """Security deny-path tests for A2A invoke routes.
+
+    Verifies that requests without proper permissions are rejected with 403.
+    Uses the ``mock_permission_service`` autouse fixture from conftest which
+    replaces ``rbac.PermissionService`` with ``MockPermissionService``.
+    """
+
+    @staticmethod
+    def _make_denied_client(app_fixture, mock_perm_svc):
+        """Create a TestClient where permission checks return False.
+
+        Args:
+            app_fixture: The FastAPI app from ``app_with_temp_db``.
+            mock_perm_svc: The ``MockPermissionService`` class from conftest.
+        """
+        # First-Party
+        from mcpgateway.auth import get_current_user
+        from mcpgateway.db import EmailUser
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+        from mcpgateway.utils.verify_credentials import require_auth
+
+        mock_perm_svc.check_permission = AsyncMock(return_value=False)
+
+        mock_user = EmailUser(
+            email="denied-user@example.com",
+            full_name="Denied User",
+            is_admin=False,
+            is_active=True,
+            auth_provider="test",
+        )
+
+        app_fixture.dependency_overrides[require_auth] = lambda: "denied-user@example.com"
+        app_fixture.dependency_overrides[get_current_user] = lambda credentials=None, db=None: mock_user
+        app_fixture.dependency_overrides[get_current_user_with_permissions] = lambda request=None, credentials=None, jwt_token=None: {
+            "email": "denied-user@example.com",
+            "full_name": "Denied User",
+            "is_admin": False,
+            "ip_address": "127.0.0.1",
+            "user_agent": "test",
+            "db": MagicMock(),
+        }
+
+        return TestClient(app_fixture, raise_server_exceptions=False)
+
+    def test_send_message_denied(self, app_with_temp_db, auth_headers, mock_permission_service):
+        """POST /a2a/{name}/message/send without permission returns 403."""
+        client = self._make_denied_client(app_with_temp_db, mock_permission_service)
+        response = client.post("/a2a/test-agent/message/send", json={}, headers=auth_headers)
+        mock_permission_service.check_permission = AsyncMock(return_value=True)
+        assert response.status_code == 403
+
+    def test_list_tasks_denied(self, app_with_temp_db, auth_headers, mock_permission_service):
+        """GET /a2a/{name}/tasks without permission returns 403."""
+        client = self._make_denied_client(app_with_temp_db, mock_permission_service)
+        response = client.get("/a2a/test-agent/tasks", headers=auth_headers)
+        mock_permission_service.check_permission = AsyncMock(return_value=True)
+        assert response.status_code == 403
+
+    def test_get_agent_card_denied(self, app_with_temp_db, auth_headers, mock_permission_service):
+        """GET /a2a/{name}/card without permission returns 403."""
+        client = self._make_denied_client(app_with_temp_db, mock_permission_service)
+        response = client.get("/a2a/test-agent/card", headers=auth_headers)
+        mock_permission_service.check_permission = AsyncMock(return_value=True)
+        assert response.status_code == 403

@@ -1520,6 +1520,9 @@ async def _run_stdio_to_streamable_http(
     async def pump_stdio_to_http() -> None:
         """Forward messages from subprocess stdout to HTTP responses.
 
+        Raises:
+            RuntimeError: If the subprocess stdout stream is not available.
+
         Examples:
             >>> async def test():
             ...     # This would pump messages in real usage
@@ -1547,6 +1550,9 @@ async def _run_stdio_to_streamable_http(
 
         Args:
             data: The data string to send to subprocess stdin.
+
+        Raises:
+            RuntimeError: If the subprocess stdin stream is not available.
 
         Examples:
             >>> async def test_pump():
@@ -1692,7 +1698,7 @@ async def _run_streamable_http_to_stdio(
             client: The HTTP client to use for streamable HTTP streaming.
 
         Raises:
-            httpx.HTTPStatusError: If the streamable HTTP endpoint returns a non-200 status code.
+            HTTPStatusError: If the streamable HTTP endpoint returns a non-200 status code.
             Exception: For unexpected errors in streamable HTTP stream processing.
         """
         retry_delay = initial_retry_delay
@@ -1768,8 +1774,8 @@ async def _simple_streamable_http_pump(client: "Any", url: str, max_retries: int
         initial_retry_delay: Initial delay between retries in seconds.
 
     Raises:
-        Exception: For unexpected errors in streamable HTTP stream processing including
-            HTTPStatusError if the endpoint returns a non-200 status code.
+        HTTPStatusError: If the streamable HTTP endpoint returns a non-200 status code.
+        Exception: For unexpected errors in streamable HTTP stream processing.
     """
     retry_delay = initial_retry_delay
     retry_count = 0
@@ -1883,6 +1889,9 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
 
             Returns:
                 EventSourceResponse: Server-sent events stream.
+
+            Raises:
+                RuntimeError: If the PubSub system is not available.
             """
             if not pubsub:
                 raise RuntimeError("PubSub not available")
@@ -1957,6 +1966,9 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
 
             Returns:
                 Response: Acknowledgement of message receipt.
+
+            Raises:
+                RuntimeError: If the stdio endpoint is not available to forward messages.
             """
             _ = session_id
 
@@ -2042,6 +2054,9 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                     - 200 OK with matched JSON response if correlation succeeds.
                     - 202 Accepted if no matching response is received in time or for notifications.
                     - 400 Bad Request if the payload is not valid JSON.
+
+            Raises:
+                RuntimeError: If the stdio endpoint is not available to forward the JSON payload.
 
             Example:
                 >>> import httpx
@@ -2371,6 +2386,9 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
 
     Args:
         argv: Optional sequence of command line arguments. If None, uses sys.argv[1:].
+
+    Raises:
+        Exception: If header mapping parsing fails when dynamic environment injection is enabled.
 
     Examples:
         >>> # Test argument parsing
