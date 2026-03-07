@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, SecretStr, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
@@ -246,6 +246,60 @@ class A2AAgentMetrics(BaseModelWithConfigDict):
     max_response_time: Optional[float] = Field(None, description="Maximum response time in seconds")
     avg_response_time: Optional[float] = Field(None, description="Average response time in seconds")
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent interaction")
+
+
+class A2AAgentAggregateMetrics(BaseModelWithConfigDict):
+    """
+    Represents aggregated metrics for all A2A agents in the system.
+
+    This model is used for the /metrics endpoint to provide system-wide A2A agent statistics
+    with consistent camelCase field naming.
+
+    Attributes:
+        total_agents (int): Total number of A2A agents registered.
+        active_agents (int): Number of currently active A2A agents.
+        total_interactions (int): Total number of agent interactions.
+        successful_interactions (int): Number of successful agent interactions.
+        failed_interactions (int): Number of failed agent interactions.
+        success_rate (float): Success rate as a percentage (0-100).
+        avg_response_time (float): Average response time in seconds.
+        min_response_time (float): Minimum response time in seconds.
+        max_response_time (float): Maximum response time in seconds.
+    """
+
+    total_agents: int = Field(..., description="Total number of A2A agents registered")
+    active_agents: int = Field(..., description="Number of currently active A2A agents")
+    total_interactions: int = Field(..., description="Total number of agent interactions")
+    successful_interactions: int = Field(..., description="Number of successful agent interactions")
+    failed_interactions: int = Field(..., description="Number of failed agent interactions")
+    success_rate: float = Field(..., description="Success rate as a percentage (0-100)")
+    avg_response_time: float = Field(..., description="Average response time in seconds")
+    min_response_time: float = Field(..., description="Minimum response time in seconds")
+    max_response_time: float = Field(..., description="Maximum response time in seconds")
+
+
+class MetricsResponse(BaseModelWithConfigDict):
+    """
+    Response model for the aggregated metrics endpoint.
+
+    Contains metrics for all entity types with consistent camelCase field names.
+    When A2A metrics are disabled, the a2a_agents key is omitted entirely
+    to preserve backwards compatibility with existing consumers.
+    """
+
+    tools: ToolMetrics
+    resources: ResourceMetrics
+    servers: ServerMetrics
+    prompts: PromptMetrics
+    a2a_agents: Optional[A2AAgentAggregateMetrics] = None
+
+    @model_serializer(mode="wrap")
+    def _exclude_none_a2a(self, handler):
+        result = handler(self)
+        if self.a2a_agents is None:
+            result.pop("a2aAgents", None)
+            result.pop("a2a_agents", None)
+        return result
 
 
 # --- JSON Path API modifier Schema
@@ -2835,7 +2889,7 @@ class GatewayCreate(BaseModel):
 
             if hostname not in settings.insecure_queryparam_auth_allowed_hosts:
                 allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. " f"Allowed hosts: {allowed}")
+                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. Allowed hosts: {allowed}")
 
         return self
 
@@ -4589,7 +4643,7 @@ class A2AAgentCreate(BaseModel):
 
             if hostname_lower not in settings.insecure_queryparam_auth_allowed_hosts:
                 allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. " f"Allowed hosts: {allowed}")
+                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. Allowed hosts: {allowed}")
 
         return self
 

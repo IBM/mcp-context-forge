@@ -22,8 +22,8 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentRead, A2AAgentUpdate
-from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.utils.services_auth import encode_auth
 
 
@@ -140,9 +140,11 @@ class TestA2AAgentService:
         service.convert_agent_to_read = MagicMock(return_value=MagicMock())
 
         # Patch ToolRead.model_validate to accept the dict without error
+        # First-Party
         import mcpgateway.schemas
 
         if hasattr(mcpgateway.schemas.ToolRead, "model_validate"):
+            # Standard
             from unittest.mock import patch
 
             with patch.object(mcpgateway.schemas.ToolRead, "model_validate", return_value=MagicMock()):
@@ -738,6 +740,8 @@ class TestA2AAgentService:
     async def test_aggregate_metrics(self, service, mock_db):
         """Test metrics aggregation."""
         # Mock aggregate_metrics_combined to return a proper AggregatedMetrics result
+        # First-Party
+        from mcpgateway.schemas import A2AAgentAggregateMetrics
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         mock_metrics = AggregatedMetrics(
@@ -753,24 +757,36 @@ class TestA2AAgentService:
             rollup_count=40,
         )
 
-        # Mock the cache for agent counts
-        mock_counts_result = MagicMock()
-        mock_counts_result.total = 5
-        mock_counts_result.active = 3
-        mock_db.execute.return_value.one.return_value = mock_counts_result
-
-        with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_metrics):
-            # Execute
+        # Mock agent counts via a2a_stats_cache (avoids singleton cache interference)
+        with (
+            patch("mcpgateway.cache.a2a_stats_cache.a2a_stats_cache.get_counts", return_value={"total": 5, "active": 3}),
+            patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_metrics),
+        ):
             result = await service.aggregate_metrics(mock_db)
 
-        # Verify
-        assert result["total_agents"] == 5
-        assert result["active_agents"] == 3
-        assert result["total_interactions"] == 100
-        assert result["successful_interactions"] == 90
-        assert result["failed_interactions"] == 10
-        assert result["success_rate"] == 90.0
-        assert result["avg_response_time"] == 1.5
+        # Verify result is an A2AAgentAggregateMetrics instance
+        assert isinstance(result, A2AAgentAggregateMetrics)
+        assert result.total_agents == 5
+        assert result.active_agents == 3
+        assert result.total_interactions == 100
+        assert result.successful_interactions == 90
+        assert result.failed_interactions == 10
+        assert result.success_rate == 90.0
+        assert result.avg_response_time == 1.5
+        assert result.min_response_time == 0.5
+        assert result.max_response_time == 3.0
+
+        # Verify camelCase serialization
+        result_dict = result.model_dump(by_alias=True)
+        assert "totalAgents" in result_dict
+        assert "activeAgents" in result_dict
+        assert "totalInteractions" in result_dict
+        assert "successfulInteractions" in result_dict
+        assert "failedInteractions" in result_dict
+        assert "successRate" in result_dict
+        assert "avgResponseTime" in result_dict
+        assert "minResponseTime" in result_dict
+        assert "maxResponseTime" in result_dict
 
     async def test_reset_metrics_all(self, service, mock_db):
         """Test resetting all metrics."""
@@ -931,6 +947,7 @@ class TestA2AAgentService:
         )
         monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: cache)
 
+        # First-Party
         from mcpgateway.schemas import A2AAgentRead
 
         monkeypatch.setattr(A2AAgentRead, "model_validate", MagicMock(return_value=MagicMock()))
@@ -1252,12 +1269,17 @@ class TestRegisterAgentEdgeCases:
     @pytest.fixture
     def agent_data(self):
         return A2AAgentCreate(
-            name="test-agent", endpoint_url="https://api.example.com/agent",
-            agent_type="custom", protocol_version="1.0", capabilities={}, config={},
+            name="test-agent",
+            endpoint_url="https://api.example.com/agent",
+            agent_type="custom",
+            protocol_version="1.0",
+            capabilities={},
+            config={},
         )
 
     async def test_register_integrity_error(self, service, mock_db, agent_data, monkeypatch):
         """IntegrityError from DB is re-raised."""
+        # Third-Party
         from sqlalchemy.exc import IntegrityError as IE
 
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: None)
@@ -1320,11 +1342,17 @@ class TestRegisterAgentEdgeCases:
         with patch("mcpgateway.config.settings") as mock_settings:
             mock_settings.insecure_allow_queryparam_auth = False
             agent_data = A2AAgentCreate.model_construct(
-                name="qp-agent", slug="qp-agent",
+                name="qp-agent",
+                slug="qp-agent",
                 endpoint_url="https://api.example.com/agent",
-                agent_type="custom", protocol_version="1.0",
-                capabilities={}, config={}, tags=[], auth_type="query_param",
-                auth_query_param_key="key", auth_query_param_value="val",
+                agent_type="custom",
+                protocol_version="1.0",
+                capabilities={},
+                config={},
+                tags=[],
+                auth_type="query_param",
+                auth_query_param_key="key",
+                auth_query_param_value="val",
             )
             with pytest.raises(ValueError, match="disabled"):
                 await service.register_agent(mock_db, agent_data)
@@ -1337,11 +1365,17 @@ class TestRegisterAgentEdgeCases:
             mock_settings.insecure_allow_queryparam_auth = True
             mock_settings.insecure_queryparam_auth_allowed_hosts = ["safe.host.com"]
             agent_data = A2AAgentCreate.model_construct(
-                name="qp-agent", slug="qp-agent",
+                name="qp-agent",
+                slug="qp-agent",
                 endpoint_url="https://bad.host.com/agent",
-                agent_type="custom", protocol_version="1.0",
-                capabilities={}, config={}, tags=[], auth_type="query_param",
-                auth_query_param_key="key", auth_query_param_value="val",
+                agent_type="custom",
+                protocol_version="1.0",
+                capabilities={},
+                config={},
+                tags=[],
+                auth_type="query_param",
+                auth_query_param_key="key",
+                auth_query_param_value="val",
             )
             with pytest.raises(ValueError, match="not in the allowed"):
                 await service.register_agent(mock_db, agent_data)
@@ -1368,11 +1402,17 @@ class TestRegisterAgentEdgeCases:
             mock_settings.insecure_queryparam_auth_allowed_hosts = []
 
             agent_data = A2AAgentCreate.model_construct(
-                name="qp-agent", slug="qp-agent",
+                name="qp-agent",
+                slug="qp-agent",
                 endpoint_url="https://api.example.com/agent",
-                agent_type="custom", protocol_version="1.0",
-                capabilities={}, config={}, tags=[], auth_type="query_param",
-                auth_query_param_key="api_key", auth_query_param_value=secret_val,
+                agent_type="custom",
+                protocol_version="1.0",
+                capabilities={},
+                config={},
+                tags=[],
+                auth_type="query_param",
+                auth_query_param_key="api_key",
+                auth_query_param_value=secret_val,
             )
             with patch("mcpgateway.services.tool_service.tool_service") as ts:
                 ts.create_tool_from_a2a_agent = AsyncMock(return_value=None)
@@ -1402,11 +1442,17 @@ class TestRegisterAgentEdgeCases:
             mock_settings.insecure_queryparam_auth_allowed_hosts = []
 
             agent_data = A2AAgentCreate.model_construct(
-                name="qp-agent", slug="qp-agent",
+                name="qp-agent",
+                slug="qp-agent",
                 endpoint_url="https://api.example.com/agent",
-                agent_type="custom", protocol_version="1.0",
-                capabilities={}, config={}, tags=[], auth_type="query_param",
-                auth_query_param_key="api_key", auth_query_param_value=123,
+                agent_type="custom",
+                protocol_version="1.0",
+                capabilities={},
+                config={},
+                tags=[],
+                auth_type="query_param",
+                auth_query_param_key="api_key",
+                auth_query_param_value=123,
             )
             with patch("mcpgateway.services.tool_service.tool_service") as ts:
                 ts.create_tool_from_a2a_agent = AsyncMock(return_value=None)
@@ -1433,11 +1479,17 @@ class TestRegisterAgentEdgeCases:
             mock_settings.insecure_queryparam_auth_allowed_hosts = []
 
             agent_data = A2AAgentCreate.model_construct(
-                name="qp-agent", slug="qp-agent",
+                name="qp-agent",
+                slug="qp-agent",
                 endpoint_url="https://api.example.com/agent",
-                agent_type="custom", protocol_version="1.0",
-                capabilities={}, config={}, tags=[], auth_type="query_param",
-                auth_query_param_key=None, auth_query_param_value=None,
+                agent_type="custom",
+                protocol_version="1.0",
+                capabilities={},
+                config={},
+                tags=[],
+                auth_type="query_param",
+                auth_query_param_key=None,
+                auth_query_param_value=None,
             )
             with patch("mcpgateway.services.tool_service.tool_service") as ts:
                 ts.create_tool_from_a2a_agent = AsyncMock(return_value=None)
@@ -1494,9 +1546,16 @@ class TestListAgentsAdvanced:
         agent = SimpleNamespace(id="a1", team_id=None, visibility="public")
 
         # Mock unified_paginate to return page-based format
-        monkeypatch.setattr("mcpgateway.services.a2a_service.unified_paginate", AsyncMock(return_value={
-            "data": [agent], "pagination": {"page": 1, "total": 1}, "links": {},
-        }))
+        monkeypatch.setattr(
+            "mcpgateway.services.a2a_service.unified_paginate",
+            AsyncMock(
+                return_value={
+                    "data": [agent],
+                    "pagination": {"page": 1, "total": 1},
+                    "links": {},
+                }
+            ),
+        )
         mock_db.execute.return_value.all.return_value = []
         mock_db.commit = MagicMock()
         service.convert_agent_to_read = MagicMock(return_value=MagicMock())
@@ -1508,6 +1567,7 @@ class TestListAgentsAdvanced:
 
     async def test_list_validation_error_skips_agent(self, service, mock_db, monkeypatch):
         """ValidationError during conversion skips agent instead of failing."""
+        # Third-Party
         from pydantic import ValidationError
 
         agent = SimpleNamespace(id="bad", team_id=None, name="bad-agent", visibility="public")
@@ -1670,6 +1730,7 @@ class TestListAgentsForUser:
 
     async def test_validation_error_skips_agent(self, service, mock_db):
         """ValidationError during conversion skips agent in list."""
+        # Third-Party
         from pydantic import ValidationError
 
         agent = SimpleNamespace(id="bad", team_id=None, name="bad", visibility="public", owner_email="u@x.com")
@@ -1698,10 +1759,20 @@ class TestUpdateAgentAdvanced:
 
     def _make_agent(self, **overrides):
         defaults = dict(
-            id="a1", name="ag", slug="ag", endpoint_url="https://example.com",
-            auth_type=None, auth_value=None, auth_query_params=None,
-            enabled=True, version=1, visibility="public", team_id=None,
-            owner_email=None, passthrough_headers=None, oauth_config=None,
+            id="a1",
+            name="ag",
+            slug="ag",
+            endpoint_url="https://example.com",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            enabled=True,
+            version=1,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            passthrough_headers=None,
+            oauth_config=None,
         )
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
@@ -1788,9 +1859,13 @@ class TestUpdateAgentAdvanced:
             service.convert_agent_to_read = MagicMock(return_value=MagicMock())
             update = A2AAgentUpdate(description="new desc")
             await service.update_agent(
-                mock_db, "a1", update,
-                modified_by="user", modified_from_ip="1.2.3.4",
-                modified_via="api", modified_user_agent="test/1.0",
+                mock_db,
+                "a1",
+                update,
+                modified_by="user",
+                modified_from_ip="1.2.3.4",
+                modified_via="api",
+                modified_user_agent="test/1.0",
             )
         assert agent.modified_by == "user"
         assert agent.modified_from_ip == "1.2.3.4"
@@ -1818,6 +1893,7 @@ class TestUpdateAgentAdvanced:
 
     async def test_integrity_error(self, service, mock_db, monkeypatch):
         """IntegrityError from DB is re-raised."""
+        # Third-Party
         from sqlalchemy.exc import IntegrityError as IE
 
         agent = self._make_agent()
@@ -1836,7 +1912,9 @@ class TestUpdateAgentAdvanced:
                 mock_settings.insecure_allow_queryparam_auth = False
                 mock_settings.insecure_queryparam_auth_allowed_hosts = []
                 update = A2AAgentUpdate.model_construct(
-                    auth_type="query_param", auth_query_param_key="k", auth_query_param_value="v",
+                    auth_type="query_param",
+                    auth_query_param_key="k",
+                    auth_query_param_value="v",
                 )
                 with pytest.raises(A2AAgentError, match="Failed to update"):
                     await service.update_agent(mock_db, "a1", update)
@@ -1849,7 +1927,9 @@ class TestUpdateAgentAdvanced:
                 mock_settings.insecure_allow_queryparam_auth = True
                 mock_settings.insecure_queryparam_auth_allowed_hosts = ["safe.host.com"]
                 update = A2AAgentUpdate.model_construct(
-                    auth_type="query_param", auth_query_param_key="k", auth_query_param_value="v",
+                    auth_type="query_param",
+                    auth_query_param_key="k",
+                    auth_query_param_value="v",
                 )
                 with pytest.raises(A2AAgentError, match="Failed to update"):
                     await service.update_agent(mock_db, "a1", update)
@@ -1883,10 +1963,18 @@ class TestInvokeAgentEdgeCases:
         """Private agent inaccessible → A2AAgentNotFoundError."""
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         agent = SimpleNamespace(
-            id="a1", name="secret", enabled=True, endpoint_url="https://x.com",
-            auth_type=None, auth_value=None, auth_query_params=None,
-            visibility="private", team_id="t1", owner_email="other@x.com",
-            agent_type="generic", protocol_version="1.0",
+            id="a1",
+            name="secret",
+            enabled=True,
+            endpoint_url="https://x.com",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="private",
+            team_id="t1",
+            owner_email="other@x.com",
+            agent_type="generic",
+            protocol_version="1.0",
         )
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
 
@@ -1904,10 +1992,18 @@ class TestInvokeAgentEdgeCases:
         mock_get_client.return_value = mock_client
 
         agent = SimpleNamespace(
-            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/",
-            auth_type="authheaders", auth_value={"X-Key": "val"},
-            auth_query_params=None, visibility="public", team_id=None, owner_email=None,
-            agent_type="generic", protocol_version="1.0",
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type="authheaders",
+            auth_value={"X-Key": "val"},
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
@@ -1934,10 +2030,18 @@ class TestInvokeAgentEdgeCases:
         mock_get_client.return_value = mock_client
 
         agent = SimpleNamespace(
-            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/custom",
-            auth_type=None, auth_value=None, auth_query_params=None,
-            visibility="public", team_id=None, owner_email=None,
-            agent_type="custom", protocol_version="2.0",
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/custom",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="custom",
+            protocol_version="2.0",
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
@@ -1964,10 +2068,18 @@ class TestInvokeAgentEdgeCases:
         mock_get_client.return_value = mock_client
 
         agent = SimpleNamespace(
-            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/",
-            auth_type=None, auth_value=None, auth_query_params=None,
-            visibility="public", team_id=None, owner_email=None,
-            agent_type="generic", protocol_version="1.0",
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
@@ -1993,10 +2105,18 @@ class TestInvokeAgentEdgeCases:
         mock_get_client.return_value = mock_client
 
         agent = SimpleNamespace(
-            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/",
-            auth_type=None, auth_value=None, auth_query_params=None,
-            visibility="public", team_id=None, owner_email=None,
-            agent_type="generic", protocol_version="1.0",
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
@@ -2023,10 +2143,18 @@ class TestInvokeAgentEdgeCases:
         mock_get_client.return_value = mock_client
 
         agent = SimpleNamespace(
-            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/",
-            auth_type=None, auth_value=None, auth_query_params=None,
-            visibility="public", team_id=None, owner_email=None,
-            agent_type="generic", protocol_version="1.0",
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
@@ -2051,10 +2179,18 @@ class TestInvokeAgentEdgeCases:
         mock_get_client.return_value = mock_client
 
         agent = SimpleNamespace(
-            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/",
-            auth_type=None, auth_value=None, auth_query_params=None,
-            visibility="public", team_id=None, owner_email=None,
-            agent_type="generic", protocol_version="1.0",
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         mock_db.commit = MagicMock()
@@ -2087,11 +2223,18 @@ class TestInvokeAgentEdgeCases:
         mock_get_client.return_value = mock_client
 
         agent = SimpleNamespace(
-            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/api",
-            auth_type="query_param", auth_value=None,
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/api",
+            auth_type="query_param",
+            auth_value=None,
             auth_query_params={"api_key": "encrypted_blob"},
-            visibility="public", team_id=None, owner_email=None,
-            agent_type="generic", protocol_version="1.0",
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
@@ -2121,11 +2264,18 @@ class TestInvokeAgentEdgeCases:
         mock_get_client.return_value = mock_client
 
         agent = SimpleNamespace(
-            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/api",
-            auth_type="query_param", auth_value=None,
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/api",
+            auth_type="query_param",
+            auth_value=None,
             auth_query_params={"api_key": "bad", "empty": ""},
-            visibility="public", team_id=None, owner_email=None,
-            agent_type="generic", protocol_version="1.0",
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
@@ -2158,10 +2308,18 @@ class TestInvokeAgentEdgeCases:
         mock_get_client.return_value = mock_client
 
         agent = SimpleNamespace(
-            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/",
-            auth_type="authheaders", auth_value={"X-API-Key": "secret"}, auth_query_params=None,
-            visibility="public", team_id=None, owner_email=None,
-            agent_type="generic", protocol_version="1.0",
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type="authheaders",
+            auth_value={"X-API-Key": "secret"},
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
@@ -2181,10 +2339,18 @@ class TestInvokeAgentEdgeCases:
     async def test_invoke_auth_value_decode_failure_raises(self, service, mock_db, monkeypatch):
         """decode_auth failures for auth_value raise A2AAgentError."""
         agent = SimpleNamespace(
-            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/",
-            auth_type="basic", auth_value="bad", auth_query_params=None,
-            visibility="public", team_id=None, owner_email=None,
-            agent_type="generic", protocol_version="1.0",
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type="basic",
+            auth_value="bad",
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
@@ -2204,10 +2370,18 @@ class TestInvokeAgentEdgeCases:
         mock_get_client.return_value = mock_client
 
         agent = SimpleNamespace(
-            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/",
-            auth_type=None, auth_value=None, auth_query_params=None,
-            visibility="public", team_id=None, owner_email=None,
-            agent_type="generic", protocol_version="1.0",
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
@@ -2352,24 +2526,51 @@ class TestAggregateMetricsEdgeCases:
 
     async def test_cache_hit(self, service, mock_db, monkeypatch):
         """Cached metrics are returned without DB query."""
-        cached_metrics = {"total_agents": 5, "active_agents": 3, "total_interactions": 100}
+        # First-Party
+        from mcpgateway.schemas import A2AAgentAggregateMetrics
+
+        cached_dict = {
+            "total_agents": 5,
+            "active_agents": 3,
+            "total_interactions": 100,
+            "successful_interactions": 90,
+            "failed_interactions": 10,
+            "success_rate": 90.0,
+            "avg_response_time": 1.5,
+            "min_response_time": 0.5,
+            "max_response_time": 3.0,
+        }
 
         monkeypatch.setattr("mcpgateway.cache.metrics_cache.is_cache_enabled", lambda: True)
-        monkeypatch.setattr("mcpgateway.cache.metrics_cache.metrics_cache", SimpleNamespace(
-            get=MagicMock(return_value=cached_metrics),
-        ))
+        monkeypatch.setattr(
+            "mcpgateway.cache.metrics_cache.metrics_cache",
+            SimpleNamespace(
+                get=MagicMock(return_value=cached_dict),
+            ),
+        )
 
         result = await service.aggregate_metrics(mock_db)
-        assert result == cached_metrics
+        assert isinstance(result, A2AAgentAggregateMetrics)
+        assert result.total_agents == 5
+        assert result.active_agents == 3
 
     async def test_cache_write(self, service, mock_db, monkeypatch):
         """Computed metrics are written to cache."""
+        # First-Party
+        from mcpgateway.schemas import A2AAgentAggregateMetrics
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         mock_metrics = AggregatedMetrics(
-            total_executions=10, successful_executions=8, failed_executions=2,
-            failure_rate=0.2, min_response_time=0.1, max_response_time=2.0,
-            avg_response_time=1.0, last_execution_time=None, raw_count=10, rollup_count=0,
+            total_executions=10,
+            successful_executions=8,
+            failed_executions=2,
+            failure_rate=0.2,
+            min_response_time=0.1,
+            max_response_time=2.0,
+            avg_response_time=1.0,
+            last_execution_time=None,
+            raw_count=10,
+            rollup_count=0,
         )
 
         mock_cache = MagicMock()
@@ -2380,12 +2581,12 @@ class TestAggregateMetricsEdgeCases:
         monkeypatch.setattr("mcpgateway.cache.metrics_cache.metrics_cache", mock_cache)
         monkeypatch.setattr("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", lambda db, t: mock_metrics)
 
-        # Mock agent counts
-        mock_counts_result = MagicMock()
-        mock_counts_result.total = 3
-        mock_counts_result.active = 2
-        mock_db.execute.return_value.one.return_value = mock_counts_result
+        # Mock agent counts via a2a_stats_cache (avoids singleton cache interference)
+        monkeypatch.setattr("mcpgateway.cache.a2a_stats_cache.a2a_stats_cache.get_counts", lambda db: {"total": 3, "active": 2})
 
         result = await service.aggregate_metrics(mock_db)
-        assert result["total_agents"] == 3
+        assert isinstance(result, A2AAgentAggregateMetrics)
+        assert result.total_agents == 3
+        assert result.active_agents == 2
+        assert result.total_interactions == 10
         mock_cache.set.assert_called_once()

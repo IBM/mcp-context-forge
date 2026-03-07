@@ -7,9 +7,9 @@ branch coverage beyond the current 63%.
 
 # Standard
 import asyncio
-import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import json
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, patch
@@ -26,7 +26,7 @@ from mcpgateway.common.models import TextContent, ToolResult
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import ToolRead, ToolUpdate
+from mcpgateway.schemas import ToolMetrics, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     _canonicalize_schema,
     _get_registry_cache,
@@ -810,49 +810,77 @@ class TestAggregateMetrics:
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics_cached(self, tool_service, monkeypatch):
-        """When cache is enabled and has data, return cached."""
+        """When cache is enabled and has data, return cached as ToolMetrics."""
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
 
-        cached_data = {"total": 100, "success": 90}
+        cached_data = {"total_executions": 100, "successful_executions": 90, "failed_executions": 10, "failure_rate": 0.1}
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
         cache_module.metrics_cache.get = MagicMock(return_value=cached_data)
 
         db = MagicMock()
         result = await tool_service.aggregate_metrics(db)
-        assert result == cached_data
+        assert isinstance(result, ToolMetrics)
+        assert result.total_executions == 100
+        assert result.successful_executions == 90
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics_not_cached(self, tool_service, monkeypatch):
         """When cache miss, compute and cache result."""
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
+        from mcpgateway.schemas import ToolMetrics
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
         cache_module.metrics_cache.get = MagicMock(return_value=None)
         cache_module.metrics_cache.set = MagicMock()
 
-        mock_result = MagicMock()
-        mock_result.to_dict.return_value = {"total": 50}
+        mock_result = AggregatedMetrics(
+            total_executions=50,
+            successful_executions=45,
+            failed_executions=5,
+            failure_rate=0.1,
+            min_response_time=0.1,
+            max_response_time=1.0,
+            avg_response_time=0.5,
+            last_execution_time=None,
+            raw_count=10,
+            rollup_count=5,
+        )
 
         with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
             result = await tool_service.aggregate_metrics(MagicMock())
-        assert result == {"total": 50}
+        assert isinstance(result, ToolMetrics)
+        assert result.total_executions == 50
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics_cache_disabled(self, tool_service, monkeypatch):
         """When cache is disabled, compute directly."""
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
+        from mcpgateway.schemas import ToolMetrics
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: False)
 
-        mock_result = MagicMock()
-        mock_result.to_dict.return_value = {"total": 25}
+        mock_result = AggregatedMetrics(
+            total_executions=25,
+            successful_executions=20,
+            failed_executions=5,
+            failure_rate=0.2,
+            min_response_time=0.1,
+            max_response_time=2.0,
+            avg_response_time=0.8,
+            last_execution_time=None,
+            raw_count=5,
+            rollup_count=5,
+        )
 
         with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
             result = await tool_service.aggregate_metrics(MagicMock())
-        assert result == {"total": 25}
+        assert isinstance(result, ToolMetrics)
+        assert result.total_executions == 25
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -3250,6 +3278,7 @@ class TestConvertToolToReadMetrics:
 class TestExtractUsingJqErrors:
     def test_jq_filter_returns_none_result(self):
         """When jq filter produces [None], returns error TextContent in list."""
+        # First-Party
         import mcpgateway.services.tool_service as ts
 
         with patch.object(ts, "_compile_jq_filter") as mock_compile:
@@ -3267,6 +3296,7 @@ class TestExtractUsingJqErrors:
 
     def test_jq_filter_exception(self):
         """When jq raises exception, returns error message as TextContent in list."""
+        # First-Party
         import mcpgateway.services.tool_service as ts
 
         with patch.object(ts, "_compile_jq_filter", side_effect=ValueError("bad filter")):
@@ -4206,7 +4236,6 @@ class TestUpdateToolBranches:
             patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
             patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
         ):
-
             result = await tool_service.update_tool(
                 db,
                 "t1",
@@ -7521,7 +7550,6 @@ class TestInvokeToolLookupLogic:
             patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=AsyncMock(get=AsyncMock(return_value=None))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
         ):
-
             with pytest.raises(ToolInvocationError, match="ambiguous"):
                 await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=["team-A"])
 
