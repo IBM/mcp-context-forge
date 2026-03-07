@@ -314,6 +314,80 @@ class TestDiscoverASMetadata:
             expected_url = "https://as.example.com/.well-known/oauth-authorization-server/tenant1/realm1"
             assert call_url == expected_url
 
+    @pytest.mark.asyncio
+    async def test_discover_as_metadata_rfc8414_path_with_semicolon_params(self):
+        """Test RFC 8414 URL preserves semicolon path parameters.
+
+        urlparse() strips ;params from the last path segment into a separate
+        attribute, losing data. urlsplit() preserves the full path.
+        """
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+
+        dcr_service = DcrService()
+        issuer = "https://as.example.com/tenant;v=1"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"issuer": issuer})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            await dcr_service.discover_as_metadata(issuer)
+
+            call_url = mock_client.get.call_args_list[0][0][0]
+            expected_url = "https://as.example.com/.well-known/oauth-authorization-server/tenant;v=1"
+            assert call_url == expected_url
+
+    @pytest.mark.asyncio
+    async def test_discover_as_metadata_oidc_fallback_appends_for_path_issuer(self):
+        """Test that OIDC fallback appends (not inserts) for path-based issuers.
+
+        RFC 8414 inserts between host and path, but OIDC Discovery 1.0 Section 4.1
+        appends to the issuer. Verify both URLs are constructed correctly when the
+        RFC 8414 attempt fails and falls back to OIDC.
+        """
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+
+        dcr_service = DcrService()
+        issuer = "https://as.example.com/tenant1"
+
+        mock_response_404 = MagicMock()
+        mock_response_404.status_code = 404
+
+        mock_response_200 = MagicMock()
+        mock_response_200.status_code = 200
+        mock_response_200.json = MagicMock(return_value={"issuer": issuer})
+
+        call_count = [0]
+
+        async def get_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return mock_response_404
+            return mock_response_200
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=get_side_effect)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            await dcr_service.discover_as_metadata(issuer)
+
+            calls = mock_client.get.call_args_list
+            assert len(calls) == 2
+
+            # RFC 8414: inserted between host and path
+            assert calls[0][0][0] == "https://as.example.com/.well-known/oauth-authorization-server/tenant1"
+            # OIDC: appended to issuer
+            assert calls[1][0][0] == "https://as.example.com/tenant1/.well-known/openid-configuration"
+
 
 class TestRegisterClient:
     """Test client registration (RFC 7591)."""

@@ -16,7 +16,7 @@ This module handles OAuth 2.0 Dynamic Client Registration (DCR) including:
 from datetime import datetime, timezone
 import logging
 from typing import Any, Dict, List
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 # Third-Party
 import httpx
@@ -98,7 +98,7 @@ class DcrService:
         # well-known URI string... between the host component and any existing path
         # component of the issuer's identifier".
         # See: https://datatracker.ietf.org/doc/html/rfc8414#section-3.1
-        parsed = urlparse(normalized_issuer)
+        parsed = urlsplit(normalized_issuer)
         rfc8414_url = f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-authorization-server"
         if parsed.path:
             rfc8414_url += parsed.path
