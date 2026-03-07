@@ -208,4 +208,3 @@ services:
 
         print(f'Registration complete: {registered}/{server_count} benchmark servers')
         "
-
