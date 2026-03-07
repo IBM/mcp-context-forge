@@ -2309,4 +2309,3 @@ class TestTeamManagementService:
 
             # Verify - member should still be removed
             assert result is True
-
