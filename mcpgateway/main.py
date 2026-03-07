@@ -42,7 +42,6 @@ import warnings
 # Third-Party
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
-from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -104,6 +103,7 @@ from mcpgateway.schemas import (
     GatewayRefreshResponse,
     GatewayUpdate,
     JsonPathModifier,
+    MetricsResponse,
     PromptCreate,
     PromptExecuteArgs,
     PromptRead,
@@ -7034,9 +7034,9 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
 ####################
 # Metrics          #
 ####################
-@metrics_router.get("", response_model=dict)
+@metrics_router.get("", response_model=MetricsResponse)
 @require_permission("admin.metrics")
-async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> dict:
+async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> MetricsResponse:
     """
     Retrieve aggregated metrics for all entity types (Tools, Resources, Servers, Prompts, A2A Agents).
 
@@ -7045,7 +7045,7 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
         user: Authenticated user
 
     Returns:
-        A dictionary with keys for each entity type and their aggregated metrics.
+        A MetricsResponse with keys for each entity type and their aggregated metrics.
     """
     logger.debug(f"User {user} requested aggregated metrics")
     tool_metrics = await tool_service.aggregate_metrics(db)
@@ -7053,19 +7053,17 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
     server_metrics = await server_service.aggregate_metrics(db)
     prompt_metrics = await prompt_service.aggregate_metrics(db)
 
-    metrics_result = {
+    kwargs = {
         "tools": tool_metrics,
         "resources": resource_metrics,
         "servers": server_metrics,
         "prompts": prompt_metrics,
     }
 
-    # Include A2A metrics only if A2A features are enabled
     if a2a_service and settings.mcpgateway_a2a_metrics_enabled:
-        a2a_metrics = await a2a_service.aggregate_metrics(db)
-        metrics_result["a2a_agents"] = a2a_metrics
+        kwargs["a2a_agents"] = await a2a_service.aggregate_metrics(db)
 
-    return jsonable_encoder(metrics_result)
+    return MetricsResponse(**kwargs)
 
 
 @metrics_router.post("/reset", response_model=dict)
