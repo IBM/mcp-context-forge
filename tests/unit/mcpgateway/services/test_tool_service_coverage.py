@@ -7,9 +7,9 @@ branch coverage beyond the current 63%.
 
 # Standard
 import asyncio
-import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import json
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, patch
@@ -26,7 +26,7 @@ from mcpgateway.common.models import TextContent, ToolResult
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import ToolRead, ToolUpdate, ToolMetrics
+from mcpgateway.schemas import ToolMetrics, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     _canonicalize_schema,
     _get_registry_cache,
@@ -829,8 +829,8 @@ class TestAggregateMetrics:
         """When cache miss, compute and cache result."""
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
-        from mcpgateway.services.metrics_query_service import AggregatedMetrics
         from mcpgateway.schemas import ToolMetrics
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
         cache_module.metrics_cache.get = MagicMock(return_value=None)
@@ -859,8 +859,8 @@ class TestAggregateMetrics:
         """When cache is disabled, compute directly."""
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
-        from mcpgateway.services.metrics_query_service import AggregatedMetrics
         from mcpgateway.schemas import ToolMetrics
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: False)
 
@@ -3278,6 +3278,7 @@ class TestConvertToolToReadMetrics:
 class TestExtractUsingJqErrors:
     def test_jq_filter_returns_none_result(self):
         """When jq filter produces [None], returns error TextContent in list."""
+        # First-Party
         import mcpgateway.services.tool_service as ts
 
         with patch.object(ts, "_compile_jq_filter") as mock_compile:
@@ -3295,6 +3296,7 @@ class TestExtractUsingJqErrors:
 
     def test_jq_filter_exception(self):
         """When jq raises exception, returns error message as TextContent in list."""
+        # First-Party
         import mcpgateway.services.tool_service as ts
 
         with patch.object(ts, "_compile_jq_filter", side_effect=ValueError("bad filter")):

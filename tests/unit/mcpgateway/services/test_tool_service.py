@@ -215,6 +215,7 @@ class TestToolServiceHelpersExtended:
 
     def test_tool_service_plugin_env_override(self, monkeypatch):
         """PLUGINS_ENABLED env flag should override settings."""
+        # First-Party
         import mcpgateway.plugins.framework as pf_mod  # pylint: disable=import-outside-toplevel
         from mcpgateway.plugins.framework.settings import settings as plugin_settings  # pylint: disable=import-outside-toplevel
 
@@ -2876,8 +2877,8 @@ class TestToolService:
 
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
-        from mcpgateway.services.metrics_query_service import AggregatedMetrics
         from mcpgateway.schemas import ToolMetrics
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         cache_module.metrics_cache.invalidate("tools")
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: False)
@@ -2920,8 +2921,8 @@ class TestToolService:
 
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
-        from mcpgateway.services.metrics_query_service import AggregatedMetrics
         from mcpgateway.schemas import ToolMetrics
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         cache_module.metrics_cache.invalidate("tools")
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: False)

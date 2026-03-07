@@ -19,20 +19,18 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any, List, Optional
+from typing import Any, List, Optional, TypeVar
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
-from typing import TypeVar
 
 # Third-Party
 import pytest
 from sqlalchemy.exc import IntegrityError
 
 # First-Party
+from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
-from mcpgateway.common.models import Message, PromptResult, Role, TextContent
-from mcpgateway.schemas import PromptArgument, PromptCreate, PromptRead, PromptUpdate, PromptMetrics
-
+from mcpgateway.schemas import PromptArgument, PromptCreate, PromptMetrics, PromptRead, PromptUpdate
 from mcpgateway.services.prompt_service import (
     PromptError,
     PromptNameConflictError,
@@ -149,6 +147,7 @@ def reset_jinja_singleton():
     the Jinja environment (for caching), so tests that modify the environment
     can affect subsequent tests.
     """
+    # First-Party
     import mcpgateway.services.prompt_service as ps
 
     ps._JINJA_ENV = None
@@ -443,6 +442,7 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_get_prompt_observability_start_span_exception_is_swallowed(self, prompt_service, test_db):
         """Covers start_span() exception path (should not break prompt rendering)."""
+        # Standard
         from contextlib import contextmanager
 
         db_prompt = _build_db_prompt(template="Hello!")
@@ -470,6 +470,7 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_get_prompt_observability_end_span_success_and_metrics_error(self, prompt_service, test_db):
         """Covers observability span start+end plus metrics buffer exception handling."""
+        # Standard
         from contextlib import contextmanager
 
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
@@ -503,6 +504,7 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_get_prompt_observability_end_span_exception_is_caught(self, prompt_service, test_db):
+        # Standard
         from contextlib import contextmanager
 
         db_prompt = _build_db_prompt(template="Hello!")
@@ -556,6 +558,7 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_get_prompt_render_error_sets_span_attributes(self, prompt_service, test_db):
         """Covers span attribute setting on render errors."""
+        # Standard
         from contextlib import contextmanager
 
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
@@ -581,7 +584,10 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_get_prompt_plugin_pre_and_post_hooks_modify_payload_and_result(self, prompt_service, test_db):
         """Covers plugin hook paths including GlobalContext update when provided."""
+        # Standard
         from contextlib import contextmanager
+
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
@@ -636,7 +642,10 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_get_prompt_plugin_hooks_create_global_context_when_missing(self, prompt_service, test_db):
         """Covers GlobalContext creation fallback when middleware didn't provide one."""
+        # Standard
         from contextlib import contextmanager
+
+        # First-Party
         from mcpgateway.plugins.framework import PromptHookType, PromptPrehookPayload
 
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
@@ -936,8 +945,8 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_aggregate_and_reset_metrics(self, prompt_service, test_db):
         # Mock aggregate_metrics_combined to return a proper AggregatedMetrics result
+        # First-Party
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
-        # from mcpgateway.schemas import PromptMetrics
 
         mock_result = AggregatedMetrics(
             total_executions=10,
@@ -986,6 +995,7 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics_cache_disabled_skips_cache_get_set(self, prompt_service, test_db):
+        # First-Party
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         mock_result = AggregatedMetrics(
@@ -1064,7 +1074,8 @@ class TestJinjaTemplateCaching:
 
     def test_template_caching_works(self):
         """Verify template compilation is cached across renders."""
-        from mcpgateway.services.prompt_service import PromptService, _compile_jinja_template
+        # First-Party
+        from mcpgateway.services.prompt_service import _compile_jinja_template, PromptService
 
         service = PromptService()
         template = "Hello {{ name }}"
@@ -1081,7 +1092,8 @@ class TestJinjaTemplateCaching:
 
     def test_different_templates_cached_separately(self):
         """Verify different templates get separate cache entries."""
-        from mcpgateway.services.prompt_service import PromptService, _compile_jinja_template
+        # First-Party
+        from mcpgateway.services.prompt_service import _compile_jinja_template, PromptService
 
         service = PromptService()
 
@@ -1096,7 +1108,8 @@ class TestJinjaTemplateCaching:
 
     def test_format_fallback_still_works(self):
         """Verify Python format() fallback works when Jinja render fails."""
-        from mcpgateway.services.prompt_service import PromptService, _compile_jinja_template
+        # First-Party
+        from mcpgateway.services.prompt_service import _compile_jinja_template, PromptService
 
         service = PromptService()
 
@@ -1225,16 +1238,11 @@ class TestPromptGatewayNamespacing:
         Verifies that the conflict query includes gateway_id in the filter by capturing
         the executed SQL and checking for the gateway_id clause.
         """
+        # First-Party
         from mcpgateway.db import Gateway as DbGateway
 
         # Setup prompt create data
-        pc = PromptCreate(
-            name="hello", 
-            description="greet a user", 
-            template="Hello {{ name }}!", 
-            arguments=[], 
-            gateway_id="gateway-2"
-        )
+        pc = PromptCreate(name="hello", description="greet a user", template="Hello {{ name }}!", arguments=[], gateway_id="gateway-2")
 
         # Track executed queries to verify gateway_id filtering
         executed_queries = []
@@ -1268,6 +1276,7 @@ class TestPromptGatewayNamespacing:
     @pytest.mark.asyncio
     async def test_prompt_namespacing_same_gateway(self, prompt_service, test_db):
         """Test: Same `name` **cannot** be registered for the **same** gateway (same team/owner)."""
+        # First-Party
         from mcpgateway.db import Gateway as DbGateway
 
         # Setup existing prompt
@@ -1290,13 +1299,7 @@ class TestPromptGatewayNamespacing:
 
         test_db.execute = Mock(side_effect=mock_execute)
 
-        pc = PromptCreate(
-            name="hello", 
-            description="", 
-            template="X", 
-            arguments=[], 
-            gateway_id="gateway-1"
-            )
+        pc = PromptCreate(name="hello", description="", template="X", arguments=[], gateway_id="gateway-1")
 
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.register_prompt(test_db, pc)
@@ -1323,13 +1326,7 @@ class TestPromptGatewayNamespacing:
 
         test_db.execute = Mock(side_effect=mock_execute)
 
-        pc = PromptCreate(
-            name="hello", 
-            description="", 
-            template="X", 
-            arguments=[], 
-            gateway_id=None
-            )
+        pc = PromptCreate(name="hello", description="", template="X", arguments=[], gateway_id=None)
 
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.register_prompt(test_db, pc)
@@ -2008,6 +2005,7 @@ class TestRecordPromptMetric:
     async def test_success(self, prompt_service):
         db = MagicMock()
         prompt = _build_db_prompt(pid="prompt-1")
+        # Standard
         import time
 
         start = time.monotonic() - 0.5
@@ -2023,6 +2021,7 @@ class TestRecordPromptMetric:
     async def test_failure(self, prompt_service):
         db = MagicMock()
         prompt = _build_db_prompt(pid="prompt-2")
+        # Standard
         import time
 
         start = time.monotonic()
@@ -2243,9 +2242,7 @@ class TestUpdatePromptNameConflict:
         conflicting.id = 99
         conflicting.visibility = "private"
 
-        with (
-            patch("mcpgateway.services.prompt_service.get_for_update") as mock_gfu,
-        ):
+        with (patch("mcpgateway.services.prompt_service.get_for_update") as mock_gfu,):
             mock_gfu.side_effect = [existing, conflicting]
 
             upd = PromptUpdate(name="new-name")
@@ -2513,7 +2510,10 @@ class TestSetPromptStateLockAndPermission:
     @pytest.mark.asyncio
     async def test_lock_conflict(self, prompt_service):
         """OperationalError during row lock raises PromptLockConflictError."""
+        # Third-Party
         from sqlalchemy.exc import OperationalError
+
+        # First-Party
         from mcpgateway.services.prompt_service import PromptLockConflictError
 
         db = MagicMock()

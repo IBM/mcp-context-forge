@@ -1529,17 +1529,14 @@ class A2AAgentService(BaseService):
         Returns:
             A2AAgentAggregateMetrics: Aggregated metrics from raw + hourly rollup tables.
         """
-        # First-Party
         # Check cache first (if enabled)
+        # First-Party
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
-
-        # from mcpgateway.schemas import A2AAgentAggregateMetrics  # pylint: disable=import-outside-toplevel
 
         if is_cache_enabled():
             cached = metrics_cache.get("a2a")
             if cached is not None:
-                # Cached value is already an A2AAgentAggregateMetrics instance
-                return cached
+                return A2AAgentAggregateMetrics(**cached)
 
         # Get total/active agent counts from cache (avoids 2 COUNT queries per call)
         counts = a2a_stats_cache.get_counts(db)
@@ -1568,9 +1565,9 @@ class A2AAgentService(BaseService):
             max_response_time=float(result.max_response_time or 0.0),
         )
 
-        # Cache the result (if enabled)
+        # Cache the result as dict for serialization compatibility (if enabled)
         if is_cache_enabled():
-            metrics_cache.set("a2a", metrics)
+            metrics_cache.set("a2a", metrics.model_dump())
 
         return metrics
 
