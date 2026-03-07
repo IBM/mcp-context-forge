@@ -25,8 +25,8 @@ from sqlalchemy import and_, func, select
 # First-Party
 from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.db import Permissions
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
