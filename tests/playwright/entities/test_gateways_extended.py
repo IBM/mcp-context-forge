@@ -1348,8 +1348,8 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        # Status column index shifted +1 after Gateway ID insertion
-        status_cell = first_row.locator("td").nth(7)
+        # Column order: Actions(0), S.No.(1), GatewayID(2), Name(3), URL(4), Tags(5), Status(6)
+        status_cell = first_row.locator("td").nth(6)
         status_text = status_cell.text_content().strip()
         assert status_text in ("Active", "Inactive"), f"Unexpected status: '{status_text}'"
 

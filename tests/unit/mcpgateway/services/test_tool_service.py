@@ -498,6 +498,28 @@ class TestToolService:
         assert tool_read.auth.auth_type == "authheaders"
         assert tool_read.auth.auth_header_key == "test-api-key"
         assert tool_read.auth.auth_header_value == settings.masked_auth_value
+        # Verify multi-header format (authHeaders array)
+        assert tool_read.auth.authHeaders is not None
+        assert len(tool_read.auth.authHeaders) == 1
+        assert tool_read.auth.authHeaders[0]["key"] == "test-api-key"
+        assert tool_read.auth.authHeaders[0]["value"] == settings.masked_auth_value
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_authheaders_multi(self, tool_service, mock_tool):
+        """Check auth for authheaders with multiple headers returns all headers."""
+        mock_tool.auth_type = "authheaders"
+        mock_tool.auth_value = encode_auth({"X-API-Key": "secret1", "X-Custom": "secret2"})
+        tool_read = tool_service.convert_tool_to_read(mock_tool)
+
+        assert tool_read.auth.auth_type == "authheaders"
+        assert tool_read.auth.authHeaders is not None
+        assert len(tool_read.auth.authHeaders) == 2
+        header_keys = [h["key"] for h in tool_read.auth.authHeaders]
+        assert "X-API-Key" in header_keys
+        assert "X-Custom" in header_keys
+        # All values should be masked
+        for h in tool_read.auth.authHeaders:
+            assert h["value"] == settings.masked_auth_value
 
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_authheaders_empty(self, tool_service, mock_tool):
