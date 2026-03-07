@@ -834,10 +834,12 @@ async def test_admin_ui_rejects_invalid_team_id(monkeypatch):
     monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {"auth_provider": "local"}}))
     monkeypatch.setattr(admin, "create_jwt_token", AsyncMock(return_value="jwt"))
 
-    with pytest.raises(HTTPException) as exc_info:
-        await admin.admin_ui(request, "not-a-member-team", True, mock_db, user=user)
-    assert exc_info.value.status_code == 403
-    assert "Not a member" in exc_info.value.detail
+    # Non-admin requesting non-member team: selected_team_id silently reset to None
+    response = await admin.admin_ui(request, "not-a-member-team", True, mock_db, user=user)
+    assert isinstance(response, HTMLResponse)
+    template_call = request.app.state.templates.TemplateResponse.call_args
+    context = template_call[0][2]
+    assert context["selected_team_id"] is None
 
 
 @pytest.mark.asyncio
@@ -955,11 +957,13 @@ async def test_admin_ui_team_scoped_admin_rejected_for_other_team(monkeypatch):
     monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {"auth_provider": "local"}}))
     monkeypatch.setattr(admin, "create_jwt_token", AsyncMock(return_value="jwt"))
 
-    # Admin with team-scoped token requesting a team they're not a member of -> 403
-    with pytest.raises(HTTPException) as exc_info:
-        await admin.admin_ui(request, "other-team", False, mock_db, user=user)
-    assert exc_info.value.status_code == 403
-    assert "Not a member" in exc_info.value.detail
+    # Admin with team-scoped token requesting a non-member team: banner shown, content defaults to All Teams
+    response = await admin.admin_ui(request, "other-team", False, mock_db, user=user)
+    assert isinstance(response, HTMLResponse)
+    template_call = request.app.state.templates.TemplateResponse.call_args
+    context = template_call[0][2]
+    assert context["admin_viewing_non_member_team"] is True
+    assert context["selected_team_id"] is None
 
 
 @pytest.mark.asyncio
@@ -1374,6 +1378,7 @@ async def test_admin_get_all_team_ids_admin_and_user(monkeypatch):
                 SimpleNamespace(id="team-4", name="Beta", slug="beta", is_active=False, visibility="private"),
             ]
 
+
     class _StubAuthService:
         def __init__(self, _db):
             self._user = None
@@ -1432,6 +1437,7 @@ async def test_admin_search_teams_admin_and_user(monkeypatch):
                 SimpleNamespace(id="t-2", name="Beta", slug="beta", description="desc", visibility="public", is_active=True),
                 SimpleNamespace(id="t-3", name="Gamma", slug="gamma", description="desc", visibility="private", is_active=False),
             ]
+
 
     class _StubAuthService:
         def __init__(self, _db):

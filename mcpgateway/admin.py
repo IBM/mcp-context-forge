@@ -3231,27 +3231,33 @@ async def admin_ui(
 
     # --------------------------------------------------------------------------------
     # Validate team_id if provided (only when email-based teams are enabled).
-    # Non-admin users get 403 when they supply a team_id they do not belong to.
     # Platform admins with unrestricted tokens (is_admin AND token_teams is None)
-    # bypass the membership check, consistent with the codebase admin bypass
-    # convention. Team-scoped admin tokens are still subject to membership checks.
-    # When team_id is None (not sent), selected_team_id stays None and the
-    # unscoped/public path works as expected.
+    # bypass the membership check. Team-scoped admin tokens can still view any
+    # team for governance. Non-admins get their team filter reset when they
+    # supply a team_id they do not belong to.
     # --------------------------------------------------------------------------------
     selected_team_id = team_id
     user_email = get_user_email(user)
+    is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    admin_viewing_non_member_team = False
+
     if team_id and getattr(settings, "email_auth_enabled", False):
-        _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
         _token_teams = user.get("token_teams") if isinstance(user, dict) else getattr(user, "token_teams", None)
-        if not (_is_admin and _token_teams is None):
+        if not (is_admin_user and _token_teams is None):
             if not user_teams:
                 LOGGER.warning("team_id requested but user_teams not available; rejecting (team_id=%s)", team_id)
                 raise HTTPException(status_code=403, detail="Unable to verify team membership")
 
             valid_team_ids = {t["id"] for t in user_teams if t.get("id")}
             if str(team_id) not in valid_team_ids:
-                LOGGER.warning("Requested team_id is not in user's teams; rejecting (team_id=%s)", team_id)
-                raise HTTPException(status_code=403, detail="Not a member of the requested team")
+                if not is_admin_user:
+                    LOGGER.warning("Non-admin requested team_id not in their teams; ignoring team filter (team_id=%s)", team_id)
+                    selected_team_id = None
+                else:
+                    # Admin selected a team they don't belong to; show banner and default content to All Teams
+                    LOGGER.info("Admin viewing non-member team for governance (team_id=%s)", team_id)
+                    admin_viewing_non_member_team = True
+                    selected_team_id = None
 
     # --------------------------------------------------------------------------------
     # Helper: attempt to call a listing function with team_id if it supports it.
@@ -3600,6 +3606,7 @@ async def admin_ui(
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "allow_public_visibility": settings.allow_public_visibility,
             "selected_team_id": selected_team_id,
+            "admin_viewing_non_member_team": admin_viewing_non_member_team,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "ui_hidden_sections": ui_visibility_config["hidden_sections"],
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
@@ -4739,7 +4746,8 @@ async def admin_get_all_team_ids(
 
     # Check admin
     if current_user.is_admin:
-        team_ids = await team_service.get_all_team_ids(include_inactive=include_inactive, visibility_filter=visibility, include_personal=True, search_query=q)
+        # Admin sees all non-personal teams plus their own personal team (single query)
+        team_ids = await team_service.get_all_team_ids(include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=q, personal_owner_email=user_email)
     else:
         # For non-admins, get user's teams + public teams logic?
         # get_user_teams gets all teams user is in.
@@ -4810,7 +4818,10 @@ async def admin_search_teams(
     # The CALLER (admin.py) distinguishes.
 
     if current_user.is_admin:
-        result = await team_service.list_teams(page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=True, search_query=search_query)
+        # Admin sees all non-personal teams plus their own personal team (single query)
+        result = await team_service.list_teams(
+            page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=search_query, personal_owner_email=user_email
+        )
         # Result is dict {data, pagination...} (since page provided)
         teams = result["data"]
     else:
@@ -4911,9 +4922,9 @@ async def admin_teams_partial_html(
     pending_requests = team_service.get_pending_join_requests_batch(user_email, list(public_team_ids))
 
     if current_user.is_admin and not relationship:
-        # Admin sees all teams when no relationship filter
+        # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
         paginated_result = await team_service.list_teams(
-            page=page, per_page=per_page, include_inactive=include_inactive, visibility_filter=visibility, base_url=base_url, include_personal=True, search_query=q
+            page=page, per_page=per_page, include_inactive=include_inactive, visibility_filter=visibility, base_url=base_url, include_personal=False, search_query=q, personal_owner_email=user_email
         )
         data = paginated_result["data"]
         pagination = paginated_result["pagination"]
@@ -5116,7 +5127,8 @@ async def admin_list_teams(
             if q:
                 base_url += f"?q={urllib.parse.quote(q, safe='')}"
 
-            paginated_result = await team_service.list_teams(page=page, per_page=per_page, base_url=base_url, include_personal=True, search_query=q)
+            # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
+            paginated_result = await team_service.list_teams(page=page, per_page=per_page, base_url=base_url, include_personal=False, search_query=q, personal_owner_email=user_email)
             data = paginated_result["data"]
             pagination = paginated_result["pagination"]
             links = paginated_result["links"]
@@ -5575,6 +5587,10 @@ async def admin_get_team_edit(
         if not team:
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
+        # Personal teams cannot be updated (service rejects all personal team updates)
+        if team.is_personal:
+            return HTMLResponse(content='<div class="text-red-500">Personal teams cannot be edited</div>', status_code=403)
+
         safe_team_name = html.escape(team.name, quote=True)
         safe_description = html.escape(team.description or "")
         edit_form = rf"""
@@ -5714,7 +5730,18 @@ async def admin_update_team(
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
-        await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, updated_by=user_email)
+        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, updated_by=user_email)
+
+        if not updated:
+            is_htmx = request.headers.get("HX-Request") == "true"
+            error_html = '<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">Team cannot be updated</div>'
+            if is_htmx:
+                response = HTMLResponse(content=error_html, status_code=400)
+                response.headers["HX-Retarget"] = "#edit-team-error"
+                response.headers["HX-Reswap"] = "innerHTML"
+                return response
+            error_msg = urllib.parse.quote("Team cannot be updated")
+            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
         # Check if this is an HTMX request
         is_htmx = request.headers.get("HX-Request") == "true"
@@ -5775,7 +5802,10 @@ async def admin_delete_team(
 
         # Delete team (get user email from JWT payload)
         user_email = get_user_email(user)
-        await team_service.delete_team(team_id, deleted_by=user_email)
+        deleted = await team_service.delete_team(team_id, deleted_by=user_email)
+
+        if not deleted:
+            return HTMLResponse(content='<div class="text-red-500">Team cannot be deleted</div>', status_code=400)
 
         # Return success message with script to refresh teams list
         safe_team_name = html.escape(team_name)
