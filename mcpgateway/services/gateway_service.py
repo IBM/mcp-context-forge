@@ -1897,8 +1897,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway.tags = gateway_update.tags
                 if gateway_update.visibility is not None:
                     gateway.visibility = gateway_update.visibility
-                if gateway_update.visibility is not None:
-                    gateway.visibility = gateway_update.visibility
+                    # Propagate visibility to all linked items immediately so it
+                    # takes effect even when the upstream server is unreachable
+                    # and _initialize_gateway fails.
+                    for tool in gateway.tools:
+                        tool.visibility = gateway.visibility
+                    for resource in gateway.resources:
+                        resource.visibility = gateway.visibility
+                    for prompt in gateway.prompts:
+                        prompt.visibility = gateway.visibility
                 if gateway_update.passthrough_headers is not None:
                     if isinstance(gateway_update.passthrough_headers, list):
                         gateway.passthrough_headers = gateway_update.passthrough_headers

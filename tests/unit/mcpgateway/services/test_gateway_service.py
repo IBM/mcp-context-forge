@@ -1060,6 +1060,56 @@ class TestGatewayService:
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_gateway_visibility_propagates_when_init_fails(self, gateway_service, mock_gateway, test_db):
+        """Visibility change must propagate to linked tools/prompts/resources even when gateway init fails."""
+        # Set up linked items with old visibility
+        mock_tool = MagicMock(spec=DbTool)
+        mock_tool.visibility = "public"
+        mock_resource = MagicMock(spec=DbResource)
+        mock_resource.visibility = "public"
+        mock_prompt = MagicMock(spec=DbPrompt)
+        mock_prompt.visibility = "public"
+
+        mock_gateway.visibility = "public"
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.oauth_config = None
+        mock_gateway.auth_query_params = None
+        mock_gateway.slug = "test_gateway"
+        mock_gateway.tools = [mock_tool]
+        mock_gateway.resources = [mock_resource]
+        mock_gateway.prompts = [mock_prompt]
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_query.all.return_value = []
+        test_db.query = Mock(return_value=mock_query)
+
+        # Gateway is unreachable
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("Connection failed"))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        gateway_update = GatewayUpdate(visibility="team")
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        # Gateway visibility updated
+        assert mock_gateway.visibility == "team"
+        # Linked items must also be updated even though init failed
+        assert mock_tool.visibility == "team", "Tool visibility not propagated when gateway init failed"
+        assert mock_resource.visibility == "team", "Resource visibility not propagated when gateway init failed"
+        assert mock_prompt.visibility == "team", "Prompt visibility not propagated when gateway init failed"
+        # Visibility changes must be persisted
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_update_gateway_partial_update(self, gateway_service, mock_gateway, test_db):
         """Test updating only some fields."""
         # Use return_value for all execute calls
