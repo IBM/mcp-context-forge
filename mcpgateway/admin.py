@@ -5587,11 +5587,9 @@ async def admin_get_team_edit(
         if not team:
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
-        # Block editing other users' personal teams
+        # Personal teams cannot be updated (service rejects all personal team updates)
         if team.is_personal:
-            caller_email = get_user_email(_user) if _user else None
-            if not caller_email or team.created_by != caller_email:
-                return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
+            return HTMLResponse(content='<div class="text-red-500">Personal teams cannot be edited</div>', status_code=403)
 
         safe_team_name = html.escape(team.name, quote=True)
         safe_description = html.escape(team.description or "")
@@ -5804,7 +5802,10 @@ async def admin_delete_team(
 
         # Delete team (get user email from JWT payload)
         user_email = get_user_email(user)
-        await team_service.delete_team(team_id, deleted_by=user_email)
+        deleted = await team_service.delete_team(team_id, deleted_by=user_email)
+
+        if not deleted:
+            return HTMLResponse(content='<div class="text-red-500">Team cannot be deleted</div>', status_code=400)
 
         # Return success message with script to refresh teams list
         safe_team_name = html.escape(team_name)

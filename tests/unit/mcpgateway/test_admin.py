@@ -6448,7 +6448,7 @@ async def test_admin_update_team_rejected_personal_team_redirect(monkeypatch, mo
 
 @pytest.mark.asyncio
 async def test_admin_get_team_edit_blocks_other_personal_team(monkeypatch, mock_request, mock_db, allow_permission):
-    """Editing another user's personal team must return 404."""
+    """Editing another user's personal team must return 403."""
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     team_service = MagicMock()
     team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(
@@ -6458,12 +6458,13 @@ async def test_admin_get_team_edit_blocks_other_personal_team(monkeypatch, mock_
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_get_team_edit("team-personal", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
-    assert response.status_code == 404
+    assert response.status_code == 403
+    assert "cannot be edited" in response.body.decode().lower()
 
 
 @pytest.mark.asyncio
-async def test_admin_get_team_edit_allows_own_personal_team(monkeypatch, mock_request, mock_db, allow_permission):
-    """Editing your own personal team should succeed."""
+async def test_admin_get_team_edit_blocks_own_personal_team(monkeypatch, mock_request, mock_db, allow_permission):
+    """Editing your own personal team is also blocked (service rejects all personal team updates)."""
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     team_service = MagicMock()
     team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(
@@ -6473,8 +6474,8 @@ async def test_admin_get_team_edit_allows_own_personal_team(monkeypatch, mock_re
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_get_team_edit("team-personal", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
-    assert response.status_code == 200
-    assert "my-personal" in response.body.decode()
+    assert response.status_code == 403
+    assert "cannot be edited" in response.body.decode().lower()
 
 
 @pytest.mark.asyncio
@@ -7071,12 +7072,28 @@ async def test_admin_delete_team_success(monkeypatch, mock_db, allow_permission)
     request = MagicMock(spec=Request)
     team_service = MagicMock()
     team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One"))
-    team_service.delete_team = AsyncMock(return_value=None)
+    team_service.delete_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_delete_team("team-1", request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "deleted successfully" in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_team_rejected_personal_team(monkeypatch, mock_db, allow_permission):
+    """delete_team returning False (personal team) must surface an error, not false success."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-personal", name="Personal Team"))
+    team_service.delete_team = AsyncMock(return_value=False)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_delete_team("team-personal", request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    assert response.status_code == 400
+    assert "cannot be deleted" in response.body.decode().lower()
 
 
 @pytest.mark.asyncio
