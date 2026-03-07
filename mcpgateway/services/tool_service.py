@@ -487,6 +487,8 @@ class ToolNameConflictError(ToolError):
         self.tool_id = tool_id
         if visibility == "team":
             vis_label = "Team-level"
+        elif visibility == "private":
+            vis_label = "Private"
         else:
             vis_label = "Public"
         message = f"{vis_label} Tool already exists with name: {name}"

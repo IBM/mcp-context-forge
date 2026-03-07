@@ -4637,6 +4637,12 @@ class TestUpdateToolBranches:
         mock_logger.warning.assert_called_once()
         assert mock_logger.warning.call_args[0][3] == "owner_email"
 
+    def test_tool_name_conflict_error_private_label(self):
+        """ToolNameConflictError should label private conflicts as 'Private', not 'Public'."""
+        err = ToolNameConflictError("my_tool", enabled=True, tool_id="t1", visibility="private")
+        assert "Private" in str(err)
+        assert "Public" not in str(err)
+
     @pytest.mark.asyncio
     async def test_permission_check_on_update(self, tool_service):
         """Non-owner user gets PermissionError on update."""
