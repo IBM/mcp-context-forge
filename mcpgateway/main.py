@@ -42,7 +42,6 @@ import warnings
 # Third-Party
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
-from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -80,7 +79,7 @@ from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, PermissionChecker, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
@@ -104,6 +103,7 @@ from mcpgateway.schemas import (
     GatewayRefreshResponse,
     GatewayUpdate,
     JsonPathModifier,
+    MetricsResponse,
     PromptCreate,
     PromptExecuteArgs,
     PromptRead,
@@ -573,12 +573,17 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
     if request is not None:
         scoped = _extract_scoped_permissions(request)
         if scoped is not None and "*" not in scoped and permission not in scoped:
-            raise JSONRPCError(-32003, f"Insufficient permissions. Required: {permission}", {"method": method})
+            logger.warning("RPC permission denied (token scope): method=%s, required=%s", method, permission)
+            raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
     # Layer 2: RBAC check
+    # Session tokens have no explicit team_id, so check across all team-scoped roles.
+    # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
+    check_any_team = isinstance(user, dict) and user.get("token_use") == "session"
     checker = PermissionChecker(_build_rpc_permission_user(user, db))
-    if not await checker.has_permission(permission):
-        raise JSONRPCError(-32003, f"Insufficient permissions. Required: {permission}", {"method": method})
+    if not await checker.has_permission(permission, check_any_team=check_any_team):
+        logger.warning("RPC permission denied (RBAC): method=%s, required=%s", method, permission)
+        raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
 
 def _enforce_scoped_resource_access(request: Request, db: Session, user, resource_path: str) -> None:
@@ -608,7 +613,8 @@ def _enforce_scoped_resource_access(request: Request, db: Session, user, resourc
         db=db,
         _user_email=scoped_user_email,
     ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied for requested resource")
+        logger.warning("Scoped resource access denied: user=%s, resource=%s", scoped_user_email, resource_path)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
 
 async def _assert_session_owner_or_admin(request: Request, user, session_id: str) -> None:
@@ -6085,10 +6091,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             if init_session_id:
                 effective_owner = await session_registry.claim_session_owner(init_session_id, requester_email)
                 if effective_owner is None:
-                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership unavailable.", {"method": method, "session_id": init_session_id})
+                    raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
                 if effective_owner and not requester_is_admin and requester_email != effective_owner:
-                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership mismatch.", {"method": method, "session_id": init_session_id})
+                    raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
             # Pass server_id to advertise OAuth capability if configured per RFC 9728
             result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id, server_id=server_id)
@@ -6290,7 +6296,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             try:
                 await resource_service.subscribe_resource(db, subscription, user_email=access_user_email, token_teams=access_token_teams)
             except PermissionError:
-                raise JSONRPCError(-32003, "Insufficient permissions for resource subscription", {"uri": uri})
+                raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
             db.commit()
             db.close()
             result = {}
@@ -6793,7 +6799,8 @@ async def _authenticate_websocket_user(websocket: WebSocket) -> tuple[Optional[s
     if user_context:
         checker = PermissionChecker(user_context)
         if not await checker.has_any_permission(_WS_RELAY_REQUIRED_PERMISSIONS):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            logger.warning("WebSocket relay permission denied: user=%s", user_context.get("email"))
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
     return auth_token, proxy_user
 
@@ -7031,9 +7038,9 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
 ####################
 # Metrics          #
 ####################
-@metrics_router.get("", response_model=dict)
+@metrics_router.get("", response_model=MetricsResponse)
 @require_permission("admin.metrics")
-async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> dict:
+async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> MetricsResponse:
     """
     Retrieve aggregated metrics for all entity types (Tools, Resources, Servers, Prompts, A2A Agents).
 
@@ -7042,7 +7049,7 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
         user: Authenticated user
 
     Returns:
-        A dictionary with keys for each entity type and their aggregated metrics.
+        A MetricsResponse with keys for each entity type and their aggregated metrics.
     """
     logger.debug(f"User {user} requested aggregated metrics")
     tool_metrics = await tool_service.aggregate_metrics(db)
@@ -7050,19 +7057,17 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
     server_metrics = await server_service.aggregate_metrics(db)
     prompt_metrics = await prompt_service.aggregate_metrics(db)
 
-    metrics_result = {
+    kwargs = {
         "tools": tool_metrics,
         "resources": resource_metrics,
         "servers": server_metrics,
         "prompts": prompt_metrics,
     }
 
-    # Include A2A metrics only if A2A features are enabled
     if a2a_service and settings.mcpgateway_a2a_metrics_enabled:
-        a2a_metrics = await a2a_service.aggregate_metrics(db)
-        metrics_result["a2a_agents"] = a2a_metrics
+        kwargs["a2a_agents"] = await a2a_service.aggregate_metrics(db)
 
-    return jsonable_encoder(metrics_result)
+    return MetricsResponse(**kwargs)
 
 
 @metrics_router.post("/reset", response_model=dict)
