@@ -7053,12 +7053,12 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
     server_metrics = await server_service.aggregate_metrics(db)
     prompt_metrics = await prompt_service.aggregate_metrics(db)
 
-    kwargs = dict(
-        tools=tool_metrics,
-        resources=resource_metrics,
-        servers=server_metrics,
-        prompts=prompt_metrics,
-    )
+    kwargs = {
+        "tools": tool_metrics,
+        "resources": resource_metrics,
+        "servers": server_metrics,
+        "prompts": prompt_metrics,
+    }
 
     if a2a_service and settings.mcpgateway_a2a_metrics_enabled:
         kwargs["a2a_agents"] = await a2a_service.aggregate_metrics(db)
