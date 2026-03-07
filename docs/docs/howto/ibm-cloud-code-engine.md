@@ -233,7 +233,7 @@ ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" | grep -E "Status
 # Quick health check
 APP_URL=$(ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" --output url)
 curl -s "${APP_URL}/health" | jq .
-# Expected: {"status": "ok"} or similar health response
+# Expected: {"status": "healthy"}
 ```
 
 ```bash
