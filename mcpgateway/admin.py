@@ -3242,9 +3242,8 @@ async def admin_ui(
     admin_viewing_non_member_team = False
 
     if team_id and getattr(settings, "email_auth_enabled", False):
-        _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
         _token_teams = user.get("token_teams") if isinstance(user, dict) else getattr(user, "token_teams", None)
-        if not (_is_admin and _token_teams is None):
+        if not (is_admin_user and _token_teams is None):
             if not user_teams:
                 LOGGER.warning("team_id requested but user_teams not available; rejecting (team_id=%s)", team_id)
                 raise HTTPException(status_code=403, detail="Unable to verify team membership")

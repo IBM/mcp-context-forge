@@ -3739,15 +3739,18 @@ class TestAdminUIRoute:
         mock_gateways.return_value = []
         mock_roots.return_value = []
 
-        with pytest.raises(HTTPException) as exc_info:
-            await admin_ui(
-                request=mock_request,
-                team_id="not-a-team",
-                include_inactive=False,
-                db=mock_db,
-                user={"email": "admin@example.com", "db": mock_db},
-            )
-        assert exc_info.value.status_code == 403
+        # Non-admin requesting a team they don't belong to: selected_team_id silently reset to None
+        response = await admin_ui(
+            request=mock_request,
+            team_id="not-a-team",
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "db": mock_db},
+        )
+        assert isinstance(response, HTMLResponse)
+        template_call = mock_request.app.state.templates.TemplateResponse.call_args
+        context = template_call[0][2]
+        assert context["selected_team_id"] is None
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
@@ -5594,13 +5597,14 @@ class TestAdminNonMemberTeamBanner:
         mock_gateways.return_value = []
         mock_roots.return_value = []
 
-        # Admin user selecting team-2 (which they are NOT a member of)
+        # Admin user with team-scoped token selecting team-2 (which they are NOT a member of)
+        # token_teams must be set (non-None) so the unrestricted-admin bypass does NOT skip the check
         response = await admin_ui(
             request=mock_request,
             team_id="team-2",
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "is_admin": True, "db": mock_db},
+            user={"email": "admin@example.com", "is_admin": True, "token_teams": ["team-1"], "db": mock_db},
         )
 
         assert isinstance(response, HTMLResponse)
