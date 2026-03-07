@@ -10766,7 +10766,14 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
 
 
 def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
-    """Parse auth fields from a form and return a serialized auth object, or None."""
+    """Parse auth fields from a form and return a serialized auth object, or None.
+
+    Args:
+        form: Multipart form data containing auth_type and credential fields.
+
+    Returns:
+        A dict with auth_type and encrypted auth_value, or None if no valid auth provided.
+    """
     auth_headers_json = form.get("auth_headers") or ""
     auth_headers: list[dict[str, Any]] = []
     if auth_headers_json:
