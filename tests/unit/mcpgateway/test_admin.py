@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.admin import (  # admin_get_metrics,
     _adjust_pagination_for_conversion_failures,
     _build_admin_redirect,
+    _build_auth_obj_from_form,
     _escape_like,
     _generate_unified_teams_view,
     _get_latency_heatmap_postgresql,
@@ -279,6 +280,7 @@ from mcpgateway.services.tool_service import (
     ToolService,
 )
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
+from mcpgateway.utils.services_auth import decode_auth
 
 
 class FakeForm(dict):
@@ -1426,6 +1428,273 @@ class TestAdminToolRoutes:
         tool_update = call_args[2]
         assert tool_update.headers == {}
         assert tool_update.input_schema == {}
+
+    @patch.object(ToolService, "register_tool")
+    async def test_admin_add_tool_with_basic_auth(self, mock_register_tool, mock_request, mock_db):
+        """Test adding tool with basic authentication - covers auth_type=basic branch."""
+        form_data = FakeForm(
+            {
+                "name": "test-tool-basic",
+                "url": "http://example.com",
+                "description": "Test tool with basic auth",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "auth_type": "basic",
+                "auth_username": "testuser",
+                "auth_password": "testpass",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        mock_register_tool.assert_called_once()
+        call_tool = mock_register_tool.call_args[0][1]
+        assert call_tool.auth is not None
+        assert call_tool.auth.auth_type == "basic"
+        assert call_tool.auth.auth_value is not None
+        decoded = decode_auth(call_tool.auth.auth_value)
+        assert "Authorization" in decoded
+        assert decoded["Authorization"].startswith("Basic ")
+
+    @patch.object(ToolService, "register_tool")
+    async def test_admin_add_tool_with_bearer_auth(self, mock_register_tool, mock_request, mock_db):
+        """Test adding tool with bearer token - covers auth_type=bearer branch."""
+        form_data = FakeForm(
+            {
+                "name": "test-tool-bearer",
+                "url": "http://example.com",
+                "description": "Test tool with bearer auth",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "auth_type": "bearer",
+                "auth_token": "test-bearer-token",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        mock_register_tool.assert_called_once()
+        call_tool = mock_register_tool.call_args[0][1]
+        assert call_tool.auth is not None
+        assert call_tool.auth.auth_type == "bearer"
+        assert call_tool.auth.auth_value is not None
+        decoded = decode_auth(call_tool.auth.auth_value)
+        assert decoded["Authorization"] == "Bearer test-bearer-token"
+
+    @patch.object(ToolService, "register_tool")
+    async def test_admin_add_tool_with_custom_headers_multi(self, mock_register_tool, mock_request, mock_db):
+        """Test adding tool with multiple custom headers - covers authheaders multi-header branch."""
+        form_data = FakeForm(
+            {
+                "name": "test-tool-headers",
+                "url": "http://example.com",
+                "description": "Test tool with custom headers",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": "X-API-Key", "value": "secret1"}, {"key": "X-Custom", "value": "secret2"}]),
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        mock_register_tool.assert_called_once()
+        call_tool = mock_register_tool.call_args[0][1]
+        assert call_tool.auth is not None
+        assert call_tool.auth.auth_type == "authheaders"
+        assert call_tool.auth.auth_value is not None
+
+    @patch.object(ToolService, "register_tool")
+    async def test_admin_add_tool_with_custom_headers_legacy(self, mock_register_tool, mock_request, mock_db):
+        """Test adding tool with legacy single custom header - covers authheaders legacy branch."""
+        form_data = FakeForm(
+            {
+                "name": "test-tool-legacy-header",
+                "url": "http://example.com",
+                "description": "Test tool with legacy header",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "auth_type": "authheaders",
+                "auth_header_key": "X-API-Key",
+                "auth_header_value": "legacy-secret",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        mock_register_tool.assert_called_once()
+        call_tool = mock_register_tool.call_args[0][1]
+        assert call_tool.auth is not None
+        assert call_tool.auth.auth_type == "authheaders"
+        assert call_tool.auth.auth_value is not None
+
+    @patch.object(ToolService, "update_tool")
+    async def test_admin_edit_tool_with_basic_auth(self, mock_update_tool, mock_request, mock_db):
+        """Test editing tool with basic authentication - covers auth_type=basic branch in edit."""
+        form_data = FakeForm(
+            {
+                "name": "updated-tool-basic",
+                "customName": "updated-tool-basic",
+                "url": "http://updated.com",
+                "description": "Updated tool with basic auth",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "auth_type": "basic",
+                "auth_username": "updateduser",
+                "auth_password": "updatedpass",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        mock_update_tool.assert_called_once()
+        call_tool = mock_update_tool.call_args[0][2]
+        assert call_tool.auth is not None
+        assert call_tool.auth.auth_type == "basic"
+        assert call_tool.auth.auth_value is not None
+
+    @patch.object(ToolService, "update_tool")
+    async def test_admin_edit_tool_with_bearer_auth(self, mock_update_tool, mock_request, mock_db):
+        """Test editing tool with bearer token - covers auth_type=bearer branch in edit."""
+        form_data = FakeForm(
+            {
+                "name": "updated-tool-bearer",
+                "customName": "updated-tool-bearer",
+                "url": "http://updated.com",
+                "description": "Updated tool with bearer auth",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "auth_type": "bearer",
+                "auth_token": "updated-bearer-token",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        mock_update_tool.assert_called_once()
+        call_tool = mock_update_tool.call_args[0][2]
+        assert call_tool.auth is not None
+        assert call_tool.auth.auth_type == "bearer"
+        assert call_tool.auth.auth_value is not None
+
+    @patch.object(ToolService, "update_tool")
+    async def test_admin_edit_tool_with_custom_headers_multi(self, mock_update_tool, mock_request, mock_db):
+        """Test editing tool with multiple custom headers - covers authheaders multi-header branch in edit."""
+        form_data = FakeForm(
+            {
+                "name": "updated-tool-headers",
+                "customName": "updated-tool-headers",
+                "url": "http://updated.com",
+                "description": "Updated tool with custom headers",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": "X-API-Key", "value": "newsecret1"}, {"key": "X-Custom", "value": "newsecret2"}]),
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        mock_update_tool.assert_called_once()
+        call_tool = mock_update_tool.call_args[0][2]
+        assert call_tool.auth is not None
+        assert call_tool.auth.auth_type == "authheaders"
+        assert call_tool.auth.auth_value is not None
+
+    @patch.object(ToolService, "update_tool")
+    async def test_admin_edit_tool_with_custom_headers_legacy(self, mock_update_tool, mock_request, mock_db):
+        """Test editing tool with legacy single custom header - covers authheaders legacy branch in edit."""
+        form_data = FakeForm(
+            {
+                "name": "updated-tool-legacy",
+                "customName": "updated-tool-legacy",
+                "url": "http://updated.com",
+                "description": "Updated tool with legacy header",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "auth_type": "authheaders",
+                "auth_header_key": "X-API-Key",
+                "auth_header_value": "new-legacy-secret",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        mock_update_tool.assert_called_once()
+        call_tool = mock_update_tool.call_args[0][2]
+        assert call_tool.auth is not None
+        assert call_tool.auth.auth_type == "authheaders"
+        assert call_tool.auth.auth_value is not None
+
+    def test_build_auth_obj_from_form_no_auth_type(self, mock_request, mock_db):
+        """_build_auth_obj_from_form returns None when auth_type is empty."""
+        form = FakeForm({"auth_type": ""})
+        assert _build_auth_obj_from_form(form) is None
+
+    def test_build_auth_obj_from_form_invalid_json(self, mock_request, mock_db):
+        """_build_auth_obj_from_form handles invalid JSON in auth_headers gracefully."""
+        form = FakeForm({"auth_type": "authheaders", "auth_headers": "not-valid-json"})
+        # Invalid JSON falls through to legacy path; no key/value means None
+        result = _build_auth_obj_from_form(form)
+        assert result is None
+
+    def test_build_auth_obj_from_form_basic_missing_password(self, mock_request, mock_db):
+        """_build_auth_obj_from_form returns None for basic auth with missing password."""
+        form = FakeForm({"auth_type": "basic", "auth_username": "user"})
+        assert _build_auth_obj_from_form(form) is None
+
+    def test_build_auth_obj_from_form_bearer_missing_token(self, mock_request, mock_db):
+        """_build_auth_obj_from_form returns None for bearer auth with missing token."""
+        form = FakeForm({"auth_type": "bearer"})
+        assert _build_auth_obj_from_form(form) is None
+
+    def test_build_auth_obj_from_form_authheaders_empty_keys(self, mock_request, mock_db):
+        """_build_auth_obj_from_form skips headers with empty keys."""
+        form = FakeForm({
+            "auth_type": "authheaders",
+            "auth_headers": json.dumps([{"key": "", "value": "val"}, {"value": "only"}]),
+        })
+        assert _build_auth_obj_from_form(form) is None
 
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_various_activate_values(self, mock_toggle_status, mock_request, mock_db):

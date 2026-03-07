@@ -872,13 +872,23 @@ class ToolService(BaseService):
                     "token": settings.masked_auth_value if decoded_auth_value["Authorization"] else None,
                 }
             elif tool.auth_type == "authheaders":
-                # Get first key
+                # Support multi-header format (list of {key, value} dicts)
                 if decoded_auth_value:
+                    # Convert decoded dict to list format for frontend
+                    auth_headers = [
+                        {
+                            "key": key,
+                            "value": settings.masked_auth_value if value else None,
+                        }
+                        for key, value in decoded_auth_value.items()
+                    ]
+                    # Also include legacy single-header fields for backward compatibility
                     first_key = next(iter(decoded_auth_value))
                     tool_dict["auth"] = {
                         "auth_type": "authheaders",
-                        "auth_header_key": first_key,
-                        "auth_header_value": settings.masked_auth_value if decoded_auth_value[first_key] else None,
+                        "authHeaders": auth_headers,  # Multi-header format (masked)
+                        "auth_header_key": first_key,  # Legacy format
+                        "auth_header_value": settings.masked_auth_value if decoded_auth_value[first_key] else None,  # Legacy format
                     }
                 else:
                     tool_dict["auth"] = None
