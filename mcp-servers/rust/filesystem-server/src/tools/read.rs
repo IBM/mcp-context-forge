@@ -105,11 +105,14 @@ mod tests {
         let result = read_file(&sandbox, temp_dir.path().to_str().unwrap()).await;
         let err = &result.unwrap_err().to_string();
 
+        // On macOS, paths are canonicalized (/var -> /private/var)
+        // So we need to canonicalize the expected path for comparison
+        let canon_path = fs::canonicalize(temp_dir.path()).await.unwrap();
         assert_eq!(
             err,
             &format!(
                 "'{}' is not a regular file",
-                temp_dir.path().to_str().unwrap()
+                canon_path.display()
             )
         );
     }
@@ -150,11 +153,14 @@ mod tests {
         let result = read_file(&sandbox, temp_filepath.to_str().unwrap()).await;
         let err = &result.unwrap_err().to_string();
 
+        // On macOS, paths are canonicalized (/var -> /private/var)
+        // So we need to canonicalize the expected path for comparison
+        let canon_filepath = fs::canonicalize(&temp_filepath).await.unwrap();
         assert_eq!(
             err,
             &format!(
                 "File '{}' exceeds size limit ({} bytes)",
-                temp_filepath.to_str().unwrap(),
+                canon_filepath.display(),
                 MAX_FILE_SIZE
             )
         );
