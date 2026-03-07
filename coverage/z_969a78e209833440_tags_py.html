@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/validation/tags.py: 100%</title>
+    <title>Coverage for mcpgateway/validation/tags.py: 93%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;validation&#8201;/&#8201;tags.py</b>:
-            <span class="pc_cov">100%</span>
+            <span class="pc_cov">93%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">72 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">72<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">67<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">5<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_580dae60cda9039c_version_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-02-28 08:40 +0000
+            created at 2026-03-07 09:48 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -207,7 +207,7 @@
     <p class="run"><span class="n"><a id="t125" href="#t125">125</a></span><span class="t">        <span class="key">if</span> <span class="nam">len</span><span class="op">(</span><span class="nam">normalized</span><span class="op">)</span> <span class="op">&lt;</span> <span class="nam">TagValidator</span><span class="op">.</span><span class="nam">MIN_LENGTH</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t126" href="#t126">126</a></span><span class="t">            <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t">        <span class="key">if</span> <span class="nam">len</span><span class="op">(</span><span class="nam">normalized</span><span class="op">)</span> <span class="op">></span> <span class="nam">TagValidator</span><span class="op">.</span><span class="nam">MAX_LENGTH</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t">            <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t">            <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t">        <span class="com"># Check pattern (uses precompiled regex)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t131" href="#t131">131</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">_TAG_ALLOWED_RE</span><span class="op">.</span><span class="nam">match</span><span class="op">(</span><span class="nam">normalized</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -246,7 +246,7 @@
     <p class="pln"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t165" href="#t165">165</a></span><span class="t">        <span class="com"># If already in correct dict format, validate and return as-is</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t166" href="#t166">166</a></span><span class="t">        <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">tags</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">,</span> <span class="nam">dict</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t">            <span class="key">return</span> <span class="op">[</span><span class="nam">t</span> <span class="key">for</span> <span class="nam">t</span> <span class="key">in</span> <span class="nam">tags</span> <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">t</span><span class="op">,</span> <span class="nam">dict</span><span class="op">)</span> <span class="key">and</span> <span class="str">"id"</span> <span class="key">in</span> <span class="nam">t</span> <span class="key">and</span> <span class="str">"label"</span> <span class="key">in</span> <span class="nam">t</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t">            <span class="key">return</span> <span class="op">[</span><span class="nam">t</span> <span class="key">for</span> <span class="nam">t</span> <span class="key">in</span> <span class="nam">tags</span> <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">t</span><span class="op">,</span> <span class="nam">dict</span><span class="op">)</span> <span class="key">and</span> <span class="str">"id"</span> <span class="key">in</span> <span class="nam">t</span> <span class="key">and</span> <span class="str">"label"</span> <span class="key">in</span> <span class="nam">t</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t168" href="#t168">168</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t169" href="#t169">169</a></span><span class="t">        <span class="com"># Filter out None values and convert everything to strings</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t170" href="#t170">170</a></span><span class="t">        <span class="nam">string_tags</span> <span class="op">=</span> <span class="op">[</span><span class="nam">str</span><span class="op">(</span><span class="nam">tag</span><span class="op">)</span> <span class="key">for</span> <span class="nam">tag</span> <span class="key">in</span> <span class="nam">tags</span> <span class="key">if</span> <span class="nam">tag</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
@@ -298,7 +298,7 @@
     <p class="pln"><span class="n"><a id="t216" href="#t216">216</a></span><span class="t">                <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t217" href="#t217">217</a></span><span class="t">                    <span class="nam">errors</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="fst">f'</span><span class="fst">Tag "</span><span class="op">{</span><span class="nam">normalized</span><span class="op">}</span><span class="fst">" is too short (minimum </span><span class="op">{</span><span class="nam">TagValidator</span><span class="op">.</span><span class="nam">MIN_LENGTH</span><span class="op">}</span><span class="fst"> characters)</span><span class="fst">'</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">            <span class="key">elif</span> <span class="nam">len</span><span class="op">(</span><span class="nam">normalized</span><span class="op">)</span> <span class="op">></span> <span class="nam">TagValidator</span><span class="op">.</span><span class="nam">MAX_LENGTH</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">                <span class="nam">errors</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="fst">f'</span><span class="fst">Tag "</span><span class="op">{</span><span class="nam">normalized</span><span class="op">}</span><span class="fst">" is too long (maximum </span><span class="op">{</span><span class="nam">TagValidator</span><span class="op">.</span><span class="nam">MAX_LENGTH</span><span class="op">}</span><span class="fst"> characters)</span><span class="fst">'</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">                <span class="nam">errors</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="fst">f'</span><span class="fst">Tag "</span><span class="op">{</span><span class="nam">normalized</span><span class="op">}</span><span class="fst">" is too long (maximum </span><span class="op">{</span><span class="nam">TagValidator</span><span class="op">.</span><span class="nam">MAX_LENGTH</span><span class="op">}</span><span class="fst"> characters)</span><span class="fst">'</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t220" href="#t220">220</a></span><span class="t">            <span class="key">elif</span> <span class="key">not</span> <span class="nam">_TAG_ALLOWED_RE</span><span class="op">.</span><span class="nam">match</span><span class="op">(</span><span class="nam">normalized</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t221" href="#t221">221</a></span><span class="t">                <span class="nam">errors</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="fst">f'</span><span class="fst">Tag "</span><span class="op">{</span><span class="nam">normalized</span><span class="op">}</span><span class="fst">" contains invalid characters or format</span><span class="fst">'</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t222" href="#t222">222</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -336,7 +336,7 @@
     <p class="pln"><span class="n"><a id="t254" href="#t254">254</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t255" href="#t255">255</a></span><span class="t">    <span class="com"># Ensure we have a list (could be a single string by mistake)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t256" href="#t256">256</a></span><span class="t">    <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">tags</span><span class="op">,</span> <span class="nam">str</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t257" href="#t257">257</a></span><span class="t">        <span class="nam">tags</span> <span class="op">=</span> <span class="op">[</span><span class="nam">tags</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t257" href="#t257">257</a></span><span class="t">        <span class="nam">tags</span> <span class="op">=</span> <span class="op">[</span><span class="nam">tags</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t258" href="#t258">258</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t">    <span class="com"># Handle case where tags might contain comma-separated values</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t">    <span class="com"># This helps if someone passes "tag1,tag2,tag3" as a single string</span>&nbsp;</span><span class="r"></span></p>
@@ -344,7 +344,7 @@
     <p class="run"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t">    <span class="key">for</span> <span class="nam">tag</span> <span class="key">in</span> <span class="nam">tags</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t263" href="#t263">263</a></span><span class="t">        <span class="key">if</span> <span class="nam">tag</span> <span class="key">and</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">tag</span><span class="op">,</span> <span class="nam">str</span><span class="op">)</span> <span class="key">and</span> <span class="str">","</span> <span class="key">in</span> <span class="nam">tag</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t264" href="#t264">264</a></span><span class="t">            <span class="com"># Split by comma and add individual tags</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t265" href="#t265">265</a></span><span class="t">            <span class="nam">expanded_tags</span><span class="op">.</span><span class="nam">extend</span><span class="op">(</span><span class="nam">t</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span> <span class="key">for</span> <span class="nam">t</span> <span class="key">in</span> <span class="nam">tag</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="str">","</span><span class="op">)</span> <span class="key">if</span> <span class="nam">t</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t265" href="#t265">265</a></span><span class="t">            <span class="nam">expanded_tags</span><span class="op">.</span><span class="nam">extend</span><span class="op">(</span><span class="nam">t</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span> <span class="key">for</span> <span class="nam">t</span> <span class="key">in</span> <span class="nam">tag</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="str">","</span><span class="op">)</span> <span class="key">if</span> <span class="nam">t</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t266" href="#t266">266</a></span><span class="t">        <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t267" href="#t267">267</a></span><span class="t">            <span class="nam">expanded_tags</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="nam">tag</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t268" href="#t268">268</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -361,7 +361,7 @@
             <a class="nav" href="z_580dae60cda9039c_version_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-02-28 08:40 +0000
+            created at 2026-03-07 09:48 +0000
         </p>
     </div>
 </footer>

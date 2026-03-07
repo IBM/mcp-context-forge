@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/plugins/framework/external/mcp/tls_utils.py: 100%</title>
+    <title>Coverage for mcpgateway/plugins/framework/external/mcp/tls_utils.py: 93%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;plugins&#8201;/&#8201;framework&#8201;/&#8201;external&#8201;/&#8201;mcp&#8201;/&#8201;tls_utils.py</b>:
-            <span class="pc_cov">100%</span>
+            <span class="pc_cov">93%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">27 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">27<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">25<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">2<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_cf3241d508cf3aed_proto_convert_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-02-28 08:40 +0000
+            created at 2026-03-07 09:48 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -289,7 +289,7 @@
     <p class="pln"><span class="n"><a id="t207" href="#t207">207</a></span><span class="t">                <span class="com"># - Certificate hasn't expired (notAfter > now)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t208" href="#t208">208</a></span><span class="t">                <span class="com"># - Certificate is already valid (notBefore &lt; now)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t209" href="#t209">209</a></span><span class="t">                <span class="com"># - Certificate chain is complete and valid</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t210" href="#t210">210</a></span><span class="t">                <span class="nam">ssl_context</span><span class="op">.</span><span class="nam">load_verify_locations</span><span class="op">(</span><span class="nam">cafile</span><span class="op">=</span><span class="nam">tls_config</span><span class="op">.</span><span class="nam">ca_bundle</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t210" href="#t210">210</a></span><span class="t">                <span class="nam">ssl_context</span><span class="op">.</span><span class="nam">load_verify_locations</span><span class="op">(</span><span class="nam">cafile</span><span class="op">=</span><span class="nam">tls_config</span><span class="op">.</span><span class="nam">ca_bundle</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t211" href="#t211">211</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t212" href="#t212">212</a></span><span class="t">            <span class="com"># Hostname verification</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t213" href="#t213">213</a></span><span class="t">            <span class="com"># When enabled, certificate's SAN or CN must match the server hostname</span>&nbsp;</span><span class="r"></span></p>
@@ -305,7 +305,7 @@
     <p class="run run2"><span class="n"><a id="t223" href="#t223">223</a></span><span class="t">                <span class="nam">keyfile</span><span class="op">=</span><span class="nam">tls_config</span><span class="op">.</span><span class="nam">keyfile</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t224" href="#t224">224</a></span><span class="t">                <span class="nam">password</span><span class="op">=</span><span class="nam">tls_config</span><span class="op">.</span><span class="nam">keyfile_password</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t225" href="#t225">225</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t226" href="#t226">226</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="fst">f"</span><span class="fst">mTLS enabled for plugin '</span><span class="op">{</span><span class="nam">plugin_name</span><span class="op">}</span><span class="fst">' with client certificate: </span><span class="op">{</span><span class="nam">tls_config</span><span class="op">.</span><span class="nam">certfile</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t226" href="#t226">226</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="fst">f"</span><span class="fst">mTLS enabled for plugin '</span><span class="op">{</span><span class="nam">plugin_name</span><span class="op">}</span><span class="fst">' with client certificate: </span><span class="op">{</span><span class="nam">tls_config</span><span class="op">.</span><span class="nam">certfile</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t227" href="#t227">227</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t228" href="#t228">228</a></span><span class="t">        <span class="com"># Log security configuration</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t229" href="#t229">229</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -327,7 +327,7 @@
             <a class="nav" href="z_cf3241d508cf3aed_proto_convert_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-02-28 08:40 +0000
+            created at 2026-03-07 09:48 +0000
         </p>
     </div>
 </footer>

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/utils/security_cookies.py: 100%</title>
+    <title>Coverage for mcpgateway/utils/security_cookies.py: 74%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;utils&#8201;/&#8201;security_cookies.py</b>:
-            <span class="pc_cov">100%</span>
+            <span class="pc_cov">74%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">46 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">46<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">34<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">12<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_095c6c0b4411cdd5_services_auth_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-02-28 08:40 +0000
+            created at 2026-03-07 09:48 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -118,9 +118,9 @@
     <p class="pln"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t"><span class="str">            cookie_size: Actual size of the cookie in bytes.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t"><span class="str">            limit: Maximum allowed cookie size in bytes.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">cookie_size</span> <span class="op">=</span> <span class="nam">cookie_size</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">limit</span> <span class="op">=</span> <span class="nam">limit</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t41" href="#t41">41</a></span><span class="t">        <span class="nam">super</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">__init__</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Cookie size </span><span class="op">{</span><span class="nam">cookie_size</span><span class="op">}</span><span class="fst"> bytes exceeds browser limit of </span><span class="op">{</span><span class="nam">limit</span><span class="op">}</span><span class="fst"> bytes</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">cookie_size</span> <span class="op">=</span> <span class="nam">cookie_size</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">limit</span> <span class="op">=</span> <span class="nam">limit</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t41" href="#t41">41</a></span><span class="t">        <span class="nam">super</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">__init__</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Cookie size </span><span class="op">{</span><span class="nam">cookie_size</span><span class="op">}</span><span class="fst"> bytes exceeds browser limit of </span><span class="op">{</span><span class="nam">limit</span><span class="op">}</span><span class="fst"> bytes</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t42" href="#t42">42</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t43" href="#t43">43</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t44" href="#t44">44</a></span><span class="t"><span class="key">def</span> <span class="nam">set_auth_cookie</span><span class="op">(</span><span class="nam">response</span><span class="op">:</span> <span class="nam">Response</span><span class="op">,</span> <span class="nam">token</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">remember_me</span><span class="op">:</span> <span class="nam">bool</span> <span class="op">=</span> <span class="key">False</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -174,7 +174,7 @@
     <p class="pln"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t">    <span class="com"># The cookie name, value, and attributes all count toward the limit</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t93" href="#t93">93</a></span><span class="t">    <span class="nam">cookie_header</span> <span class="op">=</span> <span class="fst">f"</span><span class="fst">jwt_token=</span><span class="op">{</span><span class="nam">token</span><span class="op">}</span><span class="fst">; HttpOnly; SameSite=</span><span class="op">{</span><span class="nam">samesite</span><span class="op">}</span><span class="fst">; Path=</span><span class="op">{</span><span class="nam">path</span><span class="op">}</span><span class="fst">; Max-Age=</span><span class="op">{</span><span class="nam">max_age</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t94" href="#t94">94</a></span><span class="t">    <span class="key">if</span> <span class="nam">use_secure</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t95" href="#t95">95</a></span><span class="t">        <span class="nam">cookie_header</span> <span class="op">+=</span> <span class="str">"; Secure"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t95" href="#t95">95</a></span><span class="t">        <span class="nam">cookie_header</span> <span class="op">+=</span> <span class="str">"; Secure"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t96" href="#t96">96</a></span><span class="t">    <span class="nam">cookie_size</span> <span class="op">=</span> <span class="nam">len</span><span class="op">(</span><span class="nam">cookie_header</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="str">"ascii"</span><span class="op">,</span> <span class="nam">errors</span><span class="op">=</span><span class="str">"replace"</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t97" href="#t97">97</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t98" href="#t98">98</a></span><span class="t">    <span class="com"># Extract sub claim for log context (best-effort, don't build control flow on it)</span>&nbsp;</span><span class="r"></span></p>
@@ -186,18 +186,18 @@
     <p class="pln"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t">        <span class="nam">parts</span> <span class="op">=</span> <span class="nam">token</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="str">"."</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t">        <span class="key">if</span> <span class="nam">len</span><span class="op">(</span><span class="nam">parts</span><span class="op">)</span> <span class="op">>=</span> <span class="num">2</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">            <span class="nam">padded</span> <span class="op">=</span> <span class="nam">parts</span><span class="op">[</span><span class="num">1</span><span class="op">]</span> <span class="op">+</span> <span class="str">"="</span> <span class="op">*</span> <span class="op">(</span><span class="op">-</span><span class="nam">len</span><span class="op">(</span><span class="nam">parts</span><span class="op">[</span><span class="num">1</span><span class="op">]</span><span class="op">)</span> <span class="op">%</span> <span class="num">4</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">            <span class="nam">payload</span> <span class="op">=</span> <span class="nam">json</span><span class="op">.</span><span class="nam">loads</span><span class="op">(</span><span class="nam">base64</span><span class="op">.</span><span class="nam">urlsafe_b64decode</span><span class="op">(</span><span class="nam">padded</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t">            <span class="nam">sub_for_log</span> <span class="op">=</span> <span class="nam">payload</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"sub"</span><span class="op">,</span> <span class="str">""</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">    <span class="key">except</span> <span class="nam">Exception</span><span class="op">:</span>  <span class="com"># nosec B110 - Best-effort sub extraction for logging</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t">        <span class="key">pass</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">            <span class="nam">padded</span> <span class="op">=</span> <span class="nam">parts</span><span class="op">[</span><span class="num">1</span><span class="op">]</span> <span class="op">+</span> <span class="str">"="</span> <span class="op">*</span> <span class="op">(</span><span class="op">-</span><span class="nam">len</span><span class="op">(</span><span class="nam">parts</span><span class="op">[</span><span class="num">1</span><span class="op">]</span><span class="op">)</span> <span class="op">%</span> <span class="num">4</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">            <span class="nam">payload</span> <span class="op">=</span> <span class="nam">json</span><span class="op">.</span><span class="nam">loads</span><span class="op">(</span><span class="nam">base64</span><span class="op">.</span><span class="nam">urlsafe_b64decode</span><span class="op">(</span><span class="nam">padded</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t">            <span class="nam">sub_for_log</span> <span class="op">=</span> <span class="nam">payload</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"sub"</span><span class="op">,</span> <span class="str">""</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">    <span class="key">except</span> <span class="nam">Exception</span><span class="op">:</span>  <span class="com"># nosec B110 - Best-effort sub extraction for logging</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t">        <span class="key">pass</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t112" href="#t112">112</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t113" href="#t113">113</a></span><span class="t">    <span class="key">if</span> <span class="nam">cookie_size</span> <span class="op">></span> <span class="nam">_COOKIE_HARD_LIMIT</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t114" href="#t114">114</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="str">"JWT cookie size %d bytes exceeds %d byte browser limit (user: %s)"</span><span class="op">,</span> <span class="nam">cookie_size</span><span class="op">,</span> <span class="nam">_COOKIE_HARD_LIMIT</span><span class="op">,</span> <span class="nam">sub_for_log</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t115" href="#t115">115</a></span><span class="t">        <span class="key">raise</span> <span class="nam">CookieTooLargeError</span><span class="op">(</span><span class="nam">cookie_size</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t114" href="#t114">114</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="str">"JWT cookie size %d bytes exceeds %d byte browser limit (user: %s)"</span><span class="op">,</span> <span class="nam">cookie_size</span><span class="op">,</span> <span class="nam">_COOKIE_HARD_LIMIT</span><span class="op">,</span> <span class="nam">sub_for_log</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t115" href="#t115">115</a></span><span class="t">        <span class="key">raise</span> <span class="nam">CookieTooLargeError</span><span class="op">(</span><span class="nam">cookie_size</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t">    <span class="key">if</span> <span class="nam">cookie_size</span> <span class="op">></span> <span class="nam">_COOKIE_WARN_THRESHOLD</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"JWT cookie size %d bytes approaching %d byte browser limit (user: %s)"</span><span class="op">,</span> <span class="nam">cookie_size</span><span class="op">,</span> <span class="nam">_COOKIE_HARD_LIMIT</span><span class="op">,</span> <span class="nam">sub_for_log</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"JWT cookie size %d bytes approaching %d byte browser limit (user: %s)"</span><span class="op">,</span> <span class="nam">cookie_size</span><span class="op">,</span> <span class="nam">_COOKIE_HARD_LIMIT</span><span class="op">,</span> <span class="nam">sub_for_log</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t">    <span class="nam">response</span><span class="op">.</span><span class="nam">set_cookie</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t121" href="#t121">121</a></span><span class="t">        <span class="nam">key</span><span class="op">=</span><span class="str">"jwt_token"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -306,7 +306,7 @@
             <a class="nav" href="z_095c6c0b4411cdd5_services_auth_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-02-28 08:40 +0000
+            created at 2026-03-07 09:48 +0000
         </p>
     </div>
 </footer>
