@@ -619,13 +619,16 @@ async def _check_streamable_permission(
     try:
         async with get_db() as db:
             permission_service = PermissionService(db)
-            return await permission_service.check_permission(
+            granted = await permission_service.check_permission(
                 user_email=user_email,
                 permission=permission,
                 token_teams=user_context.get("teams"),
                 allow_admin_bypass=allow_admin_bypass,
                 check_any_team=check_any_team,
             )
+            if not granted:
+                logger.warning("Streamable HTTP RBAC denied: user=%s, permission=%s", user_email, permission)
+            return granted
     except Exception as exc:
         logger.warning("Streamable HTTP RBAC check failed for %s / %s: %s", user_email, permission, exc)
         return False
@@ -646,7 +649,10 @@ def _check_scoped_permission(user_context: dict[str, Any], permission: str) -> b
         return True
     if "*" in scoped:
         return True
-    return permission in scoped
+    allowed = permission in scoped
+    if not allowed:
+        logger.warning("Streamable HTTP token scope denied: user=%s, required=%s", user_context.get("email"), permission)
+    return allowed
 
 
 def set_shared_session_registry(session_registry: Any) -> None:

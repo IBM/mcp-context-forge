@@ -269,7 +269,7 @@ class TestTokenScopingMiddleware:
 
             # Check that the response is a JSONResponse with status 403 and the correct detail
             assert response.status_code == status.HTTP_403_FORBIDDEN
-            assert "not authorized for this server" in content.get("detail")
+            assert "Access denied" in content.get("detail")
             call_next.assert_not_called()  # Ensure the next handler is not called
 
     @pytest.mark.asyncio

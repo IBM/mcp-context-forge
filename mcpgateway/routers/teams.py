@@ -312,7 +312,7 @@ async def get_team(team_id: str, current_user: dict = Depends(get_current_user_w
         # Check if user has access to the team
         user_role = await service.get_user_role_in_team(current_user["email"], team_id)
         if not user_role:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         team_obj = cast(Any, team)
         # Build response BEFORE closing session to avoid lazy-load issues with get_member_count()
@@ -480,7 +480,7 @@ async def list_team_members(
         # Check if user has access to the team
         user_role = await service.get_user_role_in_team(current_user["email"], team_id)
         if not user_role:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         # Get members - service returns different types based on parameters:
         # - cursor=None, limit=None: List[Tuple] (backward compat)

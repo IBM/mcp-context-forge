@@ -573,6 +573,7 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
     if request is not None:
         scoped = _extract_scoped_permissions(request)
         if scoped is not None and "*" not in scoped and permission not in scoped:
+            logger.warning("RPC permission denied (token scope): method=%s, required=%s", method, permission)
             raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
     # Layer 2: RBAC check
@@ -581,6 +582,7 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
     check_any_team = isinstance(user, dict) and user.get("token_use") == "session"
     checker = PermissionChecker(_build_rpc_permission_user(user, db))
     if not await checker.has_permission(permission, check_any_team=check_any_team):
+        logger.warning("RPC permission denied (RBAC): method=%s, required=%s", method, permission)
         raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
 
@@ -611,7 +613,8 @@ def _enforce_scoped_resource_access(request: Request, db: Session, user, resourc
         db=db,
         _user_email=scoped_user_email,
     ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied for requested resource")
+        logger.warning("Scoped resource access denied: user=%s, resource=%s", scoped_user_email, resource_path)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
 
 async def _assert_session_owner_or_admin(request: Request, user, session_id: str) -> None:
@@ -6796,6 +6799,7 @@ async def _authenticate_websocket_user(websocket: WebSocket) -> tuple[Optional[s
     if user_context:
         checker = PermissionChecker(user_context)
         if not await checker.has_any_permission(_WS_RELAY_REQUIRED_PERMISSIONS):
+            logger.warning("WebSocket relay permission denied: user=%s", user_context.get("email"))
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
     return auth_token, proxy_user
