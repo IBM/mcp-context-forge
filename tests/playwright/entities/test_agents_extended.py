@@ -134,16 +134,16 @@ class TestA2ATableStructure:
         expect(table.locator('th:has-text("Actions")').first).to_be_visible()
 
     def test_table_column_id(self, agents_page: AgentsPage):
-        """Test that the ID column header is present in the agents table."""
+        """Test that the Agent ID column header is present in the agents table."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
         _skip_if_no_agents(agents_page)
 
         table = agents_page.agents_table.first
-        expect(table.locator('th:has-text("ID")').first).to_be_visible()
+        expect(table.locator('th:has-text("Agent ID")').first).to_be_visible()
 
     def test_table_columns_complete(self, agents_page: AgentsPage):
-        """Test that all 12 expected table column headers are present."""
+        """Test that all 13 expected table column headers are present."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
         _skip_if_no_agents(agents_page)
@@ -151,7 +151,8 @@ class TestA2ATableStructure:
         table = agents_page.agents_table.first
         expected_columns = [
             "Actions",
-            "ID",
+            "S. No.",
+            "Agent ID",
             "Name",
             "Description",
             "Endpoint",
@@ -809,8 +810,8 @@ class TestA2ARowActions:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Status column is at index 7
-        status_cell = first_row.locator("td").nth(7)
+        # Status column is at index 8 (Actions=0, S.No.=1, AgentID=2, Name=3, Description=4, Endpoint=5, Tags=6, Type=7, Status=8)
+        status_cell = first_row.locator("td").nth(8)
         status_text = status_cell.text_content().strip()
         assert "Active" in status_text or "Inactive" in status_text, (
             f"Status should be 'Active' or 'Inactive', got '{status_text}'"
