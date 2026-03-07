@@ -5587,6 +5587,12 @@ async def admin_get_team_edit(
         if not team:
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
+        # Block editing other users' personal teams
+        if team.is_personal:
+            caller_email = get_user_email(_user) if _user else None
+            if not caller_email or team.created_by != caller_email:
+                return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
+
         safe_team_name = html.escape(team.name, quote=True)
         safe_description = html.escape(team.description or "")
         edit_form = rf"""
@@ -5726,7 +5732,18 @@ async def admin_update_team(
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
-        await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, updated_by=user_email)
+        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, updated_by=user_email)
+
+        if not updated:
+            is_htmx = request.headers.get("HX-Request") == "true"
+            error_html = '<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">Team cannot be updated</div>'
+            if is_htmx:
+                response = HTMLResponse(content=error_html, status_code=400)
+                response.headers["HX-Retarget"] = "#edit-team-error"
+                response.headers["HX-Reswap"] = "innerHTML"
+                return response
+            error_msg = urllib.parse.quote("Team cannot be updated")
+            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
         # Check if this is an HTMX request
         is_htmx = request.headers.get("HX-Request") == "true"
