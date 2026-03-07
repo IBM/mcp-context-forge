@@ -689,20 +689,42 @@ function makeCopyIdButton(id) {
         "ml-2 inline-flex items-center px-1.5 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors";
     btn.textContent = "📋 Copy";
     btn.addEventListener("click", () => {
-        navigator.clipboard
-            .writeText(String(id))
-            .then(() => {
-                btn.textContent = "✅ Copied!";
-                setTimeout(() => {
-                    btn.textContent = "📋 Copy";
-                }, 2000);
-            })
-            .catch(() => {
-                btn.textContent = "❌ Failed";
-                setTimeout(() => {
-                    btn.textContent = "📋 Copy";
-                }, 2000);
-            });
+        const idStr = String(id);
+        const onSuccess = () => {
+            btn.textContent = "✅ Copied!";
+            setTimeout(() => {
+                btn.textContent = "📋 Copy";
+            }, 2000);
+        };
+        const onFailure = () => {
+            btn.textContent = "❌ Failed";
+            setTimeout(() => {
+                btn.textContent = "📋 Copy";
+            }, 2000);
+        };
+        if (
+            navigator.clipboard &&
+            typeof navigator.clipboard.writeText === "function"
+        ) {
+            navigator.clipboard
+                .writeText(idStr)
+                .then(onSuccess)
+                .catch(onFailure);
+        } else {
+            try {
+                const ta = document.createElement("textarea");
+                ta.value = idStr;
+                ta.style.position = "fixed";
+                ta.style.opacity = "0";
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand("copy");
+                document.body.removeChild(ta);
+                onSuccess();
+            } catch (_e) {
+                onFailure();
+            }
+        }
     });
     return btn;
 }
@@ -17869,10 +17891,10 @@ function filterToolsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude Actions and S.No. columns)
-            // Tools columns: Actions(0), S.No.(1), Source(2), Name(3), RequestType(4), Description(5), Annotations(6), Tags(7), Owner(8), Team(9), Status(10)
+            // Get text from searchable cells (exclude Actions, S.No., and Tool ID columns)
+            // Tools columns: Actions(0), S.No.(1), ToolID(2), Source(3), Name(4), RequestType(5), Description(6), Annotations(7), Tags(8), Owner(9), Team(10), Status(11)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10]; // Exclude Actions(0) and S.No.(1)
+            const searchableColumns = [3, 4, 5, 6, 7, 8, 9, 10, 11]; // Exclude Actions(0), S.No.(1), ToolID(2)
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -17999,10 +18021,10 @@ function filterA2AAgentsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude Actions and ID columns)
-            // A2A Agents columns: Actions(0), ID(1), Name(2), Description(3), Endpoint(4), Tags(5), Type(6), Status(7), Reachability(8), Owner(9), Team(10), Visibility(11)
+            // Get text from searchable cells (exclude Actions, S.No., and Agent ID columns)
+            // A2A Agents columns: Actions(0), S.No.(1), AgentID(2), Name(3), Description(4), Endpoint(5), Tags(6), Type(7), Status(8), Reachability(9), Owner(10), Team(11), Visibility(12)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; // Exclude Actions(0) and ID(1)
+            const searchableColumns = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; // Exclude Actions(0), S.No.(1), AgentID(2)
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {

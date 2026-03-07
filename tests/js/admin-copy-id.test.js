@@ -113,4 +113,35 @@ describe("makeCopyIdButton", () => {
             expect(btn.textContent).toContain("Failed");
         });
     });
+
+    test("falls back to execCommand when clipboard API is unavailable", () => {
+        Object.defineProperty(win.navigator, "clipboard", {
+            value: undefined,
+            configurable: true,
+        });
+        doc.execCommand = vi.fn(() => true);
+
+        const btn = f()("fallback-id");
+        doc.body.appendChild(btn);
+        btn.click();
+
+        expect(doc.execCommand).toHaveBeenCalledWith("copy");
+        expect(btn.textContent).toContain("Copied!");
+    });
+
+    test("shows failure when both clipboard API and execCommand fail", () => {
+        Object.defineProperty(win.navigator, "clipboard", {
+            value: undefined,
+            configurable: true,
+        });
+        doc.execCommand = vi.fn(() => {
+            throw new Error("not supported");
+        });
+
+        const btn = f()("fail-id");
+        doc.body.appendChild(btn);
+        btn.click();
+
+        expect(btn.textContent).toContain("Failed");
+    });
 });
