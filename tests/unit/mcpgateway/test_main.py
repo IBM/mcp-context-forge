@@ -2709,6 +2709,25 @@ class TestMetricsEndpoints:
         assert data["tools"]["totalExecutions"] == 4
         assert data["prompts"]["totalExecutions"] == 1
 
+    @patch("mcpgateway.main.a2a_service", None)
+    @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.aggregate_metrics", new_callable=AsyncMock)
+    def test_get_metrics_omits_a2a_when_disabled(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
+        """When A2A is disabled, a2aAgents key should be absent (not null)."""
+        mock_tool.return_value = ToolMetrics(total_executions=1, successful_executions=1, failed_executions=0, failure_rate=0.0)
+        mock_resource.return_value = ResourceMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0)
+        mock_server.return_value = ServerMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0)
+        mock_prompt.return_value = PromptMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0)
+
+        response = test_client.get("/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert "a2aAgents" not in data, "a2aAgents should be absent when A2A is disabled, not null"
+        assert "tools" in data
+        assert "resources" in data
+
     @patch("mcpgateway.main.a2a_service")
     @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
     @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)

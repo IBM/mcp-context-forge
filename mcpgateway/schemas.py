@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, SecretStr, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
@@ -262,9 +262,9 @@ class A2AAgentAggregateMetrics(BaseModelWithConfigDict):
         successful_interactions (int): Number of successful agent interactions.
         failed_interactions (int): Number of failed agent interactions.
         success_rate (float): Success rate as a percentage (0-100).
-        avg_response_time (float): Average response time in milliseconds.
-        min_response_time (float): Minimum response time in milliseconds.
-        max_response_time (float): Maximum response time in milliseconds.
+        avg_response_time (float): Average response time in seconds.
+        min_response_time (float): Minimum response time in seconds.
+        max_response_time (float): Maximum response time in seconds.
     """
 
     total_agents: int = Field(..., description="Total number of A2A agents registered")
@@ -273,9 +273,9 @@ class A2AAgentAggregateMetrics(BaseModelWithConfigDict):
     successful_interactions: int = Field(..., description="Number of successful agent interactions")
     failed_interactions: int = Field(..., description="Number of failed agent interactions")
     success_rate: float = Field(..., description="Success rate as a percentage (0-100)")
-    avg_response_time: float = Field(..., description="Average response time in milliseconds")
-    min_response_time: float = Field(..., description="Minimum response time in milliseconds")
-    max_response_time: float = Field(..., description="Maximum response time in milliseconds")
+    avg_response_time: float = Field(..., description="Average response time in seconds")
+    min_response_time: float = Field(..., description="Minimum response time in seconds")
+    max_response_time: float = Field(..., description="Maximum response time in seconds")
 
 
 class MetricsResponse(BaseModelWithConfigDict):
@@ -283,6 +283,8 @@ class MetricsResponse(BaseModelWithConfigDict):
     Response model for the aggregated metrics endpoint.
 
     Contains metrics for all entity types with consistent camelCase field names.
+    When A2A metrics are disabled, the a2a_agents key is omitted entirely
+    to preserve backwards compatibility with existing consumers.
     """
 
     tools: ToolMetrics
@@ -290,6 +292,14 @@ class MetricsResponse(BaseModelWithConfigDict):
     servers: ServerMetrics
     prompts: PromptMetrics
     a2a_agents: Optional[A2AAgentAggregateMetrics] = None
+
+    @model_serializer(mode="wrap")
+    def _exclude_none_a2a(self, handler):
+        result = handler(self)
+        if self.a2a_agents is None:
+            result.pop("a2aAgents", None)
+            result.pop("a2a_agents", None)
+        return result
 
 
 # --- JSON Path API modifier Schema
