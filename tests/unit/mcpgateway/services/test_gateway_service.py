@@ -1106,6 +1106,8 @@ class TestGatewayService:
         assert mock_tool.visibility == "team", "Tool visibility not propagated when gateway init failed"
         assert mock_resource.visibility == "team", "Resource visibility not propagated when gateway init failed"
         assert mock_prompt.visibility == "team", "Prompt visibility not propagated when gateway init failed"
+        # Visibility changes must be persisted
+        test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_update_gateway_partial_update(self, gateway_service, mock_gateway, test_db):
