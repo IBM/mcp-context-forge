@@ -1237,7 +1237,7 @@ class TokenScopingMiddleware:
 
                 if not self._check_resource_team_ownership(normalized_path, token_teams, _user_email=user_email):
                     logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Extract scopes from payload
             scopes = payload.get("scopes", {})
