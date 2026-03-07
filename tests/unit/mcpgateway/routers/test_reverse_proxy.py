@@ -939,7 +939,7 @@ class TestGetUserFromCredentials:
                 await rp._authenticate_reverse_proxy_websocket(websocket)
 
         assert exc_info.value.status_code == 403
-        assert exc_info.value.detail == "Insufficient permissions"
+        assert exc_info.value.detail == "Access denied"
 
     def test_dict_with_sub(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
