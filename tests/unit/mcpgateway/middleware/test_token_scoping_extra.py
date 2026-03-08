@@ -26,11 +26,13 @@ def test_normalize_teams_and_client_ip():
     assert middleware._normalize_teams(None) == []
     assert middleware._normalize_teams([{"id": "t1"}, "t2", {"name": "x"}]) == ["t1", "t2"]
 
+    # _get_client_ip now uses request.client.host directly (proxy headers are
+    # handled by ProxyHeadersMiddleware which rewrites client.host).
     req = SimpleNamespace(headers={"X-Forwarded-For": "1.2.3.4"}, client=SimpleNamespace(host="9.9.9.9"))
-    assert middleware._get_client_ip(req) == "1.2.3.4"
+    assert middleware._get_client_ip(req) == "9.9.9.9"
 
     req = SimpleNamespace(headers={"X-Real-IP": "5.6.7.8"}, client=SimpleNamespace(host="9.9.9.9"))
-    assert middleware._get_client_ip(req) == "5.6.7.8"
+    assert middleware._get_client_ip(req) == "9.9.9.9"
 
 
 def test_check_ip_restrictions_invalid():

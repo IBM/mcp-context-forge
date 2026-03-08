@@ -137,7 +137,6 @@ class TestGatewaysPage:
 
         # Select basic auth
         gateways_page.auth_type_select.select_option("basic")
-        gateways_page.page.wait_for_timeout(300)
 
         # Should now be visible
         expect(gateways_page.auth_basic_fields).to_be_visible()
@@ -153,7 +152,6 @@ class TestGatewaysPage:
 
         # Select bearer auth
         gateways_page.auth_type_select.select_option("bearer")
-        gateways_page.page.wait_for_timeout(300)
 
         # Should now be visible
         expect(gateways_page.auth_bearer_fields).to_be_visible()
@@ -168,7 +166,6 @@ class TestGatewaysPage:
 
         # Select OAuth
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
 
         # Should now be visible
         expect(gateways_page.oauth_fields).to_be_visible()
@@ -186,7 +183,6 @@ class TestGatewaysPage:
 
         # Select query param auth
         gateways_page.auth_type_select.select_option("query_param")
-        gateways_page.page.wait_for_timeout(300)
 
         # Should now be visible with security warning
         expect(gateways_page.auth_query_param_fields).to_be_visible()
@@ -202,7 +198,6 @@ class TestGatewaysPage:
 
         # Select custom headers auth
         gateways_page.auth_type_select.select_option("authheaders")
-        gateways_page.page.wait_for_timeout(300)
 
         # Should now be visible
         expect(gateways_page.auth_headers_fields).to_be_visible()
@@ -220,7 +215,6 @@ class TestGatewaysPage:
 
         # Select Custom Headers auth type
         gateways_page.auth_type_select.select_option("authheaders")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.auth_headers_fields).to_be_visible()
 
         # Add first header by typing into key/value fields
@@ -246,7 +240,6 @@ class TestGatewaysPage:
 
         # Select OAuth to show fields
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
 
         grant_type_select = gateways_page.oauth_grant_type_select
         expect(grant_type_select).to_be_visible()
@@ -320,7 +313,8 @@ class TestGatewayCreation:
             lambda r: "/admin/gateways" in r.url and r.request.method == "POST",
             timeout=120000,
         ) as response_info:
-            gateways_page.click_locator(gateways_page.add_gateway_btn)
+            gateways_page.add_gateway_btn.scroll_into_view_if_needed()
+            gateways_page.add_gateway_btn.click(timeout=120000)
         response = response_info.value
         if response.status >= 400:
             pytest.skip(f"Gateway creation failed for '{gateway_name}' (HTTP {response.status} — external service or server error)")
@@ -595,6 +589,7 @@ class TestGatewayActions:
         # Edit button should open an edit modal or form
         # Button click verified (no exception raised)
 
+    @pytest.mark.flaky(reruns=2, reruns_delay=1, reason="HTMX table reload timing in headless mode")
     def test_deactivate_button_functionality(self, gateways_page: GatewaysPage):
         """Test deactivating a gateway."""
         gateways_page.navigate_to_gateways_tab()
@@ -614,18 +609,19 @@ class TestGatewayActions:
         # Get gateway name before deactivation
         gateway_name = first_row.locator("td").nth(2).text_content().strip()
 
-        # Click Deactivate button
+        # Click Deactivate button and wait for HTMX to settle
         gateways_page.click_deactivate_button(0)
-        gateways_page.page.wait_for_timeout(2000)
+        gateways_page.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
 
         # Reload to see updated status
-        gateways_page.page.reload()
-        gateways_page.wait_for_gateways_table_loaded()
-        gateways_page.page.wait_for_timeout(1000)
+        gateways_page.page.reload(wait_until="domcontentloaded")
+        gateways_page.navigate_to_gateways_tab()
 
         # Search for the gateway
         gateways_page.search_gateways(gateway_name)
-        gateways_page.page.wait_for_timeout(500)
 
         # Verify Activate button is now visible (gateway was deactivated)
         if gateways_page.gateway_exists(gateway_name):

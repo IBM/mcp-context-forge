@@ -922,3 +922,137 @@ class TestMultiPluginDictChain:
 
         result, _ = await executor.execute(hook_refs, payload, global_ctx, hook_type="auth_hook")
         assert result.modified_payload == {}, "Empty dict should be preserved, not replaced by original payload"
+
+
+@pytest.mark.asyncio
+async def test_http_auth_permission_result_includes_decision_plugin_provenance():
+    """Permission hook decisions should carry deciding plugin identity even with empty plugin metadata."""
+    from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+    from mcpgateway.plugins.framework.hooks.http import HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResultPayload
+    from mcpgateway.plugins.framework.manager import PluginExecutor
+    from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+    class DecisionPlugin(Plugin):
+        async def http_auth_check_permission(self, payload, context):
+            return PluginResult(continue_processing=True, modified_payload=HttpAuthCheckPermissionResultPayload(granted=False, reason="Denied by policy"), metadata={})
+
+    config = PluginConfig(name="decision-plugin", kind="test.Plugin", version="1.0", hooks=["http_auth_check_permission"])
+    hook_ref = HookRef("http_auth_check_permission", PluginRef(DecisionPlugin(config)))
+
+    executor = PluginExecutor(hook_policies={"http_auth_check_permission": HookPayloadPolicy(writable_fields=frozenset({"reason"}))})
+    payload = HttpAuthCheckPermissionPayload(user_email="user@example.com", permission="tools.read", resource_type="tool")
+    result, _ = await executor.execute([hook_ref], payload, GlobalContext(request_id="decision-1"), hook_type="http_auth_check_permission")
+
+    assert result.modified_payload is not None
+    assert result.modified_payload.granted is False
+    assert result.metadata["_decision_plugin"] == "decision-plugin"
+
+
+@pytest.mark.asyncio
+async def test_http_auth_permission_provenance_overrides_forged_metadata_from_decider():
+    """Manager-owned provenance must overwrite forged plugin metadata keys."""
+    from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+    from mcpgateway.plugins.framework.hooks.http import HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResultPayload
+    from mcpgateway.plugins.framework.manager import PluginExecutor
+    from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+    class ForgingDecisionPlugin(Plugin):
+        async def http_auth_check_permission(self, payload, context):
+            return PluginResult(
+                continue_processing=True,
+                modified_payload=HttpAuthCheckPermissionResultPayload(granted=False, reason="Denied by policy"),
+                metadata={"_decision_plugin": "spoofed-name", "note": "kept"},
+            )
+
+    config = PluginConfig(name="real-decision-plugin", kind="test.Plugin", version="1.0", hooks=["http_auth_check_permission"])
+    hook_ref = HookRef("http_auth_check_permission", PluginRef(ForgingDecisionPlugin(config)))
+    executor = PluginExecutor(hook_policies={"http_auth_check_permission": HookPayloadPolicy(writable_fields=frozenset({"reason"}))})
+    payload = HttpAuthCheckPermissionPayload(user_email="user@example.com", permission="tools.read", resource_type="tool")
+
+    result, _ = await executor.execute([hook_ref], payload, GlobalContext(request_id="decision-forge-1"), hook_type="http_auth_check_permission")
+
+    assert result.metadata["_decision_plugin"] == "real-decision-plugin"
+    assert result.metadata["note"] == "kept"
+
+
+@pytest.mark.asyncio
+async def test_http_auth_permission_provenance_uses_actual_decider_in_multi_plugin_chain():
+    """Metadata-only plugins must not control provenance when a later plugin decides."""
+    from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+    from mcpgateway.plugins.framework.hooks.http import HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResultPayload
+    from mcpgateway.plugins.framework.manager import PluginExecutor
+    from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+    class MetadataOnlyPlugin(Plugin):
+        async def http_auth_check_permission(self, payload, context):
+            return PluginResult(continue_processing=True, metadata={"_decision_plugin": "metadata-only-plugin", "source": "plugin-a"})
+
+    class DecisionPluginB(Plugin):
+        async def http_auth_check_permission(self, payload, context):
+            return PluginResult(
+                continue_processing=True,
+                modified_payload=HttpAuthCheckPermissionResultPayload(granted=True, reason="Allowed by policy"),
+                metadata={},
+            )
+
+    hook_refs = [
+        HookRef(
+            "http_auth_check_permission",
+            PluginRef(MetadataOnlyPlugin(PluginConfig(name="metadata-a", kind="test.Plugin", version="1.0", hooks=["http_auth_check_permission"]))),
+        ),
+        HookRef(
+            "http_auth_check_permission",
+            PluginRef(DecisionPluginB(PluginConfig(name="decision-b", kind="test.Plugin", version="1.0", hooks=["http_auth_check_permission"]))),
+        ),
+    ]
+    executor = PluginExecutor(hook_policies={"http_auth_check_permission": HookPayloadPolicy(writable_fields=frozenset({"reason"}))})
+    payload = HttpAuthCheckPermissionPayload(user_email="user@example.com", permission="tools.read", resource_type="tool")
+
+    result, _ = await executor.execute(hook_refs, payload, GlobalContext(request_id="decision-forge-2"), hook_type="http_auth_check_permission")
+
+    assert result.modified_payload is not None
+    assert result.modified_payload.granted is True
+    assert result.metadata["_decision_plugin"] == "decision-b"
+    assert result.metadata["source"] == "plugin-a"
+
+
+@pytest.mark.asyncio
+async def test_http_auth_permission_enforce_short_circuit_records_decision_plugin():
+    """ENFORCE short-circuit path should still persist authoritative decision provenance."""
+    from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+    from mcpgateway.plugins.framework.hooks.http import HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResultPayload
+    from mcpgateway.plugins.framework.manager import PluginExecutor
+    from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginMode, PluginResult
+
+    class DecisionPlugin(Plugin):
+        async def http_auth_check_permission(self, payload, context):
+            return PluginResult(
+                continue_processing=True,
+                modified_payload=HttpAuthCheckPermissionResultPayload(granted=False, reason="Denied"),
+                metadata={},
+            )
+
+    class EnforceBlockPlugin(Plugin):
+        async def http_auth_check_permission(self, payload, context):
+            return PluginResult(continue_processing=False, metadata={})
+
+    decision_config = PluginConfig(name="decision-plugin", kind="test.Plugin", version="1.0", hooks=["http_auth_check_permission"])
+    block_config = PluginConfig(
+        name="enforce-block-plugin",
+        kind="test.Plugin",
+        version="1.0",
+        hooks=["http_auth_check_permission"],
+        mode=PluginMode.ENFORCE,
+    )
+    hook_refs = [
+        HookRef("http_auth_check_permission", PluginRef(DecisionPlugin(decision_config))),
+        HookRef("http_auth_check_permission", PluginRef(EnforceBlockPlugin(block_config))),
+    ]
+
+    executor = PluginExecutor(hook_policies={"http_auth_check_permission": HookPayloadPolicy(writable_fields=frozenset({"reason"}))})
+    payload = HttpAuthCheckPermissionPayload(user_email="user@example.com", permission="tools.execute", resource_type="tool")
+
+    result, _ = await executor.execute(hook_refs, payload, GlobalContext(request_id="decision-short-circuit"), hook_type="http_auth_check_permission")
+
+    assert result.continue_processing is False
+    assert result.metadata["_decision_plugin"] == "decision-plugin"

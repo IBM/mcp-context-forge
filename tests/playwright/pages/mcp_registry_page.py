@@ -232,14 +232,16 @@ class MCPRegistryPage(BasePage):
             query: Search query string
         """
         self.search_input.fill(query)
-        # Wait for HTMX debounced search (500ms delay)
         self.page.wait_for_timeout(1000)
 
     def clear_filters(self) -> None:
         """Clear all filters and search."""
         self.category_filter.select_option("")
+        self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
         self.auth_filter.select_option("")
+        self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
         self.search_input.fill("")
+        self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
         self.page.wait_for_timeout(1000)
 
     def click_category_badge(self, category: str) -> None:
@@ -366,7 +368,7 @@ class MCPRegistryPage(BasePage):
         self.open_add_server_modal(server_name)
         self.fill_api_key_form(api_key, custom_name)
         self.submit_api_key_form()
-        # Wait for registration to complete
+        # Wait for registration to complete and server grid to refresh
         self.page.wait_for_timeout(2000)
 
     # ==================== High-Level Verification Methods ====================

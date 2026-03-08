@@ -28,16 +28,10 @@ from starlette.requests import Request
 from starlette.websockets import WebSocketDisconnect
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
+from mcpgateway.config import settings
 import mcpgateway.db as db_mod
-from mcpgateway.schemas import (
-    GatewayRead,
-    PromptRead,
-    ResourceRead,
-    ServerRead,
-    ToolRead,
-)
+from mcpgateway.schemas import A2AAgentAggregateMetrics, GatewayRead, PromptMetrics, PromptRead, ResourceMetrics, ResourceRead, ServerMetrics, ServerRead, ToolMetrics, ToolRead
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
@@ -321,8 +315,6 @@ def test_client(app_with_temp_db):
 
     # Third-Party
     from fastapi import HTTPException, status
-
-    # First-Party
 
     # Mock security_logger to prevent database access
     mock_sec_logger = MagicMock()
@@ -856,6 +848,7 @@ class TestServerEndpoints:
     @patch("mcpgateway.main.server_service.get_server")
     def test_delete_server_not_found(self, mock_get, test_client, auth_headers):
         """Test deleting a non-existent server returns 404."""
+        # First-Party
         from mcpgateway.services.server_service import ServerNotFoundError
 
         mock_get.side_effect = ServerNotFoundError("Server not found: nonexistent-id")
@@ -1100,6 +1093,7 @@ class TestResourceEndpoints:
     def test_read_resource_endpoint(self, mock_read_resource, test_client, auth_headers):
         """Test reading resource content."""
         # Clear the resource cache to avoid stale/cached values
+        # First-Party
         from mcpgateway import main as mcpgateway_main
 
         mcpgateway_main.resource_cache.clear()
@@ -1176,6 +1170,7 @@ class TestResourceEndpoints:
     def test_subscribe_resource_events(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to resource change events via SSE."""
         mock_subscribe.return_value = iter(["data: test\n\n"])
+        resource_id = MOCK_RESOURCE_READ["id"]
         response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
@@ -1674,6 +1669,7 @@ class TestRootEndpoints:
 
     def test_list_roots_endpoint_requires_admin_permission(self, test_client, auth_headers):
         """Root listing should require admin.system_config permission."""
+        # First-Party
         from mcpgateway.main import app
         from mcpgateway.middleware.rbac import get_current_user_with_permissions
 
@@ -1701,6 +1697,7 @@ class TestRootEndpoints:
         ],
     )
     def test_root_management_endpoints_require_admin_permission(self, method, path, payload, auth_headers):
+        # First-Party
         from mcpgateway.main import app
         from mcpgateway.middleware.rbac import get_current_user_with_permissions
 
@@ -1789,7 +1786,7 @@ class TestRPCEndpoints:
     def test_rpc_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
         req = {"jsonrpc": "2.0", "id": "test-id-deny", "method": "tools/call", "params": {"name": "test_tool", "arguments": {"param": "value"}}}
 
-        async def _has_permission(_self, permission):
+        async def _has_permission(_self, permission, **kwargs):
             return permission != "tools.execute"
 
         with patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission):
@@ -1798,12 +1795,12 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["error"]["code"] == -32003
-        assert "tools.execute" in body["error"]["message"]
+        assert "Access denied" in body["error"]["message"]
 
     def test_rpc_legacy_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
         req = {"jsonrpc": "2.0", "id": "test-id-legacy-deny", "method": "legacy_tool", "params": {"param": "value"}}
 
-        async def _has_permission(_self, permission):
+        async def _has_permission(_self, permission, **kwargs):
             return permission != "tools.execute"
 
         with patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission):
@@ -1812,7 +1809,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["error"]["code"] == -32003
-        assert "tools.execute" in body["error"]["message"]
+        assert "Access denied" in body["error"]["message"]
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     # @patch("mcpgateway.main.validate_request")
@@ -2079,7 +2076,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["error"]["code"] == -32003
-        assert "admin.system_config" in body["error"]["message"]
+        assert "Access denied" in body["error"]["message"]
 
     @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
     @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
@@ -2466,10 +2463,12 @@ class TestRealtimeEndpoints:
 
         # Track messages
         messages_received = []
-        websocket.receive_text = AsyncMock(side_effect=[
-            '{"jsonrpc":"2.0","method":"test","id":1}',
-            WebSocketDisconnect(),
-        ])
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                '{"jsonrpc":"2.0","method":"test","id":1}',
+                WebSocketDisconnect(),
+            ]
+        )
         websocket.send_text = AsyncMock(side_effect=lambda msg: messages_received.append(msg))
 
         await mcpgateway_main.websocket_endpoint(websocket)
@@ -2521,10 +2520,12 @@ class TestRealtimeEndpoints:
         websocket.headers = {"X-Forwarded-User": "proxy-user@example.com"}
 
         # Track messages
-        websocket.receive_text = AsyncMock(side_effect=[
-            '{"jsonrpc":"2.0","method":"test","id":1}',
-            WebSocketDisconnect(),
-        ])
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                '{"jsonrpc":"2.0","method":"test","id":1}',
+                WebSocketDisconnect(),
+            ]
+        )
         websocket.send_text = AsyncMock()
 
         await mcpgateway_main.websocket_endpoint(websocket)
@@ -2672,16 +2673,17 @@ class TestRealtimeEndpoints:
 class TestMetricsEndpoints:
     """Tests for metrics collection, aggregation, and reset functionality."""
 
-    @patch("mcpgateway.main.prompt_service.aggregate_metrics")
-    @patch("mcpgateway.main.server_service.aggregate_metrics")
-    @patch("mcpgateway.main.resource_service.aggregate_metrics")
-    @patch("mcpgateway.main.tool_service.aggregate_metrics")
+    @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.aggregate_metrics", new_callable=AsyncMock)
     def test_get_metrics(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
         """Test retrieving aggregated metrics for all entity types."""
-        mock_tool.return_value = {"total": 5}
-        mock_resource.return_value = {"total": 3}
-        mock_server.return_value = {"total": 2}
-        mock_prompt.return_value = {"total": 1}
+
+        mock_tool.return_value = ToolMetrics(total_executions=5, successful_executions=5, failed_executions=0, failure_rate=0.0)
+        mock_resource.return_value = ResourceMetrics(total_executions=3, successful_executions=3, failed_executions=0, failure_rate=0.0)
+        mock_server.return_value = ServerMetrics(total_executions=2, successful_executions=2, failed_executions=0, failure_rate=0.0)
+        mock_prompt.return_value = PromptMetrics(total_executions=1, successful_executions=1, failed_executions=0, failure_rate=0.0)
 
         response = test_client.get("/metrics", headers=auth_headers)
         assert response.status_code == 200
@@ -2689,6 +2691,108 @@ class TestMetricsEndpoints:
         assert "tools" in data and "resources" in data
         assert "servers" in data and "prompts" in data
         # A2A agents may or may not be present based on configuration
+
+    @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.aggregate_metrics", new_callable=AsyncMock)
+    def test_get_metrics_returns_service_dicts(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
+        """Metrics endpoint should return service metric dicts faithfully."""
+        mock_tool.return_value = ToolMetrics(total_executions=4, successful_executions=4, failed_executions=0, failure_rate=0.0)
+        mock_resource.return_value = ResourceMetrics(total_executions=3, successful_executions=3, failed_executions=0, failure_rate=0.0)
+        mock_server.return_value = ServerMetrics(total_executions=2, successful_executions=2, failed_executions=0, failure_rate=0.0)
+        mock_prompt.return_value = PromptMetrics(total_executions=1, successful_executions=1, failed_executions=0, failure_rate=0.0)
+
+        response = test_client.get("/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["tools"]["totalExecutions"] == 4
+        assert data["prompts"]["totalExecutions"] == 1
+
+    @patch("mcpgateway.main.a2a_service", None)
+    @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.aggregate_metrics", new_callable=AsyncMock)
+    def test_get_metrics_omits_a2a_when_disabled(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
+        """When A2A is disabled, a2aAgents key should be absent (not null)."""
+        mock_tool.return_value = ToolMetrics(total_executions=1, successful_executions=1, failed_executions=0, failure_rate=0.0)
+        mock_resource.return_value = ResourceMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0)
+        mock_server.return_value = ServerMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0)
+        mock_prompt.return_value = PromptMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0)
+
+        response = test_client.get("/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert "a2aAgents" not in data, "a2aAgents should be absent when A2A is disabled, not null"
+        assert "tools" in data
+        assert "resources" in data
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.aggregate_metrics", new_callable=AsyncMock)
+    def test_get_metrics_with_a2a_agents_camelcase(self, mock_tool, mock_resource, mock_server, mock_prompt, mock_a2a_service, test_client, auth_headers):
+        """Test that A2A agent metrics are returned with consistent camelCase keys."""
+        mock_tool.return_value = ToolMetrics(total_executions=10, successful_executions=9, failed_executions=1, failure_rate=0.1)
+        mock_resource.return_value = ResourceMetrics(total_executions=5, successful_executions=5, failed_executions=0, failure_rate=0.0)
+        mock_server.return_value = ServerMetrics(total_executions=3, successful_executions=3, failed_executions=0, failure_rate=0.0)
+        mock_prompt.return_value = PromptMetrics(total_executions=2, successful_executions=2, failed_executions=0, failure_rate=0.0)
+
+        # Mock A2A service to return A2AAgentAggregateMetrics
+        mock_a2a_metrics = A2AAgentAggregateMetrics(
+            total_agents=5,
+            active_agents=3,
+            total_interactions=100,
+            successful_interactions=90,
+            failed_interactions=10,
+            success_rate=90.0,
+            avg_response_time=1.5,
+            min_response_time=0.5,
+            max_response_time=3.0,
+        )
+        mock_a2a_service.aggregate_metrics = AsyncMock(return_value=mock_a2a_metrics)
+
+        response = test_client.get("/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify all sections use camelCase
+        assert "tools" in data
+        assert "resources" in data
+        assert "servers" in data
+        assert "prompts" in data
+        assert "a2aAgents" in data, "A2A agents key should be camelCase 'a2aAgents'"
+        assert "a2a_agents" not in data, "A2A agents key should not be snake_case 'a2a_agents'"
+
+        # Verify tools section uses camelCase
+        assert "totalExecutions" in data["tools"]
+        assert "successfulExecutions" in data["tools"]
+        assert "failedExecutions" in data["tools"]
+
+        # Verify A2A agents section uses camelCase (not snake_case)
+        a2a_data = data["a2aAgents"]
+        assert "totalAgents" in a2a_data, "A2A metrics should use camelCase 'totalAgents'"
+        assert "activeAgents" in a2a_data, "A2A metrics should use camelCase 'activeAgents'"
+        assert "totalInteractions" in a2a_data, "A2A metrics should use camelCase 'totalInteractions'"
+        assert "successfulInteractions" in a2a_data, "A2A metrics should use camelCase 'successfulInteractions'"
+        assert "failedInteractions" in a2a_data, "A2A metrics should use camelCase 'failedInteractions'"
+        assert "successRate" in a2a_data, "A2A metrics should use camelCase 'successRate'"
+        assert "avgResponseTime" in a2a_data, "A2A metrics should use camelCase 'avgResponseTime'"
+        assert "minResponseTime" in a2a_data, "A2A metrics should use camelCase 'minResponseTime'"
+        assert "maxResponseTime" in a2a_data, "A2A metrics should use camelCase 'maxResponseTime'"
+
+        # Verify no snake_case keys exist
+        assert "total_agents" not in a2a_data, "A2A metrics should not have snake_case 'total_agents'"
+        assert "active_agents" not in a2a_data, "A2A metrics should not have snake_case 'active_agents'"
+        assert "total_interactions" not in a2a_data, "A2A metrics should not have snake_case 'total_interactions'"
+
+        # Verify values
+        assert a2a_data["totalAgents"] == 5
+        assert a2a_data["activeAgents"] == 3
+        assert a2a_data["totalInteractions"] == 100
+        assert a2a_data["successRate"] == 90.0
 
     #    @patch("mcpgateway.main.a2a_service")
     #    @patch("mcpgateway.main.prompt_service.reset_metrics")
@@ -2999,6 +3103,7 @@ def test_jsonpath_modifier_invalid_expressions(sample_people):
 # ----------------------------------------------------- #
 class TestTransformDataWithMappings:
     def test_transform_data_with_mappings_valid_mapping(self, sample_people):
+        # First-Party
         from mcpgateway.main import transform_data_with_mappings
 
         mapping = {"n": "$.name"}
@@ -3006,6 +3111,7 @@ class TestTransformDataWithMappings:
         assert result == [{"n": "Ada"}, {"n": "Bob"}]
 
     def test_transform_data_with_mappings_invalid_mapping(self, sample_people):
+        # First-Party
         from mcpgateway.main import transform_data_with_mappings
 
         with pytest.raises(HTTPException):
@@ -3240,7 +3346,8 @@ class TestJsonPathCaching:
 
     def test_jsonpath_caching_works(self):
         """Verify JSONPath parsing is cached."""
-        from mcpgateway.main import jsonpath_modifier, _parse_jsonpath
+        # First-Party
+        from mcpgateway.main import _parse_jsonpath, jsonpath_modifier
 
         _parse_jsonpath.cache_clear()
 
@@ -3255,7 +3362,8 @@ class TestJsonPathCaching:
 
     def test_mappings_parsed_once_per_request(self):
         """Verify mappings are parsed once per request, not per item."""
-        from mcpgateway.main import transform_data_with_mappings, _parse_jsonpath
+        # First-Party
+        from mcpgateway.main import _parse_jsonpath, transform_data_with_mappings
 
         _parse_jsonpath.cache_clear()
 
@@ -3270,7 +3378,8 @@ class TestJsonPathCaching:
 
     def test_different_jsonpath_cached_separately(self):
         """Verify different JSONPath expressions get separate cache entries."""
-        from mcpgateway.main import jsonpath_modifier, _parse_jsonpath
+        # First-Party
+        from mcpgateway.main import _parse_jsonpath, jsonpath_modifier
 
         _parse_jsonpath.cache_clear()
 
@@ -3292,18 +3401,21 @@ class TestNormalizeTokenTeams:
 
     def test_normalize_token_teams_none(self):
         """Test that None input returns empty list."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         assert _normalize_token_teams(None) == []
 
     def test_normalize_token_teams_empty_list(self):
         """Test that empty list input returns empty list."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         assert _normalize_token_teams([]) == []
 
     def test_normalize_token_teams_string_ids(self):
         """Test that string team IDs are passed through unchanged."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         result = _normalize_token_teams(["team_a", "team_b", "team_c"])
@@ -3311,6 +3423,7 @@ class TestNormalizeTokenTeams:
 
     def test_normalize_token_teams_dict_format(self):
         """Test that dict format with id key extracts the ID."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         result = _normalize_token_teams([{"id": "team_a", "name": "Team A"}, {"id": "team_b", "name": "Team B"}])
@@ -3318,6 +3431,7 @@ class TestNormalizeTokenTeams:
 
     def test_normalize_token_teams_mixed_format(self):
         """Test that mixed string and dict formats are handled correctly."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         result = _normalize_token_teams([{"id": "t1", "name": "Team 1"}, "t2", {"id": "t3"}])
@@ -3325,6 +3439,7 @@ class TestNormalizeTokenTeams:
 
     def test_normalize_token_teams_dict_without_id(self):
         """Test that dicts without id key are skipped."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         result = _normalize_token_teams([{"name": "No ID Team"}, {"id": "valid_team"}])
@@ -3332,6 +3447,7 @@ class TestNormalizeTokenTeams:
 
     def test_normalize_token_teams_dict_with_empty_id(self):
         """Test that dicts with empty id value are skipped."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         result = _normalize_token_teams([{"id": "", "name": "Empty ID"}, {"id": "valid"}])
@@ -3339,6 +3455,7 @@ class TestNormalizeTokenTeams:
 
     def test_normalize_token_teams_preserves_order(self):
         """Test that team order is preserved."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         result = _normalize_token_teams(["z_team", "a_team", "m_team"])
@@ -3350,6 +3467,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_with_valid_cached_payload(self):
         """Test extraction of teams from cached JWT payload."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3360,6 +3478,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_with_dict_teams_payload(self):
         """Test extraction and normalization of dict format teams."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3370,6 +3489,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_no_cached_payload_returns_empty_list(self):
         """Test that missing cached payload returns [] (public-only, secure default)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3380,6 +3500,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_no_teams_in_payload_returns_empty_list(self):
         """Test that payload without teams key returns [] (public-only, secure default)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3390,6 +3511,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_empty_teams_returns_empty_list(self):
         """Test that payload with empty teams returns empty list (not None)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3400,6 +3522,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_null_teams_non_admin_returns_empty_list(self):
         """Test that payload with teams: null (non-admin) returns [] (public-only)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3410,6 +3533,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_null_teams_admin_returns_none(self):
         """Test that payload with teams: null + is_admin=true returns None (admin bypass)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3420,6 +3544,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_invalid_tuple_format_returns_empty_list(self):
         """Test that non-tuple cached payload returns [] (public-only, secure default)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3430,6 +3555,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_short_tuple_returns_empty_list(self):
         """Test that tuple with wrong length returns [] (public-only, secure default)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3440,6 +3566,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_none_payload_in_tuple_returns_empty_list(self):
         """Test that None payload in tuple returns [] (public-only, secure default)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3454,6 +3581,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_dict_user(self):
         """Test with dict user containing email and is_admin."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3469,6 +3597,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_dict_user_sub_field(self):
         """Test that sub field is used if email is not present."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3483,6 +3612,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_object_user(self):
         """Test with user object having email and is_admin attributes."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3500,6 +3630,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_nested_is_admin(self):
         """Test that nested user.is_admin is extracted from token payload."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3514,6 +3645,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_empty_teams_disables_admin(self):
         """Test that empty teams array disables admin bypass even when is_admin is true."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3529,6 +3661,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_string_user(self):
         """Test with string user (fallback to str conversion)."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3543,6 +3676,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_none_user(self):
         """Test with None user."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3556,6 +3690,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_admin_not_in_dict(self):
         """Test that is_admin defaults to False if not present."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3569,6 +3704,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_no_jwt_returns_empty_teams(self):
         """Test that missing JWT payload returns [] for teams (public-only, secure default)."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3580,3 +3716,156 @@ class TestGetRpcFilterContext:
         assert email == "plugin_user@example.com"
         assert teams == []  # SECURITY: No JWT = public-only (secure default)
         assert is_admin is False
+
+
+# --------------------------------------------------------------------------- #
+# ASGI middleware helper for injecting request.state in tests                  #
+# --------------------------------------------------------------------------- #
+class _InjectRequestState:
+    """ASGI middleware that injects attributes into request.state.
+
+    Used by tests to simulate token_teams and team_id without running auth middleware.
+    """
+
+    def __init__(self, app, **state_attrs):
+        self.app = app
+        self.state_attrs = state_attrs
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            state = scope.setdefault("state", {})
+            state.update(self.state_attrs)
+        await self.app(scope, receive, send)
+
+
+def _make_team_scoped_client(app_fixture, token_teams, team_id):
+    """Create a TestClient with injected token_teams and team_id on request.state."""
+    # Standard
+    from unittest.mock import patch
+
+    # First-Party
+    from mcpgateway.auth import get_current_user
+    from mcpgateway.db import EmailUser
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from mcpgateway.services.permission_service import PermissionService
+    from mcpgateway.utils.verify_credentials import require_auth
+
+    mock_user = EmailUser(
+        email="team-user@example.com",
+        full_name="Team User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="test",
+    )
+
+    app_fixture.dependency_overrides[require_auth] = lambda: "team-user@example.com"
+    app_fixture.dependency_overrides[get_current_user] = lambda credentials=None, db=None: mock_user
+    app_fixture.dependency_overrides[get_current_user_with_permissions] = lambda request=None, credentials=None, jwt_token=None: {
+        "email": "team-user@example.com",
+        "full_name": "Team User",
+        "is_admin": False,
+        "ip_address": "127.0.0.1",
+        "user_agent": "test",
+    }
+
+    if not hasattr(PermissionService, "_original_check_permission"):
+        PermissionService._original_check_permission = PermissionService.check_permission
+
+    async def mock_check_permission(self, user_email, permission, **_kwargs):
+        return True
+
+    PermissionService.check_permission = mock_check_permission
+
+    wrapped = _InjectRequestState(app_fixture, token_teams=token_teams, team_id=team_id)
+    return TestClient(wrapped)
+
+
+class TestTeamScopedListVisibility:
+    """Regression tests for #3332: team-scoped tokens must see public + team resources.
+
+    Verifies that list endpoints do NOT auto-narrow team_id from token state,
+    allowing _apply_visibility_filter to use the global listing path (public + team).
+    """
+
+    @patch("mcpgateway.main.server_service.list_servers")
+    def test_list_servers_no_auto_narrow(self, mock_list, app_with_temp_db, auth_headers):
+        """GET /servers with team-scoped token must NOT auto-narrow team_id."""
+        mock_list.return_value = ([], None)
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/servers/", headers=auth_headers)
+        assert response.status_code == 200
+        mock_list.assert_called_once()
+        call_kwargs = mock_list.call_args.kwargs
+        assert call_kwargs["team_id"] is None, "team_id must be None (global listing) not auto-narrowed from token"
+        assert call_kwargs["token_teams"] == ["team-1"]
+
+    @patch("mcpgateway.main.server_service.list_servers")
+    def test_list_servers_explicit_team_id_preserved(self, mock_list, app_with_temp_db, auth_headers):
+        """GET /servers?team_id=team-1 with matching token should pass team_id through."""
+        mock_list.return_value = ([], None)
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/servers/?team_id=team-1", headers=auth_headers)
+        assert response.status_code == 200
+        call_kwargs = mock_list.call_args.kwargs
+        assert call_kwargs["team_id"] == "team-1"
+
+    def test_list_servers_team_id_mismatch_returns_403(self, app_with_temp_db, auth_headers):
+        """GET /servers?team_id=other with team-scoped token must return 403."""
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/servers/?team_id=other-team", headers=auth_headers)
+        assert response.status_code == 403
+
+    @patch("mcpgateway.main.tool_service.list_tools")
+    def test_list_tools_no_auto_narrow(self, mock_list, app_with_temp_db, auth_headers):
+        """GET /tools with team-scoped token must NOT auto-narrow team_id."""
+        mock_list.return_value = ([], None)
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/tools/", headers=auth_headers)
+        assert response.status_code == 200
+        call_kwargs = mock_list.call_args.kwargs
+        assert call_kwargs["team_id"] is None
+        assert call_kwargs["token_teams"] == ["team-1"]
+
+    @patch("mcpgateway.main.resource_service.list_resources")
+    def test_list_resources_no_auto_narrow(self, mock_list, app_with_temp_db, auth_headers):
+        """GET /resources with team-scoped token must NOT auto-narrow team_id."""
+        mock_list.return_value = ([], None)
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/resources/", headers=auth_headers)
+        assert response.status_code == 200
+        call_kwargs = mock_list.call_args.kwargs
+        assert call_kwargs["team_id"] is None
+        assert call_kwargs["token_teams"] == ["team-1"]
+
+    @patch("mcpgateway.main.prompt_service.list_prompts")
+    def test_list_prompts_no_auto_narrow(self, mock_list, app_with_temp_db, auth_headers):
+        """GET /prompts with team-scoped token must NOT auto-narrow team_id."""
+        mock_list.return_value = ([], None)
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/prompts/", headers=auth_headers)
+        assert response.status_code == 200
+        call_kwargs = mock_list.call_args.kwargs
+        assert call_kwargs["team_id"] is None
+        assert call_kwargs["token_teams"] == ["team-1"]
+
+    @patch("mcpgateway.main.gateway_service.list_gateways")
+    def test_list_gateways_no_auto_narrow(self, mock_list, app_with_temp_db, auth_headers):
+        """GET /gateways with team-scoped token must NOT auto-narrow team_id."""
+        mock_list.return_value = ([], None)
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/gateways/", headers=auth_headers)
+        assert response.status_code == 200
+        call_kwargs = mock_list.call_args.kwargs
+        assert call_kwargs["team_id"] is None
+        assert call_kwargs["token_teams"] == ["team-1"]
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_list_a2a_agents_no_auto_narrow(self, mock_service, app_with_temp_db, auth_headers):
+        """GET /a2a with team-scoped token must NOT auto-narrow team_id."""
+        mock_service.list_agents = AsyncMock(return_value=([], None))
+        client = _make_team_scoped_client(app_with_temp_db, token_teams=["team-1"], team_id="team-1")
+        response = client.get("/a2a", headers=auth_headers)
+        assert response.status_code == 200
+        call_kwargs = mock_service.list_agents.call_args.kwargs
+        assert call_kwargs["team_id"] is None
+        assert call_kwargs["token_teams"] == ["team-1"]

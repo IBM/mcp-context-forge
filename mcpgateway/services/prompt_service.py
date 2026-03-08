@@ -40,8 +40,9 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
-from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
+from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -170,7 +171,7 @@ class PromptLockConflictError(PromptError):
     """
 
 
-class PromptService:
+class PromptService(BaseService):
     """Service for managing prompt templates.
 
     Handles:
@@ -180,6 +181,8 @@ class PromptService:
     - Resource embedding
     - Active/inactive status management
     """
+
+    _visibility_model_cls = DbPrompt
 
     def __init__(self) -> None:
         """
@@ -1029,48 +1032,10 @@ class PromptService:
         if not include_inactive:
             query = query.where(DbPrompt.enabled)
 
-        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
-        # This ensures unauthenticated requests with token_teams=[] only see public prompts
-        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            if token_teams is not None:
-                team_ids = token_teams
-            elif user_email:
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                team_ids = [team.id for team in user_teams]
-            else:
-                team_ids = []
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-            # Check if this is a public-only token (empty teams array)
-            # Public-only tokens can ONLY see public resources - no owner access
-            is_public_only_token = token_teams is not None and len(token_teams) == 0
-
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)
-                access_conditions = [
-                    and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])),
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email))
-                query = query.where(or_(*access_conditions))
-            else:
-                # General access: public prompts + team prompts (+ owner prompts if not public-only token)
-                access_conditions = [
-                    DbPrompt.visibility == "public",
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(DbPrompt.owner_email == user_email)
-                if team_ids:
-                    access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
-                query = query.where(or_(*access_conditions))
-
-            if visibility:
-                query = query.where(DbPrompt.visibility == visibility)
+        if visibility:
+            query = query.where(DbPrompt.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
@@ -1399,8 +1364,8 @@ class PromptService:
         if is_public_only_token:
             return False  # Already checked public above
 
-        # Owner can always access their own prompts
-        if prompt_owner_email and prompt_owner_email == user_email:
+        # Owner can access their own private prompts
+        if visibility == "private" and prompt_owner_email and prompt_owner_email == user_email:
             return True
 
         # Team prompts: check team membership (matches list_prompts behavior)
@@ -1766,7 +1731,7 @@ class PromptService:
 
             visibility = prompt_update.visibility or prompt.visibility
             team_id = prompt_update.team_id or prompt.team_id
-            owner_email = prompt_update.owner_email or prompt.owner_email or user_email
+            owner_email = prompt.owner_email or user_email
 
             candidate_custom_name = prompt.custom_name
 
@@ -2566,7 +2531,7 @@ class PromptService:
         await self._event_service.publish_event(event)
 
     # --- Metrics ---
-    async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
+    async def aggregate_metrics(self, db: Session) -> PromptMetrics:
         """
         Aggregate metrics for all prompt invocations across all prompts.
 
@@ -2578,7 +2543,7 @@ class PromptService:
             db: Database session
 
         Returns:
-            Dict[str, Any]: Aggregated prompt metrics from raw + hourly rollups.
+            PromptMetrics: Aggregated prompt metrics from raw + hourly rollups.
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
@@ -2594,18 +2559,28 @@ class PromptService:
         if is_cache_enabled():
             cached = metrics_cache.get("prompts")
             if cached is not None:
-                return cached
+                return PromptMetrics(**cached)
 
         # Use combined raw + rollup query for full historical coverage
         # First-Party
         from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
         result = aggregate_metrics_combined(db, "prompt")
-        metrics = result.to_dict()
 
-        # Cache the result (if enabled)
+        metrics = PromptMetrics(
+            total_executions=result.total_executions,
+            successful_executions=result.successful_executions,
+            failed_executions=result.failed_executions,
+            failure_rate=result.failure_rate,
+            min_response_time=result.min_response_time,
+            max_response_time=result.max_response_time,
+            avg_response_time=result.avg_response_time,
+            last_execution_time=result.last_execution_time,
+        )
+
+        # Cache the result as dict for serialization compatibility (if enabled)
         if is_cache_enabled():
-            metrics_cache.set("prompts", metrics)
+            metrics_cache.set("prompts", metrics.model_dump())
 
         return metrics
 

@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import LLMModel, LLMProvider, LLMProviderType
 from mcpgateway.llm_provider_configs import PROVIDER_CONFIGS
@@ -298,6 +299,10 @@ class LLMProviderNameConflictError(LLMProviderError):
         super().__init__(message)
 
 
+class LLMProviderValidationError(LLMProviderError, ValueError):
+    """Raised when provider payload validation fails."""
+
+
 class LLMModelNotFoundError(LLMProviderError):
     """Raised when a requested LLM model is not found."""
 
@@ -316,6 +321,22 @@ class LLMProviderService:
     def __init__(self) -> None:
         """Initialize a new LLMProviderService instance."""
         self._initialized = False
+
+    @staticmethod
+    def _validate_provider_api_base(api_base: Optional[str]) -> None:
+        """Validate provider api_base against core URL + SSRF rules.
+
+        Args:
+            api_base: Provider base URL to validate.
+
+        Raises:
+            LLMProviderValidationError: If URL fails core or SSRF validation.
+        """
+        if api_base:
+            try:
+                SecurityValidator.validate_url(api_base, "Provider API base URL")
+            except ValueError as exc:
+                raise LLMProviderValidationError(str(exc)) from exc
 
     async def initialize(self) -> None:
         """Initialize the LLM provider service."""
@@ -362,6 +383,8 @@ class LLMProviderService:
         encrypted_api_key = None
         if provider_data.api_key:
             encrypted_api_key = encode_auth({"api_key": provider_data.api_key})
+
+        self._validate_provider_api_base(provider_data.api_base)
 
         # Create provider
         provider = LLMProvider(
@@ -518,6 +541,7 @@ class LLMProviderService:
         if provider_data.api_key is not None:
             provider.api_key = encode_auth({"api_key": provider_data.api_key})
         if provider_data.api_base is not None:
+            self._validate_provider_api_base(provider_data.api_base)
             provider.api_base = provider_data.api_base
         if provider_data.api_version is not None:
             provider.api_version = provider_data.api_version
@@ -895,6 +919,7 @@ class LLMProviderService:
                 # Check OpenAI models endpoint
                 headers = {"Authorization": f"Bearer {api_key}"}
                 base_url = provider.api_base or "https://api.openai.com/v1"
+                self._validate_provider_api_base(base_url)
                 response = await client.get(f"{base_url}/models", headers=headers, timeout=10.0)
                 if response.status_code == 200:
                     status = HealthStatus.HEALTHY
@@ -905,6 +930,7 @@ class LLMProviderService:
             elif provider.provider_type == LLMProviderType.OLLAMA:
                 # Check Ollama health endpoint
                 base_url = provider.api_base or "http://localhost:11434"
+                self._validate_provider_api_base(base_url)
                 # Handle OpenAI-compatible endpoint (/v1)
                 if base_url.rstrip("/").endswith("/v1"):
                     # Use OpenAI-compatible models endpoint
@@ -921,12 +947,16 @@ class LLMProviderService:
             else:
                 # Generic check - just verify connectivity
                 if provider.api_base:
+                    self._validate_provider_api_base(provider.api_base)
                     response = await client.get(provider.api_base, timeout=5.0)
                     status = HealthStatus.HEALTHY if response.status_code < 500 else HealthStatus.UNHEALTHY
                 else:
                     status = HealthStatus.UNKNOWN
                     error_msg = "No API base URL configured"
 
+        except ValueError as e:
+            status = HealthStatus.UNHEALTHY
+            error_msg = str(e)
         except httpx.TimeoutException:
             status = HealthStatus.UNHEALTHY
             error_msg = "Connection timeout"

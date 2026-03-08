@@ -135,6 +135,14 @@ async def test_execute_tool_nl_test_cases_transport(monkeypatch, path, expected_
     monkeypatch.setattr(svc, "query_tool_auth", lambda _tool_id, _db: {"Authorization": "Bearer t"})
     monkeypatch.setattr(svc, "TOOLOPS_LLM_CONFIG", svc.LLMConfig(provider="ollama", config={}))
 
+    # Use passthrough constructors that skip Pydantic validation so the test
+    # can verify transport selection logic without requiring a real command
+    # for the stdio fallback path.
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(svc, "MCPServerConfig", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(svc, "MCPClientConfig", lambda **kwargs: SimpleNamespace(**kwargs))
+
     created_configs = []
 
     class DummyChatService:

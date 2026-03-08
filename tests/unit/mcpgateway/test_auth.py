@@ -231,32 +231,22 @@ class TestGetCurrentUser:
                 assert exc_info.value.detail == "Token has been revoked"
 
     @pytest.mark.asyncio
-    async def test_token_revocation_check_failure_logs_warning(self, caplog):
-        """Test that token revocation check failure logs warning but doesn't fail auth."""
+    async def test_token_revocation_check_failure_denies_access(self, caplog):
+        """Test that token revocation check failure denies access (fail-secure)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt_with_jti")
 
         jwt_payload = {"sub": "test@example.com", "jti": "token_id_456", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
-
-        mock_user = EmailUser(
-            email="test@example.com",
-            password_hash="hash",
-            full_name="Test User",
-            is_admin=False,
-            is_active=True,
-            email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
 
         caplog.set_level(logging.WARNING)
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._check_token_revoked_sync", side_effect=Exception("Database error")):
-                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):
                     with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
-                        user = await get_current_user(credentials=credentials)
+                        with pytest.raises(HTTPException) as exc_info:
+                            await get_current_user(credentials=credentials)
 
-                        assert user.email == mock_user.email
+                        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
                         assert "Token revocation check failed for JTI token_id_456" in caplog.text
 
     @pytest.mark.asyncio
@@ -1205,20 +1195,21 @@ class TestUpdateApiTokenLastUsed:
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     with patch("mcpgateway.auth._update_api_token_last_used_sync") as mock_update:
-                        with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
-                            user = await get_current_user(credentials=credentials, request=request)
+                        with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                            with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
+                                user = await get_current_user(credentials=credentials, request=request)
 
-                            # Verify user was authenticated
-                            assert user.email == "api@example.com"
+                                # Verify user was authenticated
+                                assert user.email == "api@example.com"
 
-                            # Verify auth_method was set to api_token
-                            assert request.state.auth_method == "api_token"
+                                # Verify auth_method was set to api_token
+                                assert request.state.auth_method == "api_token"
 
-                            # Verify JTI was stored in request.state
-                            assert request.state.jti == "jti-api-456"
+                                # Verify JTI was stored in request.state
+                                assert request.state.jti == "jti-api-456"
 
-                            # Verify last_used update was called
-                            mock_update.assert_called_once_with("jti-api-456")
+                                # Verify last_used update was called
+                                mock_update.assert_called_once_with("jti-api-456")
 
     @pytest.mark.asyncio
     async def test_api_token_last_used_update_failure_continues_auth(self, monkeypatch):
@@ -1298,14 +1289,15 @@ class TestUpdateApiTokenLastUsed:
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value="team_123"):
-                    user = await get_current_user(credentials=credentials, request=request)
+                    with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                        user = await get_current_user(credentials=credentials, request=request)
 
-                    # Verify user was authenticated
-                    assert user.email == "test@example.com"
+                        # Verify user was authenticated
+                        assert user.email == "test@example.com"
 
-                    # Verify JTI was stored in request.state
-                    assert hasattr(request.state, "jti")
-                    assert request.state.jti == "jti-store-test-789"
+                        # Verify JTI was stored in request.state
+                        assert hasattr(request.state, "jti")
+                        assert request.state.jti == "jti-store-test-789"
 
     @pytest.mark.asyncio
     async def test_legacy_api_token_last_used_updated(self, monkeypatch):
@@ -1340,18 +1332,19 @@ class TestUpdateApiTokenLastUsed:
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     with patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True):
                         with patch("mcpgateway.auth._update_api_token_last_used_sync") as mock_update:
-                            with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
-                                user = await get_current_user(credentials=credentials, request=request)
+                            with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                                with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
+                                    user = await get_current_user(credentials=credentials, request=request)
 
-                                # Verify user was authenticated
-                                assert user.email == "legacy@example.com"
+                                    # Verify user was authenticated
+                                    assert user.email == "legacy@example.com"
 
-                                # Verify auth_method was set to api_token
-                                assert request.state.auth_method == "api_token"
+                                    # Verify auth_method was set to api_token
+                                    assert request.state.auth_method == "api_token"
 
-                                # Verify last_used update was called for legacy token
-                                assert mock_update.call_count == 1
-                                mock_update.assert_called_with("jti-legacy-999")
+                                    # Verify last_used update was called for legacy token
+                                    assert mock_update.call_count == 1
+                                    mock_update.assert_called_with("jti-legacy-999")
 
     @pytest.mark.asyncio
     async def test_legacy_api_token_last_used_update_failure_continues_auth(self, monkeypatch):
@@ -1767,6 +1760,7 @@ class TestSetAuthMethodFromPayload:
             patch("mcpgateway.auth._is_api_token_jti_sync", return_value=False),
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
         ):
             user = await get_current_user(credentials=credentials, request=request)
 
@@ -1835,8 +1829,22 @@ class TestPluginAuthHook:
             metadata={"auth_method": "custom_sso"},
         )
         mock_pm.invoke_hook = AsyncMock(return_value=(plugin_result, {"ctx": "data"}))
+        db_user = EmailUser(
+            email="plugin@example.com",
+            password_hash="h",
+            full_name="Plugin User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
 
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=db_user),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert user.email == "plugin@example.com"
@@ -2122,6 +2130,7 @@ class TestCachePathBranches:
             patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
         ):
             user = await get_current_user(credentials=credentials, request=request)
 
@@ -2145,6 +2154,7 @@ class TestCachePathBranches:
             patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(side_effect=RuntimeError("cache down"))),
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
         ):
             user = await get_current_user(credentials=credentials)
 
@@ -2658,11 +2668,22 @@ class TestPluginAuthHookEdgeCases:
             metadata=None,  # No metadata
         )
         mock_pm.invoke_hook = AsyncMock(return_value=(plugin_result, None))  # No context_table
+        db_user = EmailUser(
+            email="plugin@example.com",
+            password_hash="h",
+            full_name="Plugin User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
 
         with (
             patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
             patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
             patch("mcpgateway.auth._inject_userinfo_instate") as mock_inject,
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=db_user),
         ):
             user = await get_current_user(credentials=credentials, request=request)
 
@@ -2692,8 +2713,22 @@ class TestPluginAuthHookEdgeCases:
             metadata={"other_key": "value"},  # metadata present but no auth_method
         )
         mock_pm.invoke_hook = AsyncMock(return_value=(plugin_result, None))
+        db_user = EmailUser(
+            email="plugin@example.com",
+            password_hash="h",
+            full_name="Plugin User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
 
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=db_user),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert user.email == "plugin@example.com"
@@ -2962,11 +2997,182 @@ class TestSessionTokenBranches:
                 None,
             )
         )
+        db_user = EmailUser(
+            email="plugin@example.com",
+            password_hash="h",
+            full_name="Plugin User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
 
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=db_user),
+        ):
             user = await get_current_user(credentials=credentials, request=None)
 
         assert user.email == "plugin@example.com"
+
+    @pytest.mark.asyncio
+    async def test_plugin_auth_ignores_plugin_admin_claim_and_uses_db_user(self):
+        """Plugin-provided is_admin must not override database admin status."""
+        # First-Party
+        from mcpgateway.plugins.framework import PluginResult
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+        request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(return_value=True)
+        mock_pm.config = SimpleNamespace(plugin_settings=SimpleNamespace(include_user_info=False))
+        mock_pm.invoke_hook = AsyncMock(
+            return_value=(
+                PluginResult(
+                    modified_payload={"email": "plugin@example.com", "is_admin": True},
+                    continue_processing=False,
+                    metadata={"auth_method": "plugin"},
+                ),
+                None,
+            )
+        )
+
+        db_user = EmailUser(
+            email="plugin@example.com",
+            password_hash="h",
+            full_name="Plugin User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=db_user),
+        ):
+            user = await get_current_user(credentials=credentials, request=request)
+
+        assert user.is_admin is False
+
+    @pytest.mark.asyncio
+    async def test_plugin_auth_missing_user_rejected_when_require_user_in_db_enabled(self, monkeypatch):
+        """Missing DB users are rejected when REQUIRE_USER_IN_DB is enabled."""
+        # First-Party
+        from mcpgateway.plugins.framework import PluginResult
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+        request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(return_value=True)
+        mock_pm.config = SimpleNamespace(plugin_settings=SimpleNamespace(include_user_info=False))
+        mock_pm.invoke_hook = AsyncMock(
+            return_value=(
+                PluginResult(
+                    modified_payload={"email": "missing@example.com", "is_admin": True},
+                    continue_processing=False,
+                    metadata={"auth_method": "plugin"},
+                ),
+                None,
+            )
+        )
+
+        monkeypatch.setattr(settings, "require_user_in_db", True)
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=None),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await get_current_user(credentials=credentials, request=request)
+
+        assert exc.value.status_code == 401
+        assert exc.value.detail == "User not found in database"
+
+    @pytest.mark.asyncio
+    async def test_plugin_auth_existing_db_inactive_user_rejected(self):
+        """Inactive DB users must be rejected even when plugin auth succeeds."""
+        # First-Party
+        from mcpgateway.plugins.framework import PluginResult
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+        request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(return_value=True)
+        mock_pm.config = SimpleNamespace(plugin_settings=SimpleNamespace(include_user_info=False))
+        mock_pm.invoke_hook = AsyncMock(
+            return_value=(
+                PluginResult(
+                    modified_payload={"email": "disabled@example.com", "is_admin": True},
+                    continue_processing=False,
+                    metadata={"auth_method": "plugin"},
+                ),
+                None,
+            )
+        )
+
+        db_user = EmailUser(
+            email="disabled@example.com",
+            password_hash="h",
+            full_name="Disabled User",
+            is_admin=False,
+            is_active=False,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=db_user),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await get_current_user(credentials=credentials, request=request)
+
+        assert exc.value.status_code == 401
+        assert exc.value.detail == "Account disabled"
+
+    @pytest.mark.asyncio
+    async def test_plugin_auth_missing_user_defaults_to_non_admin_when_allowed(self, monkeypatch):
+        """Missing DB users can authenticate as non-admin when DB-only mode is disabled."""
+        # First-Party
+        from mcpgateway.plugins.framework import PluginResult
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+        request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(return_value=True)
+        mock_pm.config = SimpleNamespace(plugin_settings=SimpleNamespace(include_user_info=False))
+        mock_pm.invoke_hook = AsyncMock(
+            return_value=(
+                PluginResult(
+                    modified_payload={"email": "new@example.com", "is_admin": True, "full_name": "New User"},
+                    continue_processing=False,
+                    metadata={"auth_method": "plugin"},
+                ),
+                None,
+            )
+        )
+
+        monkeypatch.setattr(settings, "require_user_in_db", False)
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=None),
+        ):
+            user = await get_current_user(credentials=credentials, request=request)
+
+        assert user.email == "new@example.com"
+        assert user.is_admin is False
 
     @pytest.mark.asyncio
     async def test_cache_session_token_falls_through_and_resolves_teams(self, monkeypatch):
@@ -3076,3 +3282,12 @@ class TestSessionTokenBranches:
 
         assert user.email == "user@example.com"
         mock_cache.set_user_teams.assert_called_once()
+
+
+def test_resolve_plugin_authenticated_user_sync_returns_none_for_missing_email():
+    """Plugin-auth helper should reject empty or missing email claims."""
+    # First-Party
+    import mcpgateway.auth as auth_module
+
+    assert auth_module._resolve_plugin_authenticated_user_sync({}) is None
+    assert auth_module._resolve_plugin_authenticated_user_sync({"email": "   "}) is None
