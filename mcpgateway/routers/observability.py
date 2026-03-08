@@ -71,7 +71,7 @@ async def list_traces(
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Result offset"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ):
     """List traces with optional filtering.
 
@@ -148,7 +148,7 @@ async def query_traces_advanced(
     # Third-Party
     request_body: dict,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ):
     """Advanced trace querying with attribute filtering.
 
@@ -258,7 +258,7 @@ async def query_traces_advanced(
 
 @router.get("/traces/{trace_id}", response_model=ObservabilityTraceWithSpans)
 @require_permission("admin.system_config")
-async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(get_current_user_with_permissions)):
+async def get_trace(trace_id: str, db: Session = Depends(get_db), current_user_ctx=Depends(get_current_user_with_permissions)):
     """Get a trace by ID with all its spans and events.
 
     Returns a complete trace with all nested spans and their events,
@@ -317,7 +317,7 @@ async def list_spans(
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Result offset"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ):
     """List spans with optional filtering.
 
@@ -351,7 +351,7 @@ async def list_spans(
         ...         return [FakeSpan()]
         >>> obs.ObservabilityService = FakeService
         >>> async def run_list_spans():
-        ...     spans = await obs.list_spans(db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     spans = await obs.list_spans(db=None, current_user_ctx={"email": settings.platform_admin_email, "db": None})
         ...     return spans[0].span_id
         >>> asyncio.run(run_list_spans())
         's1'
@@ -375,7 +375,7 @@ async def list_spans(
 async def cleanup_old_traces(
     days: int = Query(7, ge=1, description="Delete traces older than this many days"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ):
     """Delete traces older than a specified number of days.
 
@@ -414,7 +414,7 @@ async def cleanup_old_traces(
 async def get_stats(
     hours: int = Query(24, ge=1, le=168, description="Time window in hours"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ):
     """Get observability statistics.
 
@@ -476,7 +476,7 @@ async def export_traces(
     request_body: dict,
     format: str = Query("json", description="Export format (json, csv, ndjson)"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ):
     """Export traces in various formats.
 
@@ -654,7 +654,7 @@ async def export_traces(
 async def get_query_performance(
     hours: int = Query(24, ge=1, le=168, description="Time window in hours"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    current_user_ctx=Depends(get_current_user_with_permissions),
 ):
     """Get query performance analytics.
 
