@@ -297,6 +297,36 @@ class TestCacheInvalidationSubscriber:
         assert cache_subscriber._process_invalidation.await_count == 1
 
     @pytest.mark.asyncio
+    async def test_listen_loop_forwards_channel_to_process_invalidation(self, cache_subscriber, monkeypatch):
+        """Regression: _listen_loop must extract and forward the pubsub channel.
+
+        Without this, auth invalidation messages would arrive with channel=""
+        and be rejected by the channel-origin guard, silently reintroducing
+        the cross-replica auth cache bug.
+        """
+        stop_event = asyncio.Event()
+
+        class FakePubSub:
+            def __init__(self):
+                self.called = False
+
+            async def get_message(self, **_kwargs):
+                if not self.called:
+                    self.called = True
+                    stop_event.set()
+                    return {"type": "message", "data": b"user:alice@test.com", "channel": b"mcpgw:auth:invalidate"}
+                return None
+
+        cache_subscriber._pubsub = FakePubSub()
+        cache_subscriber._stop_event = stop_event
+        cache_subscriber._started = True
+
+        monkeypatch.setattr(cache_subscriber, "_process_invalidation", AsyncMock())
+
+        await cache_subscriber._listen_loop()
+        cache_subscriber._process_invalidation.assert_awaited_once_with("user:alice@test.com", channel="mcpgw:auth:invalidate")
+
+    @pytest.mark.asyncio
     async def test_listen_loop_timeout(self, cache_subscriber):
         stop_event = asyncio.Event()
 
@@ -954,3 +984,76 @@ class TestAuthCacheInvalidationSubscriber:
             await subscriber._process_invalidation("registry:tools", channel="mcpgw:cache:invalidate")
 
         assert "tools:hash1" not in mock_registry_cache._cache
+
+    @pytest.mark.asyncio
+    async def test_listen_loop_auth_message_evicts_cache_end_to_end(self):
+        """End-to-end: auth pubsub message flows through _listen_loop and evicts auth cache.
+
+        This tests the full path: _listen_loop extracts channel from the Redis
+        pubsub message, forwards it to _process_invalidation, which dispatches
+        to _process_auth_invalidation, which evicts the auth cache entry.
+        A regression that drops channel forwarding would cause this test to fail.
+        """
+        subscriber = CacheInvalidationSubscriber()
+        stop_event = asyncio.Event()
+
+        class FakePubSub:
+            def __init__(self):
+                self.called = False
+
+            async def get_message(self, **_kwargs):
+                if not self.called:
+                    self.called = True
+                    stop_event.set()
+                    return {"type": "message", "data": b"user:alice@test.com", "channel": b"mcpgw:auth:invalidate"}
+                return None
+
+        subscriber._pubsub = FakePubSub()
+        subscriber._stop_event = stop_event
+        subscriber._started = True
+
+        mock_auth = create_mock_auth_cache(
+            user_cache={"alice@test.com": "user-data", "bob@test.com": "user-data"},
+            context_cache={"alice@test.com:jti1": "ctx", "bob@test.com:jti2": "ctx"},
+            team_cache={"alice@test.com:team1": "team", "bob@test.com:team2": "team"},
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._listen_loop()
+
+        # alice's caches cleared, bob's untouched
+        assert "alice@test.com" not in mock_auth._user_cache
+        assert "bob@test.com" in mock_auth._user_cache
+        assert "alice@test.com:jti1" not in mock_auth._context_cache
+        assert "bob@test.com:jti2" in mock_auth._context_cache
+
+    @pytest.mark.asyncio
+    async def test_listen_loop_auth_message_rejected_on_wrong_channel_end_to_end(self):
+        """End-to-end deny-path: auth message on cache channel is ignored by _listen_loop."""
+        subscriber = CacheInvalidationSubscriber()
+        stop_event = asyncio.Event()
+
+        class FakePubSub:
+            def __init__(self):
+                self.called = False
+
+            async def get_message(self, **_kwargs):
+                if not self.called:
+                    self.called = True
+                    stop_event.set()
+                    return {"type": "message", "data": b"user:alice@test.com", "channel": b"mcpgw:cache:invalidate"}
+                return None
+
+        subscriber._pubsub = FakePubSub()
+        subscriber._stop_event = stop_event
+        subscriber._started = True
+
+        mock_auth = create_mock_auth_cache(
+            user_cache={"alice@test.com": "user-data"},
+        )
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._listen_loop()
+
+        # Cache must NOT have been evicted (wrong channel)
+        assert "alice@test.com" in mock_auth._user_cache
