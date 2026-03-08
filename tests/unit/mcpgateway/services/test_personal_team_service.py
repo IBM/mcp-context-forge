@@ -50,7 +50,7 @@ class TestPersonalTeamService:
         team = MagicMock(spec=EmailTeam)
         team.id = "personal-team-123"
         team.name = "Test User's Team"
-        team.slug = "personal-testuser-example-com"
+        team.slug = "test-users-team"
         team.description = "Personal workspace for testuser@example.com"
         team.created_by = "testuser@example.com"
         team.is_personal = True
@@ -121,7 +121,7 @@ class TestPersonalTeamService:
             assert result == mock_team
             MockTeam.assert_called_once_with(
                 name="Test User's Team",
-                slug="personal-testuser-example-com",
+                slug="test-users-team",
                 description="Personal workspace for testuser@example.com",
                 created_by="testuser@example.com",
                 is_personal=True,
@@ -168,11 +168,10 @@ class TestPersonalTeamService:
 
             result = await service.create_personal_team(user)
 
-            # Verify slug generation handles special characters
+            # Verify slug generation with default empty prefix uses slugify(team_name)
             MockTeam.assert_called_once()
             call_args = MockTeam.call_args[1]
-            # The '+' character is preserved in the slug
-            assert call_args["slug"] == "personal-test+special-user-sub-example-com"
+            assert call_args["slug"] == "special-users-team"
             assert call_args["name"] == "Special User's Team"
 
     @pytest.mark.asyncio
@@ -407,7 +406,56 @@ class TestPersonalTeamService:
 
             assert result == mock_team
             call_args = MockTeam.call_args[1]
-            expected_slug = "personal-very-long-email-address-with-many-dots-subdomain-example-com"
+            # Default empty prefix: slug derived from display name
+            assert call_args["slug"] == "long-email-users-team"
+
+    @pytest.mark.asyncio
+    async def test_create_personal_team_with_prefix(self, service, mock_db, mock_user):
+        """Test personal team creation uses PERSONAL_TEAM_PREFIX when set."""
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        with (
+            patch("mcpgateway.services.personal_team_service.EmailTeam") as MockTeam,
+            patch("mcpgateway.services.personal_team_service.EmailTeamMember"),
+            patch("mcpgateway.services.personal_team_service.settings") as mock_settings,
+        ):
+            mock_settings.personal_team_prefix = "workspace"
+            mock_team = MagicMock()
+            mock_team.id = "prefixed-team-id"
+            MockTeam.return_value = mock_team
+
+            result = await service.create_personal_team(mock_user)
+
+            assert result == mock_team
+            call_args = MockTeam.call_args[1]
+            assert call_args["slug"] == "workspace-testuser-example-com"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "raw_prefix,expected_slug",
+        [
+            ("   ", "test-users-team"),  # whitespace-only falls back to display name
+            ("!!!", "test-users-team"),  # punctuation-only slugifies to empty, falls back
+            ("Team Ops!", "team-ops-testuser-example-com"),  # normalized to valid slug prefix
+        ],
+    )
+    async def test_create_personal_team_prefix_normalization(self, service, mock_db, mock_user, raw_prefix, expected_slug):
+        """Test that prefix is normalized via slugify before use."""
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        with (
+            patch("mcpgateway.services.personal_team_service.EmailTeam") as MockTeam,
+            patch("mcpgateway.services.personal_team_service.EmailTeamMember"),
+            patch("mcpgateway.services.personal_team_service.settings") as mock_settings,
+        ):
+            mock_settings.personal_team_prefix = raw_prefix
+            mock_team = MagicMock()
+            mock_team.id = "norm-team-id"
+            MockTeam.return_value = mock_team
+
+            await service.create_personal_team(mock_user)
+
+            call_args = MockTeam.call_args[1]
             assert call_args["slug"] == expected_slug
 
     @pytest.mark.asyncio

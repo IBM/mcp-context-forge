@@ -73,7 +73,7 @@ Before using the API, you need to:
 
 ## Authentication
 
-Most API requests require JWT Bearer token authentication (public endpoints include `/health` and `/ready`). Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) also require auth by default. The `/metrics` endpoint requires `admin.metrics` permission.
+Most API requests require JWT Bearer token authentication (public endpoints include `/health` and `/ready`). Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) also require auth by default. The `/metrics` endpoint requires `admin.metrics` permission. The `/metrics/prometheus` Prometheus scrape endpoint requires JWT authentication and is disabled by default (`ENABLE_METRICS=false`); see the Prometheus Metrics section in `.env.example` for setup instructions.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint

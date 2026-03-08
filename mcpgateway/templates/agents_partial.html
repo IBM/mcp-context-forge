@@ -3,7 +3,8 @@
   <thead class="bg-gray-50 dark:bg-gray-700">
     <tr>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
-      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">ID</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12">S. No.</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24">Agent ID</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Endpoint</th>
@@ -52,7 +53,8 @@
             {% endif %}
           </div>
         </td>
-        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300 w-12">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
+        <td class="px-6 py-4 whitespace-normal break-all text-sm font-medium text-gray-900 dark:text-gray-300 max-w-32">{{ agent.id }}</td>
         <td class="px-6 py-4 whitespace-nowrap">
           <div class="text-sm font-medium text-gray-900 dark:text-gray-200">{{ agent.name }}</div>
         </td>
@@ -100,6 +102,7 @@
 <div id="agents-pagination-controls" hx-swap-oob="true">
   {% set base_url = root_path + '/admin/a2a/partial' %}
   {% set hx_target = '#agents-table' %}
+  {% set hx_swap = 'outerHTML' %}
   {% set hx_indicator = '#agents-loading' %}
   {% set table_name = 'agents' %}
   {% set query_params = query_params if query_params is defined else {'include_inactive': include_inactive} %}

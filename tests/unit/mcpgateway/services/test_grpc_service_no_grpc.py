@@ -15,7 +15,25 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import GrpcService as DbGrpcService
 from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceUpdate
+from mcpgateway.services import grpc_service as grpc_service_module
 from mcpgateway.services.grpc_service import GrpcService, GrpcServiceError, GrpcServiceNameConflictError, GrpcServiceNotFoundError
+
+_ORIGINAL_VALIDATE_GRPC_TARGET = grpc_service_module._validate_grpc_target
+_ORIGINAL_VALIDATE_TLS_PATH = grpc_service_module._validate_tls_path
+
+
+@pytest.fixture(autouse=True)
+def _skip_grpc_target_validation(monkeypatch):
+    """Disable SSRF target validation for unit tests that use localhost targets."""
+    monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _target: None)
+
+
+@pytest.fixture(autouse=True)
+def _skip_tls_path_validation(monkeypatch):
+    """Disable TLS path validation for unit tests."""
+    from pathlib import Path
+
+    monkeypatch.setattr("mcpgateway.services.grpc_service._validate_tls_path", lambda path_str, label="TLS path": Path(path_str).resolve())
 
 
 @pytest.fixture
@@ -570,6 +588,113 @@ async def test_invoke_method_error_path(service, db):
 
 
 @pytest.mark.asyncio
+async def test_invoke_method_validates_tls_paths_when_configured(service, db):
+    """Invoke path should validate both TLS cert and key paths before creating endpoint."""
+    # Standard
+    from pathlib import Path
+
+    db_service = DbGrpcService(
+        id="svc-1",
+        name="svc",
+        slug="svc",
+        target="localhost:50051",
+        description="desc",
+        reflection_enabled=False,
+        tls_enabled=True,
+        tls_cert_path="/tmp/cert.pem",
+        tls_key_path="/tmp/key.pem",
+        grpc_metadata={},
+        enabled=True,
+        reachable=True,
+        service_count=0,
+        method_count=0,
+        discovered_services={"pkg.Service": {"methods": []}},
+        last_reflection=None,
+        tags=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=1,
+        visibility="public",
+    )
+    db.execute.return_value = _mock_execute_scalar(db_service)
+
+    class FakeEndpoint:
+        def __init__(self, **_kwargs):
+            self._services = None
+
+        async def start(self):
+            return None
+
+        async def invoke(self, _service_name, _method, _request_data):
+            return {"ok": True}
+
+        async def close(self):
+            return None
+
+    with (
+        patch("mcpgateway.services.grpc_service._validate_tls_path", side_effect=lambda path_str, _label="TLS path": Path(path_str).resolve()) as mock_validate_tls,
+        patch("mcpgateway.translate_grpc.GrpcEndpoint", FakeEndpoint),
+    ):
+        result = await service.invoke_method(db, "svc-1", "pkg.Service.Ping", {"a": 1})
+
+    assert result["ok"] is True
+    assert mock_validate_tls.call_count == 2
+
+
+def test_validate_grpc_target_enforces_ssrf_rules(monkeypatch):
+    """Directly validate SSRF checks for gRPC target parsing and network controls."""
+    monkeypatch.setattr("mcpgateway.config.settings.ssrf_allow_localhost", False, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.ssrf_allow_private_networks", False, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.ssrf_allowed_networks", [], raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.ssrf_blocked_networks", ["169.254.0.0/16", "invalid-network"], raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.ssrf_blocked_hosts", ["blocked.example"], raising=False)
+
+    with pytest.raises(GrpcServiceError, match="Empty gRPC target address"):
+        _ORIGINAL_VALIDATE_GRPC_TARGET(":50051")
+    with pytest.raises(GrpcServiceError, match="hostname 'blocked.example' is blocked"):
+        _ORIGINAL_VALIDATE_GRPC_TARGET("blocked.example:50051")
+    with pytest.raises(GrpcServiceError, match="localhost not allowed"):
+        _ORIGINAL_VALIDATE_GRPC_TARGET("localhost:50051")
+    with pytest.raises(GrpcServiceError, match="network: 169.254.0.0/16"):
+        _ORIGINAL_VALIDATE_GRPC_TARGET("169.254.1.10:50051")
+    with pytest.raises(GrpcServiceError, match="loopback not allowed"):
+        _ORIGINAL_VALIDATE_GRPC_TARGET("127.0.0.1:50051")
+    with pytest.raises(GrpcServiceError, match="reserved/multicast"):
+        _ORIGINAL_VALIDATE_GRPC_TARGET("224.0.0.1:50051")
+    with pytest.raises(GrpcServiceError, match="private network not allowed"):
+        _ORIGINAL_VALIDATE_GRPC_TARGET("10.2.3.4:50051")
+    monkeypatch.setattr("mcpgateway.config.settings.ssrf_allowed_networks", ["bad-cidr"], raising=False)
+    with pytest.raises(GrpcServiceError, match="private network not allowed"):
+        _ORIGINAL_VALIDATE_GRPC_TARGET("10.9.8.7:50051")
+
+    # Public address should pass (also exercises invalid blocked-network entry skip).
+    _ORIGINAL_VALIDATE_GRPC_TARGET("8.8.8.8:50051")
+
+    # Allow localhost and specific private ranges.
+    monkeypatch.setattr("mcpgateway.config.settings.ssrf_allow_localhost", True, raising=False)
+    monkeypatch.setattr("mcpgateway.config.settings.ssrf_allowed_networks", ["10.0.0.0/8"], raising=False)
+    _ORIGINAL_VALIDATE_GRPC_TARGET("localhost:50051")
+    _ORIGINAL_VALIDATE_GRPC_TARGET("127.0.0.1:50051")
+    _ORIGINAL_VALIDATE_GRPC_TARGET("10.2.3.4:50051")
+
+    # Global private-network allow switch also permits private destinations.
+    monkeypatch.setattr("mcpgateway.config.settings.ssrf_allow_private_networks", True, raising=False)
+    _ORIGINAL_VALIDATE_GRPC_TARGET("192.168.1.10:50051")
+
+
+def test_validate_tls_path_allows_expected_prefixes_and_blocks_other_paths():
+    """TLS path validator should accept configured certificate roots and block path escapes."""
+    # Standard
+    from pathlib import Path
+
+    allowed = _ORIGINAL_VALIDATE_TLS_PATH(str(Path.cwd().joinpath("certs", "client.pem")), "TLS cert path")
+    assert allowed.is_relative_to(Path.cwd().joinpath("certs").resolve())
+
+    with pytest.raises(GrpcServiceError, match="outside allowed certificate directories"):
+        _ORIGINAL_VALIDATE_TLS_PATH("/tmp/client.pem", "TLS cert path")
+
+
+@pytest.mark.asyncio
 async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
     from mcpgateway.services import grpc_service as module
 
@@ -766,6 +891,65 @@ async def test_perform_reflection_tls_default_creds(monkeypatch, service, db):
     )
 
     await service._perform_reflection(db, db_service)
+    assert db_service.reachable is True
+
+
+@pytest.mark.asyncio
+async def test_perform_reflection_tls_reads_cert_and_key(monkeypatch, service, db):
+    """TLS reflection should read both cert and key when explicit paths are configured."""
+    from mcpgateway.services import grpc_service as module
+
+    class FakeChannel:
+        def close(self):
+            return None
+
+    module.grpc = SimpleNamespace(
+        secure_channel=lambda _target, _creds: FakeChannel(),
+        ssl_channel_credentials=lambda **_kwargs: "creds",
+    )
+
+    class FakeRequest:
+        def __init__(self, list_services=None, file_containing_symbol=None):
+            self.list_services = list_services
+            self.file_containing_symbol = file_containing_symbol
+
+    class FakeStub:
+        def __init__(self, _channel):
+            return None
+
+        def ServerReflectionInfo(self, _requests):
+            return iter([])
+
+    monkeypatch.setattr(module, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=FakeRequest))
+    monkeypatch.setattr(module, "reflection_pb2_grpc", SimpleNamespace(ServerReflectionStub=FakeStub))
+
+    db_service = DbGrpcService(
+        id="svc-1",
+        name="svc",
+        slug="svc",
+        target="localhost:50051",
+        description="desc",
+        reflection_enabled=True,
+        tls_enabled=True,
+        tls_cert_path="/certs/client.crt",
+        tls_key_path="/certs/client.key",
+        grpc_metadata={},
+        enabled=True,
+        reachable=False,
+        service_count=0,
+        method_count=0,
+        discovered_services={},
+        last_reflection=None,
+        tags=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=1,
+        visibility="public",
+    )
+
+    with patch("mcpgateway.services.grpc_service.Path.read_bytes", side_effect=[b"cert", b"key"]):
+        await service._perform_reflection(db, db_service)
+
     assert db_service.reachable is True
 
 

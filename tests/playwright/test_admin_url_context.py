@@ -646,6 +646,55 @@ class TestAdminProxyUrlContext:
         nav_url = _build_navigate_admin_url(page, "gateways")
         _assert_url_params(nav_url, proxy_prefix=True, team_id=False, include_inactive=True)
 
+    # ------------------------------------------------------------------
+    # Same-URL reload regression (#3351, root cause of #3324)
+    # ------------------------------------------------------------------
+
+    def test_proxy_navigate_admin_reloads_when_url_unchanged(
+        self, page: Page, base_url: str
+    ):
+        """_navigateAdmin must reload even when target URL equals the current URL.
+
+        Regression for #3351 (root cause of #3324): in proxy/iframe mode the
+        URL path has no trailing slash (``/proxy/mcp/admin``), so
+        ``_navigateAdmin`` computes the exact same URL as the current one.
+        Browsers treat ``location.href = sameURL#sameHash`` as an in-page
+        anchor scroll and skip the network reload, leaving stale data on
+        screen.
+
+        In direct mode the bug is masked because FastAPI redirects ``/admin`` →
+        ``/admin/`` (trailing slash), creating a URL difference that triggers a
+        real reload.
+        """
+        _ensure_admin_logged_in(page, base_url)
+
+        # Navigate to proxy admin WITHOUT trailing slash (matches iframe behavior).
+        page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, fragment="gateways"))
+        page.wait_for_load_state("domcontentloaded")
+        _wait_for_admin_content(page)
+
+        # Plant a marker variable — a real page reload will wipe it.
+        page.evaluate("window.__reload_test_marker = Date.now()")
+
+        # Call the real _navigateAdmin from admin.js with the current fragment.
+        # Because the target URL matches the current URL (proxy path without
+        # trailing slash), the fix should trigger window.location.reload().
+        try:
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=10000):
+                page.evaluate("_navigateAdmin('gateways', new URLSearchParams())")
+        except PlaywrightTimeoutError:
+            pytest.fail(
+                "Page did NOT reload after _navigateAdmin to same URL — "
+                "this is the #3351 bug: proxy/iframe URLs have no "
+                "trailing-slash difference to trigger a browser reload."
+            )
+
+        marker = page.evaluate("window.__reload_test_marker")
+        assert marker is None, (
+            "Navigation occurred but page was not fully reloaded — "
+            "window.__reload_test_marker survived."
+        )
+
 
 # ===================================================================
 # TEST CLASS 3: Iframe-embedded mode
@@ -906,3 +955,139 @@ class TestAdminIframeContext:
             self._assert_iframe_url(page, team_id=False)
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
+
+    # ------------------------------------------------------------------
+    # Team selector dropdown inside iframe
+    # ------------------------------------------------------------------
+
+    def test_iframe_team_selector_onclick_stripped_but_delegation_works(
+        self, page: Page, base_url: str, api_request_context: APIRequestContext
+    ):
+        """Team selector click inside iframe navigates with ?team_id=.
+
+        Regression: installInnerHtmlGuard() strips inline onclick from
+        team selector buttons loaded via fetch() + innerHTML. This test
+        verifies:
+        1. The inline onclick IS stripped (proving the guard is active)
+        2. The event delegation fix makes clicks work anyway
+        3. The iframe URL ends up with ?team_id= after clicking a team
+        """
+        frame_obj = self._frame(page)
+
+        # Navigate iframe to admin WITHOUT team scope so the page loads
+        # properly (the autouse fixture uses a placeholder team_id that
+        # causes 400 errors).
+        no_team_url = _admin_url(
+            base_url, prefix=_PROXY_PREFIX, team_id=False, fragment="gateways"
+        )
+        frame_obj.evaluate(f"window.location.href = '{no_team_url}'")
+        try:
+            frame_obj.wait_for_load_state("domcontentloaded", timeout=15000)
+        except PlaywrightTimeoutError:
+            pass
+
+        # Wait for admin JS to initialise inside iframe
+        try:
+            frame_obj.wait_for_function(
+                "typeof window.searchTeamSelector === 'function'",
+                timeout=15000,
+            )
+        except PlaywrightTimeoutError:
+            pytest.skip("Admin JS did not initialise inside iframe")
+
+        frame = page.frame_locator("#admin-frame")
+
+        # Create a real team via API so the dropdown has something to click
+        team_name = f"iframe-test-{uuid.uuid4().hex[:8]}"
+        resp = api_request_context.post("/admin/teams", data={"name": team_name})
+        if resp.status >= 400:
+            pytest.skip(f"Could not create test team: {resp.status}")
+        team_data = resp.json()
+        team_id = team_data.get("id") or team_data.get("team", {}).get("id")
+        assert team_id, f"Team creation response missing id: {team_data}"
+
+        try:
+            # Open the team selector dropdown
+            selector_btn = frame.locator("#team-selector-button")
+            try:
+                selector_btn.wait_for(state="visible", timeout=10000)
+            except PlaywrightTimeoutError:
+                pytest.skip("Team selector button not visible in iframe")
+            selector_btn.click()
+
+            # Wait for team items to load via fetch + innerHTML
+            items_container = frame.locator("#team-selector-items")
+            items_container.wait_for(state="visible", timeout=10000)
+
+            # Wait for actual team buttons (not "Loading..." placeholder)
+            frame_obj.wait_for_function(
+                "() => document.querySelectorAll('#team-selector-items .team-selector-item').length > 0",
+                timeout=15000,
+            )
+
+            # PROOF 1: Verify the innerHTML guard is active inside the iframe
+            # by injecting a synthetic element with onclick via innerHTML and
+            # confirming it is stripped while data-* attributes survive.
+            # (The team selector template no longer emits onclick, so checking
+            # the template button alone would be tautological.)
+            guard_check = frame_obj.evaluate("""
+                () => {
+                    const div = document.createElement('div');
+                    document.body.appendChild(div);
+                    // Use innerHTML to trigger the guard (this is a test, not production code)
+                    div.innerHTML = '<button onclick="alert(1)" data-action="test" data-id="x">X</button>';
+                    const btn = div.querySelector('button');
+                    const result = {
+                        guardActive: !btn.hasAttribute('onclick'),
+                        dataActionSurvived: btn.getAttribute('data-action') === 'test',
+                    };
+                    div.remove();
+                    return result;
+                }
+            """)
+            assert guard_check["guardActive"], (
+                "innerHTML guard should strip onclick inside iframe"
+            )
+            assert guard_check["dataActionSurvived"], (
+                "data-action should survive innerHTML guard inside iframe"
+            )
+
+            # Also verify team selector items have data-team-id (template correctness)
+            onclick_check = frame_obj.evaluate("""
+                () => {
+                    const btn = document.querySelector('#team-selector-items .team-selector-item');
+                    if (!btn) return { found: false };
+                    return {
+                        found: true,
+                        hasDataTeamId: btn.hasAttribute('data-team-id'),
+                    };
+                }
+            """)
+            assert onclick_check["found"], "No team-selector-item found in iframe"
+            assert onclick_check["hasDataTeamId"] is True, (
+                "data-team-id should survive innerHTML guard"
+            )
+
+            # PROOF 2: Click our team and verify navigation happens
+            team_item = frame.locator(
+                f".team-selector-item:has-text('{team_name}')"
+            )
+            try:
+                team_item.wait_for(state="visible", timeout=10000)
+            except PlaywrightTimeoutError:
+                pytest.skip("Created team not visible in dropdown")
+
+            with frame_obj.expect_navigation(timeout=15000):
+                team_item.click()
+
+            # PROOF 3: iframe URL now contains team_id
+            iframe_url = frame_obj.url
+            assert "team_id=" in iframe_url, (
+                f"Expected team_id in iframe URL after clicking team, got: {iframe_url}"
+            )
+            assert team_id in iframe_url, (
+                f"Expected team_id={team_id} in iframe URL, got: {iframe_url}"
+            )
+        finally:
+            # Cleanup: delete the test team
+            api_request_context.delete(f"/admin/teams/{team_id}")

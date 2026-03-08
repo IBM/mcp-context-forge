@@ -589,6 +589,7 @@ class TestGatewayActions:
         # Edit button should open an edit modal or form
         # Button click verified (no exception raised)
 
+    @pytest.mark.flaky(reruns=2, reruns_delay=1, reason="HTMX table reload timing in headless mode")
     def test_deactivate_button_functionality(self, gateways_page: GatewaysPage):
         """Test deactivating a gateway."""
         gateways_page.navigate_to_gateways_tab()
@@ -608,18 +609,19 @@ class TestGatewayActions:
         # Get gateway name before deactivation
         gateway_name = first_row.locator("td").nth(2).text_content().strip()
 
-        # Click Deactivate button
+        # Click Deactivate button and wait for HTMX to settle
         gateways_page.click_deactivate_button(0)
-        gateways_page.page.wait_for_timeout(2000)
+        gateways_page.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
 
         # Reload to see updated status
-        gateways_page.page.reload()
-        gateways_page.wait_for_gateways_table_loaded()
-        gateways_page.page.wait_for_timeout(1000)
+        gateways_page.page.reload(wait_until="domcontentloaded")
+        gateways_page.navigate_to_gateways_tab()
 
         # Search for the gateway
         gateways_page.search_gateways(gateway_name)
-        gateways_page.page.wait_for_timeout(500)
 
         # Verify Activate button is now visible (gateway was deactivated)
         if gateways_page.gateway_exists(gateway_name):

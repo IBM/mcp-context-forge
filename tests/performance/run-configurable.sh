@@ -381,8 +381,14 @@ fi
 header "📈 Step 7: Collecting Metrics"
 
 # Save Prometheus metrics if available
-if curl -sf "$GATEWAY_URL/metrics" > "$RESULTS_DIR/prometheus_metrics.txt" 2>/dev/null; then
-    success "Prometheus metrics collected"
+if [ -n "${MCPGATEWAY_BEARER_TOKEN:-}" ]; then
+    if curl -sf -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" "$GATEWAY_URL/metrics/prometheus" > "$RESULTS_DIR/prometheus_metrics.txt" 2>/dev/null; then
+        success "Prometheus metrics collected"
+    fi
+else
+    if curl -sf "$GATEWAY_URL/metrics/prometheus" > "$RESULTS_DIR/prometheus_metrics.txt" 2>/dev/null; then
+        success "Prometheus metrics collected"
+    fi
 fi
 
 # Save application logs

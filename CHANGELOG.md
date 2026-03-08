@@ -167,6 +167,24 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * User deletion now reassigns audit trail FK references (invitations, roles, revocations) to a replacement admin before deleting the user record
 * Nullable references (team memberships, join requests) are nullified instead of cascading
 
+#### **🏛️ Team Governance Feature Flags** ([#3483](https://github.com/IBM/mcp-context-forge/pull/3483), [#3473](https://github.com/IBM/mcp-context-forge/issues/3473))
+* Three new feature flags to control self-service team operations (all default `true` for backward compatibility):
+  * `ALLOW_TEAM_CREATION` — disable non-admin team creation (admins always bypass)
+  * `ALLOW_TEAM_JOIN_REQUESTS` — disable join requests on public teams
+  * `ALLOW_TEAM_INVITATIONS` — disable team invitations
+* `MAX_TEAMS_PER_USER` now enforced across all membership paths: team creation, member addition, invitation acceptance, and join-request approval (admins bypass in team creation)
+* `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` now enforced at both invitation creation and acceptance time (previously defined but never checked)
+* `PERSONAL_TEAM_PREFIX` now used when generating personal team slugs (previously hardcoded to `personal`)
+* `ensure_personal_team()` now respects `AUTO_CREATE_PERSONAL_TEAMS` flag (previously unconditionally created)
+* Admin-created users automatically get `email_verified_at` set (admin vouches for them)
+* Admins can now set email verification status on users via API (`PUT /auth/email/admin/users/{email}`) and Admin UI checkbox
+* `@require_permission("teams.join")` added to `accept_team_invitation`, `request_to_join_team`, and `leave_team` endpoints
+
+#### **🏷️ Role Assignment Provenance Tracking** ([#3484](https://github.com/IBM/mcp-context-forge/issues/3484), [#3502](https://github.com/IBM/mcp-context-forge/pull/3502))
+* New `grant_source` column on `user_roles` table tracks the origin of role assignments (`'sso'`, `'manual'`, `'bootstrap'`, `'auto'`)
+* SSO role sync uses `grant_source='sso'` to distinguish SSO-granted roles from manually or auto-assigned roles, enabling correct revocation without affecting non-SSO roles
+* Alembic migration `e1f2a3b4c5d6` adds the column (nullable, backward-compatible with existing rows)
+
 ### Fixed
 
 #### **🔐 Security** (S-01, S-02, S-03, A-02, A-05, A-06, O-01, O-05, O-10, O-17, U-05, C-03, C-04, C-07, C-09, C-10, C-11, C-14, C-15, C-28, C-29, EXTRA-01)
@@ -197,6 +215,8 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **GitHub SSO email-claim compatibility** - GitHub logins no longer fail when `/user` omits `email_verified`; explicit false verification claims are still denied (O-03 follow-up)
 * **SSO approval-state hardening** - expired pending approvals no longer fall through to user creation; approval statuses now fail closed (O-04)
 * **SSO scope policy enforcement** - requested scopes are normalized and constrained to provider policy; invalid scopes rejected with HTTP 400 (O-06)
+* **SSO role assignment FK constraint violation** - `_sync_user_roles()` used `granted_by='sso_system'` which violated the `user_roles.granted_by` foreign key to `email_users.email` on PostgreSQL; now uses `granted_by=<user_email>` with a new `grant_source` column to track provenance ([#3484](https://github.com/IBM/mcp-context-forge/issues/3484), [#3502](https://github.com/IBM/mcp-context-forge/pull/3502))
+* **Keycloak SSO issuer mismatch** - Keycloak OIDC discovery rewrote `authorization_url` to `public_base_url` but not `issuer`; tokens issued via browser flow contain the public-facing issuer, causing `id_token` verification to fail with "Invalid issuer" when `SSO_KEYCLOAK_PUBLIC_BASE_URL` differs from `SSO_KEYCLOAK_BASE_URL` ([#3502](https://github.com/IBM/mcp-context-forge/pull/3502))
 * **OAuth grant fallback removal** - `authorization_code` no longer falls back to `client_credentials` in non-interactive token retrieval (O-11)
 * **SSO callback session binding** - state is bound to browser session marker and callback requires matching session binding (O-14)
 * **OAuth authorize/status ownership checks** - gateway visibility/team/owner checks now enforced consistently on authorize/status endpoints (O-16)
@@ -214,6 +234,9 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **Utility transport permission consistency** - `/sse` and `/message` now enforce canonical `tools.execute`.
 * **Shared auth dependency consistency** - `require_auth` now applies the same token/account validity checks used across authenticated flows.
 * **Shared admin auth dependency consistency** - `require_admin_auth` now applies the same token/account validity checks before admin authorization.
+
+#### **👥 RBAC / Teams**
+* **`PERSONAL_TEAM_PREFIX` now respected** — the `before_insert` listener on `EmailTeam` unconditionally overwrote the slug with `slugify(name)`, discarding the prefix-based slug set by `create_personal_team()`. The listener now guards with `if not target.slug` so explicitly-set slugs survive insertion. Default prefix changed from `"personal"` to `""` (empty) for zero behavior change on existing deployments; setting `PERSONAL_TEAM_PREFIX=personal` (or any value) now produces email-derived slugs (e.g. `personal-alice-example-com`) as originally intended ([#3494](https://github.com/IBM/mcp-context-forge/issues/3494))
 
 ### Hardening
 
