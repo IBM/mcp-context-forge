@@ -166,6 +166,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_teams_partial_html,
     admin_test_a2a_agent,
     admin_test_gateway,
+    admin_test_m2m_gateway,
     admin_test_resource,
     admin_tokens_partial_html,
     admin_tool_ops_partial,
@@ -20590,3 +20591,76 @@ class TestAdminPersonalTeamFiltering:
             call_kwargs = mock_team_service.list_teams.call_args[1]
             assert call_kwargs["search_query"] == "nomatch"
             assert call_kwargs["personal_owner_email"] == "admin@example.com"
+
+
+# ---------------------------------------------------------------------------
+# Tests for admin_test_m2m_gateway
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_test_m2m_gateway_success(monkeypatch, mock_db):
+    """Token acquired successfully returns success=True JSON response."""
+    gateway = SimpleNamespace(id="gw-1", oauth_config={"grant_type": "client_credentials", "token_url": "https://idp.example.com/token", "client_id": "cid", "client_secret": "secret"})
+    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_gateway", AsyncMock(return_value=gateway))
+
+    oauth_manager = MagicMock()
+    oauth_manager.get_access_token = AsyncMock(return_value="tok123")
+    monkeypatch.setattr("mcpgateway.admin.OAuthManager", lambda **_kwargs: oauth_manager)
+
+    response = await admin_test_m2m_gateway(gateway_id="gw-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert response.status_code == 200
+    body = json.loads(response.body)
+    assert body["success"] is True
+    assert "successfully" in body["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_test_m2m_gateway_not_found(monkeypatch, mock_db):
+    """Returns 404 when the gateway does not exist."""
+    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_gateway", AsyncMock(side_effect=GatewayNotFoundError("not found")))
+
+    with pytest.raises(Exception) as exc_info:
+        await admin_test_m2m_gateway(gateway_id="missing", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_admin_test_m2m_gateway_no_oauth_config(monkeypatch, mock_db):
+    """Returns 400 when the gateway has no OAuth config."""
+    gateway = SimpleNamespace(id="gw-2", oauth_config=None)
+    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_gateway", AsyncMock(return_value=gateway))
+
+    with pytest.raises(Exception) as exc_info:
+        await admin_test_m2m_gateway(gateway_id="gw-2", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert exc_info.value.status_code == 400
+    assert "not configured with oauth" in exc_info.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_test_m2m_gateway_wrong_grant_type(monkeypatch, mock_db):
+    """Returns 400 when grant_type is not client_credentials."""
+    gateway = SimpleNamespace(id="gw-3", oauth_config={"grant_type": "authorization_code"})
+    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_gateway", AsyncMock(return_value=gateway))
+
+    with pytest.raises(Exception) as exc_info:
+        await admin_test_m2m_gateway(gateway_id="gw-3", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert exc_info.value.status_code == 400
+    assert "client_credentials" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_admin_test_m2m_gateway_idp_failure(monkeypatch, mock_db):
+    """IDP failure returns success=False with error message."""
+    gateway = SimpleNamespace(id="gw-4", oauth_config={"grant_type": "client_credentials", "token_url": "https://idp.example.com/token", "client_id": "cid", "client_secret": "secret"})
+    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_gateway", AsyncMock(return_value=gateway))
+
+    oauth_manager = MagicMock()
+    oauth_manager.get_access_token = AsyncMock(side_effect=RuntimeError("IDP unreachable"))
+    monkeypatch.setattr("mcpgateway.admin.OAuthManager", lambda **_kwargs: oauth_manager)
+
+    response = await admin_test_m2m_gateway(gateway_id="gw-4", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert response.status_code == 200
+    body = json.loads(response.body)
+    assert body["success"] is False
+    assert "IDP unreachable" in body["message"]

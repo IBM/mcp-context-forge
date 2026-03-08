@@ -20403,6 +20403,32 @@ window.loadAuthHeaders = loadAuthHeaders;
  * @param {string} gatewayId - ID of the gateway to fetch tools for
  * @param {string} gatewayName - Name of the gateway for display purposes
  */
+async function testM2MGateway(gatewayId, button) {
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = "⏳ Testing...";
+
+    try {
+        const response = await fetch(`${window.adminBasePath || ""}/admin/gateways/${gatewayId}/test-m2m`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showToast("M2M token acquired successfully", "success");
+        } else {
+            showToast(`Token acquisition failed: ${data.message}`, "error");
+        }
+    } catch (err) {
+        showToast(`Request failed: ${err.message}`, "error");
+    } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+    }
+}
+
 async function fetchToolsForGateway(gatewayId, gatewayName) {
     const button = document.getElementById(`fetch-tools-${gatewayId}`);
     if (!button) {
