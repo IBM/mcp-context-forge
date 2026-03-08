@@ -56,7 +56,6 @@ import logging
 import time
 import traceback
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
 import uuid
 
 # Third-Party
@@ -1474,7 +1473,6 @@ class SessionRegistry(SessionBackend):
         server_id: Optional[str],
         user: Dict[str, Any],
         session_id: str,
-        base_url: str,
     ) -> None:
         """Process and respond to broadcast messages for a session.
 
@@ -1492,7 +1490,6 @@ class SessionRegistry(SessionBackend):
             server_id: Optional server identifier for scoped operations.
             user: User information including authentication token.
             session_id: Session identifier to respond for.
-            base_url: Base URL for API calls (used for RPC endpoints).
 
         Raises:
             asyncio.CancelledError: When the respond task is cancelled (e.g., on session removal).
@@ -1504,7 +1501,7 @@ class SessionRegistry(SessionBackend):
             >>> # This method is typically called internally by the SSE handler
             >>> reg = SessionRegistry()
             >>> user = {'token': 'test-token'}
-            >>> # asyncio.run(reg.respond(None, user, 'session-id', 'http://localhost'))
+            >>> # asyncio.run(reg.respond(None, user, 'session-id'))
         """
 
         if self._backend == "none":
@@ -1520,7 +1517,7 @@ class SessionRegistry(SessionBackend):
                         message = data["message"]
                     else:
                         message = data
-                    await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
+                    await self.generate_response(message=message, transport=transport, server_id=server_id, user=user)
                 else:
                     logger.warning(f"Session message stored but message content is None for session {session_id}")
 
@@ -1565,7 +1562,7 @@ class SessionRegistry(SessionBackend):
                     message = data.get("message", {})
                     transport = self.get_session_sync(session_id)
                     if transport:
-                        await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
+                        await self.generate_response(message=message, transport=transport, server_id=server_id, user=user)
             except asyncio.CancelledError:
                 logger.info(f"PubSub listener for session {session_id} cancelled")
                 raise  # Re-raise to properly complete cancellation
@@ -1793,7 +1790,6 @@ class SessionRegistry(SessionBackend):
                                     transport=transport,
                                     server_id=server_id,
                                     user=user,
-                                    base_url=base_url,
                                 )
 
                                 await asyncio.to_thread(_db_remove, session_id, record.message)
@@ -2221,19 +2217,22 @@ class SessionRegistry(SessionBackend):
                         capable_sessions.append(session_id)
             return capable_sessions
 
-    async def generate_response(self, message: Dict[str, Any], transport: SSETransport, server_id: Optional[str], user: Dict[str, Any], base_url: str) -> None:
+    async def generate_response(self, message: Dict[str, Any], transport: SSETransport, server_id: Optional[str], user: Dict[str, Any]) -> None:
         """Generate and send response for incoming MCP protocol message.
 
         Processes MCP protocol messages and generates appropriate responses based on
         the method. Supports various MCP methods including initialization, tool/resource/prompt
         listing, tool invocation, and ping.
 
+        Uses loopback (127.0.0.1) for the internal RPC call to avoid issues when
+        the gateway is behind a reverse proxy or service mesh where the client-facing
+        URL is not reachable from the server itself.
+
         Args:
             message: Incoming MCP message as JSON. Must contain 'method' and 'id' fields.
             transport: SSE transport to send responses through.
             server_id: Optional server ID for scoped operations.
             user: User information containing authentication token.
-            base_url: Base URL for constructing RPC endpoints.
 
         Examples:
             >>> import asyncio
@@ -2247,7 +2246,7 @@ class SessionRegistry(SessionBackend):
             >>> transport = MockTransport()
             >>> message = {"method": "ping", "id": 1}
             >>> user = {"token": "test-token"}
-            >>> # asyncio.run(reg.generate_response(message, transport, None, user, "http://localhost"))
+            >>> # asyncio.run(reg.generate_response(message, transport, None, user))
             >>> # Response: {}
         """
         result = {}
@@ -2301,24 +2300,11 @@ class SessionRegistry(SessionBackend):
                 headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
                 if settings.mcpgateway_session_affinity_enabled:
                     headers["x-mcp-session-id"] = transport.session_id
-                # Extract root URL from base_url (remove /servers/{id} path)
-                parsed_url = urlparse(base_url)
-                # Preserve the path up to the root path (before /servers/{id})
-                path_parts = parsed_url.path.split("/")
-                if "/servers/" in parsed_url.path:
-                    # Find the index of 'servers' and take everything before it
-                    try:
-                        servers_index = path_parts.index("servers")
-                        root_path = "/" + "/".join(path_parts[1:servers_index]).strip("/")
-                        if root_path == "/":
-                            root_path = ""
-                    except ValueError:
-                        root_path = ""
-                else:
-                    root_path = parsed_url.path.rstrip("/")
-
-                root_url = f"{parsed_url.scheme}://{parsed_url.netloc}{root_path}"
-                rpc_url = root_url + "/rpc"
+                # Use loopback for internal RPC call (consistent with other self-call sites
+                # in mcp_session_pool.py and streamablehttp_transport.py). This avoids
+                # failures when the client-facing URL is not reachable from the server
+                # (e.g., behind a reverse proxy or service mesh). See #3049.
+                rpc_url = f"http://127.0.0.1:{settings.port}/rpc"
 
                 logger.info(f"SSE RPC: Making call to {rpc_url} with method={method}, params={params}")
 
