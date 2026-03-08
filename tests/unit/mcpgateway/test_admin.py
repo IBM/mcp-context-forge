@@ -3111,6 +3111,7 @@ class TestAdminGatewayTestRoute:
                 mock_client_class.return_value = mock_client
 
                 mock_db = MagicMock()
+                mock_db.execute.return_value.scalars.return_value.first.return_value = None
                 result = await admin_test_gateway(request, team_id=None, user={"email": "test-user", "db": mock_db}, db=mock_db)
 
                 assert result.status_code == 200
@@ -3151,6 +3152,7 @@ class TestAdminGatewayTestRoute:
                 mock_client_class.return_value = mock_client
 
                 mock_db = MagicMock()
+                mock_db.execute.return_value.scalars.return_value.first.return_value = None
                 await admin_test_gateway(request, team_id=None, user={"email": "test-user", "db": mock_db}, db=mock_db)
 
                 call_args = mock_client.request.call_args
@@ -3178,6 +3180,7 @@ class TestAdminGatewayTestRoute:
             mock_client_class.return_value = mock_client
 
             mock_db = MagicMock()
+            mock_db.execute.return_value.scalars.return_value.first.return_value = None
             result = await admin_test_gateway(request, team_id=None, user={"email": "test-user", "db": mock_db}, db=mock_db)
 
             assert result.status_code == 502
@@ -3216,6 +3219,7 @@ class TestAdminGatewayTestRoute:
                 mock_client_class.return_value = mock_client
 
                 mock_db = MagicMock()
+                mock_db.execute.return_value.scalars.return_value.first.return_value = None
                 result = await admin_test_gateway(request, team_id=None, user={"email": "test-user", "db": mock_db}, db=mock_db)
 
                 assert result.status_code == 200
@@ -12505,6 +12509,7 @@ async def test_admin_test_gateway_json_and_text(monkeypatch, mock_db):
 
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    mock_db.execute.return_value.scalars.return_value.first.return_value = None
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
@@ -12553,7 +12558,7 @@ async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_
 @pytest.mark.asyncio
 async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
-    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_first_gateway_by_url", lambda *_args, **_kwargs: gateway)
+    mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     token_storage = MagicMock()
     token_storage.get_user_token = AsyncMock(return_value=None)
@@ -12568,7 +12573,7 @@ async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
 async def test_admin_test_gateway_oauth_authorization_code_missing_user_email(monkeypatch, mock_db):
     """Cover the 401 branch when OAuth auth-code flow requires a user email."""
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
-    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_first_gateway_by_url", lambda *_args, **_kwargs: gateway)
+    mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
     monkeypatch.setattr("mcpgateway.admin.get_user_email", lambda _user: "", raising=True)
     monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda _db: MagicMock(), raising=True)
 
@@ -12610,7 +12615,7 @@ async def test_admin_test_gateway_oauth_authorization_code_token_success_sets_he
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
 
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
-    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_first_gateway_by_url", lambda *_args, **_kwargs: gateway)
+    mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     token_storage = MagicMock()
     token_storage.get_user_token = AsyncMock(return_value="tok")
@@ -12626,7 +12631,7 @@ async def test_admin_test_gateway_oauth_authorization_code_token_success_sets_he
 async def test_admin_test_gateway_oauth_authorization_code_token_exception_returns_500(monkeypatch, mock_db):
     """Cover exception handler when retrieving stored OAuth tokens fails."""
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
-    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_first_gateway_by_url", lambda *_args, **_kwargs: gateway)
+    mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     token_storage = MagicMock()
     token_storage.get_user_token = AsyncMock(side_effect=RuntimeError("boom"))
@@ -12666,7 +12671,7 @@ async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, 
             return MockResponse()
 
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
-    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_first_gateway_by_url", lambda *_args, **_kwargs: gateway)
+    mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     oauth_manager = MagicMock()
     oauth_manager.get_access_token = AsyncMock(return_value="tok")
@@ -12698,7 +12703,7 @@ async def test_admin_test_gateway_oauth_client_credentials_token_error(monkeypat
             raise httpx.RequestError("boom", request=httpx.Request("GET", "https://api.example.com/test"))
 
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
-    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_first_gateway_by_url", lambda *_args, **_kwargs: gateway)
+    mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     oauth_manager = MagicMock()
     oauth_manager.get_access_token = AsyncMock(side_effect=RuntimeError("oauth failed"))
@@ -12748,7 +12753,7 @@ async def test_admin_test_gateway_form_urlencoded_body_handling(monkeypatch, moc
 
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
-    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_first_gateway_by_url", lambda *_args, **_kwargs: None)
+    mock_db.execute.return_value.scalars.return_value.first.return_value = None
 
     request = GatewayTestRequest(
         base_url="https://api.example.com",
