@@ -192,6 +192,7 @@ class TestTojsonAttrFilter:
 
     def test_returns_plain_str_not_markup(self):
         """tojson_attr must return plain str so autoescape HTML-encodes it."""
+        # Third-Party
         from markupsafe import Markup
 
         result = main.tojson_attr("hello")
@@ -243,3 +244,75 @@ class TestTojsonAttrFilter:
         assert "\\u0027" in result  # single quote escaped
         assert "alert" in result  # content preserved but escaped
         assert result.startswith('"') and result.endswith('"')  # valid JSON string
+
+    def test_fileurl_serialization(self):
+        """FileUrl objects are converted to strings during JSON serialization."""
+        # First-Party
+        from mcpgateway.common.models import FileUrl
+
+        file_url = FileUrl("file:///home/user/documents")
+        result = main.tojson_attr(file_url)
+
+        assert result == '"file:///home/user/documents"'
+        assert isinstance(result, str)
+
+    def test_anyurl_serialization(self):
+        """AnyUrl objects are converted to strings during JSON serialization."""
+        # Third-Party
+        from pydantic import AnyUrl
+
+        any_url = AnyUrl("https://example.com/path")
+        result = main.tojson_attr(any_url)
+
+        assert result == '"https://example.com/path"'
+        assert isinstance(result, str)
+
+    def test_fileurl_in_dict(self):
+        """FileUrl objects in dictionaries are properly serialized."""
+        # First-Party
+        from mcpgateway.common.models import FileUrl
+
+        data = {"uri": FileUrl("file:///tmp"), "name": "Temp Directory"}
+        result = main.tojson_attr(data)
+
+        # orjson uses compact format (no spaces after : and ,)
+        assert '"uri":"file:///tmp"' in result
+        assert '"name":"Temp Directory"' in result
+
+    def test_fileurl_in_list(self):
+        """FileUrl objects in lists are properly serialized."""
+        # First-Party
+        from mcpgateway.common.models import FileUrl
+
+        roots = [{"uri": FileUrl("file:///home"), "name": "Home"}, {"uri": FileUrl("file:///tmp"), "name": "Temp"}]
+        result = main.tojson_attr(roots)
+
+        assert '"file:///home"' in result
+        assert '"file:///tmp"' in result
+
+    def test_mixed_url_types(self):
+        """Both FileUrl and AnyUrl can be serialized in the same structure."""
+        # Third-Party
+        from pydantic import AnyUrl
+
+        # First-Party
+        from mcpgateway.common.models import FileUrl
+
+        data = {"local": FileUrl("file:///data"), "remote": AnyUrl("https://api.example.com")}
+        result = main.tojson_attr(data)
+
+        assert '"file:///data"' in result
+        assert '"https://api.example.com' in result
+
+    def test_non_serializable_object_uses_str_fallback(self):
+        """Non-serializable objects are converted to strings via orjson default=str."""
+
+        class CustomObject:
+            pass
+
+        obj = CustomObject()
+        result = main.tojson_attr(obj)
+
+        # orjson default=str converts to string representation
+        assert isinstance(result, str)
+        assert "CustomObject" in result
