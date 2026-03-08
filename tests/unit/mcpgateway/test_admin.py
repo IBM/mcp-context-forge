@@ -14106,6 +14106,174 @@ async def test_admin_edit_a2a_agent_error_handlers(monkeypatch, mock_db):
         assert response.status_code == expected_status
 
 
+# ---------------------------------------------------------------------------
+# Tests for oauth_resource field coverage in add/edit gateway and A2A agent
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_add_gateway_oauth_resource_stored(monkeypatch, mock_request, mock_db):
+    """oauth_resource form field is stored in oauth_config['resource'] for add gateway."""
+    from mcpgateway.services.gateway_service import GatewayService
+
+    form_data = FakeForm(
+        {
+            "name": "M2M-GW",
+            "url": "https://api.example.com",
+            "auth_type": "oauth",
+            "oauth_grant_type": "client_credentials",
+            "oauth_token_url": "https://idp.example.com/token",
+            "oauth_client_id": "cid",
+            "oauth_client_secret": "secret",
+            "oauth_resource": "https://api.example.com/mcp",
+        }
+    )
+    mock_request.form = AsyncMock(return_value=form_data)
+
+    mock_svc = MagicMock()
+    mock_svc.register_gateway = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", mock_svc)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    encryptor = MagicMock()
+    encryptor.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+    monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _s: encryptor)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+        lambda *_a, **_kw: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+    )
+
+    response = await admin_add_gateway(mock_request, mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 200
+    gw = mock_svc.register_gateway.call_args.args[1]
+    assert gw.oauth_config["resource"] == "https://api.example.com/mcp"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_gateway_oauth_resource_stored(monkeypatch, mock_request, mock_db):
+    """oauth_resource form field is stored in oauth_config['resource'] for edit gateway."""
+    form_data = FakeForm(
+        {
+            "name": "M2M-GW",
+            "url": "https://api.example.com",
+            "auth_type": "oauth",
+            "oauth_grant_type": "authorization_code",
+            "oauth_token_url": "https://idp.example.com/token",
+            "oauth_client_id": "cid",
+            "oauth_client_secret": "secret",
+            "oauth_resource": "https://api.example.com/mcp",
+        }
+    )
+    mock_request.form = AsyncMock(return_value=form_data)
+
+    mock_svc = MagicMock()
+    mock_svc.update_gateway = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", mock_svc)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    encryptor = MagicMock()
+    encryptor.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+    monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _s: encryptor)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+        lambda *_a, **_kw: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None},
+    )
+
+    response = await admin_edit_gateway("gw-1", mock_request, mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 200
+    gw = mock_svc.update_gateway.call_args.args[2]
+    assert gw.oauth_config["resource"] == "https://api.example.com/mcp"
+
+
+@pytest.mark.asyncio
+async def test_admin_add_a2a_agent_oauth_resource_stored(monkeypatch, mock_db):
+    """oauth_resource form field is stored in oauth_config['resource'] for add A2A agent."""
+    form_data = FakeForm(
+        {
+            "name": "M2M-Agent",
+            "endpoint_url": "http://agent.example.com",
+            "auth_type": "oauth",
+            "oauth_grant_type": "client_credentials",
+            "oauth_token_url": "https://idp.example.com/token",
+            "oauth_client_id": "cid",
+            "oauth_client_secret": "secret",
+            "oauth_resource": "http://agent.example.com/a2a",
+        }
+    )
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.register_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    encryptor = MagicMock()
+    encryptor.encrypt_secret_async = AsyncMock(return_value="enc")
+    monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _s: encryptor)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+        lambda *_a, **_kw: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+    )
+
+    response = await admin_add_a2a_agent(request, mock_db, user={"email": "u@example.com"})
+    assert response.status_code == 200
+    agent = service.register_agent.call_args.args[1]
+    assert agent.oauth_config["resource"] == "http://agent.example.com/a2a"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_a2a_agent_oauth_resource_stored(monkeypatch, mock_db):
+    """oauth_resource form field is stored in oauth_config['resource'] for edit A2A agent."""
+    form_data = FakeForm(
+        {
+            "name": "M2M-Agent",
+            "endpoint_url": "http://agent.example.com",
+            "auth_type": "oauth",
+            "oauth_grant_type": "authorization_code",
+            "oauth_token_url": "https://idp.example.com/token",
+            "oauth_client_id": "cid",
+            "oauth_client_secret": "secret",
+            "oauth_resource": "http://agent.example.com/a2a",
+        }
+    )
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.update_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    encryptor = MagicMock()
+    encryptor.encrypt_secret_async = AsyncMock(return_value="enc")
+    monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _s: encryptor)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+        lambda *_a, **_kw: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None},
+    )
+
+    response = await admin_edit_a2a_agent("agent-1", request, mock_db, user={"email": "u@example.com"})
+    assert response.status_code == 200
+    agent = service.update_agent.call_args.kwargs["agent_data"]
+    assert agent.oauth_config["resource"] == "http://agent.example.com/a2a"
+
+
 # ============================================================================ #
 #                 GROUP 1: Utility Functions                                    #
 # ============================================================================ #
