@@ -2096,7 +2096,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                         remaining = max(0.0, deadline - asyncio.get_event_loop().time())
 
                     # timeout -> accept and return 202
-                    return PlainTextResponse("accepted (no response yet)", status_code=status.HTTP_202_ACCEPTED)  # noqa: vulture
+                    return PlainTextResponse("accepted (no response yet)", status_code=status.HTTP_202_ACCEPTED)
                 finally:
                     if pubsub:
                         pubsub.unsubscribe(queue)

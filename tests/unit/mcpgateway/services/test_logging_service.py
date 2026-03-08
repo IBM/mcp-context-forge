@@ -49,7 +49,7 @@ async def test_get_logger_sets_level_and_reuses_instance():
     # Reset root logger to INFO to ensure consistent test behavior across environments
     # This is necessary because other tests may have modified the root logger level
     logging.getLogger().setLevel(logging.INFO)
-    
+
     service = LoggingService()
 
     # First call - default level INFO
@@ -245,7 +245,7 @@ class TestHttpxUrlSanitizeFilter:
         record = logging.makeLogRecord(
             {
                 "name": "httpx",
-                "msg": "HTTP Request: GET https://api.example.com/path?token=my-secret&q=search \"HTTP/1.1 200 OK\"",
+                "msg": 'HTTP Request: GET https://api.example.com/path?token=my-secret&q=search "HTTP/1.1 200 OK"',
             }
         )
         filt.filter(record)

@@ -587,11 +587,15 @@ class LoggingService:
         """
         self._level = level
 
-        # Update all loggers
+        # Update all loggers and handlers
         log_level = getattr(logging, level.upper())
 
         # Update Python root logger so new child loggers inherit the correct level
         logging.getLogger().setLevel(log_level)
+
+        # Update handler levels so they don't filter out records the logger passes
+        for handler in logging.getLogger().handlers:
+            handler.setLevel(log_level)
 
         for logger in self._loggers.values():
             logger.setLevel(log_level)

@@ -2367,8 +2367,6 @@ class ResourceService(BaseService):
                         )
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record server metric: {metrics_error}")
-                else:
-                    logger.debug(f"Skipping server metric: resource_db={resource_db is not None}, server_id={server_id}")
 
                 # End database span for observability dashboard
                 # NOTE: Use fresh_db_session() since db may have been closed by invoke_resource

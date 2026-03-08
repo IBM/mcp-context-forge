@@ -847,7 +847,7 @@ async def test_list_resource_templates_public_only_token(monkeypatch):
     captured_calls = []
 
     async def mock_list_templates(db, user_email=None, token_teams=None, server_id=None):
-        captured_calls.append({"user_email": user_email, "token_teams": token_teams})
+        captured_calls.append({"user_email": user_email, "token_teams": token_teams, "server_id": server_id})
         return [mock_template]
 
     monkeypatch.setattr(resource_service, "list_resource_templates", mock_list_templates)
@@ -865,6 +865,7 @@ async def test_list_resource_templates_public_only_token(monkeypatch):
     assert len(captured_calls) == 1
     assert captured_calls[0]["user_email"] is None
     assert captured_calls[0]["token_teams"] == []  # Public-only (secure default)
+    assert captured_calls[0]["server_id"] == "test-server"
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -889,7 +890,7 @@ async def test_list_resource_templates_admin_unrestricted(monkeypatch):
     captured_calls = []
 
     async def mock_list_templates(db, user_email=None, token_teams=None, server_id=None):
-        captured_calls.append({"user_email": user_email, "token_teams": token_teams})
+        captured_calls.append({"user_email": user_email, "token_teams": token_teams, "server_id": server_id})
         return [mock_template]
 
     monkeypatch.setattr(resource_service, "list_resource_templates", mock_list_templates)
@@ -907,6 +908,7 @@ async def test_list_resource_templates_admin_unrestricted(monkeypatch):
     assert len(captured_calls) == 1
     assert captured_calls[0]["user_email"] is None  # Admin bypass clears email
     assert captured_calls[0]["token_teams"] is None  # Unrestricted
+    assert captured_calls[0]["server_id"] == "test-server"
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -931,7 +933,7 @@ async def test_list_resource_templates_team_scoped(monkeypatch):
     captured_calls = []
 
     async def mock_list_templates(db, user_email=None, token_teams=None, server_id=None):
-        captured_calls.append({"user_email": user_email, "token_teams": token_teams})
+        captured_calls.append({"user_email": user_email, "token_teams": token_teams, "server_id": server_id})
         return [mock_template]
 
     monkeypatch.setattr(resource_service, "list_resource_templates", mock_list_templates)
@@ -949,6 +951,7 @@ async def test_list_resource_templates_team_scoped(monkeypatch):
     assert len(captured_calls) == 1
     assert captured_calls[0]["user_email"] == "user@example.com"
     assert captured_calls[0]["token_teams"] == ["team-1", "team-2"]
+    assert captured_calls[0]["server_id"] == "test-server"
 
     assert isinstance(result, list)
     assert len(result) == 1

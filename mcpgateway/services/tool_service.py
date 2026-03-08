@@ -2804,8 +2804,7 @@ class ToolService(BaseService):
             >>> pass  # doctest: +SKIP
         """
         # pylint: disable=comparison-with-callable
-        logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}")
-        logger.info(f"Invoking tool: server_id:{server_id}")
+        logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}, server_id={server_id}")
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Check for X-Context-Forge-Gateway-Id header for direct_proxy mode (no DB lookup)
         # ═══════════════════════════════════════════════════════════════════════════
@@ -4091,7 +4090,6 @@ class ToolService(BaseService):
                 # Record server metrics ONLY when invoked through a specific virtual server
                 # When server_id is provided, it means the tool was called via a virtual server endpoint
                 # Direct tool calls via /rpc should NOT populate server metrics
-                logger.info(f"DEBUG: Checking server metrics recording - server_id={server_id}, tool_id={tool_id}, tool_gateway_id={tool_gateway_id}")
                 if tool_id and server_id:
                     try:
                         # Record server metric only for the specific virtual server being accessed

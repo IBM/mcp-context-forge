@@ -1658,7 +1658,7 @@ class PromptService(BaseService):
                     # Record server metrics ONLY when invoked through a specific virtual server
                     # When server_id is provided, it means the prompt was called via a virtual server endpoint
                     # Direct prompt calls via /rpc should NOT populate server metrics
-                    if prompt and server_id:
+                    if server_id:
                         try:
                             # Record server metric only for the specific virtual server being accessed
                             metrics_buffer.record_server_metric(
