@@ -20437,7 +20437,7 @@ window.testM2MGateway = async function testM2MGateway(gatewayId, button) {
         button.disabled = false;
         button.textContent = originalText;
     }
-}
+};
 
 async function fetchToolsForGateway(gatewayId, gatewayName) {
     const button = document.getElementById(`fetch-tools-${gatewayId}`);
