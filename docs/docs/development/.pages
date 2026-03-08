@@ -7,6 +7,7 @@ nav:
   - documentation.md
   - review.md
   - packaging.md
+  - release-management.md
   - developer-workstation.md
   - doctest-coverage.md
   - module-documentation.md
