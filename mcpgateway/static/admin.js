@@ -6258,8 +6258,12 @@ async function editGateway(gatewayId) {
             "oauth-redirect-uri-gw-edit",
         );
         const oauthScopesField = safeGetElement("oauth-scopes-gw-edit");
+        const oauthResourceField = safeGetElement("oauth-resource-gw-edit");
         const oauthAuthCodeFields = safeGetElement(
             "oauth-auth-code-fields-gw-edit",
+        );
+        const oauthClientCredentialsFields = safeGetElement(
+            "oauth-client-credentials-fields-gw-edit",
         );
 
         // Hide all auth sections first
@@ -6356,10 +6360,16 @@ async function editGateway(gatewayId) {
                     const config = gateway.oauthConfig;
                     if (oauthGrantTypeField && config.grant_type) {
                         oauthGrantTypeField.value = config.grant_type;
-                        // Show/hide authorization code fields based on grant type
+                        // Show/hide grant-type-specific fields
                         if (oauthAuthCodeFields) {
                             oauthAuthCodeFields.style.display =
                                 config.grant_type === "authorization_code"
+                                    ? "block"
+                                    : "none";
+                        }
+                        if (oauthClientCredentialsFields) {
+                            oauthClientCredentialsFields.style.display =
+                                config.grant_type === "client_credentials"
                                     ? "block"
                                     : "none";
                         }
@@ -6385,6 +6395,9 @@ async function editGateway(gatewayId) {
                         Array.isArray(config.scopes)
                     ) {
                         oauthScopesField.value = config.scopes.join(" ");
+                    }
+                    if (oauthResourceField && config.resource) {
+                        oauthResourceField.value = config.resource;
                     }
                 }
                 break;
@@ -18969,6 +18982,7 @@ function handleOAuthGrantTypeChange() {
 
     // Select the correct fields dynamically based on prefix
     const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
+    const clientCredentialsFields = safeGetElement(`oauth-client-credentials-fields-${prefix}`);
     const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
     const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
 
@@ -18993,6 +19007,11 @@ function handleOAuthGrantTypeChange() {
                 authCodeFields.querySelectorAll('input[type="url"]');
             requiredFields.forEach((field) => (field.required = false));
         }
+    }
+
+    // Handle Client Credentials flow
+    if (clientCredentialsFields) {
+        clientCredentialsFields.style.display = grantType === "client_credentials" ? "block" : "none";
     }
 
     // Handle Password Grant flow
@@ -19036,6 +19055,7 @@ function handleEditOAuthGrantTypeChange() {
     const prefix = id.includes("a2a") ? "a2a-edit" : "gw-edit";
 
     const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
+    const clientCredentialsFields = safeGetElement(`oauth-client-credentials-fields-${prefix}`);
     const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
     const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
 
@@ -19052,6 +19072,11 @@ function handleEditOAuthGrantTypeChange() {
             authCodeFields.style.display = "none";
             urlInputs.forEach((field) => (field.required = false));
         }
+    }
+
+    // === Handle Client Credentials grant ===
+    if (clientCredentialsFields) {
+        clientCredentialsFields.style.display = grantType === "client_credentials" ? "block" : "none";
     }
 
     // === Handle Password grant ===

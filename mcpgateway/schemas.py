@@ -2894,6 +2894,35 @@ class GatewayCreate(BaseModel):
 
         return self
 
+    @model_validator(mode="after")
+    def validate_client_credentials_config(self) -> "GatewayCreate":
+        """Validate that client_credentials oauth_config has all required fields.
+
+        Returns:
+            GatewayCreate: The validated instance.
+
+        Raises:
+            ValueError: If required fields are missing for client_credentials grant.
+
+        Examples:
+            >>> from mcpgateway.schemas import GatewayCreate
+            >>> try:
+            ...     GatewayCreate(name="gw", url="http://example.com", oauth_config={"grant_type": "client_credentials"})
+            ... except Exception as e:
+            ...     "token_url" in str(e)
+            True
+        """
+        if not self.oauth_config:
+            return self
+        if self.oauth_config.get("grant_type") != "client_credentials":
+            return self
+
+        missing = [f for f in ("token_url", "client_id", "client_secret") if not self.oauth_config.get(f)]
+        if missing:
+            raise ValueError(f"oauth_config is missing required fields for client_credentials grant: {', '.join(missing)}")
+
+        return self
+
 
 class GatewayUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing federation gateway.
@@ -3176,6 +3205,38 @@ class GatewayUpdate(BaseModelWithConfigDict):
                 raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
             if not self.auth_query_param_value:
                 raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_client_credentials_config(self) -> "GatewayUpdate":
+        """Validate that client_credentials oauth_config has all required fields.
+
+        Only runs when oauth_config is explicitly provided in the update payload,
+        so partial updates that omit oauth_config are unaffected.
+
+        Returns:
+            GatewayUpdate: The validated instance.
+
+        Raises:
+            ValueError: If required fields are missing for client_credentials grant.
+
+        Examples:
+            >>> from mcpgateway.schemas import GatewayUpdate
+            >>> try:
+            ...     GatewayUpdate(oauth_config={"grant_type": "client_credentials", "client_id": "x"})
+            ... except Exception as e:
+            ...     "token_url" in str(e)
+            True
+        """
+        if not self.oauth_config:
+            return self
+        if self.oauth_config.get("grant_type") != "client_credentials":
+            return self
+
+        missing = [f for f in ("token_url", "client_id", "client_secret") if not self.oauth_config.get(f)]
+        if missing:
+            raise ValueError(f"oauth_config is missing required fields for client_credentials grant: {', '.join(missing)}")
 
         return self
 

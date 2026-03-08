@@ -5009,18 +5009,21 @@ class TestOAuthFunctionality:
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_empty_client_secret(self, mock_update_gateway, mock_request, mock_db):
-        """Test editing gateway with empty OAuth client secret."""
-        oauth_config = {
-            "grant_type": "client_credentials",
-            "client_id": "edit-client-id",
-            "client_secret": "",  # Empty secret
-            "token_url": "https://auth.example.com/oauth/token",
-        }
-
-        form_data = FakeForm({"name": "Edited_Gateway", "url": "https://edited.example.com", "oauth_config": json.dumps(oauth_config)})
+        """Empty oauth_client_secret in form fields (Option 2) does not trigger encryption."""
+        # Uses authorization_code so the M2M required-fields validator does not run.
+        # The intent is to verify the `if oauth_client_secret:` branch skips encryption when empty.
+        form_data = FakeForm(
+            {
+                "name": "Edited_Gateway",
+                "url": "https://edited.example.com",
+                "oauth_grant_type": "authorization_code",
+                "oauth_client_id": "edit-client-id",
+                "oauth_client_secret": "",  # Empty — encryption must not be called
+                "oauth_token_url": "https://auth.example.com/oauth/token",
+            }
+        )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        # Mock OAuth encryption - should not be called for empty secret
         with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
             mock_encryption = MagicMock()
             mock_encryption.encrypt_secret_async = AsyncMock()
@@ -5029,8 +5032,6 @@ class TestOAuthFunctionality:
             result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
             assert isinstance(result, JSONResponse)
-
-            # Verify OAuth encryption was not called for empty secret
             mock_encryption.encrypt_secret_async.assert_not_called()
             mock_update_gateway.assert_called_once()
 
@@ -5159,13 +5160,13 @@ class TestOAuthFunctionality:
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_oauth_scopes_parse_empty_and_missing_client_id(self, mock_register_gateway, mock_request, mock_db):
-        """Cover 'missing client_id' and 'empty scopes list' branches."""
+        """Cover 'missing client_id' and 'empty scopes list' branches (uses authorization_code to avoid M2M validator)."""
         form_data = FakeForm(
             {
                 "name": "OAuth_Scopes_Empty_Gateway",
                 "url": "https://example.com",
                 "auth_headers": "",
-                "oauth_grant_type": "client_credentials",
+                "oauth_grant_type": "authorization_code",
                 "oauth_client_id": "",  # Ensure the client_id branch is false
                 "oauth_scopes": ",",  # Truthy string but parses to empty list
             }
@@ -5193,11 +5194,11 @@ class TestOAuthFunctionality:
 
             gateway_create = mock_register_gateway.call_args.args[1]
             assert gateway_create.auth_type == "oauth"
-            assert gateway_create.oauth_config == {"grant_type": "client_credentials"}
+            assert gateway_create.oauth_config == {"grant_type": "authorization_code"}
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_oauth_config_without_client_secret(self, mock_register_gateway, mock_request, mock_db):
-        """Cover Option 1 parsing when oauth_config has no client_secret."""
+        """client_credentials config missing client_secret is rejected with 422."""
         oauth_config = {"grant_type": "client_credentials", "client_id": "cid"}
         form_data = FakeForm({"name": "OAuth_NoSecret_Gateway", "url": "https://example.com", "auth_headers": "", "oauth_config": json.dumps(oauth_config)})
         mock_request.form = AsyncMock(return_value=form_data)
@@ -5218,12 +5219,8 @@ class TestOAuthFunctionality:
             }
 
             result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-            assert isinstance(result, JSONResponse)
-            assert result.status_code == 200
-
-            gateway_create = mock_register_gateway.call_args.args[1]
-            assert gateway_create.auth_type == "oauth"
-            assert gateway_create.oauth_config == oauth_config
+            assert result.status_code == 422
+            mock_register_gateway.assert_not_called()
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_assembled_from_form_fields(self, mock_update_gateway, mock_request, mock_db):
@@ -5268,14 +5265,14 @@ class TestOAuthFunctionality:
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_assembled_minimal_fields_covers_false_branches(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
-        """Cover false branches in admin_edit_gateway's OAuth field assembly."""
+        """Cover false branches in admin_edit_gateway's OAuth field assembly (uses authorization_code to avoid M2M validator)."""
         form_data = FakeForm(
             {
                 "name": "Edited_Gateway",
                 "url": "https://edited.example.com",
                 "auth_headers": "",
                 "passthrough_headers": "X-Req-Id, X-Trace",
-                "oauth_grant_type": "client_credentials",
+                "oauth_grant_type": "authorization_code",
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
@@ -5294,19 +5291,19 @@ class TestOAuthFunctionality:
 
         gateway_update = mock_update_gateway.call_args.args[2]
         assert gateway_update.auth_type == "oauth"
-        assert gateway_update.oauth_config == {"grant_type": "client_credentials"}
+        assert gateway_update.oauth_config == {"grant_type": "authorization_code"}
         assert gateway_update.passthrough_headers == ["X-Req-Id", "X-Trace"]
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_scopes_parse_empty(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
-        """Cover the empty-scopes (inner if) branch in admin_edit_gateway."""
+        """Cover the empty-scopes (inner if) branch in admin_edit_gateway (uses authorization_code to avoid M2M validator)."""
         form_data = FakeForm(
             {
                 "name": "Edited_Gateway",
                 "url": "https://edited.example.com",
                 "auth_headers": "",
                 "passthrough_headers": "",
-                "oauth_grant_type": "client_credentials",
+                "oauth_grant_type": "authorization_code",
                 "oauth_scopes": ",",
             }
         )
@@ -5325,7 +5322,7 @@ class TestOAuthFunctionality:
         assert result.status_code == 200
 
         gateway_update = mock_update_gateway.call_args.args[2]
-        assert gateway_update.oauth_config == {"grant_type": "client_credentials"}
+        assert gateway_update.oauth_config == {"grant_type": "authorization_code"}
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_ca_certificate_signed(self, mock_register_gateway, mock_request, mock_db, monkeypatch):
