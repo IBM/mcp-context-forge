@@ -295,9 +295,15 @@ def setup_metrics(app):
     else:
         print("⚠️ Metrics instrumentation disabled")
 
-        @app.get("/metrics/prometheus")
-        async def metrics_disabled():
-            """Returns metrics response when metrics collection is disabled.
+        # First-Party
+        from mcpgateway.utils.verify_credentials import require_auth
+
+        @app.get("/metrics/prometheus", tags=["Metrics"])
+        async def metrics_disabled(_user=Depends(require_auth)):  # pylint: disable=unused-argument
+            """Returns 503 when metrics collection is disabled (requires authentication).
+
+            Args:
+                _user: Authenticated user from require_auth dependency.
 
             Returns:
                 Response: HTTP 503 response indicating metrics are disabled.

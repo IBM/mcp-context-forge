@@ -205,7 +205,8 @@ def test_setup_metrics_postgres_prefix():
 
 def test_setup_metrics_disabled():
     app = MagicMock()
-    with patch.dict("os.environ", {"ENABLE_METRICS": "false"}):
+    with patch("mcpgateway.services.metrics.settings") as mock_settings:
+        mock_settings.ENABLE_METRICS = False
         setup_metrics(app)
     # Should register a disabled endpoint
     app.get.assert_called_once()

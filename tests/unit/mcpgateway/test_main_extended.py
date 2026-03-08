@@ -2388,6 +2388,19 @@ class TestSecurityHealthEndpoint:
         assert result["status"] == "unhealthy"
         assert result["warnings"] == ["w1", "w2"]
 
+    def test_security_health_requires_admin_auth_http(self, test_client):
+        """Unauthenticated HTTP requests to /health/security must be rejected."""
+        # The test_client fixture overrides require_auth but NOT require_admin_auth,
+        # so this exercises the real admin auth dependency rejection path.
+        from fastapi.testclient import TestClient
+
+        from mcpgateway.main import app
+
+        # Create a client with NO auth overrides for admin auth
+        no_admin_client = TestClient(app, raise_server_exceptions=False)
+        resp = no_admin_client.get("/health/security")
+        assert resp.status_code in (401, 403), f"Expected 401/403, got {resp.status_code}"
+
 
 class TestRootEndpointsCoverage:
     """Cover export_root + root lookup/update error branches."""

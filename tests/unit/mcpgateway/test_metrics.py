@@ -144,8 +144,83 @@ def test_metrics_excluded_paths(monkeypatch):
 
 
 # ----------------------------------------------------------------------
+# Deny-path tests - unauthenticated access must be rejected
+# ----------------------------------------------------------------------
+
+
+def test_metrics_prometheus_requires_auth_when_enabled(monkeypatch):
+    """Unauthenticated requests to /metrics/prometheus must be rejected (401)."""
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_METRICS", True)
+
+    from prometheus_client import REGISTRY
+
+    saved_collectors = dict(REGISTRY._names_to_collectors)
+    saved_reverse = dict(REGISTRY._collector_to_names)
+    REGISTRY._collector_to_names.clear()
+    REGISTRY._names_to_collectors.clear()
+
+    try:
+        from fastapi import FastAPI
+        from mcpgateway.services.metrics import setup_metrics
+
+        app = FastAPI()
+        setup_metrics(app)
+        # NO auth override — simulates unauthenticated access
+        client = TestClient(app, raise_server_exceptions=False)
+
+        resp = client.get("/metrics/prometheus")
+        assert resp.status_code in (401, 403), f"Expected 401/403, got {resp.status_code}"
+    finally:
+        REGISTRY._collector_to_names.clear()
+        REGISTRY._names_to_collectors.clear()
+        REGISTRY._names_to_collectors.update(saved_collectors)
+        REGISTRY._collector_to_names.update(saved_reverse)
+
+
+def test_metrics_prometheus_requires_auth_when_disabled(monkeypatch):
+    """Unauthenticated requests to /metrics/prometheus must be rejected even when metrics are disabled."""
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_METRICS", False)
+
+    from fastapi import FastAPI
+    from mcpgateway.services.metrics import setup_metrics
+
+    app = FastAPI()
+    setup_metrics(app)
+    # NO auth override
+    client = TestClient(app, raise_server_exceptions=False)
+
+    resp = client.get("/metrics/prometheus")
+    assert resp.status_code in (401, 403), f"Expected 401/403, got {resp.status_code}"
+
+
+def test_metrics_prometheus_disabled_returns_503_with_auth(monkeypatch):
+    """Authenticated requests to /metrics/prometheus return 503 when metrics are disabled."""
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_METRICS", False)
+
+    from fastapi import FastAPI
+    from mcpgateway.services.metrics import setup_metrics
+    from mcpgateway.utils.verify_credentials import require_auth
+
+    app = FastAPI()
+    setup_metrics(app)
+    app.dependency_overrides[require_auth] = lambda: {"sub": "test@metrics"}
+    client = TestClient(app)
+
+    resp = client.get("/metrics/prometheus")
+    assert resp.status_code == 503
+    assert "Metrics collection is disabled" in resp.text
+
+
+# ----------------------------------------------------------------------
 # Helper function
 # ----------------------------------------------------------------------
+
 
 def _sum_metric_values(text: str, metric_name: str) -> float:
     """Aggregate all metric values for a given metric name."""
