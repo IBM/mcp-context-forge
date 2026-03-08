@@ -1676,8 +1676,8 @@ class TestServerEndpointCoverage:
             db=MagicMock(),
             user={"email": "user@example.com"},
         )
-        assert result["resources"] == [{"id": "res-1"}]
-        assert result["nextCursor"] == "next-cursor"
+        assert result.resources == [resource]
+        assert result.next_cursor == "next-cursor"
 
     @pytest.mark.asyncio
     async def test_list_resources_pagination_null_cursor(self, monkeypatch, allow_permission):
@@ -1700,9 +1700,8 @@ class TestServerEndpointCoverage:
             db=MagicMock(),
             user={"email": "user@example.com"},
         )
-        assert result["resources"] == [{"id": "res-1"}]
-        assert "nextCursor" in result
-        assert result["nextCursor"] is None
+        assert result.resources == [resource]
+        assert result.next_cursor is None
 
     @pytest.mark.asyncio
     async def test_list_resources_tags_and_public_only_default(self, monkeypatch, allow_permission):
@@ -1722,7 +1721,7 @@ class TestServerEndpointCoverage:
             db=MagicMock(),
             user={"email": "user@example.com"},
         )
-        assert result["resources"] == []
+        assert result.resources == []
 
 
 class TestCrudEndpoints:
@@ -2523,8 +2522,8 @@ class TestToolListEndpointCoverage:
             apijsonpath=None,
             user={"email": "user@example.com"},
         )
-        assert result["tools"][0]["id"] == "tool-1"
-        assert result["nextCursor"] == "next"
+        assert result.tools == [tool]
+        assert result.next_cursor == "next"
         assert list_tools_mock.await_args.kwargs["tags"] == ["a", "b"]
 
     @pytest.mark.asyncio
@@ -2628,8 +2627,8 @@ class TestPromptListEndpointCoverage:
             db=db,
             user={"email": "user@example.com"},
         )
-        assert result["prompts"][0]["id"] == "prompt-1"
-        assert result["nextCursor"] == "next"
+        assert result.prompts == [prompt]
+        assert result.next_cursor == "next"
         assert list_prompts_mock.await_args.kwargs["tags"] == ["a", "b"]
 
     @pytest.mark.asyncio
@@ -4047,8 +4046,8 @@ class TestA2ABranchCoverage:
             db=db,
             user={"email": "user@example.com"},
         )
-        assert result["agents"][0]["id"] == "agent-1"
-        assert result["nextCursor"] == "next"
+        assert result.agents == [agent]
+        assert result.next_cursor == "next"
 
         with pytest.raises(HTTPException) as excinfo:
             await main_mod.get_a2a_agent("agent-1", request, db=MagicMock(), user={"email": "user@example.com"})
@@ -5003,8 +5002,8 @@ class TestA2AListAndGet:
         ):
             mock_service.list_agents = AsyncMock(return_value=([agent], "next-cursor"))
             result = await list_a2a_agents(request, include_pagination=True, db=MagicMock(), user={"email": "user@example.com"})
-            assert result["agents"][0]["id"] == "agent-1"
-            assert result["nextCursor"] == "next-cursor"
+            assert result.agents == [agent]
+            assert result.next_cursor == "next-cursor"
 
     async def test_list_a2a_agents_team_mismatch(self):
         request = MagicMock(spec=Request)
@@ -5489,8 +5488,8 @@ class TestRemainingCoverageGaps:
             db=MagicMock(),
             user={"email": "user@example.com"},
         )
-        assert result["servers"] == [{"id": "srv-1"}]
-        assert result["nextCursor"] == "next"
+        assert result.servers == [server]
+        assert result.next_cursor == "next"
         assert list_servers.call_args.kwargs["tags"] == ["a", "b"]
 
     async def test_list_gateways_team_mismatch_and_pagination(self, monkeypatch):
@@ -5530,8 +5529,8 @@ class TestRemainingCoverageGaps:
             db=db,
             user={"email": "user@example.com"},
         )
-        assert result["gateways"] == [{"id": "gw-1"}]
-        assert result["nextCursor"] == "next"
+        assert result.gateways == [gateway]
+        assert result.next_cursor == "next"
         db.commit.assert_called()
         db.close.assert_called()
 

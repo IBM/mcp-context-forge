@@ -2812,8 +2812,7 @@ async def list_servers(
     )
 
     if include_pagination:
-        serialized_data = [server.model_dump(by_alias=True) for server in data]
-        return CursorPaginatedServersResponse.model_construct(servers=serialized_data, next_cursor=next_cursor).model_dump(by_alias=True)
+        return CursorPaginatedServersResponse.model_construct(servers=data, next_cursor=next_cursor)
     return data
 
 
@@ -3493,8 +3492,7 @@ async def list_a2a_agents(
     )
 
     if include_pagination:
-        serialized_data = [agent.model_dump(by_alias=True) for agent in data]
-        return CursorPaginatedA2AAgentsResponse.model_construct(agents=serialized_data, next_cursor=next_cursor).model_dump(by_alias=True)
+        return CursorPaginatedA2AAgentsResponse.model_construct(agents=data, next_cursor=next_cursor)
     return data
 
 
@@ -3953,8 +3951,7 @@ async def list_tools(
 
     if apijsonpath is None:
         if include_pagination:
-            serialized_data = [tool.model_dump(by_alias=True) for tool in data]
-            return CursorPaginatedToolsResponse.model_construct(tools=serialized_data, next_cursor=next_cursor).model_dump(by_alias=True)
+            return CursorPaginatedToolsResponse.model_construct(tools=data, next_cursor=next_cursor)
         return data
 
     tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
@@ -4477,8 +4474,7 @@ async def list_resources(
     db.close()
 
     if include_pagination:
-        serialized_data = [resource.model_dump(by_alias=True) if hasattr(resource, "model_dump") else resource for resource in data]
-        return CursorPaginatedResourcesResponse.model_construct(resources=serialized_data, next_cursor=next_cursor).model_dump(by_alias=True)
+        return CursorPaginatedResourcesResponse.model_construct(resources=data, next_cursor=next_cursor)
     return data
 
 
@@ -4964,8 +4960,7 @@ async def list_prompts(
     db.close()
 
     if include_pagination:
-        serialized_data = [prompt.model_dump(by_alias=True) if hasattr(prompt, "model_dump") else prompt for prompt in data]
-        return CursorPaginatedPromptsResponse.model_construct(prompts=serialized_data, next_cursor=next_cursor).model_dump(by_alias=True)
+        return CursorPaginatedPromptsResponse.model_construct(prompts=data, next_cursor=next_cursor)
     return data
 
 
@@ -5453,8 +5448,7 @@ async def list_gateways(
     db.close()
 
     if include_pagination:
-        serialized_data = [gateway.model_dump(by_alias=True) for gateway in data]
-        return CursorPaginatedGatewaysResponse.model_construct(gateways=serialized_data, next_cursor=next_cursor).model_dump(by_alias=True)
+        return CursorPaginatedGatewaysResponse.model_construct(gateways=data, next_cursor=next_cursor)
     return data
 
 
