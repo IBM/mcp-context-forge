@@ -1326,6 +1326,77 @@ def test_email_user_is_account_locked_aware_datetime():
     assert user.is_account_locked() is False
 
 
+def test_is_account_locked_naive_datetime_render_user_card_regression():
+    """Regression: _render_user_card_html must not crash on naive locked_until (SQLite)."""
+    # First-Party
+    from mcpgateway.admin import _render_user_card_html
+
+    user = db.EmailUser(
+        email="locked@example.com",
+        password_hash="hash",
+        full_name="Locked User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="local",
+        created_at=db.utc_now(),
+        password_change_required=False,
+    )
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10)
+    user.failed_login_attempts = 5
+
+    html = _render_user_card_html(user, "other@example.com", admin_count=1, root_path="")
+    assert "Locked" in html
+    assert "locked@example.com" in html
+
+
+def test_is_account_locked_naive_datetime_email_user_response_regression():
+    """Regression: EmailUserResponse.from_email_user must not crash on naive locked_until (SQLite)."""
+    # First-Party
+    from mcpgateway.schemas import EmailUserResponse
+
+    user = db.EmailUser(
+        email="locked@example.com",
+        password_hash="hash",
+        full_name="Locked User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="local",
+        created_at=db.utc_now(),
+        password_change_required=False,
+    )
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10)
+    user.failed_login_attempts = 5
+
+    response = EmailUserResponse.from_email_user(user)
+    assert response.is_locked is True
+    assert response.failed_login_attempts == 5
+    assert response.locked_until is not None
+
+
+def test_is_account_locked_expired_naive_datetime_clears_fields():
+    """Expired naive lock: from_email_user sees cleared fields after is_account_locked()."""
+    # First-Party
+    from mcpgateway.schemas import EmailUserResponse
+
+    user = db.EmailUser(
+        email="expired@example.com",
+        password_hash="hash",
+        full_name="Expired User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="local",
+        created_at=db.utc_now(),
+        password_change_required=False,
+    )
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+    user.failed_login_attempts = 5
+
+    response = EmailUserResponse.from_email_user(user)
+    assert response.is_locked is False
+    assert response.failed_login_attempts == 0
+    assert response.locked_until is None
+
+
 def test_email_user_failed_attempts_flow():
     user = db.EmailUser(email="user@example.com", password_hash="hash", failed_login_attempts=2)
     user.locked_until = db.utc_now() + timedelta(minutes=5)
