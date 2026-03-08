@@ -884,9 +884,9 @@ async def _proxy_list_prompts_to_gateway(gateway: Any, request_headers: dict, us
     try:
         headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
 
-        logger.info(f"Proxying prompts/list to gateway {gateway.id} at {gateway.url}")
+        logger.info("Proxying prompts/list to gateway %s at %s", gateway.id, gateway.url)
         if meta:
-            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+            logger.debug("Forwarding _meta to remote gateway: %s", meta)
 
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
@@ -897,11 +897,11 @@ async def _proxy_list_prompts_to_gateway(gateway: Any, request_headers: dict, us
                     params = PaginatedRequestParams(_meta=meta)
 
                 result = await session.list_prompts(params=params)
-                logger.info(f"Received {len(result.prompts)} prompts from gateway {gateway.id}")
+                logger.info("Received %d prompts from gateway %s", len(result.prompts), gateway.id)
                 return result.prompts
 
     except Exception as e:
-        logger.exception(f"Error proxying prompts/list to gateway {gateway.id}: {e}")
+        logger.exception("Error proxying prompts/list to gateway %s: %s", gateway.id, e)
         return []
 
 
@@ -926,9 +926,9 @@ async def _proxy_get_prompt_to_gateway(
     try:
         headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
 
-        logger.info(f"Proxying prompts/get '{name}' to gateway {gateway.id} at {gateway.url}")
+        logger.info("Proxying prompts/get '%s' to gateway %s at %s", name, gateway.id, gateway.url)
         if meta:
-            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+            logger.debug("Forwarding _meta to remote gateway: %s", meta)
 
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
@@ -945,11 +945,11 @@ async def _proxy_get_prompt_to_gateway(
                 else:
                     result = await session.get_prompt(name, arguments=arguments)
 
-                logger.info(f"Received prompt '{name}' from gateway {gateway.id}")
+                logger.info("Received prompt '%s' from gateway %s", name, gateway.id)
                 return result
 
     except Exception as e:
-        logger.exception(f"Error proxying prompts/get '{name}' to gateway {gateway.id}: {e}")
+        logger.exception("Error proxying prompts/get '%s' to gateway %s: %s", name, gateway.id, e)
         return None
 
 
@@ -982,9 +982,9 @@ async def _proxy_complete_to_gateway(  # pylint: disable=unused-argument
     try:
         headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
 
-        logger.info(f"Proxying completion/complete to gateway {gateway.id} at {gateway.url}")
+        logger.info("Proxying completion/complete to gateway %s at %s", gateway.id, gateway.url)
         if meta:
-            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+            logger.debug("Forwarding _meta to remote gateway: %s", meta)
 
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
@@ -1008,11 +1008,11 @@ async def _proxy_complete_to_gateway(  # pylint: disable=unused-argument
                         context_arguments=context_args,
                     )
 
-                logger.info(f"Received completion result from gateway {gateway.id}")
+                logger.info("Received completion result from gateway %s", gateway.id)
                 return result
 
     except Exception as e:
-        logger.exception(f"Error proxying completion/complete to gateway {gateway.id}: {e}")
+        logger.exception("Error proxying completion/complete to gateway %s: %s", gateway.id, e)
         return None
 
 
@@ -1038,13 +1038,6 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         gw_id = extract_gateway_id_from_headers(request_headers)
         if gw_id:
             headers[GATEWAY_ID_HEADER] = gw_id
-
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
 
         logger.info("Proxying resources/read for %s to gateway %s at %s", resource_uri, gateway.id, gateway.url)
         if meta:
@@ -1778,23 +1771,23 @@ async def list_prompts() -> List[types.Prompt]:
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                     if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                         if not await check_gateway_access(db, gateway, user_email, token_teams):
-                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            logger.warning("Access denied to gateway %s in direct_proxy mode for user %s", gateway_id, user_email)
                             return []
 
                         meta = None
                         try:
                             request_ctx = mcp_app.request_context
                             meta = request_ctx.meta
-                            logger.info(f"[LIST PROMPTS] Using direct_proxy mode for server {server_id}, gateway {gateway.id}. Meta Attached: {meta is not None}")
+                            logger.info("[LIST PROMPTS] Using direct_proxy mode for server %s, gateway %s. Meta Attached: %s", server_id, gateway.id, meta is not None)
                         except (LookupError, AttributeError) as e:
-                            logger.debug(f"No request context available for _meta extraction: {e}")
+                            logger.debug("No request context available for _meta extraction: %s", e)
 
                         return await _proxy_list_prompts_to_gateway(gateway, request_headers, user_context, meta)
 
                     if gateway:
-                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {getattr(gateway, 'gateway_mode', 'cache')}), using cache mode")
+                        logger.debug("Gateway %s found but not in direct_proxy mode (mode: %s), using cache mode", gateway_id, getattr(gateway, "gateway_mode", "cache"))
                     else:
-                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+                        logger.warning("Gateway %s specified in %s header not found", gateway_id, GATEWAY_ID_HEADER)
 
                 prompts = await prompt_service.list_server_prompts(db, server_id, user_email=user_email, token_teams=token_teams)
                 return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
@@ -1890,21 +1883,21 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                     if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                         if not await check_gateway_access(db, gateway, user_email, token_teams):
-                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            logger.warning("Access denied to gateway %s in direct_proxy mode for user %s", gateway_id, user_email)
                             return types.GetPromptResult(messages=[], description=None)
 
-                        logger.info(f"[GET PROMPT] Using direct_proxy mode for server {server_id}, gateway {gateway.id}")
+                        logger.info("[GET PROMPT] Using direct_proxy mode for server %s, gateway %s", server_id, gateway.id)
                         result = await _proxy_get_prompt_to_gateway(gateway, request_headers, prompt_id, arguments, meta_data)
                         if not result or not result.messages:
-                            logger.warning(f"No content returned by upstream prompt: {prompt_id}")
+                            logger.warning("No content returned by upstream prompt: %s", prompt_id)
                             return types.GetPromptResult(messages=[], description=None)
                         message_dicts = [message.model_dump() for message in result.messages]
                         return types.GetPromptResult(messages=message_dicts, description=result.description)
 
                     if gateway:
-                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {getattr(gateway, 'gateway_mode', 'cache')}), using cache mode")
+                        logger.debug("Gateway %s found but not in direct_proxy mode (mode: %s), using cache mode", gateway_id, getattr(gateway, "gateway_mode", "cache"))
                     else:
-                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+                        logger.warning("Gateway %s specified in %s header not found", gateway_id, GATEWAY_ID_HEADER)
 
             try:
                 result = await prompt_service.get_prompt(
@@ -1918,15 +1911,15 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                 )
             except Exception as e:
                 logger.exception("Error getting prompt '%s': %s", prompt_id, e)
-                return []
+                return types.GetPromptResult(messages=[], description=None)
             if not result or not result.messages:
                 logger.warning("No content returned by prompt: %s", prompt_id)
-                return []
+                return types.GetPromptResult(messages=[], description=None)
             message_dicts = [message.model_dump() for message in result.messages]
             return types.GetPromptResult(messages=message_dicts, description=result.description)
     except Exception as e:
         logger.exception("Error getting prompt '%s': %s", prompt_id, e)
-        return []
+        return types.GetPromptResult(messages=[], description=None)
 
 
 @mcp_app.list_resources()
@@ -2390,14 +2383,11 @@ async def complete(
 
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                     if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
-                        user_email = user_context.get("email") if user_context else None
-                        token_teams = user_context.get("teams") if user_context else None
-
                         if not await check_gateway_access(db, gateway, user_email, token_teams):
-                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            logger.warning("Access denied to gateway %s in direct_proxy mode for user %s", gateway_id, user_email)
                             return types.Completion(values=[], total=0, hasMore=False)
 
-                        logger.info(f"[COMPLETE] Using direct_proxy mode for server {server_id}, gateway {gateway.id}")
+                        logger.info("[COMPLETE] Using direct_proxy mode for server %s, gateway %s", server_id, gateway.id)
                         result = await _proxy_complete_to_gateway(
                             gateway,
                             request_headers,
@@ -2417,9 +2407,9 @@ async def complete(
                         return result
 
                     if gateway:
-                        logger.debug(f"Gateway {gateway_id} not in direct_proxy mode, using cache")
+                        logger.debug("Gateway %s not in direct_proxy mode, using cache", gateway_id)
                     else:
-                        logger.warning(f"Gateway {gateway_id} not found")
+                        logger.warning("Gateway %s not found", gateway_id)
 
             params = {
                 "ref": ref.model_dump() if hasattr(ref, "model_dump") else ref,
