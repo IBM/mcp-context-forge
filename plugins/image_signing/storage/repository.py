@@ -3,29 +3,22 @@
 """Location: ./plugins/image_signing/storage/repository.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
-Authors: Xinyi, Liam
+Authors: Xinyi
 
 CRUD operations for trusted signers and verification result persistence.
-
-Stable data contracts (do NOT modify):
-    - TrustedSigner (types.py)
-    - SignatureVerificationResult (types.py)
-    - MatchResult (types.py)
-    - PolicyDecision (types.py)
-
-DB models (storage/models.py):
-    - TrustedSignerRecord
-    - SignatureVerificationRecord
 """
 
 # Future
 from __future__ import annotations
 
 # Standard
+import uuid
+from datetime import datetime, timezone
 from typing import List, Optional
 
 # Third-Party
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 # First-Party
 from plugins.image_signing.storage.models import (
@@ -34,250 +27,240 @@ from plugins.image_signing.storage.models import (
 )
 from plugins.image_signing.types import (
     SignatureVerificationResult,
+    SignerType,
+    SlsaResult,
     TrustedSigner,
 )
 
 
-# ---------------------------------------------------------------------------
-# Trusted Signer CRUD
-# ---------------------------------------------------------------------------
-# TODO(Liam): All methods below should use AsyncSession for DB access.
-#   Reference pattern: plugins/source_scanner/storage/repository.py
-#   All IDs are UUID strings (uuid4), generate in create methods.
-#   NOTE: Repository functions only call session.flush().
-#   Commit/Rollback is handled by the caller (service/plugin) to keep transactions consistent.
-# ---------------------------------------------------------------------------
+class ImageSigningRepository:
+    """Repository for trusted signers and verification results."""
 
+    def __init__(self, db: Session) -> None:
+        """Initialize repository with database session.
 
-async def list_trusted_signers(
-    session: AsyncSession,
-    enabled_only: bool = True,
-) -> List[TrustedSigner]:
-    """List all trusted signers from the database.
+        Args:
+            db: SQLAlchemy database session.
+        """
+        self.db = db
 
-    TODO(Liam):
-        - Query TrustedSignerRecord table
-        - If enabled_only=True:
-             filter:
-                 - enabled == True
-                 - (expires_at IS NULL OR expires_at > now_utc)
-        - Convert each TrustedSignerRecord to TrustedSigner (types.py)
-        - Order by created_at desc
+    # ------------------------------------------------------------------
+    # Trusted Signer CRUD
+    # ------------------------------------------------------------------
 
-    Args:
-        session: Async database session.
-        enabled_only: If True, return only enabled signers.
+    def list_trusted_signers(self, enabled_only: bool = True) -> List[TrustedSigner]:
+        """List all trusted signers from the database.
 
-    Returns:
-        List of TrustedSigner domain objects.
-    """
-    raise NotImplementedError
+        Args:
+            enabled_only: If True, return only enabled and non-expired signers.
 
+        Returns:
+            List of TrustedSigner domain objects.
+        """
+        query = self.db.query(TrustedSignerRecord)
 
-async def get_trusted_signer(
-    session: AsyncSession,
-    signer_id: str,
-) -> Optional[TrustedSigner]:
-    """Get a single trusted signer by ID.
+        if enabled_only:
+            now = datetime.now(timezone.utc)
+            query = query.filter(TrustedSignerRecord.enabled == True)  # noqa: E712
+            query = query.filter(
+                (TrustedSignerRecord.expires_at.is_(None))
+                | (TrustedSignerRecord.expires_at > now)
+            )
 
-    TODO(Liam):
-        - Query TrustedSignerRecord by primary key
-        - Return None if not found
-        - Convert to TrustedSigner domain object
+        return [
+            _record_to_signer(record)
+            for record in query.order_by(TrustedSignerRecord.created_at.desc()).all()
+        ]
 
-    Args:
-        session: Async database session.
-        signer_id: UUID string of the signer.
+    def get_trusted_signer(self, signer_id: str) -> Optional[TrustedSigner]:
+        """Get a single trusted signer by ID.
 
-    Returns:
-        TrustedSigner if found, None otherwise.
-    """
-    raise NotImplementedError
+        Args:
+            signer_id: UUID string of the signer.
 
+        Returns:
+            TrustedSigner if found, None otherwise.
+        """
+        record = self.db.query(TrustedSignerRecord).filter(
+            TrustedSignerRecord.id == signer_id
+        ).first()
 
-async def create_trusted_signer(
-    session: AsyncSession,
-    signer: TrustedSigner,
-) -> TrustedSigner:
-    """Create a new trusted signer record.
+        if record is None:
+            return None
 
-    TODO(Liam):
-        - If signer.id is empty/blank, generate uuid4; otherwise use provided id.
-          (But backend-generated IDs are recommended.)
-        - Map TrustedSigner fields to TrustedSignerRecord columns:
-            signer.type.value -> signer_type
-            signer.oidc_issuer -> oidc_issuer
-            signer.subject -> subject
-            signer.subject_regex -> subject_regex
-            signer.public_key -> public_key
-            signer.kms_key_ref -> kms_key_ref
-        - session.add() + session.flush()
-        - Return the created TrustedSigner
+        return _record_to_signer(record)
 
-    Args:
-        session: Async database session.
-        signer: TrustedSigner domain object to persist.
+    def create_trusted_signer(self, signer: TrustedSigner) -> TrustedSigner:
+        """Create a new trusted signer record.
 
-    Returns:
-        Created TrustedSigner with generated ID.
-    """
-    raise NotImplementedError
+        Args:
+            signer: TrustedSigner domain object to persist.
 
+        Returns:
+            Created TrustedSigner with generated ID.
+        """
+        signer_id = signer.id if signer.id and signer.id.strip() else str(uuid.uuid4())
 
-async def update_trusted_signer(
-    session: AsyncSession,
-    signer_id: str,
-    updates: dict[str, object],
-) -> Optional[TrustedSigner]:
-    """Update an existing trusted signer.
+        record = TrustedSignerRecord(
+            id=signer_id,
+            name=signer.name,
+            signer_type=signer.type.value,
+            oidc_issuer=signer.oidc_issuer,
+            subject=signer.subject,
+            subject_regex=signer.subject_regex,
+            public_key=signer.public_key,
+            kms_key_ref=signer.kms_key_ref,
+            enabled=signer.enabled,
+            expires_at=signer.expires_at,
+        )
 
-    TODO(Liam):
-        - Fetch TrustedSignerRecord by ID
-        - Return None if not found
-        - Apply updates dict to record fields
-        - Validate: do NOT allow changing signer_type after creation
-        - session.flush()
-        - Return updated TrustedSigner
-    NOTE: Allowed update fields:
-           name, oidc_issuer, subject, subject_regex, public_key, kms_key_ref, enabled, expires_at
-          Disallowed fields:
-           id, signer_type, created_at, created_by
-          Behavior:
-           - If updates contains disallowed keys -> raise ValueError
+        self.db.add(record)
+        self.db.flush()
 
-    Args:
-        session: Async database session.
-        signer_id: UUID string of the signer to update.
-        updates: Dictionary of field names to new values.
+        return _record_to_signer(record)
 
-    Returns:
-        Updated TrustedSigner if found, None otherwise.
-    """
-    raise NotImplementedError
+    def update_trusted_signer(
+        self,
+        signer_id: str,
+        updates: dict[str, object],
+    ) -> Optional[TrustedSigner]:
+        """Update an existing trusted signer.
 
+        Args:
+            signer_id: UUID string of the signer to update.
+            updates: Dictionary of field names to new values.
 
-async def delete_trusted_signer(
-    session: AsyncSession,
-    signer_id: str,
-) -> bool:
-    """Delete a trusted signer by ID.
+        Returns:
+            Updated TrustedSigner if found, None otherwise.
 
-    TODO(Liam):
-        - Fetch TrustedSignerRecord by ID
-        - Return False if not found
-        - session.delete()
-        - Return True on success
+        Raises:
+            ValueError: If updates contain disallowed fields.
+        """
+        disallowed = {"id", "signer_type", "created_at", "created_by"}
+        bad_keys = disallowed & set(updates.keys())
+        if bad_keys:
+            raise ValueError(f"Cannot update disallowed fields: {bad_keys}")
 
-    Args:
-        session: Async database session.
-        signer_id: UUID string of the signer to delete.
+        record = self.db.query(TrustedSignerRecord).filter(
+            TrustedSignerRecord.id == signer_id
+        ).first()
 
-    Returns:
-        True if deleted, False if not found.
-    """
-    raise NotImplementedError
+        if record is None:
+            return None
 
+        for key, value in updates.items():
+            if hasattr(record, key):
+                setattr(record, key, value)
 
-# ---------------------------------------------------------------------------
-# Verification Result Persistence
-# ---------------------------------------------------------------------------
-# TODO(Liam): These methods store/query SignatureVerificationRecord.
-#   The plugin calls save_verification_result after each image check.
-#   assessment_id links to the security assessment pipeline (#2215).
-# ---------------------------------------------------------------------------
+        self.db.flush()
 
+        return _record_to_signer(record)
 
-async def save_verification_result(
-    session: AsyncSession,
-    result: SignatureVerificationResult,
-    assessment_id: Optional[str] = None,
-) -> str:
-    """Persist a signature verification result to the database.
+    def delete_trusted_signer(self, signer_id: str) -> bool:
+        """Delete a trusted signer by ID.
 
-    TODO(Liam):
-        - Generate UUID for record ID
-        - Map SignatureVerificationResult fields to SignatureVerificationRecord:
-            result.image_ref -> image_ref
-            result.image_digest -> image_digest
-            result.signature_found -> signature_found
-            result.signature_valid -> record.signature_valid
-            result.signer_identity -> signer_identity
-            result.signer_issuer -> signer_issuer
-            result.signed_at -> signed_at
-            result.rekor_verified -> rekor_verified
-            result.slsa.level -> slsa_level
-            result.slsa.builder -> slsa_builder
-            result.blocked -> blocked
-            result.reason -> reason
-        - Set assessment_id if provided
-        - session.add() + session.flush()
-        - Return the generated record ID
+        Args:
+            signer_id: UUID string of the signer to delete.
 
-    Args:
-        session: Async database session.
-        result: Verification result to persist.
-        assessment_id: Optional security assessment ID for linking.
+        Returns:
+            True if deleted, False if not found.
+        """
+        record = self.db.query(TrustedSignerRecord).filter(
+            TrustedSignerRecord.id == signer_id
+        ).first()
 
-    Returns:
-        Generated UUID string of the persisted record.
-    """
-    raise NotImplementedError
+        if record is None:
+            return False
 
+        self.db.delete(record)
+        self.db.flush()
+        return True
 
-async def get_verification_history(
-    session: AsyncSession,
-    image_ref: Optional[str] = None,
-    assessment_id: Optional[str] = None,
-    limit: int = 50,
-) -> List[SignatureVerificationResult]:
-    """Query verification history with optional filters.
+    # ------------------------------------------------------------------
+    # Verification Result Persistence
+    # ------------------------------------------------------------------
 
-    TODO(Liam):
-        - Query SignatureVerificationRecord table
-        - Filter by image_ref if provided
-        - Filter by assessment_id if provided
-        - Order by created_at desc
-        - Apply limit
-        - Convert each record to SignatureVerificationResult
+    def save_verification_result(
+        self,
+        result: SignatureVerificationResult,
+        assessment_id: Optional[str] = None,
+    ) -> str:
+        """Persist a signature verification result to the database.
 
-    Args:
-        session: Async database session.
-        image_ref: Optional image reference to filter by.
-        assessment_id: Optional assessment ID to filter by.
-        limit: Maximum number of results to return.
+        Args:
+            result: Verification result to persist.
+            assessment_id: Optional security assessment ID for linking.
 
-    Returns:
-        List of SignatureVerificationResult domain objects.
-    """
-    raise NotImplementedError
+        Returns:
+            Generated UUID string of the persisted record.
+        """
+        record_id = str(uuid.uuid4())
+
+        record = SignatureVerificationRecord(
+            id=record_id,
+            assessment_id=assessment_id,
+            image_ref=result.image_ref,
+            image_digest=result.image_digest,
+            signature_found=result.signature_found,
+            signature_valid=result.signature_valid,
+            signer_identity=result.signer_identity,
+            signer_issuer=result.signer_issuer,
+            signed_at=result.signed_at,
+            rekor_verified=result.rekor_verified,
+            slsa_level=result.slsa.level if result.slsa else None,
+            slsa_builder=result.slsa.builder if result.slsa else None,
+            blocked=result.blocked,
+            reason=result.reason,
+        )
+
+        self.db.add(record)
+        self.db.flush()
+
+        return record_id
+
+    def get_verification_history(
+        self,
+        image_ref: Optional[str] = None,
+        assessment_id: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[SignatureVerificationResult]:
+        """Query verification history with optional filters.
+
+        Args:
+            image_ref: Optional image reference to filter by.
+            assessment_id: Optional assessment ID to filter by.
+            limit: Maximum number of results to return.
+            offset: Number of results to skip.
+
+        Returns:
+            List of SignatureVerificationResult domain objects.
+        """
+        query = self.db.query(SignatureVerificationRecord)
+
+        if image_ref:
+            query = query.filter(SignatureVerificationRecord.image_ref == image_ref)
+        if assessment_id:
+            query = query.filter(SignatureVerificationRecord.assessment_id == assessment_id)
+
+        records = (
+            query
+            .order_by(SignatureVerificationRecord.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        return [_record_to_result(record) for record in records]
 
 
 # ---------------------------------------------------------------------------
 # Conversion helpers
 # ---------------------------------------------------------------------------
-# TODO(Liam): Implement these two helpers for mapping between DB and domain.
-# ---------------------------------------------------------------------------
 
 
 def _record_to_signer(record: TrustedSignerRecord) -> TrustedSigner:
     """Convert a TrustedSignerRecord ORM object to a TrustedSigner domain object.
-
-    TODO(Liam):
-        - Map record.signer_type -> SignerType enum
-        - Map all other fields directly
-        - Handle nullable fields
-        - return TrustedSigner(
-            id=record.id,
-            name=record.name,
-            type=SignerType(record.signer_type),
-            oidc_issuer=record.oidc_issuer,
-            subject=record.subject,
-            subject_regex=record.subject_regex,
-            public_key=record.public_key,
-            kms_key_ref=record.kms_key_ref,
-            enabled=record.enabled,
-            expires_at=record.expires_at,
-          )
 
     Args:
         record: ORM record from database.
@@ -285,32 +268,42 @@ def _record_to_signer(record: TrustedSignerRecord) -> TrustedSigner:
     Returns:
         TrustedSigner domain object.
     """
-    raise NotImplementedError
+    return TrustedSigner(
+        id=record.id,
+        name=record.name,
+        type=SignerType(record.signer_type),
+        oidc_issuer=record.oidc_issuer,
+        subject=record.subject,
+        subject_regex=record.subject_regex,
+        public_key=record.public_key,
+        kms_key_ref=record.kms_key_ref,
+        enabled=record.enabled,
+        expires_at=record.expires_at,
+    )
 
 
 def _record_to_result(record: SignatureVerificationRecord) -> SignatureVerificationResult:
     """Convert a SignatureVerificationRecord to a SignatureVerificationResult.
 
-    TODO(Liam):
-        - Map flat DB fields to nested SlsaResult for slsa_level/slsa_builder
-        - Handle nullable fields
-        - return SignatureVerificationResult(
-            image_ref=record.image_ref,
-            image_digest=record.image_digest,
-            signature_found=record.signature_found,
-            signature_valid=bool(record.signature_valid) if record.signature_valid is not None else False,
-            signer_identity=record.signer_identity,
-            signer_issuer=record.signer_issuer,
-            signed_at=record.signed_at,
-            rekor_verified=record.rekor_verified,
-            slsa=SlsaResult(level=record.slsa_level, builder=record.slsa_builder),
-            blocked=record.blocked,
-            reason=record.reason,   
-          )
     Args:
         record: ORM record from database.
 
     Returns:
         SignatureVerificationResult domain object.
     """
-    raise NotImplementedError
+    return SignatureVerificationResult(
+        image_ref=record.image_ref,
+        image_digest=record.image_digest,
+        signature_found=record.signature_found,
+        signature_valid=bool(record.signature_valid) if record.signature_valid is not None else False,
+        signer_identity=record.signer_identity,
+        signer_issuer=record.signer_issuer,
+        signed_at=record.signed_at,
+        rekor_verified=record.rekor_verified,
+        slsa=SlsaResult(
+            level=record.slsa_level,
+            builder=record.slsa_builder,
+        ),
+        blocked=record.blocked,
+        reason=record.reason,
+    )

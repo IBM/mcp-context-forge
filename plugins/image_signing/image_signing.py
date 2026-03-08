@@ -32,14 +32,16 @@ from __future__ import annotations
 # Standard
 import logging
 from typing import List, Optional
+from dataclasses import dataclass, field
 
 # First-Party
+from mcpgateway.db import SessionLocal
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
-#    AssessmentPostContainerScanPayload,
-#    AssessmentPostContainerScanResult,
+#    AssessmentPostContainerScanPayload
+#    AssessmentPostContainerScanResult
     PluginViolation,
 )
 from plugins.image_signing.config import ImageSigningConfig, TrustedSignerConfig
@@ -47,6 +49,7 @@ from plugins.image_signing.cosign.verifier import CosignVerifier
 from plugins.image_signing.errors import CosignNotFoundError
 from plugins.image_signing.policy.evaluator import evaluate_policy
 from plugins.image_signing.policy.matcher import match_signer
+from plugins.image_signing.storage.repository import ImageSigningRepository
 from plugins.image_signing.types import (
     AttestationResult,
     EnforcementMode,
@@ -59,6 +62,19 @@ from plugins.image_signing.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+@dataclass
+class AssessmentPostContainerScanPayload:
+    """Stub until framework exports this type."""
+    image_ref: str = ""
+    image_digest: str | None = None
+    assessment_id: str | None = None
+
+@dataclass
+class AssessmentPostContainerScanResult:
+    """Stub until framework exports this type."""
+    continue_processing: bool = True
+    violation: PluginViolation | None = None
 
 
 class ImageSigningPlugin(Plugin):
@@ -113,11 +129,15 @@ class ImageSigningPlugin(Plugin):
         logger.info("Verifying image: %s", image_ref)
 
 
-        # Step 1: Gather trusted signers (config + DB)
-        trusted_signers = list(self._config_signers)      
-        # TODO: Merge DB signers when repository is implemented:
-        #   db_signers = await repository.list_trusted_signers(session)
-        #   trusted_signers.extend(db_signers)
+        # Step 1: Gather trusted signers (config + DB)     
+        trusted_signers = list(self._config_signers)
+        try:
+            with SessionLocal() as session:
+                repo = ImageSigningRepository(session)
+                db_signers = repo.list_trusted_signers(enabled_only=True)
+                trusted_signers.extend(db_signers)
+        except Exception:
+            logger.warning("Failed to load DB signers, using config signers only", exc_info=True)
 
         # Step 2: Run cosign verify
         verification: Optional[VerificationResult] = None
@@ -125,15 +145,18 @@ class ImageSigningPlugin(Plugin):
 
         for signer in trusted_signers:
             if signer.type in {SignerType.PUBLIC_KEY, SignerType.KMS}:
-                verification = await self._verifier.verify(
+                signer_config = self._domain_signer_to_config(signer)
+                key_result = await self._verifier.verify(
                     image_ref=image_ref,
                     image_digest=image_digest,
-                    signer=signer,
+                    signer=signer_config,
                 )
-                if verification.signature_valid:
+                if key_result.signature_valid:
+                    verification = key_result
                     matched_config_signer = signer
                     break
 
+        # Fallback: keyless verify if no key-based signer matched
         if verification is None:
             verification = await self._verifier.verify(
                 image_ref=image_ref,
@@ -182,8 +205,13 @@ class ImageSigningPlugin(Plugin):
         )
 
         # Step 7: Persist to DB
-        # TODO: Save result when repository is implemented:
-        #   await repository.save_verification_result(session, result, assessment_id)
+        try:
+            with SessionLocal() as session:
+                repo = ImageSigningRepository(session)
+                repo.save_verification_result(result, assessment_id)
+                session.commit()
+        except Exception:
+            logger.warning("Failed to persist verification result", exc_info=True)
 
         logger.info(
             "Verification complete: image=%s, signature_found=%s, blocked=%s",
@@ -191,7 +219,6 @@ class ImageSigningPlugin(Plugin):
             result.signature_found,
             result.blocked,
         )
-
 
         return result
 
@@ -331,3 +358,23 @@ class ImageSigningPlugin(Plugin):
             blocked=blocked,
             reason=reason,
         )
+
+    
+    @staticmethod
+    def _domain_signer_to_config(signer: TrustedSigner) -> TrustedSignerConfig:
+        """Convert TrustedSigner domain object back to TrustedSignerConfig for cosign verify.
+
+        Args:
+            signer: TrustedSigner domain object.
+
+        Returns:
+            TrustedSignerConfig for command builder.
+        """
+        return TrustedSignerConfig(
+            type=signer.type,
+            oidc_issuer=signer.oidc_issuer,
+            subject=signer.subject,
+            subject_regex=signer.subject_regex,
+            public_key=signer.public_key,
+            kms_key_ref=signer.kms_key_ref,
+        )    
