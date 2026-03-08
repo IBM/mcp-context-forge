@@ -18982,7 +18982,9 @@ function handleOAuthGrantTypeChange() {
 
     // Select the correct fields dynamically based on prefix
     const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
-    const clientCredentialsFields = safeGetElement(`oauth-client-credentials-fields-${prefix}`);
+    const clientCredentialsFields = safeGetElement(
+        `oauth-client-credentials-fields-${prefix}`,
+    );
     const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
     const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
 
@@ -19011,7 +19013,8 @@ function handleOAuthGrantTypeChange() {
 
     // Handle Client Credentials flow
     if (clientCredentialsFields) {
-        clientCredentialsFields.style.display = grantType === "client_credentials" ? "block" : "none";
+        clientCredentialsFields.style.display =
+            grantType === "client_credentials" ? "block" : "none";
     }
 
     // Handle Password Grant flow
@@ -19055,7 +19058,9 @@ function handleEditOAuthGrantTypeChange() {
     const prefix = id.includes("a2a") ? "a2a-edit" : "gw-edit";
 
     const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
-    const clientCredentialsFields = safeGetElement(`oauth-client-credentials-fields-${prefix}`);
+    const clientCredentialsFields = safeGetElement(
+        `oauth-client-credentials-fields-${prefix}`,
+    );
     const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
     const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
 
@@ -19076,7 +19081,8 @@ function handleEditOAuthGrantTypeChange() {
 
     // === Handle Client Credentials grant ===
     if (clientCredentialsFields) {
-        clientCredentialsFields.style.display = grantType === "client_credentials" ? "block" : "none";
+        clientCredentialsFields.style.display =
+            grantType === "client_credentials" ? "block" : "none";
     }
 
     // === Handle Password grant ===
@@ -20399,21 +20405,25 @@ window.updateAuthHeadersJSON = updateAuthHeadersJSON;
 window.loadAuthHeaders = loadAuthHeaders;
 
 /**
- * Fetch tools from MCP server after OAuth completion for Authorization Code flow
- * @param {string} gatewayId - ID of the gateway to fetch tools for
- * @param {string} gatewayName - Name of the gateway for display purposes
+ * Test M2M token acquisition for a client_credentials gateway.
+ * @param {string} gatewayId - ID of the gateway to test
+ * @param {HTMLElement} button - The button element that triggered the test
  */
-async function testM2MGateway(gatewayId, button) {
+window.testM2MGateway = async function testM2MGateway(gatewayId, button) {
     const originalText = button.textContent;
     button.disabled = true;
     button.textContent = "⏳ Testing...";
 
     try {
-        const response = await fetch(`${window.adminBasePath || ""}/admin/gateways/${gatewayId}/test-m2m`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "same-origin",
-        });
+        const base = window.adminBasePath || "";
+        const response = await fetch(
+            `${base}/admin/gateways/${gatewayId}/test-m2m`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "same-origin",
+            },
+        );
         const data = await response.json();
 
         if (data.success) {
