@@ -80,13 +80,22 @@ appears in OpenAPI / Swagger) and supports gzip compression via the
 
      http://localhost:4444/metrics/prometheus
 
-3. Quick check (get the first lines of exposition text):
+3. Generate a scrape token (non-expiring service JWT):
 
      ```bash
-     curl -sS http://localhost:4444/metrics/prometheus | head -n 20
+     export METRICS_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+       --username prometheus@monitoring --exp 0 \
+       --secret $JWT_SECRET_KEY --algo HS256)
      ```
 
-4. If metrics are disabled, the endpoint returns a small JSON 503 response.
+4. Quick check (get the first lines of exposition text):
+
+     ```bash
+     curl -sS -H "Authorization: Bearer $METRICS_TOKEN" \
+       http://localhost:4444/metrics/prometheus | head -n 20
+     ```
+
+5. If metrics are disabled, the endpoint returns a JSON 503 response (authentication is still required).
 
 ### Prometheus scrape job example
 
@@ -96,13 +105,20 @@ Add the job below to your `prometheus.yml` for local testing:
 scrape_configs:
     - job_name: 'mcp-gateway'
         metrics_path: /metrics/prometheus
+        authorization:
+            type: Bearer
+            credentials_file: /path/to/metrics-token.jwt
         static_configs:
             - targets: ['localhost:4444']
 ```
 
+To create the token file: `echo -n "$METRICS_TOKEN" > /path/to/metrics-token.jwt`.
+
 If Prometheus runs in Docker, adjust the target host accordingly (host networking
-or container host IP). See the repo `docs/manage/scale.md` for examples of
-deploying Prometheus in Kubernetes.
+or container host IP). The Docker Compose monitoring profile generates the scrape
+token automatically via the `prometheus_token` service.
+See the repo `docs/manage/scale.md` for examples of deploying Prometheus in
+Kubernetes.
 
 ### Grafana and dashboards
 
