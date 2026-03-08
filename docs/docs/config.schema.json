@@ -3817,8 +3817,8 @@
       "type": "string"
     },
     "ENABLE_METRICS": {
-      "default": true,
-      "description": "Enable Prometheus metrics instrumentation",
+      "default": false,
+      "description": "Enable Prometheus metrics endpoint at /metrics/prometheus (requires authentication)",
       "title": "Enable Metrics",
       "type": "boolean"
     },

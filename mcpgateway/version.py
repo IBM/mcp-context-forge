@@ -75,7 +75,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import engine
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.redis_client import get_redis_client, is_redis_available
-from mcpgateway.utils.verify_credentials import require_auth
+from mcpgateway.utils.verify_credentials import require_admin_auth
 
 # Optional runtime dependencies
 try:
@@ -170,72 +170,76 @@ def _is_secret(key: str) -> bool:
     return key_upper in secret_vars
 
 
-def _public_env() -> Dict[str, str]:
-    """Collect environment variables excluding those that look secret.
+_PUBLIC_ENV_PREFIXES = ("MCPGATEWAY_", "MCP_")
+_PUBLIC_ENV_ALLOWLIST = frozenset(
+    {
+        "PORT",
+        "HOST",
+        "RELOAD",
+        "LOG_LEVEL",
+        "LOG_TO_FILE",
+        "PLUGINS_ENABLED",
+        "OBSERVABILITY_ENABLED",
+        "AUTH_REQUIRED",
+        "ALLOWED_ORIGINS",
+    }
+)
 
-    Filters out environment variables containing sensitive keywords or matching
-    known secret patterns to create a safe subset for display in diagnostics.
+
+def _public_env() -> Dict[str, str]:
+    """Collect application-specific environment variables for diagnostics.
+
+    Only returns variables with ``MCPGATEWAY_`` or ``MCP_`` prefixes, plus a
+    curated allowlist of safe operational variables.  Secrets are still excluded
+    via :func:`_is_secret`.
 
     Returns:
-        Dict[str, str]: A map of environment variable names to values,
-            excluding any variables identified as secrets.
+        Dict[str, str]: A map of environment variable names to values.
 
     Examples:
         >>> import os
-        >>> # Mock environment
         >>> original_env = dict(os.environ)
         >>> os.environ.clear()
         >>> os.environ.update({
         ...     "HOME": "/home/user",
         ...     "PATH": "/usr/bin:/bin",
+        ...     "PORT": "8080",
+        ...     "HOST": "0.0.0.0",
+        ...     "MCPGATEWAY_UI_ENABLED": "true",
+        ...     "MCP_REQUIRE_AUTH": "true",
         ...     "DATABASE_PASSWORD": "xxxxx",
-        ...     "API_KEY": "xxxxx",
-        ...     "DEBUG": "true",
-        ...     "BASIC_AUTH_USER": "admin",
-        ...     "BASIC_AUTH_PASSWORD": "xxxxx",
         ...     "JWT_SECRET_KEY": "xxxxx",
-        ...     "AUTH_ENCRYPTION_SECRET": "xxxxx",
         ...     "DATABASE_URL": "postgresql://user:xxxxx@localhost/db",
-        ...     "REDIS_URL": "redis://user:xxxxx@localhost:6379",
-        ...     "APP_NAME": "MyApp",
-        ...     "PORT": "8080"
         ... })
         >>>
         >>> result = _public_env()
-        >>> # Public vars should be included
-        >>> "HOME" in result
+        >>> # App-prefixed vars included
+        >>> "MCPGATEWAY_UI_ENABLED" in result
         True
-        >>> "PATH" in result
+        >>> "MCP_REQUIRE_AUTH" in result
         True
-        >>> "DEBUG" in result
-        True
-        >>> "APP_NAME" in result
-        True
+        >>> # Allowlisted vars included
         >>> "PORT" in result
         True
-        >>> # Secrets should be excluded
+        >>> "HOST" in result
+        True
+        >>> # System vars excluded
+        >>> "HOME" in result
+        False
+        >>> "PATH" in result
+        False
+        >>> # Secrets still excluded
         >>> "DATABASE_PASSWORD" in result
-        False
-        >>> "API_KEY" in result
-        False
-        >>> "BASIC_AUTH_USER" in result
-        False
-        >>> "BASIC_AUTH_PASSWORD" in result
         False
         >>> "JWT_SECRET_KEY" in result
         False
-        >>> "AUTH_ENCRYPTION_SECRET" in result
-        False
         >>> "DATABASE_URL" in result
         False
-        >>> "REDIS_URL" in result
-        False
         >>>
-        >>> # Restore original environment
         >>> os.environ.clear()
         >>> os.environ.update(original_env)
     """
-    return {k: v for k, v in os.environ.items() if not _is_secret(k)}
+    return {k: v for k, v in os.environ.items() if not _is_secret(k) and (k.upper().startswith(_PUBLIC_ENV_PREFIXES) or k.upper() in _PUBLIC_ENV_ALLOWLIST)}
 
 
 def _sanitize_url(url: Optional[str]) -> Optional[str]:
@@ -724,17 +728,17 @@ button{{margin-top:1rem;padding:.5rem 1rem;}}
 
 
 # Endpoint
-@router.get("/version", summary="Diagnostics (auth required)")
+@router.get("/version", summary="Diagnostics (admin only)")
 async def version_endpoint(
     request: Request,
     fmt: Optional[str] = None,
     partial: Optional[bool] = False,
-    _user=Depends(require_auth),
+    _user=Depends(require_admin_auth),
 ) -> Response:
     """Serve diagnostics as JSON, full HTML, or partial HTML.
 
     Main endpoint that gathers all diagnostic information and returns it in the
-    requested format. Requires authentication via HTTP Basic Auth or session.
+    requested format. Requires admin authentication.
 
     The endpoint supports three output formats:
     - JSON (default): Machine-readable diagnostic data
@@ -745,7 +749,7 @@ async def version_endpoint(
         request (Request): The incoming FastAPI request object.
         fmt (Optional[str]): Query parameter to force format ('html' for HTML output).
         partial (Optional[bool]): Query parameter to request partial HTML fragment.
-        _user: Injected authenticated user from require_auth dependency.
+        _user: Injected authenticated admin user from require_admin_auth dependency.
 
     Returns:
         Response: JSONResponse with diagnostic data, or HTMLResponse with formatted page.

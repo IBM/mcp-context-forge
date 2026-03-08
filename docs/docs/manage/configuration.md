@@ -859,7 +859,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 
 | Setting                      | Description                                              | Default   | Options          |
 | ---------------------------- | -------------------------------------------------------- | --------- | ---------------- |
-| `ENABLE_METRICS`             | Enable Prometheus metrics instrumentation                | `true`    | bool             |
+| `ENABLE_METRICS`             | Enable Prometheus metrics endpoint (requires JWT auth)   | `false`   | bool             |
 | `METRICS_EXCLUDED_HANDLERS`  | Regex patterns for paths to exclude from metrics         | (empty)   | comma-separated  |
 | `METRICS_NAMESPACE`          | Prometheus metrics namespace (prefix)                    | `default` | string           |
 | `METRICS_SUBSYSTEM`          | Prometheus metrics subsystem (secondary prefix)          | (empty)   | string           |
