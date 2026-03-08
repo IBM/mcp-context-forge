@@ -6499,6 +6499,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 db,
                 user_email=user_email_rpc,
                 token_teams=token_teams_rpc,
+                server_id=server_id,
             )
             db.commit()
             db.close()

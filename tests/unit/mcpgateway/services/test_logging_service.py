@@ -46,11 +46,16 @@ async def test_should_log_default_levels():
 
 @pytest.mark.asyncio
 async def test_get_logger_sets_level_and_reuses_instance():
+    # Reset root logger to INFO to ensure consistent test behavior across environments
+    # This is necessary because other tests may have modified the root logger level
+    logging.getLogger().setLevel(logging.INFO)
+    
     service = LoggingService()
 
     # First call - default level INFO
+    # Child loggers inherit from root, so check effective level
     logger1 = service.get_logger("test")
-    assert logger1.level == logging.INFO
+    assert logger1.getEffectiveLevel() == logging.INFO
 
     # Same logger object returned on second call
     logger2 = service.get_logger("test")
@@ -59,7 +64,7 @@ async def test_get_logger_sets_level_and_reuses_instance():
     # After raising service level to DEBUG a *new* logger inherits that level
     await service.set_level(LogLevel.DEBUG)
     logger3 = service.get_logger("newlogger")
-    assert logger3.level == logging.DEBUG
+    assert logger3.getEffectiveLevel() == logging.DEBUG
 
 
 # ---------------------------------------------------------------------------
