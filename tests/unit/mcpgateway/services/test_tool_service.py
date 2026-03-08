@@ -3643,6 +3643,78 @@ class TestToolService:
 
         await tool_service._plugin_manager.shutdown()
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_query_mapping", "tool_header_mapping", "expected_json", "expected_headers"),
+        [
+            (
+                {"query": "mapped_query"},
+                {"query": "X-Mapped-Query"},
+                {"existing": "1", "mapped_query": "test"},
+                {"Content-Type": "application/json", "X-Mapped-Query": "test"},
+            ),
+            (
+                None,
+                None,
+                {"query": "test", "existing": "1"},
+                {"Content-Type": "application/json"},
+            ),
+            (
+                {"query": "mapped_query"},
+                None,
+                {"existing": "1", "mapped_query": "test"},
+                {"Content-Type": "application/json"},
+            ),
+            (
+                None,
+                {"query": "X-Query"},
+                {"query": "test", "existing": "1"},
+                {"Content-Type": "application/json", "X-Query": "test"},
+            ),
+        ],
+    )
+    async def test_invoke_tool_rest_headers_and_query_maps_applied(
+        self,
+        tool_service,
+        mock_tool,
+        mock_global_config_obj,
+        test_db,
+        tool_query_mapping,
+        tool_header_mapping,
+        expected_json,
+        expected_headers,
+    ):
+        """invoke_tool should apply query_mapping and header_mapping through apply_mapping_into_target."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.url = "http://example.com/tools/test?existing=1"
+        mock_tool.query_mapping = tool_query_mapping
+        mock_tool.header_mapping = tool_header_mapping
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "REST tool response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"query": "test"}, request_headers=None)
+
+        tool_service._http_client.request.assert_called_once_with(
+            "POST",
+            "http://example.com/tools/test",
+            json=expected_json,
+            headers=expected_headers,
+        )
+
 
 # --------------------------------------------------------------------------- #
 #                               extract_using_jq                              #

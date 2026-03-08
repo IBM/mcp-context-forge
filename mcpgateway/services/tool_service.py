@@ -3299,11 +3299,15 @@ class ToolService(BaseService):
 
                     query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
-                    # Apply query mapping and merge into parsed query params from url
-                    payload = apply_mapping_into_target(payload, tool_query_mapping, query_params)
+                    if tool_query_mapping:
+                        # Apply query mapping and merge into parsed query params from url
+                        payload = apply_mapping_into_target(payload, tool_query_mapping, query_params)
+                    else:
+                        # Else just use the parsed query params from url
+                        payload.update(query_params)
 
                     # Apply headers mapping and merge into already existing headers
-                    headers = apply_mapping_into_target(payload, tool_header_mapping, headers)
+                    headers = apply_mapping_into_target(arguments.copy(), tool_header_mapping, headers)
 
                     # Use the tool's request_type rather than defaulting to POST (using local variable)
                     method = tool_request_type.upper() if tool_request_type else "POST"
