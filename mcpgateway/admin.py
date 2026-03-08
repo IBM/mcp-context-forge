@@ -6626,8 +6626,8 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
 
     is_current_user = user_obj.email == current_user_email
     is_last_admin = bool(user_obj.is_admin and user_obj.is_active and admin_count == 1)
+    is_locked = user_obj.is_account_locked()
     locked_until = getattr(user_obj, "locked_until", None)
-    is_locked = bool(locked_until and locked_until > utc_now())
     failed_attempts = int(getattr(user_obj, "failed_login_attempts", 0) or 0)
     lock_until_text = locked_until.strftime("%Y-%m-%d %H:%M") if locked_until else "N/A"
 
@@ -6858,9 +6858,9 @@ async def admin_users_partial_html(
                     "auth_provider": user_obj.auth_provider,
                     "created_at": user_obj.created_at,
                     "password_change_required": user_obj.password_change_required,
+                    "is_locked": user_obj.is_account_locked(),
                     "failed_login_attempts": int(getattr(user_obj, "failed_login_attempts", 0) or 0),
                     "locked_until": getattr(user_obj, "locked_until", None),
-                    "is_locked": bool(getattr(user_obj, "locked_until", None) and getattr(user_obj, "locked_until", None) > utc_now()),
                     "is_current_user": is_current_user,
                     "is_last_admin": is_last_admin,
                 }
