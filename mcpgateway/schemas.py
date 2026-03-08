@@ -5533,6 +5533,7 @@ class EmailUserResponse(BaseModel):
         Returns:
             EmailUserResponse: Response schema instance
         """
+        is_locked = user.is_account_locked()
         locked_until_raw = getattr(user, "locked_until", None)
         locked_until = locked_until_raw if isinstance(locked_until_raw, datetime) else None
         failed_attempts_raw = getattr(user, "failed_login_attempts", 0)
@@ -5552,7 +5553,7 @@ class EmailUserResponse(BaseModel):
             password_change_required=user.password_change_required,
             failed_login_attempts=failed_attempts,
             locked_until=locked_until,
-            is_locked=bool(locked_until and locked_until > datetime.now(timezone.utc)),
+            is_locked=is_locked,
         )
 
 
