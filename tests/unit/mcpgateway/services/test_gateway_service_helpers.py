@@ -237,10 +237,14 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
     assert decode_auth(captured_tool_auth_values[0]) == {"X-Custom-Auth-Header": "my-token", "X-Custom-User-ID": "user-123"}
 
 
-def test_update_or_create_tools_authheaders_encodes_for_dbtool():
-    """Verify _update_or_create_tools encodes DbGateway.auth_value (dict) into an encoded
-    string before writing to DbTool.auth_value (Text column), and that the comparison
-    against the existing tool's auth_value does not produce a spurious no-op update.
+def test_update_or_create_tools_authheaders_no_spurious_update():
+    """Verify _update_or_create_tools does NOT trigger a spurious update when the
+    gateway's auth_value dict matches the existing tool's encoded auth_value.
+
+    encode_auth() uses os.urandom(12) for the AES-GCM nonce, so comparing
+    ciphertext would always differ even when the plaintext is identical. The
+    comparison must use decoded/plaintext values to avoid write amplification
+    on every health-check refresh cycle.
     """
     # Standard
     from types import SimpleNamespace as NS
@@ -249,6 +253,7 @@ def test_update_or_create_tools_authheaders_encodes_for_dbtool():
 
     auth_dict = {"X-My-Header": "secret-val"}
     encoded = encode_auth(auth_dict)
+    original_encoded = encoded  # save for byte-for-byte comparison
 
     # Existing tool already has the correctly encoded auth_value stored
     existing = MagicMock()
@@ -289,8 +294,8 @@ def test_update_or_create_tools_authheaders_encodes_for_dbtool():
 
     result = service._update_or_create_tools(db, [tool], gateway, "update")
 
-    # No new tools: the existing tool was not meaningfully changed
+    # No new tools returned
     assert result == []
-    # auth_value on DbTool must remain an encoded string (not overwritten with the raw dict)
-    assert isinstance(existing.auth_value, str)
+    # auth_value must be the EXACT same string — no spurious re-encryption
+    assert existing.auth_value is original_encoded, f"auth_value was spuriously rewritten: {existing.auth_value!r} != {original_encoded!r}"
     assert decode_auth(existing.auth_value) == auth_dict

@@ -4138,9 +4138,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     # Check authentication and visibility changes.
                     # DbTool.auth_value is Text (encoded str); DbGateway.auth_value is JSON (dict).
-                    # Encode gateway.auth_value for comparison and assignment to keep types consistent.
-                    gateway_tool_auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
-                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or existing_tool.auth_value != gateway_tool_auth_value or existing_tool.visibility != gateway.visibility
+                    # encode_auth() uses a random nonce, so comparing ciphertext would always
+                    # differ even when the plaintext hasn't changed.  Compare on decoded
+                    # (plaintext) values instead, and only encode on the write path.
+                    gateway_auth_plain = gateway.auth_value if isinstance(gateway.auth_value, dict) else (decode_auth(gateway.auth_value) if gateway.auth_value else {})
+                    existing_tool_auth_plain = decode_auth(existing_tool.auth_value) if existing_tool.auth_value else {}
+                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or existing_tool_auth_plain != gateway_auth_plain or existing_tool.visibility != gateway.visibility
 
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed:
                         fields_to_update = True
@@ -4158,7 +4161,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.output_schema = tool.output_schema
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
                         existing_tool.auth_type = gateway.auth_type
-                        existing_tool.auth_value = gateway_tool_auth_value
+                        existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
                         existing_tool.visibility = gateway.visibility
                         logger.debug(f"Updated existing tool: {tool.name}")
                 else:
