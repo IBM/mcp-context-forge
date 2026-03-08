@@ -561,9 +561,9 @@ class LoggingService:
             # This prevents duplicate logging while maintaining dual output (console + file)
             logger.propagate = True
 
-            # Set level to match service level
-            log_level = getattr(logging, self._level.upper())
-            logger.setLevel(log_level)
+            # Don't set level on child loggers - let them inherit from root logger
+            # This ensures LOG_LEVEL environment variable is respected after initialize() runs
+            # The root logger level is set in initialize() based on settings.log_level
 
             self._loggers[name] = logger
 
@@ -587,8 +587,16 @@ class LoggingService:
         """
         self._level = level
 
-        # Update all loggers
+        # Update all loggers and handlers
         log_level = getattr(logging, level.upper())
+
+        # Update Python root logger so new child loggers inherit the correct level
+        logging.getLogger().setLevel(log_level)
+
+        # Update handler levels so they don't filter out records the logger passes
+        for handler in logging.getLogger().handlers:
+            handler.setLevel(log_level)
+
         for logger in self._loggers.values():
             logger.setLevel(log_level)
 

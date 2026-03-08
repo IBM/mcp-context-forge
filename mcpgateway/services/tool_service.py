@@ -76,6 +76,7 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
+from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -136,10 +137,11 @@ def _get_tool_lookup_cache():
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-# Initialize performance tracker, structured logger, and audit trail for tool operations
+# Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
 perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
 audit_trail = get_audit_trail_service()
+metrics_buffer = get_metrics_buffer_service()
 
 _ENCRYPTED_TOOL_HEADER_VALUE_KEY = "_mcpgateway_encrypted_header_value_v1"
 _TOOL_HEADER_DATA_KEY = "data"
@@ -2802,8 +2804,7 @@ class ToolService(BaseService):
             >>> pass  # doctest: +SKIP
         """
         # pylint: disable=comparison-with-callable
-        logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}")
-
+        logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}, server_id={server_id}")
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Check for X-Context-Forge-Gateway-Id header for direct_proxy mode (no DB lookup)
         # ═══════════════════════════════════════════════════════════════════════════
@@ -3157,8 +3158,8 @@ class ToolService(BaseService):
             # Create new context (fallback when middleware didn't run)
             # Use correlation ID from context if available, otherwise generate new one
             request_id = get_correlation_id() or uuid.uuid4().hex
-            server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else "unknown"
-            global_context = GlobalContext(request_id=request_id, server_id=server_id, tenant_id=None, user=app_user_email)
+            context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else "unknown"
+            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email)
 
         start_time = time.monotonic()
         success = False
@@ -4077,10 +4078,6 @@ class ToolService(BaseService):
                 # Only record metrics if tool_id is valid (skip for direct_proxy mode)
                 if tool_id:
                     try:
-                        # First-Party
-                        from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
-
-                        metrics_buffer = get_metrics_buffer_service()
                         metrics_buffer.record_tool_metric(
                             tool_id=tool_id,
                             start_time=start_time,
@@ -4089,6 +4086,21 @@ class ToolService(BaseService):
                         )
                     except Exception as metric_error:
                         logger.warning(f"Failed to record tool metric: {metric_error}")
+
+                # Record server metrics ONLY when invoked through a specific virtual server
+                # When server_id is provided, it means the tool was called via a virtual server endpoint
+                # Direct tool calls via /rpc should NOT populate server metrics
+                if tool_id and server_id:
+                    try:
+                        # Record server metric only for the specific virtual server being accessed
+                        metrics_buffer.record_server_metric(
+                            server_id=server_id,
+                            start_time=start_time,
+                            success=success,
+                            error_message=error_message,
+                        )
+                    except Exception as metric_error:
+                        logger.warning(f"Failed to record server metric: {metric_error}")
 
                 # Log structured message with performance tracking (using local variables)
                 if success:

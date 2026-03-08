@@ -831,7 +831,7 @@ async def test_list_resources_exception_no_server_id(monkeypatch, caplog):
 async def test_list_resource_templates_public_only_token(monkeypatch):
     """Test list_resource_templates passes empty token_teams for public-only access."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, user_context_var
+    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
     mock_template = MagicMock()
@@ -846,23 +846,26 @@ async def test_list_resource_templates_public_only_token(monkeypatch):
     # Track what parameters were passed to the service
     captured_calls = []
 
-    async def mock_list_templates(db, user_email=None, token_teams=None):
-        captured_calls.append({"user_email": user_email, "token_teams": token_teams})
+    async def mock_list_templates(db, user_email=None, token_teams=None, server_id=None):
+        captured_calls.append({"user_email": user_email, "token_teams": token_teams, "server_id": server_id})
         return [mock_template]
 
     monkeypatch.setattr(resource_service, "list_resource_templates", mock_list_templates)
 
     # Set public-only user context (no auth, teams=None which becomes [])
-    token = user_context_var.set({"email": None, "teams": None, "is_admin": False})
+    user_token = user_context_var.set({"email": None, "teams": None, "is_admin": False})
+    server_token = server_id_var.set("test-server")
     try:
         result = await list_resource_templates()
     finally:
-        user_context_var.reset(token)
+        user_context_var.reset(user_token)
+        server_id_var.reset(server_token)
 
     # Verify the service was called with public-only access (empty teams)
     assert len(captured_calls) == 1
     assert captured_calls[0]["user_email"] is None
     assert captured_calls[0]["token_teams"] == []  # Public-only (secure default)
+    assert captured_calls[0]["server_id"] == "test-server"
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -872,7 +875,7 @@ async def test_list_resource_templates_public_only_token(monkeypatch):
 async def test_list_resource_templates_admin_unrestricted(monkeypatch):
     """Test list_resource_templates passes token_teams=None for admin users without team restrictions."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, user_context_var
+    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
     mock_template = MagicMock()
@@ -886,23 +889,26 @@ async def test_list_resource_templates_admin_unrestricted(monkeypatch):
 
     captured_calls = []
 
-    async def mock_list_templates(db, user_email=None, token_teams=None):
-        captured_calls.append({"user_email": user_email, "token_teams": token_teams})
+    async def mock_list_templates(db, user_email=None, token_teams=None, server_id=None):
+        captured_calls.append({"user_email": user_email, "token_teams": token_teams, "server_id": server_id})
         return [mock_template]
 
     monkeypatch.setattr(resource_service, "list_resource_templates", mock_list_templates)
 
     # Set admin user context with no team restrictions
-    token = user_context_var.set({"email": "admin@example.com", "teams": None, "is_admin": True})
+    user_token = user_context_var.set({"email": "admin@example.com", "teams": None, "is_admin": True})
+    server_token = server_id_var.set("test-server")
     try:
         result = await list_resource_templates()
     finally:
-        user_context_var.reset(token)
+        user_context_var.reset(user_token)
+        server_id_var.reset(server_token)
 
     # Verify the service was called with admin unrestricted access
     assert len(captured_calls) == 1
     assert captured_calls[0]["user_email"] is None  # Admin bypass clears email
     assert captured_calls[0]["token_teams"] is None  # Unrestricted
+    assert captured_calls[0]["server_id"] == "test-server"
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -912,7 +918,7 @@ async def test_list_resource_templates_admin_unrestricted(monkeypatch):
 async def test_list_resource_templates_team_scoped(monkeypatch):
     """Test list_resource_templates passes token_teams for team-scoped access."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, user_context_var
+    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
     mock_template = MagicMock()
@@ -926,23 +932,26 @@ async def test_list_resource_templates_team_scoped(monkeypatch):
 
     captured_calls = []
 
-    async def mock_list_templates(db, user_email=None, token_teams=None):
-        captured_calls.append({"user_email": user_email, "token_teams": token_teams})
+    async def mock_list_templates(db, user_email=None, token_teams=None, server_id=None):
+        captured_calls.append({"user_email": user_email, "token_teams": token_teams, "server_id": server_id})
         return [mock_template]
 
     monkeypatch.setattr(resource_service, "list_resource_templates", mock_list_templates)
 
     # Set user context with specific team membership
-    token = user_context_var.set({"email": "user@example.com", "teams": ["team-1", "team-2"], "is_admin": False})
+    user_token = user_context_var.set({"email": "user@example.com", "teams": ["team-1", "team-2"], "is_admin": False})
+    server_token = server_id_var.set("test-server")
     try:
         result = await list_resource_templates()
     finally:
-        user_context_var.reset(token)
+        user_context_var.reset(user_token)
+        server_id_var.reset(server_token)
 
     # Verify the service was called with team-scoped access
     assert len(captured_calls) == 1
     assert captured_calls[0]["user_email"] == "user@example.com"
     assert captured_calls[0]["token_teams"] == ["team-1", "team-2"]
+    assert captured_calls[0]["server_id"] == "test-server"
 
     assert isinstance(result, list)
     assert len(result) == 1

@@ -1998,9 +1998,10 @@ class TestToolService:
         tool_service._http_client.get = AsyncMock(return_value=mock_response)
 
         # ------------- metrics -----------------
-        # Mock the metrics buffer service
+        # Mock the metrics buffer at module level
         mock_metrics_buffer = Mock()
-        with patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer):
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
             # -------------- invoke -----------------
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
@@ -2027,10 +2028,11 @@ class TestToolService:
         tool_service._http_client.get = AsyncMock(return_value=mock_response)
 
         # ------------- metrics -----------------
-        tool_service._record_tool_metric_sync = Mock()
-
-        # -------------- invoke -----------------
-        result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            # -------------- invoke -----------------
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
         assert result.content[0].text == "Request completed successfully (No Content)"
 
@@ -2043,10 +2045,11 @@ class TestToolService:
         tool_service._http_client.get = AsyncMock(return_value=mock_response)
 
         # ------------- metrics -----------------
-        tool_service._record_tool_metric_sync = Mock()
-
-        # -------------- invoke -----------------
-        result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            # -------------- invoke -----------------
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
         assert result.content[0].text == "Tool error encountered"
 
@@ -2069,10 +2072,11 @@ class TestToolService:
         mock_response.json = Mock(return_value={"result": "REST tool response"})  # Make json() synchronous
         tool_service._http_client.request.return_value = mock_response
 
-        # Mock metrics buffer service and other dependencies
+        # Mock metrics buffer at module level and other dependencies
         mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
         with (
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
             patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}),
         ):
@@ -2186,8 +2190,9 @@ class TestToolService:
         jq_error = [TextContent(type="text", text="Error applying jsonpath filter")]
 
         mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
         with (
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
             patch("mcpgateway.services.tool_service.extract_using_jq", return_value=jq_error),
         ):
@@ -2704,10 +2709,11 @@ class TestToolService:
         # Mock HTTP client to raise an error
         tool_service._http_client.request.side_effect = Exception("HTTP error")
 
-        # Mock metrics buffer service and decode_auth
+        # Mock metrics buffer at module level and decode_auth
         mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
         with (
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
         ):
             # Should raise ToolInvocationError
@@ -2792,10 +2798,11 @@ class TestToolService:
         # Mock HTTP client to raise an ExceptionGroup
         tool_service._http_client.request.side_effect = outer_group
 
-        # Mock metrics buffer service and decode_auth
+        # Mock metrics buffer at module level and decode_auth
         mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
         with (
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
         ):
             # Should raise ToolInvocationError with the unwrapped root cause message

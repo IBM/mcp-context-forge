@@ -459,10 +459,10 @@ class TestPromptService:
             patch("mcpgateway.services.prompt_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.prompt_service.ObservabilityService", return_value=obs),
             patch("mcpgateway.services.prompt_service.create_span", _no_span),
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_get_buf,
+            patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf,
         ):
             mock_trace.get.return_value = "trace-1"
-            mock_get_buf.return_value.record_prompt_metric = Mock()
+            mock_get_buf.record_prompt_metric = Mock()
             result = await prompt_service.get_prompt(test_db, "1", {})
 
         assert result.messages[0].content.text == "Hello!"
@@ -493,7 +493,7 @@ class TestPromptService:
             patch("mcpgateway.services.prompt_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.prompt_service.ObservabilityService", return_value=obs),
             patch("mcpgateway.services.prompt_service.create_span", _span_cm),
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=metrics_buffer),
+            patch("mcpgateway.services.prompt_service.metrics_buffer", metrics_buffer),
         ):
             mock_trace.get.return_value = "trace-1"
             result = await prompt_service.get_prompt(test_db, "1", {"name": "Alice"})
@@ -522,10 +522,10 @@ class TestPromptService:
             patch("mcpgateway.services.prompt_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.prompt_service.ObservabilityService", return_value=obs),
             patch("mcpgateway.services.prompt_service.create_span", _no_span),
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_get_buf,
+            patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf,
         ):
             mock_trace.get.return_value = "trace-1"
-            mock_get_buf.return_value.record_prompt_metric = Mock()
+            mock_get_buf.record_prompt_metric = Mock()
             result = await prompt_service.get_prompt(test_db, "1", {})
 
         assert result.messages[0].content.text == "Hello!"
@@ -536,8 +536,8 @@ class TestPromptService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
         prompt_service._check_prompt_access = AsyncMock(return_value=False)
 
-        with patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_get_buf:
-            mock_get_buf.return_value.record_prompt_metric = Mock()
+        with patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf:
+            mock_get_buf.record_prompt_metric = Mock()
             with pytest.raises(PromptNotFoundError, match="Prompt not found"):
                 await prompt_service.get_prompt(test_db, "1", {})
 
@@ -550,8 +550,8 @@ class TestPromptService:
         server_match_result.first.return_value = None
         test_db.execute = Mock(side_effect=[_make_execute_result(scalar=db_prompt), server_match_result])
 
-        with patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_get_buf:
-            mock_get_buf.return_value.record_prompt_metric = Mock()
+        with patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf:
+            mock_get_buf.record_prompt_metric = Mock()
             with pytest.raises(PromptNotFoundError, match="Prompt not found"):
                 await prompt_service.get_prompt(test_db, "1", {}, server_id="server-1")
 
@@ -573,9 +573,9 @@ class TestPromptService:
 
         with (
             patch("mcpgateway.services.prompt_service.create_span", _span_cm),
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_get_buf,
+            patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf,
         ):
-            mock_get_buf.return_value.record_prompt_metric = Mock()
+            mock_get_buf.record_prompt_metric = Mock()
             with pytest.raises(PromptError, match="Failed to process prompt"):
                 await prompt_service.get_prompt(test_db, "1", {"name": "Alice"})
 
@@ -619,9 +619,9 @@ class TestPromptService:
 
         with (
             patch("mcpgateway.services.prompt_service.create_span", _no_span),
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_get_buf,
+            patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf,
         ):
-            mock_get_buf.return_value.record_prompt_metric = Mock()
+            mock_get_buf.record_prompt_metric = Mock()
             result = await prompt_service.get_prompt(
                 test_db,
                 "1",
@@ -666,9 +666,9 @@ class TestPromptService:
 
         with (
             patch("mcpgateway.services.prompt_service.create_span", _no_span),
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_get_buf,
+            patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf,
         ):
-            mock_get_buf.return_value.record_prompt_metric = Mock()
+            mock_get_buf.record_prompt_metric = Mock()
             result = await prompt_service.get_prompt(test_db, "1", {"name": "Bob"}, user="user@test.com")
 
         assert result.messages[0].content.text == "Hello, Alice!"
