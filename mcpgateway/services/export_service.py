@@ -28,11 +28,11 @@ from sqlalchemy.orm import selectinload, Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.utils.services_auth import encode_auth
 
 # Service singletons are imported lazily in __init__ to avoid circular imports
 

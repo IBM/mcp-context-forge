@@ -151,6 +151,7 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
     assert isinstance(encoded, str), "encode_auth must return str — storing it in a dict JSON column yields null"
 
     # Build a minimal gateway with authheaders
+    # Standard
     from types import SimpleNamespace as NS
 
     gateway = NS(
@@ -204,6 +205,7 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
     # Snapshot at db.add() time — tools flow through the gateway relationship (gateway.tools=tools),
     # not separate db.add() calls. _prepare_gateway_for_read() later mutates db_gateway.auth_value
     # to an encoded string for the GatewayRead response; we capture before that mutation.
+    # First-Party
     from mcpgateway.db import Gateway as DbGateway
 
     captured_gw: dict = {}
@@ -223,18 +225,14 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
     # auth_value must be a plain dict — NOT a string.
     # A string stored in a Mapped[Optional[Dict[str, str]]] JSON column is written as JSON null.
     assert "auth_value" in captured_gw, "db.add was never called with a DbGateway object"
-    assert isinstance(captured_gw["auth_value"], dict), (
-        f"DbGateway.auth_value must be dict for authheaders auth type, got {type(captured_gw['auth_value'])}: {captured_gw['auth_value']!r}"
-    )
+    assert isinstance(captured_gw["auth_value"], dict), f"DbGateway.auth_value must be dict for authheaders auth type, got {type(captured_gw['auth_value'])}: {captured_gw['auth_value']!r}"
     assert captured_gw["auth_value"] == {"X-Custom-Auth-Header": "my-token", "X-Custom-User-ID": "user-123"}
 
     # --- DbTool assertion ---
     # DbTool.auth_value is Mapped[Optional[str]] (Text), so it must be an encoded string,
     # not a raw dict. tool_service.py calls decode_auth() on it at read-time.
     assert len(captured_tool_auth_values) == 1, "expected exactly one DbTool to be added"
-    assert isinstance(captured_tool_auth_values[0], str), (
-        f"DbTool.auth_value must be an encoded string for Text column, got {type(captured_tool_auth_values[0])}: {captured_tool_auth_values[0]!r}"
-    )
+    assert isinstance(captured_tool_auth_values[0], str), f"DbTool.auth_value must be an encoded string for Text column, got {type(captured_tool_auth_values[0])}: {captured_tool_auth_values[0]!r}"
     # Decoding must recover the original headers dict
     assert decode_auth(captured_tool_auth_values[0]) == {"X-Custom-Auth-Header": "my-token", "X-Custom-User-ID": "user-123"}
 
@@ -244,6 +242,7 @@ def test_update_or_create_tools_authheaders_encodes_for_dbtool():
     string before writing to DbTool.auth_value (Text column), and that the comparison
     against the existing tool's auth_value does not produce a spurious no-op update.
     """
+    # Standard
     from types import SimpleNamespace as NS
 
     service = GatewayService()
