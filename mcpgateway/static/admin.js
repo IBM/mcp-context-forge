@@ -16462,6 +16462,7 @@ async function handleEditA2AAgentFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("a2a-agents");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.append("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
