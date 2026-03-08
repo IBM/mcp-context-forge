@@ -30,6 +30,18 @@ import pytest
 from mcpgateway.common.models import LogLevel
 from mcpgateway.services.logging_service import CorrelationIdJsonFormatter, LoggingService, StorageHandler
 
+
+@pytest.fixture(autouse=True)
+def _restore_root_logger_level():
+    """Prevent set_level() calls from leaking global root logger state into other test modules."""
+    root = logging.getLogger()
+    saved_level = root.level
+    saved_handler_levels = [(h, h.level) for h in root.handlers]
+    yield
+    root.setLevel(saved_level)
+    for handler, level in saved_handler_levels:
+        handler.setLevel(level)
+
 # ---------------------------------------------------------------------------
 # Basic behaviour
 # ---------------------------------------------------------------------------
@@ -46,11 +58,16 @@ async def test_should_log_default_levels():
 
 @pytest.mark.asyncio
 async def test_get_logger_sets_level_and_reuses_instance():
+    # Reset root logger to INFO to ensure consistent test behavior across environments
+    # This is necessary because other tests may have modified the root logger level
+    logging.getLogger().setLevel(logging.INFO)
+
     service = LoggingService()
 
     # First call - default level INFO
+    # Child loggers inherit from root, so check effective level
     logger1 = service.get_logger("test")
-    assert logger1.level == logging.INFO
+    assert logger1.getEffectiveLevel() == logging.INFO
 
     # Same logger object returned on second call
     logger2 = service.get_logger("test")
@@ -59,7 +76,7 @@ async def test_get_logger_sets_level_and_reuses_instance():
     # After raising service level to DEBUG a *new* logger inherits that level
     await service.set_level(LogLevel.DEBUG)
     logger3 = service.get_logger("newlogger")
-    assert logger3.level == logging.DEBUG
+    assert logger3.getEffectiveLevel() == logging.DEBUG
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +257,7 @@ class TestHttpxUrlSanitizeFilter:
         record = logging.makeLogRecord(
             {
                 "name": "httpx",
-                "msg": "HTTP Request: GET https://api.example.com/path?token=my-secret&q=search \"HTTP/1.1 200 OK\"",
+                "msg": 'HTTP Request: GET https://api.example.com/path?token=my-secret&q=search "HTTP/1.1 200 OK"',
             }
         )
         filt.filter(record)

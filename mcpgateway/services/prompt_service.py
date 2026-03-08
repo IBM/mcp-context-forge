@@ -45,6 +45,7 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -109,9 +110,10 @@ def _get_registry_cache():
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-# Initialize structured logger and audit trail for prompt operations
+# Initialize structured logger, audit trail, and metrics buffer for prompt operations
 structured_logger = get_structured_logger("prompt_service")
 audit_trail = get_audit_trail_service()
+metrics_buffer = get_metrics_buffer_service()
 
 
 class PromptError(Exception):
@@ -1440,6 +1442,7 @@ class PromptService(BaseService):
         success = False
         error_message = None
         prompt = None
+        server_scoped = False
 
         # Create database span for observability dashboard
         trace_id = current_trace_id.get()
@@ -1555,6 +1558,7 @@ class PromptService(BaseService):
                     ).first()
                     if not server_match:
                         raise PromptNotFoundError(f"Prompt not found: {search_key}")
+                    server_scoped = True
 
                 if not arguments:
                     result = PromptResult(
@@ -1644,10 +1648,6 @@ class PromptService(BaseService):
                 # Record metrics only if we found a prompt
                 if prompt:
                     try:
-                        # First-Party
-                        from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
-
-                        metrics_buffer = get_metrics_buffer_service()
                         metrics_buffer.record_prompt_metric(
                             prompt_id=prompt.id,
                             start_time=start_time,
@@ -1656,6 +1656,21 @@ class PromptService(BaseService):
                         )
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record prompt metric: {metrics_error}")
+
+                    # Record server metrics ONLY when the server scoping check passed.
+                    # This prevents recording metrics with unvalidated server_id values
+                    # from admin API headers (X-Server-ID) or RPC params.
+                    if server_scoped:
+                        try:
+                            # Record server metric only for the specific virtual server being accessed
+                            metrics_buffer.record_server_metric(
+                                server_id=server_id,
+                                start_time=start_time,
+                                success=success,
+                                error_message=error_message,
+                            )
+                        except Exception as metrics_error:
+                            logger.warning(f"Failed to record server metric: {metrics_error}")
 
                 # End database span for observability dashboard
                 if db_span_id and observability_service and not db_span_ended:
