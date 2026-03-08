@@ -1984,6 +1984,7 @@ class ResourceService(BaseService):
         success = False
         error_message = None
         resource_db = None
+        server_scoped = False
         resource_db_gateway = None  # Only set when eager-loaded via Q2's joinedload
         content = None
         uri = resource_uri or "unknown"
@@ -2244,6 +2245,7 @@ class ResourceService(BaseService):
                         ).first()
                         if not server_match:
                             raise ResourceNotFoundError(f"Resource not found: {resource_uri or resource_id}")
+                        server_scoped = True
 
                 # Set success attributes on span
                 if span:
@@ -2352,10 +2354,10 @@ class ResourceService(BaseService):
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record resource metric: {metrics_error}")
 
-                # Record server metrics ONLY when invoked through a specific virtual server
-                # When server_id is provided, it means the resource was called via a virtual server endpoint
-                # Direct resource calls via /rpc should NOT populate server metrics
-                if resource_db and server_id:
+                # Record server metrics ONLY when the server scoping check passed.
+                # This prevents recording metrics with unvalidated server_id values
+                # from admin API headers (X-Server-ID) or RPC params.
+                if resource_db and server_scoped:
                     try:
                         logger.debug(f"Recording server metric for server_id={server_id}, resource_id={resource_db.id}, success={success}")
                         # Record server metric only for the specific virtual server being accessed

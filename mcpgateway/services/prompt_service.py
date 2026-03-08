@@ -1442,6 +1442,7 @@ class PromptService(BaseService):
         success = False
         error_message = None
         prompt = None
+        server_scoped = False
 
         # Create database span for observability dashboard
         trace_id = current_trace_id.get()
@@ -1557,6 +1558,7 @@ class PromptService(BaseService):
                     ).first()
                     if not server_match:
                         raise PromptNotFoundError(f"Prompt not found: {search_key}")
+                    server_scoped = True
 
                 if not arguments:
                     result = PromptResult(
@@ -1655,10 +1657,10 @@ class PromptService(BaseService):
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record prompt metric: {metrics_error}")
 
-                    # Record server metrics ONLY when invoked through a specific virtual server
-                    # When server_id is provided, it means the prompt was called via a virtual server endpoint
-                    # Direct prompt calls via /rpc should NOT populate server metrics
-                    if server_id:
+                    # Record server metrics ONLY when the server scoping check passed.
+                    # This prevents recording metrics with unvalidated server_id values
+                    # from admin API headers (X-Server-ID) or RPC params.
+                    if server_scoped:
                         try:
                             # Record server metric only for the specific virtual server being accessed
                             metrics_buffer.record_server_metric(
