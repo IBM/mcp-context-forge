@@ -15627,7 +15627,7 @@ async function handleGatewayFormSubmit(e) {
             formData.set("oauth_grant_type", "");
         }
 
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
 
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
@@ -15714,7 +15714,7 @@ async function handleResourceFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("resources");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -15784,7 +15784,7 @@ async function handlePromptFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("prompts");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -15854,6 +15854,7 @@ async function handleEditPromptFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("prompts");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
 
         // Submit via fetch
         const response = await fetch(form.action, {
@@ -15916,7 +15917,7 @@ async function handleServerFormSubmit(e) {
         const isInactiveCheckedBool = isInactiveChecked("servers");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -16093,7 +16094,7 @@ async function handleA2AFormSubmit(e) {
 
         // ✅ Ensure visibility is captured from checked radio button
         // formData.set("visibility", visibility);
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -16195,7 +16196,7 @@ async function handleToolFormSubmit(event) {
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -16265,6 +16266,7 @@ async function handleEditToolFormSubmit(event) {
 
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
 
         // Submit via fetch
         const response = await fetch(form.action, {
@@ -16360,6 +16362,7 @@ async function handleEditGatewayFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("gateways");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
@@ -16459,6 +16462,7 @@ async function handleEditA2AAgentFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("a2a-agents");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
@@ -16513,6 +16517,7 @@ async function handleEditServerFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("servers");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
 
         // Merge persistent selection store into FormData so off-screen selections are included
         [
@@ -16622,6 +16627,7 @@ async function handleEditResFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("resources");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
