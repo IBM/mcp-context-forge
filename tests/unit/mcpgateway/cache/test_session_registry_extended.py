@@ -261,7 +261,7 @@ class TestRedisBackendRespond:
                 # Mock generate_response to track calls
                 with patch.object(registry, "generate_response", new_callable=AsyncMock):
                     # Start respond task and let it process one message
-                    respond_task = asyncio.create_task(registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost"))
+                    respond_task = asyncio.create_task(registry.respond(server_id=None, user={"token": "test"}, session_id="test_session"))
 
                     # Give it time to process messages
                     await asyncio.sleep(0.01)
@@ -308,7 +308,7 @@ class TestRedisBackendRespond:
                 await registry.add_session("test_session", mock_sse_transport)
 
                 # Start respond task and cancel it
-                respond_task = asyncio.create_task(registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost"))
+                respond_task = asyncio.create_task(registry.respond(server_id=None, user={"token": "test"}, session_id="test_session"))
 
                 await asyncio.sleep(0.01)  # Let it start
                 respond_task.cancel()
@@ -387,7 +387,6 @@ class TestDatabaseBackendRespond:
                                 server_id=None,
                                 user={"token": "test"},
                                 session_id="test_session",
-                                base_url="http://localhost",
                             )
 
                             # Assert message was processed
@@ -448,7 +447,6 @@ class TestDatabaseBackendRespond:
                                 server_id=None,
                                 user={"token": "test"},
                                 session_id="test_session",
-                                base_url="http://localhost",
                             )
 
                             # Assert log output
@@ -512,7 +510,6 @@ class TestDatabaseBackendRespond:
                                 server_id=None,
                                 user={"token": "test"},
                                 session_id="test_session",
-                                base_url="http://localhost",
                             )
 
                             # Assert message removal log
