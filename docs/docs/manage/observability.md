@@ -167,8 +167,8 @@ Kubernetes.
 
 - `mcpgateway/main.py` — wiring: imports and calls `setup_metrics(app)` from
     `mcpgateway.services.metrics`. The function call instruments the app at
-    startup; the actual HTTP handler for `/metrics/prometheus` is registered by
-    the `Instrumentator` inside `mcpgateway/services/metrics.py`.
+    startup; the `/metrics/prometheus` endpoint is registered as a custom
+    auth-gated handler inside `mcpgateway/services/metrics.py`.
 - `mcpgateway/services/metrics.py` — instrumentation implementation and env-vars.
 - `mcpgateway/config.py` — settings defaults and names used by the app.
 

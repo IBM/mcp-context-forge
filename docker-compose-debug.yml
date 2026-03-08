@@ -861,11 +861,16 @@ services:
       - '--storage.tsdb.retention.time=7d'
       - '--web.enable-lifecycle'
     depends_on:
-      - postgres_exporter
-      - redis_exporter
-      - nginx_exporter
-      - cadvisor
-      - prometheus_token
+      postgres_exporter:
+        condition: service_started
+      redis_exporter:
+        condition: service_started
+      nginx_exporter:
+        condition: service_started
+      cadvisor:
+        condition: service_started
+      prometheus_token:
+        condition: service_completed_successfully
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────

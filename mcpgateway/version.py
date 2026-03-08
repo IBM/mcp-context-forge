@@ -181,7 +181,7 @@ _PUBLIC_ENV_ALLOWLIST = frozenset(
         "PLUGINS_ENABLED",
         "OBSERVABILITY_ENABLED",
         "AUTH_REQUIRED",
-        "CORS_ORIGINS",
+        "ALLOWED_ORIGINS",
     }
 )
 
@@ -728,7 +728,7 @@ button{{margin-top:1rem;padding:.5rem 1rem;}}
 
 
 # Endpoint
-@router.get("/version", summary="Diagnostics (auth required)")
+@router.get("/version", summary="Diagnostics (admin only)")
 async def version_endpoint(
     request: Request,
     fmt: Optional[str] = None,
@@ -738,7 +738,7 @@ async def version_endpoint(
     """Serve diagnostics as JSON, full HTML, or partial HTML.
 
     Main endpoint that gathers all diagnostic information and returns it in the
-    requested format. Requires authentication via HTTP Basic Auth or session.
+    requested format. Requires admin authentication.
 
     The endpoint supports three output formats:
     - JSON (default): Machine-readable diagnostic data
@@ -749,7 +749,7 @@ async def version_endpoint(
         request (Request): The incoming FastAPI request object.
         fmt (Optional[str]): Query parameter to force format ('html' for HTML output).
         partial (Optional[bool]): Query parameter to request partial HTML fragment.
-        _user: Injected authenticated user from require_auth dependency.
+        _user: Injected authenticated admin user from require_admin_auth dependency.
 
     Returns:
         Response: JSONResponse with diagnostic data, or HTMLResponse with formatted page.

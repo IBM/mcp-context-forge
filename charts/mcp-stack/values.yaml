@@ -108,9 +108,10 @@ mcpContextForge:
     port: 8000
     serviceMonitor:
       enabled: true
-    metricsToken:
-      secretName: mcpgateway-metrics-token
-      key: token
+    # metricsToken: Uncomment and configure to enable authenticated scraping.
+    #   secretName: mcpgateway-metrics-token
+    #   key: token
+    metricsToken: {}
     customLabels: {}
 
   # Health & readiness probes
