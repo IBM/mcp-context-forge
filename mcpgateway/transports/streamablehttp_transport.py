@@ -2013,6 +2013,7 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
                     db,
                     user_email=user_email,
                     token_teams=token_teams,
+                    server_id=server_id,
                 )
                 return [template.model_dump(by_alias=True) for template in resource_templates]
             except Exception as e:
