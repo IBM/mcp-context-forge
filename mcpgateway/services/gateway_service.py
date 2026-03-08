@@ -4141,9 +4141,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # encode_auth() uses a random nonce, so comparing ciphertext would always
                     # differ even when the plaintext hasn't changed.  Compare on decoded
                     # (plaintext) values instead, and only encode on the write path.
-                    gateway_auth_plain = gateway.auth_value if isinstance(gateway.auth_value, dict) else (decode_auth(gateway.auth_value) if gateway.auth_value else {})
-                    existing_tool_auth_plain = decode_auth(existing_tool.auth_value) if existing_tool.auth_value else {}
-                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or existing_tool_auth_plain != gateway_auth_plain or existing_tool.visibility != gateway.visibility
+                    # If decoding fails (legacy/corrupt data), fall back to direct comparison.
+                    try:
+                        gateway_auth_plain = gateway.auth_value if isinstance(gateway.auth_value, dict) else (decode_auth(gateway.auth_value) if gateway.auth_value else {})
+                        existing_tool_auth_plain = decode_auth(existing_tool.auth_value) if existing_tool.auth_value else {}
+                        auth_value_changed = existing_tool_auth_plain != gateway_auth_plain
+                    except Exception:
+                        gateway_tool_auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
+                        auth_value_changed = existing_tool.auth_value != gateway_tool_auth_value
+                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or auth_value_changed or existing_tool.visibility != gateway.visibility
 
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed:
                         fields_to_update = True

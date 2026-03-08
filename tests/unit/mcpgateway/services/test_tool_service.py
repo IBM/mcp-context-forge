@@ -2646,11 +2646,14 @@ class TestToolService:
         with (
             patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
             patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.encode_auth", wraps=encode_auth) as spy_encode,
         ):
             response = await tool_service.invoke_tool(test_db, "cached_tool_ah", {"param": "value"}, request_headers=None)
 
         assert response.content[0].text == "Invalid tool type"
         assert test_db.execute.called
+        # Verify the hydration path actually called encode_auth on the dict
+        spy_encode.assert_called_once_with({"X-Custom-Auth-Header": "my-token"})
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_tool_basic_auth(self, tool_service, mock_tool, mock_gateway, test_db):
