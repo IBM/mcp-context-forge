@@ -4055,6 +4055,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return GatewayRead.model_validate(gateway_dict).masked()
 
+    def _prepare_gateway_for_read(self, gateway: DbGateway) -> DbGateway:
+        """DEPRECATED: Use convert_gateway_to_read instead.
+
+        Returns a prepared copy and does not mutate the original ORM object.
+        """
+        import copy
+
+        prepared_gateway = copy.copy(gateway)
+
+        if isinstance(prepared_gateway.auth_value, dict):
+            prepared_gateway.auth_value = encode_auth(prepared_gateway.auth_value)
+
+        if prepared_gateway.tags and isinstance(prepared_gateway.tags[0], str):
+            prepared_gateway.tags = validate_tags_field(prepared_gateway.tags)
+
+        return prepared_gateway
+
     def _create_db_tool(
         self,
         tool: ToolCreate,
