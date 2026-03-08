@@ -144,6 +144,58 @@ def test_metrics_excluded_paths(monkeypatch):
 
 
 # ----------------------------------------------------------------------
+# Response format tests - gzip vs plain, multiprocess registry
+# ----------------------------------------------------------------------
+
+
+def test_metrics_prometheus_plain_text_response(client):
+    """Non-gzip request returns plain Prometheus exposition text."""
+    response = client.get("/metrics/prometheus", headers={"Accept-Encoding": "identity"})
+    assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
+    assert "Content-Encoding" not in response.headers
+    assert len(response.text) > 0
+
+
+def test_metrics_prometheus_multiprocess_registry(monkeypatch):
+    """PROMETHEUS_MULTIPROC_DIR triggers multiprocess collector."""
+    import tempfile
+
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_METRICS", True)
+
+    from prometheus_client import REGISTRY
+
+    saved_collectors = dict(REGISTRY._names_to_collectors)
+    saved_reverse = dict(REGISTRY._collector_to_names)
+    REGISTRY._collector_to_names.clear()
+    REGISTRY._names_to_collectors.clear()
+
+    try:
+        from fastapi import FastAPI
+        from mcpgateway.services.metrics import setup_metrics
+        from mcpgateway.utils.verify_credentials import require_auth
+
+        app = FastAPI()
+        setup_metrics(app)
+        app.dependency_overrides[require_auth] = lambda: {"sub": "test@metrics"}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", tmpdir)
+            client = TestClient(app)
+            response = client.get("/metrics/prometheus", headers={"Accept-Encoding": "identity"})
+            assert response.status_code == 200
+            assert "text/plain" in response.headers["content-type"]
+    finally:
+        monkeypatch.delenv("PROMETHEUS_MULTIPROC_DIR", raising=False)
+        REGISTRY._collector_to_names.clear()
+        REGISTRY._names_to_collectors.clear()
+        REGISTRY._names_to_collectors.update(saved_collectors)
+        REGISTRY._collector_to_names.update(saved_reverse)
+
+
+# ----------------------------------------------------------------------
 # Deny-path tests - unauthenticated access must be rejected
 # ----------------------------------------------------------------------
 
