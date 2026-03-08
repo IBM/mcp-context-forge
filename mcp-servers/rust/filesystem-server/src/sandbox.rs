@@ -83,7 +83,7 @@ mod tests {
         let sandbox = Sandbox::new(vec![path.clone()]).await.unwrap();
         let roots = sandbox.get_roots();
         assert_eq!(roots.len(), 1);
-        
+
         // On macOS, temp paths may be canonicalized from /var to /private/var
         // So we compare the canonicalized version of the temp_dir path
         let expected_canon = fs::canonicalize(temp_dir.path()).await.unwrap();
@@ -131,7 +131,7 @@ mod tests {
             .resolve_path(file_path.to_str().unwrap())
             .await
             .unwrap();
-        
+
         // On macOS, temp paths may be canonicalized from /var to /private/var
         // So we compare against the canonicalized temp_dir path
         let expected_canon = fs::canonicalize(temp_dir.path()).await.unwrap();
