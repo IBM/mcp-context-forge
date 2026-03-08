@@ -22,7 +22,7 @@ Supported Metrics:
 - app_info: Gauge with custom static labels for application metadata
 
 Environment Variables:
-- ENABLE_METRICS: Enable/disable metrics collection (default: "true")
+- ENABLE_METRICS: Enable/disable metrics collection (default: "false")
 - METRICS_EXCLUDED_HANDLERS: Comma-separated regex patterns for excluded endpoints
 - METRICS_CUSTOM_LABELS: Custom labels for app_info gauge (format: "key1=value1,key2=value2")
 
@@ -39,12 +39,13 @@ Functions:
 """
 
 # Standard
+import gzip
 import os
 import re
 
 # Third-Party
-from fastapi import Response, status
-from prometheus_client import Counter, Gauge, REGISTRY
+from fastapi import Depends, Request, Response, status
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest, REGISTRY
 from prometheus_fastapi_instrumentator import Instrumentator
 
 # First-Party
@@ -110,7 +111,7 @@ def setup_metrics(app):
         app: FastAPI application instance to instrument
 
     Environment Variables Used:
-        ENABLE_METRICS (str): "true" to enable metrics, "false" to disable (default: "true")
+        ENABLE_METRICS (str): "true" to enable metrics, "false" to disable (default: "false")
         METRICS_EXCLUDED_HANDLERS (str): Comma-separated regex patterns for endpoints
                                         to exclude from metrics collection
         METRICS_CUSTOM_LABELS (str): Custom labels in "key1=value1,key2=value2" format
@@ -129,7 +130,7 @@ def setup_metrics(app):
         >>> # setup_metrics(app)  # Configures Prometheus metrics
         >>> # Metrics available at GET /metrics/prometheus
     """
-    enable_metrics = os.getenv("ENABLE_METRICS", "true").lower() == "true"
+    enable_metrics = settings.ENABLE_METRICS
 
     if enable_metrics:
         # Detect database engine from DATABASE_URL
@@ -257,17 +258,52 @@ def setup_metrics(app):
         # Instrument FastAPI app
         instrumentator.instrument(app)
 
-        # Expose Prometheus metrics at /metrics/prometheus and include
-        # the endpoint in the OpenAPI schema so it appears in Swagger UI.
-        instrumentator.expose(app, endpoint="/metrics/prometheus", include_in_schema=True, should_gzip=True)
+        # Expose Prometheus metrics at /metrics/prometheus with auth.
+        # We define the endpoint manually (instead of instrumentator.expose)
+        # so we can gate it behind require_auth.
+        # First-Party
+        from mcpgateway.utils.verify_credentials import require_auth
+
+        @app.get("/metrics/prometheus", include_in_schema=True, tags=["Metrics"])
+        def prometheus_metrics(request: Request, _user=Depends(require_auth)):
+            """Prometheus metrics endpoint (requires authentication).
+
+            Args:
+                request: The incoming HTTP request (used to check Accept-Encoding).
+                _user: Authenticated user from require_auth dependency.
+
+            Returns:
+                Response: Prometheus metrics in text exposition format.
+            """
+            registry = REGISTRY
+            if "PROMETHEUS_MULTIPROC_DIR" in os.environ:
+                # Third-Party
+                from prometheus_client import CollectorRegistry, multiprocess
+
+                registry = CollectorRegistry()
+                multiprocess.MultiProcessCollector(registry)
+            if "gzip" in request.headers.get("Accept-Encoding", ""):
+                resp = Response(content=gzip.compress(generate_latest(registry)))
+                resp.headers["Content-Type"] = CONTENT_TYPE_LATEST
+                resp.headers["Content-Encoding"] = "gzip"
+            else:
+                resp = Response(content=generate_latest(registry))
+                resp.headers["Content-Type"] = CONTENT_TYPE_LATEST
+            return resp
 
         print("✅ Metrics instrumentation enabled")
     else:
         print("⚠️ Metrics instrumentation disabled")
 
-        @app.get("/metrics/prometheus")
-        async def metrics_disabled():
-            """Returns metrics response when metrics collection is disabled.
+        # First-Party
+        from mcpgateway.utils.verify_credentials import require_auth
+
+        @app.get("/metrics/prometheus", tags=["Metrics"])
+        async def metrics_disabled(_user=Depends(require_auth)):  # pylint: disable=unused-argument
+            """Returns 503 when metrics collection is disabled (requires authentication).
+
+            Args:
+                _user: Authenticated user from require_auth dependency.
 
             Returns:
                 Response: HTTP 503 response indicating metrics are disabled.

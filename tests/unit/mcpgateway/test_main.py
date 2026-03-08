@@ -526,11 +526,12 @@ class TestHealthAndInfrastructure:
             assert response.status_code == 303
             assert response.headers["location"] == f"{settings.app_root_path}/admin/"
         else:
-            # When UI is disabled, should return API info
+            # When UI is disabled, should return API info (no version/admin status)
             assert response.status_code == 200
             data = response.json()
             assert data["name"] == "ContextForge"
-            assert data["ui_enabled"] is False
+            assert "version" not in data
+            assert "admin_api_enabled" not in data
 
     def test_static_files(self, test_client):
         """Test static file serving (when files don't exist)."""

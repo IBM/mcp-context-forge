@@ -464,6 +464,11 @@ spec:
               subPath: prometheus.yml
             - name: data
               mountPath: /prometheus
+            {{- with .Values.mcpContextForge.metrics.metricsToken }}
+            - name: metrics-token
+              mountPath: /etc/prometheus/secrets/{{ .secretName }}
+              readOnly: true
+            {{- end }}
           resources:
 {{- toYaml .Values.monitoring.prometheus.resources | nindent 12 }}
       volumes:
@@ -477,6 +482,11 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- with .Values.mcpContextForge.metrics.metricsToken }}
+        - name: metrics-token
+          secret:
+            secretName: {{ .secretName }}
+        {{- end }}
 ---
 apiVersion: v1
 kind: Service

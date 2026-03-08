@@ -27,8 +27,10 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(scope="function")
 def client(monkeypatch):
-    """Provides a FastAPI TestClient with metrics enabled."""
-    monkeypatch.setenv("ENABLE_METRICS", "true")
+    """Provides a FastAPI TestClient with metrics enabled and auth bypassed."""
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_METRICS", True)
 
     from prometheus_client import REGISTRY
 
@@ -42,9 +44,13 @@ def client(monkeypatch):
     # Create a fresh app instance with metrics enabled
     from fastapi import FastAPI
     from mcpgateway.services.metrics import setup_metrics
+    from mcpgateway.utils.verify_credentials import require_auth
 
     app = FastAPI()
     setup_metrics(app)
+
+    # Override auth dependency so unit tests can access /metrics/prometheus
+    app.dependency_overrides[require_auth] = lambda: {"sub": "test@metrics"}
 
     yield TestClient(app)
 
@@ -93,8 +99,10 @@ def test_metrics_counters_increment(client):
 
 def test_metrics_excluded_paths(monkeypatch):
     """✅ Excluded paths do not appear in metrics."""
-    monkeypatch.setenv("ENABLE_METRICS", "true")
-    monkeypatch.setenv("METRICS_EXCLUDED_HANDLERS", ".*health.*")
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_METRICS", True)
+    monkeypatch.setattr(settings, "METRICS_EXCLUDED_HANDLERS", ".*health.*")
 
     from prometheus_client import REGISTRY
 
@@ -109,6 +117,7 @@ def test_metrics_excluded_paths(monkeypatch):
         # Create fresh app with exclusions
         from fastapi import FastAPI
         from mcpgateway.services.metrics import setup_metrics
+        from mcpgateway.utils.verify_credentials import require_auth
 
         app = FastAPI()
 
@@ -117,6 +126,7 @@ def test_metrics_excluded_paths(monkeypatch):
             return {"status": "ok"}
 
         setup_metrics(app)
+        app.dependency_overrides[require_auth] = lambda: {"sub": "test@metrics"}
         client = TestClient(app)
 
         # Hit the /health endpoint
@@ -134,8 +144,135 @@ def test_metrics_excluded_paths(monkeypatch):
 
 
 # ----------------------------------------------------------------------
+# Response format tests - gzip vs plain, multiprocess registry
+# ----------------------------------------------------------------------
+
+
+def test_metrics_prometheus_plain_text_response(client):
+    """Non-gzip request returns plain Prometheus exposition text."""
+    response = client.get("/metrics/prometheus", headers={"Accept-Encoding": "identity"})
+    assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
+    assert "Content-Encoding" not in response.headers
+    assert len(response.text) > 0
+
+
+def test_metrics_prometheus_multiprocess_registry(monkeypatch):
+    """PROMETHEUS_MULTIPROC_DIR triggers multiprocess collector."""
+    import tempfile
+
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_METRICS", True)
+
+    from prometheus_client import REGISTRY
+
+    saved_collectors = dict(REGISTRY._names_to_collectors)
+    saved_reverse = dict(REGISTRY._collector_to_names)
+    REGISTRY._collector_to_names.clear()
+    REGISTRY._names_to_collectors.clear()
+
+    try:
+        from fastapi import FastAPI
+        from mcpgateway.services.metrics import setup_metrics
+        from mcpgateway.utils.verify_credentials import require_auth
+
+        app = FastAPI()
+        setup_metrics(app)
+        app.dependency_overrides[require_auth] = lambda: {"sub": "test@metrics"}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", tmpdir)
+            client = TestClient(app)
+            response = client.get("/metrics/prometheus", headers={"Accept-Encoding": "identity"})
+            assert response.status_code == 200
+            assert "text/plain" in response.headers["content-type"]
+    finally:
+        monkeypatch.delenv("PROMETHEUS_MULTIPROC_DIR", raising=False)
+        REGISTRY._collector_to_names.clear()
+        REGISTRY._names_to_collectors.clear()
+        REGISTRY._names_to_collectors.update(saved_collectors)
+        REGISTRY._collector_to_names.update(saved_reverse)
+
+
+# ----------------------------------------------------------------------
+# Deny-path tests - unauthenticated access must be rejected
+# ----------------------------------------------------------------------
+
+
+def test_metrics_prometheus_requires_auth_when_enabled(monkeypatch):
+    """Unauthenticated requests to /metrics/prometheus must be rejected (401)."""
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_METRICS", True)
+
+    from prometheus_client import REGISTRY
+
+    saved_collectors = dict(REGISTRY._names_to_collectors)
+    saved_reverse = dict(REGISTRY._collector_to_names)
+    REGISTRY._collector_to_names.clear()
+    REGISTRY._names_to_collectors.clear()
+
+    try:
+        from fastapi import FastAPI
+        from mcpgateway.services.metrics import setup_metrics
+
+        app = FastAPI()
+        setup_metrics(app)
+        # NO auth override — simulates unauthenticated access
+        client = TestClient(app, raise_server_exceptions=False)
+
+        resp = client.get("/metrics/prometheus")
+        assert resp.status_code in (401, 403), f"Expected 401/403, got {resp.status_code}"
+    finally:
+        REGISTRY._collector_to_names.clear()
+        REGISTRY._names_to_collectors.clear()
+        REGISTRY._names_to_collectors.update(saved_collectors)
+        REGISTRY._collector_to_names.update(saved_reverse)
+
+
+def test_metrics_prometheus_requires_auth_when_disabled(monkeypatch):
+    """Unauthenticated requests to /metrics/prometheus must be rejected even when metrics are disabled."""
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_METRICS", False)
+
+    from fastapi import FastAPI
+    from mcpgateway.services.metrics import setup_metrics
+
+    app = FastAPI()
+    setup_metrics(app)
+    # NO auth override
+    client = TestClient(app, raise_server_exceptions=False)
+
+    resp = client.get("/metrics/prometheus")
+    assert resp.status_code in (401, 403), f"Expected 401/403, got {resp.status_code}"
+
+
+def test_metrics_prometheus_disabled_returns_503_with_auth(monkeypatch):
+    """Authenticated requests to /metrics/prometheus return 503 when metrics are disabled."""
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_METRICS", False)
+
+    from fastapi import FastAPI
+    from mcpgateway.services.metrics import setup_metrics
+    from mcpgateway.utils.verify_credentials import require_auth
+
+    app = FastAPI()
+    setup_metrics(app)
+    app.dependency_overrides[require_auth] = lambda: {"sub": "test@metrics"}
+    client = TestClient(app)
+
+    resp = client.get("/metrics/prometheus")
+    assert resp.status_code == 503
+    assert "Metrics collection is disabled" in resp.text
+
+
+# ----------------------------------------------------------------------
 # Helper function
 # ----------------------------------------------------------------------
+
 
 def _sum_metric_values(text: str, metric_name: str) -> float:
     """Aggregate all metric values for a given metric name."""

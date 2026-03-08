@@ -151,7 +151,7 @@ from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
-from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_docs_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_admin_auth, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
@@ -7200,30 +7200,18 @@ async def readiness_check():
 
 
 @app.get("/health/security", tags=["health"])
-async def security_health(request: Request):
+async def security_health(request: Request, _user=Depends(require_admin_auth)):  # pylint: disable=unused-argument
     """
-    Get the security configuration health status.
+    Get the security configuration health status (admin only).
 
     Args:
-        request (Request): The incoming HTTP request containing headers for authentication.
+        request (Request): The incoming HTTP request.
+        _user: Authenticated admin user (injected by require_admin_auth).
 
     Returns:
         dict: A dictionary containing the overall security health status, score,
-            individual checks, warning count, and timestamp. Warnings are included
-            only if authentication passes or when running in development mode.
-
-    Raises:
-        HTTPException: If authentication is required and the request does not
-            include a valid bearer token in the Authorization header.
+            individual checks, warning count, and timestamp.
     """
-    # Check authentication
-    if settings.auth_required:
-        auth_header = request.headers.get("authorization", "")
-        scheme, _, credentials = auth_header.partition(" ")
-        if scheme.lower() != "bearer" or not credentials:
-            raise HTTPException(401, "Authentication required for security health")
-        await verify_jwt_token(credentials.strip())
-
     security_status = settings.get_security_status()
 
     # Determine overall health
@@ -7246,8 +7234,8 @@ async def security_health(request: Request):
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Include warnings only if authenticated or in dev mode
-    if settings.dev_mode:
+    # Include warnings for admin users
+    if security_status["warnings"]:
         response["warnings"] = security_status["warnings"]
 
     return response
@@ -7934,7 +7922,7 @@ else:
             dict: API info with app name, version, and UI/admin API status.
         """
         logger.info("UI disabled, serving API info at root path")
-        return {"name": settings.app_name, "version": __version__, "description": f"{settings.app_name} API - UI is disabled", "ui_enabled": False, "admin_api_enabled": ADMIN_API_ENABLED}
+        return {"name": settings.app_name, "description": f"{settings.app_name} API"}
 
 
 # Expose some endpoints at the root level as well

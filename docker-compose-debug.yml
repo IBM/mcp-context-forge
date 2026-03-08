@@ -29,6 +29,7 @@ volumes:                # Named volumes survive podman-compose down/up
   grafanadata:
   prometheusdata:
   lokidata:
+  prometheus_token:
 
 ###############################################################################
 #  CORE SERVICE - ContextForge
@@ -115,6 +116,8 @@ services:
       - PORT=4444
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
+      # Prometheus metrics endpoint (disabled by default; requires JWT auth when enabled)
+      - ENABLE_METRICS=true
       # Database connection: Via PgBouncer (default) or direct PostgreSQL
       # PgBouncer provides connection pooling for better performance under high concurrency
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp
@@ -852,15 +855,46 @@ services:
     volumes:
       - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheusdata:/prometheus
+      - prometheus_token:/tokens:ro
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.retention.time=7d'
       - '--web.enable-lifecycle'
     depends_on:
-      - postgres_exporter
-      - redis_exporter
-      - nginx_exporter
-      - cadvisor
+      postgres_exporter:
+        condition: service_started
+      redis_exporter:
+        condition: service_started
+      nginx_exporter:
+        condition: service_started
+      cadvisor:
+        condition: service_started
+      prometheus_token:
+        condition: service_completed_successfully
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Prometheus scrape token - generates a JWT for Prometheus to
+  # authenticate against the gateway's /metrics/prometheus endpoint
+  # ──────────────────────────────────────────────────────────────────────
+  prometheus_token:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    restart: "no"
+    # Gateway image runs as non-root (uid 1001); named volumes are root-owned
+    # by default, so writing /tokens/gateway.jwt requires root.
+    user: "0"
+    volumes:
+      - prometheus_token:/tokens
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token \
+          --username prometheus@monitoring --exp 0 \
+          --secret my-test-key --algo HS256 2>/dev/null)
+        printf "%s" "$$TOKEN" > /tokens/gateway.jwt
+        echo "✅ Prometheus scrape token written to /tokens/gateway.jwt"
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────

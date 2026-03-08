@@ -1585,10 +1585,10 @@ class TestUtilityAPIs:
 # Test Metrics APIs
 # -------------------------
 class TestMetricsAPIs:
-    async def test_metrics_no_auth(self, client: AsyncClient):
-        """Test GET /metrics without auth header (should not error, but may be protected)."""
-        response = await client.get("/metrics")
-        assert response.status_code in [200, 401, 403]
+    async def test_metrics_requires_auth(self, client: AsyncClient):
+        """Test GET /metrics with auth header succeeds."""
+        response = await client.get("/metrics", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
 
     """Test metrics collection endpoints."""
 
@@ -1643,13 +1643,9 @@ class TestMetricsAPIs:
 class TestVersionAndDocs:
     """Test version and documentation endpoints."""
 
-    async def test_get_version(self, client: AsyncClient):
-        """Test GET /version - no auth required."""
-        response = await client.get("/version")
-        # Version endpoint might require auth based on settings
-        if response.status_code == 401:
-            # Try with auth
-            response = await client.get("/version", headers=TEST_AUTH_HEADER)
+    async def test_get_version_with_admin_auth(self, client: AsyncClient):
+        """Test GET /version with admin auth succeeds."""
+        response = await client.get("/version", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         result = response.json()
         assert result["app"]["version"]  # non-empty
@@ -1695,13 +1691,12 @@ class TestRootPath:
             # UI is enabled, check redirect
             assert "/admin" in response.headers.get("location", "")
         else:
-            # UI is disabled, check API info
+            # UI is disabled, check API info (no version/admin status exposed)
             assert response.status_code == 200
             result = response.json()
             assert "name" in result
-            assert "version" in result
-            assert result["ui_enabled"] is False
-            assert result["admin_api_enabled"] is False
+            assert "version" not in result
+            assert "admin_api_enabled" not in result
 
 
 # -------------------------

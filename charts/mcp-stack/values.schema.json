@@ -360,6 +360,23 @@
               },
               "additionalProperties": false
             },
+            "metricsToken": {
+              "type": "object",
+              "description": "Secret reference for Prometheus scrape authentication token",
+              "properties": {
+                "secretName": {
+                  "type": "string",
+                  "description": "Name of the Kubernetes Secret containing the metrics scrape JWT",
+                  "default": "mcpgateway-metrics-token"
+                },
+                "key": {
+                  "type": "string",
+                  "description": "Key within the Secret that holds the JWT token",
+                  "default": "token"
+                }
+              },
+              "additionalProperties": false
+            },
             "customLabels": {
               "type": "object",
               "description": "Custom labels for metrics",
