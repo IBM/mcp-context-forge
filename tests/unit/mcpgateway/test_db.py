@@ -1281,17 +1281,18 @@ def test_email_user_is_account_locked_naive_datetime():
     """Test is_account_locked handles naive datetime (SQLite timezone handling)."""
     user = db.EmailUser(email="user@example.com", password_hash="hash")
 
-    # Active lock: naive future datetime should be normalised to UTC and return True
-    user.locked_until = datetime.now() + timedelta(minutes=10)
+    # Active lock: naive future UTC datetime (simulates SQLite stripping tzinfo)
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10)
     user.failed_login_attempts = 3
 
     assert user.is_account_locked() is True
-    assert user.locked_until.tzinfo == timezone.utc
+    # Method must not mutate the ORM field (avoids write-on-read in GET paths)
+    assert user.locked_until.tzinfo is None
     # Counter must not be touched while the lock is still active
     assert user.failed_login_attempts == 3
 
     # Expired lock: should reset counters and return False
-    user.locked_until = datetime.now() - timedelta(minutes=1)
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
     user.failed_login_attempts = 3
 
     assert user.is_account_locked() is False
