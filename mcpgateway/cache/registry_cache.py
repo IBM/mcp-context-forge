@@ -824,7 +824,7 @@ class CacheInvalidationSubscriber:
         # First-Party
         from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-        # Order matters: team_roles/teams must be checked before team
+        # Dispatch auth message to the correct handler
         if message.startswith("user:"):
             email = message[len("user:") :]
             with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]

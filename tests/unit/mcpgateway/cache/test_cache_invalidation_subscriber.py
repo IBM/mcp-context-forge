@@ -866,8 +866,8 @@ class TestAuthCacheInvalidationSubscriber:
         assert "new-jti" in mock_auth._revoked_jtis
 
     @pytest.mark.asyncio
-    async def test_prefix_collision_teams_does_not_match_team(self):
-        """Regression: 'teams:' must not fall through to 'team:' handler."""
+    async def test_teams_message_dispatches_to_correct_handler(self):
+        """Verify 'teams:' is dispatched to teams handler, not 'team:' handler."""
         subscriber = CacheInvalidationSubscriber()
         mock_auth = create_mock_auth_cache(
             team_cache={"alice@test.com": "should-remain"},
@@ -884,8 +884,8 @@ class TestAuthCacheInvalidationSubscriber:
         assert "alice@test.com:jti1" in mock_auth._context_cache
 
     @pytest.mark.asyncio
-    async def test_prefix_collision_team_roles_does_not_match_team(self):
-        """Regression: 'team_roles:' must not fall through to 'team:' handler."""
+    async def test_team_roles_message_dispatches_to_correct_handler(self):
+        """Verify 'team_roles:' is dispatched to team_roles handler, not 'team:' handler."""
         subscriber = CacheInvalidationSubscriber()
         mock_auth = create_mock_auth_cache(
             team_cache={"alice@test.com": "should-remain"},
