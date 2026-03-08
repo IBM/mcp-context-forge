@@ -98,11 +98,20 @@ mcpContextForge:
   containerPort: 4444           # port the app listens on inside the pod
 
   # Metrics configuration
+  # The /metrics/prometheus endpoint requires JWT authentication.
+  # Create a Secret with a service JWT for Prometheus scraping:
+  #   kubectl create secret generic mcpgateway-metrics-token \
+  #     --from-literal=token="$(python -m mcpgateway.utils.create_jwt_token \
+  #       --username prometheus@monitoring --exp 0 --secret $JWT_SECRET_KEY)"
   metrics:
     enabled: true
     port: 8000
     serviceMonitor:
       enabled: true
+    # metricsToken: Uncomment and configure to enable authenticated scraping.
+    #   secretName: mcpgateway-metrics-token
+    #   key: token
+    metricsToken: {}
     customLabels: {}
 
   # Health & readiness probes

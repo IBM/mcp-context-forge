@@ -2309,50 +2309,17 @@ class TestSecurityConfiguration:
 
 
 class TestSecurityHealthEndpoint:
-    """Cover /health/security endpoint branches in main.py."""
+    """Cover /health/security endpoint branches in main.py.
+
+    The endpoint now requires admin auth via ``require_admin_auth`` dependency.
+    Tests call the handler directly with ``_user`` kwarg to simulate DI.
+    """
 
     @pytest.mark.asyncio
-    async def test_security_health_requires_auth_when_enabled(self, monkeypatch):
+    async def test_security_health_returns_healthy_for_admin(self, monkeypatch):
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
-        request.headers = {}
-
-        monkeypatch.setattr(main_mod.settings, "auth_required", True)
-
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.security_health(request)
-        assert excinfo.value.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_security_health_rejects_invalid_bearer_token(self, monkeypatch):
-        import mcpgateway.main as main_mod
-
-        request = MagicMock(spec=Request)
-        request.headers = {"authorization": "Bearer invalid-token"}
-
-        monkeypatch.setattr(main_mod.settings, "auth_required", True)
-        monkeypatch.setattr(
-            main_mod,
-            "verify_jwt_token",
-            AsyncMock(side_effect=HTTPException(status_code=401, detail="Invalid token")),
-        )
-
-        with pytest.raises(HTTPException) as excinfo:
-            await main_mod.security_health(request)
-
-        assert excinfo.value.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_security_health_accepts_valid_bearer_token(self, monkeypatch):
-        import mcpgateway.main as main_mod
-
-        request = MagicMock(spec=Request)
-        request.headers = {"authorization": "Bearer valid-token"}
-
-        monkeypatch.setattr(main_mod.settings, "auth_required", True)
-        monkeypatch.setattr(main_mod.settings, "dev_mode", False)
-        monkeypatch.setattr(main_mod, "verify_jwt_token", AsyncMock(return_value={"sub": "user@example.com"}))
         monkeypatch.setattr(
             main_mod.settings,
             "get_security_status",
@@ -2364,25 +2331,20 @@ class TestSecurityHealthEndpoint:
                 "debug_disabled": True,
                 "cors_restricted": True,
                 "ui_protected": True,
-                "warnings": ["w1"],
+                "warnings": [],
             },
         )
 
-        result = await main_mod.security_health(request)
-
+        result = await main_mod.security_health(request, _user="admin@example.com")
         assert result["status"] == "healthy"
+        assert result["score"] == 80
         assert "warnings" not in result
-        main_mod.verify_jwt_token.assert_awaited_once_with("valid-token")
 
     @pytest.mark.asyncio
-    async def test_security_health_includes_warnings_in_dev_mode(self, monkeypatch):
+    async def test_security_health_includes_warnings_when_present(self, monkeypatch):
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
-        request.headers = {"authorization": "Bearer token"}
-
-        monkeypatch.setattr(main_mod.settings, "auth_required", False)
-        monkeypatch.setattr(main_mod.settings, "dev_mode", True)
         monkeypatch.setattr(
             main_mod.settings,
             "get_security_status",
@@ -2398,19 +2360,15 @@ class TestSecurityHealthEndpoint:
             },
         )
 
-        result = await main_mod.security_health(request)
+        result = await main_mod.security_health(request, _user="admin@example.com")
         assert result["status"] == "healthy"
         assert result["warnings"] == ["w1"]
 
     @pytest.mark.asyncio
-    async def test_security_health_omits_warnings_outside_dev_mode(self, monkeypatch):
+    async def test_security_health_unhealthy_low_score(self, monkeypatch):
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
-        request.headers = {"authorization": "Bearer token"}
-
-        monkeypatch.setattr(main_mod.settings, "auth_required", False)
-        monkeypatch.setattr(main_mod.settings, "dev_mode", False)
         monkeypatch.setattr(
             main_mod.settings,
             "get_security_status",
@@ -2426,9 +2384,22 @@ class TestSecurityHealthEndpoint:
             },
         )
 
-        result = await main_mod.security_health(request)
+        result = await main_mod.security_health(request, _user="admin@example.com")
         assert result["status"] == "unhealthy"
-        assert "warnings" not in result
+        assert result["warnings"] == ["w1", "w2"]
+
+    def test_security_health_requires_admin_auth_http(self, test_client):
+        """Unauthenticated HTTP requests to /health/security must be rejected."""
+        # The test_client fixture overrides require_auth but NOT require_admin_auth,
+        # so this exercises the real admin auth dependency rejection path.
+        from fastapi.testclient import TestClient
+
+        from mcpgateway.main import app
+
+        # Create a client with NO auth overrides for admin auth
+        no_admin_client = TestClient(app, raise_server_exceptions=False)
+        resp = no_admin_client.get("/health/security")
+        assert resp.status_code in (401, 403), f"Expected 401/403, got {resp.status_code}"
 
 
 class TestRootEndpointsCoverage:
@@ -3155,7 +3126,7 @@ class TestUtilityFunctions:
             content_type = response.headers.get("content-type", "")
             if "application/json" in content_type:
                 data = response.json()
-                assert "name" in data or "ui_enabled" in data
+                assert "name" in data
             # HTML response from admin is also acceptable (UI enabled with auto-redirect)
         else:
             # Accept other valid status codes (e.g., 307 for redirect)
@@ -6075,9 +6046,11 @@ class TestRemainingCoverageGaps:
         # Allow the import-time bootstrap_db create_task (running-loop branch) to complete.
         await asyncio.sleep(0)
 
-        # root_info exists only when UI is disabled.
+        # root_info exists only when UI is disabled (no version/admin status exposed).
         info = await mod.root_info()
-        assert info["ui_enabled"] is False
+        assert "name" in info
+        assert "version" not in info
+        assert "admin_api_enabled" not in info
 
     def test_jsonpath_modifier_defaults_when_jsonpath_missing(self):
         # jsonpath_modifier(None/""/0) should fall back to default "$[*]".
