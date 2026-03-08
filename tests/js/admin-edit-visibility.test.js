@@ -1,6 +1,6 @@
 /**
  * Tests that all edit form submit handlers preserve the visibility field
- * in the submitted FormData.
+ * in the submitted FormData without creating duplicate entries.
  *
  * Covers: handleEditToolFormSubmit, handleEditPromptFormSubmit,
  *         handleEditGatewayFormSubmit, handleEditServerFormSubmit,
@@ -145,13 +145,22 @@ function mockFetchCapture() {
     return () => capturedBody;
 }
 
+/**
+ * Assert that submitted FormData contains exactly one visibility entry
+ * with the expected value — no duplicates.
+ */
+function expectSingleVisibility(formData, expected) {
+    const all = formData.getAll("visibility");
+    expect(all).toEqual([expected]);
+}
+
 // ---------------------------------------------------------------------------
 // handleEditToolFormSubmit
 // ---------------------------------------------------------------------------
 describe("handleEditToolFormSubmit — visibility preservation", () => {
     beforeEach(setupCommonStubs);
 
-    test("submitted FormData includes the selected visibility value", async () => {
+    test("submits exactly one visibility entry with the selected value", async () => {
         const form = buildForm({
             id: "edit-tool-form",
             action: "/admin/tools/1",
@@ -161,9 +170,7 @@ describe("handleEditToolFormSubmit — visibility preservation", () => {
         const getCaptured = mockFetchCapture();
         await win.handleEditToolFormSubmit(fakeSubmitEvent(form));
 
-        const submitted = getCaptured();
-        expect(submitted).not.toBeNull();
-        expect(submitted.getAll("visibility")).toContain("team");
+        expectSingleVisibility(getCaptured(), "team");
     });
 
     test("visibility=public is preserved when selected", async () => {
@@ -176,8 +183,7 @@ describe("handleEditToolFormSubmit — visibility preservation", () => {
         const getCaptured = mockFetchCapture();
         await win.handleEditToolFormSubmit(fakeSubmitEvent(form));
 
-        const submitted = getCaptured();
-        expect(submitted.getAll("visibility")).toContain("public");
+        expectSingleVisibility(getCaptured(), "public");
     });
 });
 
@@ -187,7 +193,7 @@ describe("handleEditToolFormSubmit — visibility preservation", () => {
 describe("handleEditPromptFormSubmit — visibility preservation", () => {
     beforeEach(setupCommonStubs);
 
-    test("submitted FormData includes the selected visibility value", async () => {
+    test("submits exactly one visibility entry with the selected value", async () => {
         const form = buildForm({
             id: "edit-prompt-form",
             action: "/admin/prompts/1",
@@ -197,9 +203,7 @@ describe("handleEditPromptFormSubmit — visibility preservation", () => {
         const getCaptured = mockFetchCapture();
         await win.handleEditPromptFormSubmit(fakeSubmitEvent(form));
 
-        const submitted = getCaptured();
-        expect(submitted).not.toBeNull();
-        expect(submitted.getAll("visibility")).toContain("private");
+        expectSingleVisibility(getCaptured(), "private");
     });
 });
 
@@ -209,7 +213,7 @@ describe("handleEditPromptFormSubmit — visibility preservation", () => {
 describe("handleEditGatewayFormSubmit — visibility preservation", () => {
     beforeEach(setupCommonStubs);
 
-    test("submitted FormData includes the selected visibility value", async () => {
+    test("submits exactly one visibility entry with the selected value", async () => {
         const form = buildForm({
             id: "edit-gateway-form",
             action: "/admin/gateways/1",
@@ -226,9 +230,7 @@ describe("handleEditGatewayFormSubmit — visibility preservation", () => {
         const getCaptured = mockFetchCapture();
         await win.handleEditGatewayFormSubmit(fakeSubmitEvent(form));
 
-        const submitted = getCaptured();
-        expect(submitted).not.toBeNull();
-        expect(submitted.getAll("visibility")).toContain("team");
+        expectSingleVisibility(getCaptured(), "team");
     });
 });
 
@@ -249,7 +251,7 @@ describe("handleEditServerFormSubmit — visibility preservation", () => {
         return div;
     }
 
-    test("submitted FormData includes the selected visibility value", async () => {
+    test("submits exactly one visibility entry with the selected value", async () => {
         const form = buildForm({
             id: "edit-server-form",
             action: "/admin/servers/1",
@@ -264,9 +266,7 @@ describe("handleEditServerFormSubmit — visibility preservation", () => {
         const getCaptured = mockFetchCapture();
         await win.handleEditServerFormSubmit(fakeSubmitEvent(form));
 
-        const submitted = getCaptured();
-        expect(submitted).not.toBeNull();
-        expect(submitted.getAll("visibility")).toContain("public");
+        expectSingleVisibility(getCaptured(), "public");
     });
 });
 
@@ -276,7 +276,7 @@ describe("handleEditServerFormSubmit — visibility preservation", () => {
 describe("handleEditResFormSubmit — visibility preservation", () => {
     beforeEach(setupCommonStubs);
 
-    test("submitted FormData includes the selected visibility value", async () => {
+    test("submits exactly one visibility entry with the selected value", async () => {
         const form = buildForm({
             id: "edit-resource-form",
             action: "/admin/resources/1",
@@ -287,9 +287,7 @@ describe("handleEditResFormSubmit — visibility preservation", () => {
         const getCaptured = mockFetchCapture();
         await win.handleEditResFormSubmit(fakeSubmitEvent(form));
 
-        const submitted = getCaptured();
-        expect(submitted).not.toBeNull();
-        expect(submitted.getAll("visibility")).toContain("team");
+        expectSingleVisibility(getCaptured(), "team");
     });
 });
 
@@ -299,7 +297,7 @@ describe("handleEditResFormSubmit — visibility preservation", () => {
 describe("handleEditA2AAgentFormSubmit — visibility preservation", () => {
     beforeEach(setupCommonStubs);
 
-    test("submitted FormData includes the selected visibility value", async () => {
+    test("submits exactly one visibility entry with the selected value", async () => {
         const form = buildForm({
             id: "edit-a2a-form",
             action: "/admin/a2a-agents/1",
@@ -326,8 +324,6 @@ describe("handleEditA2AAgentFormSubmit — visibility preservation", () => {
         const getCaptured = mockFetchCapture();
         await win.handleEditA2AAgentFormSubmit(fakeSubmitEvent(form));
 
-        const submitted = getCaptured();
-        expect(submitted).not.toBeNull();
-        expect(submitted.getAll("visibility")).toContain("team");
+        expectSingleVisibility(getCaptured(), "team");
     });
 });
