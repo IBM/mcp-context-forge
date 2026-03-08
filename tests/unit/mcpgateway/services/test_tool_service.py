@@ -2589,6 +2589,73 @@ class TestToolService:
         assert test_db.execute.called
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_cache_hit_hydrates_authheaders_dict_from_db(self, tool_service, test_db):
+        """Cache-miss hydration encodes DbGateway.auth_value dict (JSON col) to str for downstream use."""
+        cached_payload = {
+            "status": "active",
+            "tool": {
+                "id": "tool-cache-2",
+                "name": "cached_tool_ah",
+                "original_name": "cached_tool_ah",
+                "url": "http://example.com/tool",
+                "integration_type": "ABC",
+                "request_type": "POST",
+                "auth_type": "authheaders",
+                "headers": {},
+                "annotations": {},
+                "jsonpath_filter": "",
+                "output_schema": {},
+                "enabled": True,
+                "reachable": True,
+                "visibility": "public",
+                "owner_email": None,
+                "team_id": None,
+                "gateway_id": "gw-cache-2",
+            },
+            "gateway": {
+                "id": "gw-cache-2",
+                "name": "cached-gw-ah",
+                "url": "http://example.com/gateway",
+                "auth_type": "authheaders",
+                "passthrough_headers": [],
+            },
+        }
+
+        lookup_cache = SimpleNamespace(
+            enabled=True,
+            get=AsyncMock(return_value=cached_payload),
+            set=AsyncMock(),
+            set_negative=AsyncMock(),
+        )
+
+        # DbGateway.auth_value is a JSON dict — the path under test encodes it
+        hydrated_gateway = SimpleNamespace(
+            auth_value={"X-Custom-Auth-Header": "my-token"},
+            auth_query_params=None,
+            oauth_config=None,
+        )
+        hydrated_tool = SimpleNamespace(
+            auth_value=None,
+            oauth_config=None,
+            gateway=hydrated_gateway,
+        )
+        hydration_result = Mock()
+        hydration_result.scalar_one_or_none.return_value = hydrated_tool
+        test_db.execute = Mock(return_value=hydration_result)
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.encode_auth", wraps=encode_auth) as spy_encode,
+        ):
+            response = await tool_service.invoke_tool(test_db, "cached_tool_ah", {"param": "value"}, request_headers=None)
+
+        assert response.content[0].text == "Invalid tool type"
+        assert test_db.execute.called
+        # Verify the hydration path actually called encode_auth on the dict
+        spy_encode.assert_called_once_with({"X-Custom-Auth-Header": "my-token"})
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_mcp_tool_basic_auth(self, tool_service, mock_tool, mock_gateway, test_db):
         """Test invoking an invalid tool type."""
         # Basic auth_value

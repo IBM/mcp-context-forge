@@ -2835,7 +2835,8 @@ class ToolService(BaseService):
                     "name": gateway.name,
                     "url": gateway.url,
                     "auth_type": gateway.auth_type,
-                    "auth_value": gateway.auth_value,
+                    # DbGateway.auth_value is JSON (dict); downstream code expects an encoded str.
+                    "auth_value": encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
                     "auth_query_params": gateway.auth_query_params,
                     "oauth_config": gateway.oauth_config,
                     "ca_certificate": gateway.ca_certificate,
@@ -3022,7 +3023,9 @@ class ToolService(BaseService):
         gateway_oauth_config = gateway_payload.get("oauth_config") if has_gateway and isinstance(gateway_payload.get("oauth_config"), dict) else None
         if has_gateway and gateway is not None:
             runtime_gateway_auth_value = getattr(gateway, "auth_value", None)
-            if isinstance(runtime_gateway_auth_value, str):
+            if isinstance(runtime_gateway_auth_value, dict):
+                gateway_auth_value = encode_auth(runtime_gateway_auth_value)
+            elif isinstance(runtime_gateway_auth_value, str):
                 gateway_auth_value = runtime_gateway_auth_value
             runtime_gateway_query_params = getattr(gateway, "auth_query_params", None)
             if isinstance(runtime_gateway_query_params, dict):
@@ -3053,7 +3056,9 @@ class ToolService(BaseService):
                             tool_oauth_config = hydrated_tool_oauth_config
                         if has_gateway and tool_auth_row.gateway:
                             hydrated_gateway_auth_value = getattr(tool_auth_row.gateway, "auth_value", None)
-                            if isinstance(hydrated_gateway_auth_value, str):
+                            if isinstance(hydrated_gateway_auth_value, dict):
+                                gateway_auth_value = encode_auth(hydrated_gateway_auth_value)
+                            elif isinstance(hydrated_gateway_auth_value, str):
                                 gateway_auth_value = hydrated_gateway_auth_value
                             hydrated_gateway_query_params = getattr(tool_auth_row.gateway, "auth_query_params", None)
                             if isinstance(hydrated_gateway_query_params, dict):

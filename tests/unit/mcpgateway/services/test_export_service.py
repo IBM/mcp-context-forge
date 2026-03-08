@@ -1696,3 +1696,81 @@ async def test_export_selected_resources_scoped_no_visible_match_returns_empty(e
     )
     assert exported == []
     mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_export_gateways_masked_auth_encodes_dict_auth_value(export_service, mock_db):
+    """Batch-fetched auth_value that is a dict (authheaders) must be encoded before export."""
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.utils.services_auth import decode_auth
+
+    auth_dict = {"X-Custom-Auth": "my-token", "X-Org-ID": "org-42"}
+
+    gateway = GatewayRead(
+        id="gw1",
+        name="gw-authheaders",
+        url="https://gw.example.com",
+        description="gateway with authheaders",
+        transport="SSE",
+        capabilities={},
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        enabled=True,
+        reachable=True,
+        last_seen=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=settings.masked_auth_value,
+        auth_username=None,
+        auth_password=None,
+        auth_token=None,
+        auth_header_key=None,
+        auth_header_value=None,
+        tags=[],
+        slug="gw-authheaders",
+        passthrough_headers=None,
+    )
+
+    export_service.gateway_service.list_gateways.return_value = ([gateway], None)
+    # DB batch query returns the raw dict (JSON column value for authheaders)
+    mock_db.execute.return_value.all.return_value = [("gw1", "authheaders", auth_dict)]
+
+    exported = await export_service._export_gateways(mock_db, None, False)
+
+    assert len(exported) == 1
+    assert exported[0]["auth_type"] == "authheaders"
+    # auth_value must be an encoded string, not the raw dict
+    assert isinstance(exported[0]["auth_value"], str)
+    assert decode_auth(exported[0]["auth_value"]) == auth_dict
+
+
+@pytest.mark.asyncio
+async def test_export_selected_gateways_encodes_dict_auth_value(export_service, mock_db):
+    """_export_selected_gateways must encode dict auth_value (authheaders) before export."""
+    # First-Party
+    from mcpgateway.utils.services_auth import decode_auth
+
+    auth_dict = {"X-Custom-Auth": "my-token"}
+
+    db_gateway = MagicMock()
+    db_gateway.id = "gw1"
+    db_gateway.name = "gw-authheaders"
+    db_gateway.url = "https://gw.example.com"
+    db_gateway.description = "desc"
+    db_gateway.transport = "SSE"
+    db_gateway.capabilities = {}
+    db_gateway.is_active = True
+    db_gateway.tags = []
+    db_gateway.passthrough_headers = []
+    db_gateway.auth_type = "authheaders"
+    db_gateway.auth_value = auth_dict  # JSON column stores plain dict
+    db_gateway.auth_query_params = None
+
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [db_gateway]
+
+    exported = await export_service._export_selected_gateways(mock_db, ["gw1"])
+
+    assert len(exported) == 1
+    assert exported[0]["auth_type"] == "authheaders"
+    assert isinstance(exported[0]["auth_value"], str)
+    assert decode_auth(exported[0]["auth_value"]) == auth_dict
