@@ -26,46 +26,61 @@ plugins_rust/
     └── src/
 ```
 
-## 📦 Installation
+## 📦 Quick Start
+
+### Build from Source
 
 ```bash
 # Install Rust toolchain
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Build all plugins
-cd plugins_rust && make install
+# Build all plugins (from repo root)
+make rust-install
 
 # Or build specific plugin
-cd pii_filter && make install
+cd plugins_rust/pii_filter && make install
 ```
 
 ## 🔧 Development
 
 ```bash
-# Per-plugin commands (run from plugin directory)
+# Per-plugin commands (run from plugin directory, e.g. plugins_rust/pii_filter)
 make install          # Install plugin
 make test             # Run tests
+make test-verbose     # Run tests with output
 make bench            # Run benchmarks
 make fmt              # Format code
+make fmt-check        # Check format (CI)
 make clippy           # Lint
+make doc              # Build Rust docs
 
-# All plugins (run from plugins_rust directory)
-make test             # Test all
-make fmt              # Format all
-make clippy           # Lint all
+# From repo root (all plugins)
+make rust-test        # Test all
+make rust-check       # Format, clippy, test all
+make rust-audit       # Security audit
 ```
 
 ## 🧪 Verification
 
 ```bash
-# Verify installation
-python -c "from pii_filter import PIIDetectorRust; print('OK')"
+# Verify installation (PII filter example)
+python -c "from pii_filter_rust.pii_filter_rust import PIIDetectorRust; print('✓ Rust PII filter OK')"
 
-# Security audit
+# Security audit (per plugin)
 cd plugins_rust/pii_filter && cargo audit
 ```
 
 Rust plugins auto-activate with graceful Python fallback. Start gateway normally with `make dev` or `make serve`.
+
+## 🔒 Security
+
+```bash
+make rust-audit       # Audit all plugins (from repo root)
+# Or per plugin:
+cd plugins_rust/pii_filter && cargo audit
+```
+
+Rust provides guaranteed memory safety (no buffer overflows, use-after-free, data races, or null pointer dereferences).
 
 ## 📚 Resources
 
@@ -75,7 +90,8 @@ Rust plugins auto-activate with graceful Python fallback. Start gateway normally
 ## 🤝 Contributing
 
 ```bash
-cargo fmt && cargo clippy && cargo test  # Before committing
+make rust-check       # Format, clippy, test (from repo root)
+# Or per plugin: make fmt && make fmt-check && make clippy && make test
 ```
 
 ## 📝 License

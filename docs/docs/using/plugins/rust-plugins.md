@@ -44,7 +44,7 @@ plugins_rust/
 │              │                        │                 │
 │      ┌───────┴──────┐        ┌───────┴────────┐       │
 │      │ Rust Wrapper │        │ Python Fallback│       │
-│      │ (5-10x fast)│        │ (Pure Python)  │       │
+│      │ (5-10x fast) │        │ (Pure Python)  │       │
 │      └───────┬──────┘        └────────────────┘       │
 └──────────────┼────────────────────────────────────────┘
                │
@@ -77,7 +77,7 @@ cd plugins_rust/[plugin_name]
 make install
 
 # Or build all plugins from project root
-make rust-dev
+make rust-dev 
 ```
 
 ### Option 2: Use Python Fallback
@@ -139,14 +139,12 @@ print(f"Implementation: {plugin.implementation}")
 You can also use the implementations directly:
 
 ```python
-# Use Rust implementation explicitly
-from plugin_rust.plugin_rust import PluginRust
+# Use Rust implementation explicitly (PII filter example)
+from pii_filter_rust.pii_filter_rust import PIIDetectorRust
 
-config = {"option1": True, "option2": "value"}
-plugin = PluginRust(config)
-
-# Use plugin methods
-result = plugin.process(data)
+detector = PIIDetectorRust()
+# Use detector methods (API is plugin-specific)
+result = detector.detect_and_mask("text with PII")
 ```
 
 ## Verification
@@ -155,7 +153,7 @@ result = plugin.process(data)
 
 ```bash
 # Verify Rust plugin is available
-python -c "from plugin_rust.plugin_rust import PluginRust; print('✓ Rust plugin available')"
+python -c "from pii_filter_rust.pii_filter_rust import PIIDetectorRust; print('✓ Rust PII filter available')"
 
 # Check implementation being used
 python -c "
@@ -173,7 +171,7 @@ The gateway logs which implementation is being used:
 
 ```
 # With Rust available
-INFO - ✓ Plugin: Using Rust implementation (5-10x faster)
+INFO - ✓ PII Filter: Using Rust implementation (5-10x faster)
 
 # Without Rust
 WARNING - Plugin: Using Python implementation
