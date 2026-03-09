@@ -467,7 +467,7 @@ mcpContextForge:
     YIELD_BATCH_SIZE: "1000" # rows per batch when streaming rollup queries (100-10000)
 
     # ─ Transports ─
-    TRANSPORT_TYPE: all              # comma-separated list: http, ws, sse, stdio, all
+    TRANSPORT_TYPE: http,sse          # comma-separated list: http, ws, sse, stdio, all
     MCPGATEWAY_WS_RELAY_ENABLED: "false" # /ws JSON-RPC relay (disabled)
     MCPGATEWAY_REVERSE_PROXY_ENABLED: "false" # /reverse-proxy/* endpoints (disabled)
     SSE_SEND_TIMEOUT: "30.0"         # ASGI send timeout (seconds), 0=disabled
@@ -575,12 +575,11 @@ mcpContextForge:
     # WELL_KNOWN_CUSTOM_FILES: "{}"  # additional custom well-known files (JSON)
     WELL_KNOWN_CACHE_MAX_AGE: "3600" # cache control for well-known files (seconds)
 
-    # ─ Plugin Configuration (disabled) ─
-    PLUGINS_ENABLED: "false"         # enable the plugin framework
-    # Uncomment when enabling plugins:
-    # PLUGINS_PLUGIN_TIMEOUT: "30"
-    # PLUGINS_LOG_LEVEL: "INFO"
-    # PLUGINS_SKIP_SSL_VERIFY: "false"
+    # ─ Plugin Configuration ─
+    PLUGINS_ENABLED: "true"          # enable the plugin framework
+    PLUGINS_PLUGIN_TIMEOUT: "30"               # plugin execution timeout (seconds)
+    PLUGINS_LOG_LEVEL: "INFO"                  # plugin framework log level
+    PLUGINS_SKIP_SSL_VERIFY: "false"           # skip TLS verification for plugin HTTP requests
     # See config.py for full PLUGINS_CLIENT_MTLS_*, PLUGINS_SERVER_SSL_*, PLUGINS_HTTPX_* settings
 
     # ─ OpenTelemetry Observability ─
