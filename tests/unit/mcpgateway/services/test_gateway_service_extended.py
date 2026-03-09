@@ -863,6 +863,41 @@ class TestGatewayServiceExtended:
         assert existing_resource.uri_template == "template_content"
         assert existing_resource.visibility == "public"
 
+    def test_build_prompt_argument_schema_empty(self):
+        """Test _build_prompt_argument_schema returns base schema when no arguments."""
+        from types import SimpleNamespace
+
+        prompt = SimpleNamespace(arguments=[])
+        schema = GatewayService._build_prompt_argument_schema(prompt)
+        assert schema == {"type": "object", "properties": {}, "required": []}
+
+    def test_build_prompt_argument_schema_with_arguments(self):
+        """Test _build_prompt_argument_schema correctly maps MCP argument metadata."""
+        from types import SimpleNamespace
+
+        arg1 = SimpleNamespace(name="name", description="User name", required=True)
+        arg2 = SimpleNamespace(name="style", description="Greeting style", required=False)
+        arg3 = SimpleNamespace(name="lang", description=None, required=False)
+        prompt = SimpleNamespace(arguments=[arg1, arg2, arg3])
+
+        schema = GatewayService._build_prompt_argument_schema(prompt)
+
+        assert schema["type"] == "object"
+        assert schema["required"] == ["name"]
+        assert schema["properties"]["name"] == {"type": "string", "description": "User name"}
+        assert schema["properties"]["style"] == {"type": "string", "description": "Greeting style"}
+        # None description should be omitted
+        assert schema["properties"]["lang"] == {"type": "string"}
+        assert "lang" not in schema["required"]
+
+    def test_build_prompt_argument_schema_no_arguments_attr(self):
+        """Test _build_prompt_argument_schema handles missing arguments attribute gracefully."""
+        from types import SimpleNamespace
+
+        prompt = SimpleNamespace()  # no 'arguments' attribute
+        schema = GatewayService._build_prompt_argument_schema(prompt)
+        assert schema == {"type": "object", "properties": {}, "required": []}
+
     @pytest.mark.asyncio
     async def test_update_or_create_prompts_new_prompts(self):
         """Test _update_or_create_prompts creates new prompts."""
@@ -905,7 +940,7 @@ class TestGatewayServiceExtended:
         assert new_prompt.template == "Hello {name}!"
         assert new_prompt.created_via == "test"
         assert new_prompt.visibility == "private"
-        assert new_prompt.argument_schema == {}
+        assert new_prompt.argument_schema == {"type": "object", "properties": {}, "required": []}
 
     @pytest.mark.asyncio
     async def test_update_or_create_prompts_existing_prompts(self):
@@ -953,6 +988,7 @@ class TestGatewayServiceExtended:
         assert existing_prompt.description == "Updated description"
         assert existing_prompt.template == "Updated template {var}"
         assert existing_prompt.visibility == "public"
+        assert existing_prompt.argument_schema == {"type": "object", "properties": {}, "required": []}
 
     @pytest.mark.asyncio
     async def test_helper_methods_mixed_operations(self):
@@ -1149,7 +1185,7 @@ class TestGatewayServiceExtended:
         prompt = prompts_result[0]
         assert prompt.created_via == "metadata_test"
         assert prompt.visibility == "team"
-        assert prompt.argument_schema == {}
+        assert prompt.argument_schema == {"type": "object", "properties": {}, "required": []}
 
     @pytest.mark.asyncio
     async def test_helper_methods_context_propagation(self):
