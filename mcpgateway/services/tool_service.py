@@ -442,7 +442,7 @@ def apply_mapping_into_target(data_obj: dict, mapping_obj: dict | None, target_o
     If no target_obj provided it will just create an empty dict as target
 
     Returns:
-        A new dict containing all fields from target_obj and all ampped fields from data_obj.
+        A new dict containing all fields from target_obj and all mapped fields from data_obj.
     """
 
     if target_obj is None:
