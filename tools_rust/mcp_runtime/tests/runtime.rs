@@ -563,3 +563,48 @@ async fn jsonrpc_batch_payload_is_rejected() {
     assert_eq!(body["jsonrpc"], "2.0");
     assert_eq!(body["error"]["code"], -32600);
 }
+
+#[tokio::test]
+async fn top_level_scalar_payload_is_invalid_request() {
+    let backend = Router::new().route(
+        "/rpc",
+        post(|| async {
+            Json(json!({
+                "jsonrpc":"2.0",
+                "id": 1,
+                "result": {}
+            }))
+        }),
+    );
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            log_filter: "error".to_string(),
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("mcp-protocol-version", "2025-11-25")
+        .body("\"not-an-object\"")
+        .send()
+        .await
+        .expect("invalid request response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["jsonrpc"], "2.0");
+    assert_eq!(body["error"]["code"], -32600);
+}
