@@ -101,9 +101,11 @@ async def discover_keycloak_endpoints(base_url: str, realm: str, timeout: int = 
             "jwks_uri": config.get("jwks_uri"),
         }
 
-        # Use optional browser-facing base for authorization endpoint while keeping
-        # token/userinfo/jwks endpoints reachable from the gateway runtime.
+        # Use optional browser-facing base for authorization endpoint and issuer
+        # (tokens issued via browser flow contain the public-facing issuer) while
+        # keeping token/userinfo/jwks endpoints reachable from the gateway runtime.
         endpoints["authorization_url"] = _rewrite_endpoint_base(endpoints.get("authorization_url"), public_base_url, "authorization")
+        endpoints["issuer"] = _rewrite_endpoint_base(endpoints.get("issuer"), public_base_url, "issuer")
         endpoints["token_url"] = _rewrite_endpoint_base(endpoints.get("token_url"), base_url, "token")
         endpoints["userinfo_url"] = _rewrite_endpoint_base(endpoints.get("userinfo_url"), base_url, "userinfo")
         endpoints["jwks_uri"] = _rewrite_endpoint_base(endpoints.get("jwks_uri"), base_url, "jwks")
@@ -166,9 +168,11 @@ def discover_keycloak_endpoints_sync(base_url: str, realm: str, timeout: int = 1
                 "jwks_uri": config.get("jwks_uri"),
             }
 
-            # Use optional browser-facing base for authorization endpoint while keeping
-            # token/userinfo/jwks endpoints reachable from the gateway runtime.
+            # Use optional browser-facing base for authorization endpoint and issuer
+            # (tokens issued via browser flow contain the public-facing issuer) while
+            # keeping token/userinfo/jwks endpoints reachable from the gateway runtime.
             endpoints["authorization_url"] = _rewrite_endpoint_base(endpoints.get("authorization_url"), public_base_url, "authorization")
+            endpoints["issuer"] = _rewrite_endpoint_base(endpoints.get("issuer"), public_base_url, "issuer")
             endpoints["token_url"] = _rewrite_endpoint_base(endpoints.get("token_url"), base_url, "token")
             endpoints["userinfo_url"] = _rewrite_endpoint_base(endpoints.get("userinfo_url"), base_url, "userinfo")
             endpoints["jwks_uri"] = _rewrite_endpoint_base(endpoints.get("jwks_uri"), base_url, "jwks")

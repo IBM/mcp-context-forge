@@ -539,7 +539,8 @@ def test_flush_to_db_writes_all_metric_types(monkeypatch):
 
     service = MetricsBufferService(enabled=True)
 
-    holder = {}
+    # Track ALL sessions (server metrics use a separate transaction)
+    all_dbs = []
 
     class DummyDB:
         def __init__(self):
@@ -554,8 +555,9 @@ def test_flush_to_db_writes_all_metric_types(monkeypatch):
 
     class DummySession:
         def __enter__(self):
-            holder["db"] = DummyDB()
-            return holder["db"]
+            db = DummyDB()
+            all_dbs.append(db)
+            return db
 
         def __exit__(self, exc_type, exc, tb):
             return False
@@ -570,8 +572,12 @@ def test_flush_to_db_writes_all_metric_types(monkeypatch):
 
     service._flush_to_db([tool_metric], [resource_metric], [prompt_metric], [server_metric], [a2a_metric])
 
-    assert holder["db"].committed is True
-    models = [call[0] for call in holder["db"].bulk_calls]
+    # Two transactions: main (tool/resource/prompt/a2a) + server metrics
+    assert len(all_dbs) == 2
+    assert all(db.committed for db in all_dbs)
+
+    # Collect models across both transactions
+    models = [call[0] for db in all_dbs for call in db.bulk_calls]
     assert ToolMetric in models
     assert ResourceMetric in models
     assert PromptMetric in models
@@ -645,7 +651,7 @@ class TestMetricsSetup:
                 return None
 
         app = FastAPI()
-        monkeypatch.setenv("ENABLE_METRICS", "true")
+        monkeypatch.setattr(metrics_module.settings, "ENABLE_METRICS", True)
         monkeypatch.setenv("METRICS_CUSTOM_LABELS", "")
         monkeypatch.setattr(metrics_module.settings, "database_url", db_url)
         monkeypatch.setattr(metrics_module.settings, "METRICS_EXCLUDED_HANDLERS", "")
@@ -670,7 +676,7 @@ class TestMetricsSetup:
         from mcpgateway.services import metrics as metrics_module
 
         app = FastAPI()
-        monkeypatch.setenv("ENABLE_METRICS", "false")
+        monkeypatch.setattr(metrics_module.settings, "ENABLE_METRICS", False)
 
         metrics_module.setup_metrics(app)
 
@@ -710,7 +716,7 @@ class TestMetricsSetup:
                 return None
 
         app = FastAPI()
-        monkeypatch.setenv("ENABLE_METRICS", "true")
+        monkeypatch.setattr(metrics_module.settings, "ENABLE_METRICS", True)
         monkeypatch.setattr(metrics_module.settings, "database_url", "sqlite:///./test.db")
         monkeypatch.setattr(metrics_module.settings, "METRICS_EXCLUDED_HANDLERS", "")
         monkeypatch.setattr(metrics_module, "Gauge", DummyGauge)

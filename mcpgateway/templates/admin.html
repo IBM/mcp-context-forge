@@ -334,7 +334,7 @@
       crossorigin="anonymous">
     </script>
     <script
-      src="https://cdn.jsdelivr.net/npm/dompurify@3.3.1/dist/purify.min.js"
+      src="https://cdn.jsdelivr.net/npm/dompurify@3.3.2/dist/purify.min.js"
       integrity="{{ sri_hashes.dompurify }}"
       crossorigin="anonymous">
     </script>
@@ -951,6 +951,22 @@
             </div>
           </div>
         </header>
+
+        <!-- Admin Non-Member Team Banner -->
+        {% if admin_viewing_non_member_team %}
+        <div class="bg-red-100 dark:bg-red-900/30 border-b border-red-300 dark:border-red-800">
+          <div class="px-4 py-3">
+            <div class="flex items-center">
+              <svg class="h-5 w-5 text-red-600 dark:text-red-400 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+              </svg>
+              <p class="text-sm font-semibold text-red-800 dark:text-red-200">
+                ⚠ Since you are not a member of this team, team content won't be visible. Defaulting to All Teams.
+              </p>
+            </div>
+          </div>
+        </div>
+        {% endif %}
 
         <!-- Global notification container for flash messages -->
         <div id="global-notification" class="px-4 mt-4" style="display: none;">

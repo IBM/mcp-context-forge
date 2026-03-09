@@ -2173,6 +2173,67 @@ load-test-agentgateway-mcp-server-time:    ## Load test external MCP server (loc
 			--run-time=60s \
 			--class-picker'
 
+# --- MCP Streamable HTTP Protocol Load Test ---
+# help: load-test-mcp-protocol       - MCP-only protocol test (150 users, 2min) — measures pure MCP RPS
+# help: load-test-mcp-protocol-ui    - MCP-only protocol test with Locust Web UI (class picker)
+# help: load-test-mcp-protocol-heavy - MCP-only protocol heavy test (500 users, 5min)
+
+MCP_PROTOCOL_LOCUSTFILE ?= tests/loadtest/locustfile_mcp_protocol.py
+MCP_PROTOCOL_HOST ?= http://localhost:4444
+
+load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
+	@echo "🔬 Running MCP STREAMABLE HTTP protocol load test..."
+	@echo "   Host: $(MCP_PROTOCOL_HOST)"
+	@echo "   Users: 150, Spawn: 30/s, Duration: 2 minutes"
+	@echo "   📝 Tests ONLY MCP protocol path: /servers/{id}/mcp"
+	@echo "   💡 Requires: gateway + at least one MCP server connected"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_PROTOCOL_HOST) \
+			--users=150 \
+			--spawn-rate=30 \
+			--run-time=120s \
+			--headless \
+			--html=reports/loadtest_mcp_protocol.html \
+			--csv=reports/loadtest_mcp_protocol \
+			--processes=-1'
+
+load-test-mcp-protocol-ui:                 ## MCP Streamable HTTP protocol test with Web UI
+	@echo "🔬 Starting MCP STREAMABLE HTTP protocol load test Web UI..."
+	@echo "   🌐 Open http://localhost:8089 in your browser"
+	@echo "   🎯 Host: $(MCP_PROTOCOL_HOST)"
+	@echo "   👥 Defaults: 150 users, 30 spawn/s, 2 min"
+	@echo "   🎛️  Class picker enabled - select which MCP user types to run"
+	@echo "   📝 Tests ONLY MCP protocol path: /servers/{id}/mcp"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_PROTOCOL_HOST) \
+			--users=150 \
+			--spawn-rate=30 \
+			--run-time=120s \
+			--class-picker'
+
+load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy test (500 users, 5min)
+	@echo "🔬 Running MCP STREAMABLE HTTP protocol HEAVY load test..."
+	@echo "   Host: $(MCP_PROTOCOL_HOST)"
+	@echo "   Users: 500, Spawn: 50/s, Duration: 5 minutes"
+	@echo "   ⚠️  This will generate sustained MCP protocol load"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_PROTOCOL_HOST) \
+			--users=500 \
+			--spawn-rate=50 \
+			--run-time=300s \
+			--headless \
+			--html=reports/loadtest_mcp_protocol_heavy.html \
+			--csv=reports/loadtest_mcp_protocol_heavy \
+			--processes=-1'
+
 # =============================================================================
 # 📊 JMETER PERFORMANCE TESTING
 # =============================================================================
@@ -3911,7 +3972,14 @@ jsonlint:                         ## 📑 JSON validation (jq)
 		exit 1; \
 	}
 	@echo '📑  jsonlint (jq) ...'
-	@find . -type f -name '*.json' -not -path './node_modules/*' -print0 \
+	@find . -type f -name '*.json' \
+	  -not -path './node_modules/*' \
+	  -not -path './.venv/*' \
+	  -not -path './.git/*' \
+	  -not -path './.cache/*' \
+	  -not -path './coverage/*' \
+	  -not -path './.depupdate.*' \
+	  -print0 \
 	  | xargs -0 -I{} sh -c 'jq empty "{}"' \
 	&& echo '✅  All JSON valid'
 

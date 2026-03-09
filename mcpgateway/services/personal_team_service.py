@@ -24,8 +24,10 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.create_slug import slugify
 
 # Initialize logging
 logging_service = LoggingService()
@@ -102,9 +104,13 @@ class PersonalTeamService:
             display_name = user.get_display_name()
             team_name = f"{display_name}'s Team"
 
-            # Create team slug from email to ensure uniqueness
-            email_slug = user.email.replace("@", "-").replace(".", "-").lower()
-            team_slug = f"personal-{email_slug}"
+            # Create team slug — use prefix from config if set, otherwise derive from display name
+            prefix = slugify(settings.personal_team_prefix.strip()) if settings.personal_team_prefix.strip() else ""
+            if prefix:
+                email_slug = user.email.replace("@", "-").replace(".", "-").lower()
+                team_slug = f"{prefix}-{email_slug}"
+            else:
+                team_slug = slugify(team_name)
 
             # Create the personal team
             team = EmailTeam(
@@ -162,14 +168,14 @@ class PersonalTeamService:
             logger.error(f"Failed to get personal team for {user_email}: {e}")
             return None
 
-    async def ensure_personal_team(self, user: EmailUser) -> EmailTeam:
+    async def ensure_personal_team(self, user: EmailUser) -> Optional[EmailTeam]:
         """Ensure a user has a personal team, creating one if needed.
 
         Args:
             user: EmailUser instance
 
         Returns:
-            EmailTeam: The user's personal team (existing or newly created)
+            EmailTeam: The user's personal team (existing or newly created), or None if auto-creation is disabled
 
         Raises:
             Exception: If team creation or retrieval fails
@@ -186,6 +192,8 @@ class PersonalTeamService:
             team = await self.get_personal_team(user.email)
 
             if team is None:
+                if not getattr(settings, "auto_create_personal_teams", True):
+                    return None
                 # Create personal team if it doesn't exist
                 logger.info(f"Creating missing personal team for user {user.email}")
                 team = await self.create_personal_team(user)

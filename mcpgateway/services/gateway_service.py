@@ -831,8 +831,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             elif hasattr(gateway, "auth_headers") and gateway.auth_headers:
                 # Convert list of {key, value} to dict
                 header_dict = {h["key"]: h["value"] for h in gateway.auth_headers if h.get("key")}
-                # Keep encoded form for persistence, but pass raw headers for initialization
-                auth_value = encode_auth(header_dict)  # Encode the dict for consistency
+                auth_value = header_dict  # store plain dict, consistent with update path and DB column type
                 authentication_headers = {str(k): str(v) for k, v in header_dict.items()}
 
             elif isinstance(auth_value, str) and auth_value:
@@ -885,6 +884,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth_value = None
                 oauth_config = None
 
+            # DbTool.auth_value is Mapped[Optional[str]] (Text), so encode the dict before
+            # storing it there. DbGateway.auth_value is Mapped[Optional[Dict]] (JSON) and
+            # receives the plain dict directly (see assignment above).
+            tool_auth_value = encode_auth(auth_value) if isinstance(auth_value, dict) else auth_value
+
             tools = [
                 DbTool(
                     original_name=tool.name,
@@ -902,7 +906,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     annotations=tool.annotations,
                     jsonpath_filter=tool.jsonpath_filter,
                     auth_type=auth_type,
-                    auth_value=auth_value,
+                    auth_value=tool_auth_value,
                     # Federation metadata
                     created_by=created_by or "system",
                     created_from_ip=created_from_ip,
@@ -1897,8 +1901,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway.tags = gateway_update.tags
                 if gateway_update.visibility is not None:
                     gateway.visibility = gateway_update.visibility
-                if gateway_update.visibility is not None:
-                    gateway.visibility = gateway_update.visibility
+                    # Propagate visibility to all linked items immediately so it
+                    # takes effect even when the upstream server is unreachable
+                    # and _initialize_gateway fails.
+                    for tool in gateway.tools:
+                        tool.visibility = gateway.visibility
+                    for resource in gateway.resources:
+                        resource.visibility = gateway.visibility
+                    for prompt in gateway.prompts:
+                        prompt.visibility = gateway.visibility
                 if gateway_update.passthrough_headers is not None:
                     if isinstance(gateway_update.passthrough_headers, list):
                         gateway.passthrough_headers = gateway_update.passthrough_headers
@@ -4125,8 +4136,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or existing_tool.jsonpath_filter != tool.jsonpath_filter
                     )
 
-                    # Check authentication and visibility changes
-                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or existing_tool.auth_value != gateway.auth_value or existing_tool.visibility != gateway.visibility
+                    # Check authentication and visibility changes.
+                    # DbTool.auth_value is Text (encoded str); DbGateway.auth_value is JSON (dict).
+                    # encode_auth() uses a random nonce, so comparing ciphertext would always
+                    # differ even when the plaintext hasn't changed.  Compare on decoded
+                    # (plaintext) values instead, and only encode on the write path.
+                    # If decoding fails (legacy/corrupt data), fall back to direct comparison.
+                    try:
+                        gateway_auth_plain = gateway.auth_value if isinstance(gateway.auth_value, dict) else (decode_auth(gateway.auth_value) if gateway.auth_value else {})
+                        existing_tool_auth_plain = decode_auth(existing_tool.auth_value) if existing_tool.auth_value else {}
+                        auth_value_changed = existing_tool_auth_plain != gateway_auth_plain
+                    except Exception:
+                        gateway_tool_auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
+                        auth_value_changed = existing_tool.auth_value != gateway_tool_auth_value
+                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or auth_value_changed or existing_tool.visibility != gateway.visibility
 
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed:
                         fields_to_update = True
@@ -4144,7 +4167,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.output_schema = tool.output_schema
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
                         existing_tool.auth_type = gateway.auth_type
-                        existing_tool.auth_value = gateway.auth_value
+                        existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
                         existing_tool.visibility = gateway.visibility
                         logger.debug(f"Updated existing tool: {tool.name}")
                 else:
