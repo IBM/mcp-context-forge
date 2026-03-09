@@ -69,7 +69,7 @@ class AuditTrailService:
     def __init__(self):
         """Initialize audit trail service."""
 
-    def log_action(  # pylint: disable=too-many-positional-arguments
+    def log_action(  # noqa: PLR0917  # pylint: disable=too-many-positional-arguments
         self,
         action: str,
         resource_type: str,

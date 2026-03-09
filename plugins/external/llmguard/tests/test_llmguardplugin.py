@@ -925,7 +925,7 @@ async def test_retreive_vault_with_error():
         mock_vault.side_effect = Exception("Test error")
 
         # Should handle the error gracefully
-        vault, vault_id, vault_tuples = plugin.llmguard_instance._retreive_vault()
+        vault, _vault_id, _vault_tuples = plugin.llmguard_instance._retreive_vault()
 
         # Should still return the scanner's vault despite error
         assert vault is not None
@@ -1108,7 +1108,6 @@ async def test_process_scanner_result_with_exception():
     # Create a mock scanner
     class MockScanner:
         """Mock scanner class for testing."""
-        pass
 
     scanner = MockScanner()
     scan_result = Exception("Test scanner error")

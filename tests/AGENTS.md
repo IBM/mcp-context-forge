@@ -37,6 +37,7 @@ make doctest test                 # Doctests then unit tests
 make htmlcov                      # Coverage HTML → docs/docs/coverage/index.html
 make coverage                     # Full coverage (md + HTML + XML + badge + annotated)
 make smoketest                    # Container build + simple E2E flow
+make test-mcp-cli                 # MCP protocol via mcp-cli (needs live gateway)
 
 # Selective runs
 pytest -k "fragment"              # By name substring

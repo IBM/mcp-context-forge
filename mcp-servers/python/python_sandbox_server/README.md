@@ -1,8 +1,14 @@
 # Python Sandbox MCP Server
 
-> Author: Mihai Criveti
+> Authors: Mihai Criveti, Jonathan Springer
 
-A highly secure MCP server for executing Python code in sandboxed environments. Combines RestrictedPython for AST-level code transformation with optional gVisor container isolation for maximum security. Now powered by **FastMCP** for enhanced type safety and automatic validation!
+An MCP server for executing Python code in sandboxed environments. Combines RestrictedPython for AST-level code transformation with optional gVisor container isolation for maximum security. Built with **FastMCP** for enhanced type safety and automatic validation.
+
+> **Warning:** This is an unsupported sample server for demonstration and testing only.
+> Never run untrusted MCP servers directly on your local filesystem — always use a
+> sandbox, container, or microVM (e.g. Docker, gVisor, Firecracker) with restricted
+> capabilities. Perform your own security evaluation before registering any remote MCP
+> server, including servers from public catalogs.
 
 ## Features
 

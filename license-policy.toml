@@ -74,21 +74,11 @@ allowlist = [
   { name = "pylint-plugin-utils", license = "GPL", reason = "pylint plugin, dev-only" },
   # chardet: LGPL licensed, pulled in by older dependencies; dev-only transitive dep.
   { name = "chardet", license = "LGPL", reason = "legacy encoding detector, dev-only transitive dep" },
-  # pyphen: GPL-licensed hyphenation library, used only in mcp_eval_server for text analysis.
-  { name = "pyphen", license = "GPL", reason = "hyphenation library, evaluation server only" },
-  # zeroconf: LGPL-licensed, used in OPA plugin for service discovery.
-  { name = "zeroconf", license = "LGPL", reason = "service discovery, OPA plugin only" },
-  # jinja2-ansible-filters: GPL-licensed, used in OPA plugin.
-  { name = "jinja2-ansible-filters", license = "GPL", reason = "Ansible filters, OPA plugin only" },
-  # NVIDIA CUDA runtime packages — proprietary but standard CUDA toolkit.
-  { name = "nvidia-*", reason = "NVIDIA CUDA toolkit, proprietary but standard runtime" },
-  { name = "cuda-bindings", reason = "NVIDIA CUDA bindings, proprietary but standard runtime" },
+  # pyphen: GPL-licensed hyphenation library, transitive dep of docs toolchain.
+  { name = "pyphen", license = "GPL", reason = "hyphenation library, docs toolchain only" },
   # Packages with missing/broken license metadata in sub-venvs (verified licenses manually).
   { name = "docutils", reason = "BSD/Public-Domain dual-licensed; metadata missing in sub-venvs" },
-  { name = "mergedeep", reason = "MIT licensed; metadata missing in some installs" },
   { name = "ptyprocess", reason = "ISC licensed; metadata missing in some installs" },
-  { name = "matplotlib-inline", reason = "BSD-3-Clause; metadata missing in some installs" },
-  { name = "uuid", reason = "stdlib backport; metadata missing" },
   { name = "cedarpy", reason = "Apache-2.0; AWS Cedar policy engine bindings" },
   # Local Rust crate missing license declaration in Cargo.toml.
   { name = "filesystem-server", reason = "local crate, Apache-2.0 (repo license)" },

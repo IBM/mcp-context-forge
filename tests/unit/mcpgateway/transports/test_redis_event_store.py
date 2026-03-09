@@ -305,7 +305,7 @@ class TestRedisEventStore:
         assert len(replayed1) == 0  # No events after event1 in stream1
         assert len(replayed2) == 0  # No events after event2 in stream2
 
-    async def test_ttl_expiration(self, redis_event_store, fake_redis_client):
+    async def test_ttl_expiration(self, redis_event_store, fake_redis_client, monkeypatch):
         """Streams expire after TTL."""
         # Create store with very short TTL
         short_ttl_store = RedisEventStore(max_events_per_stream=10, ttl=1)
@@ -323,8 +323,9 @@ class TestRedisEventStore:
         result = await short_ttl_store.replay_events_after(event_id, callback)
         assert result == stream_id
 
-        # Wait for TTL to expire
-        await asyncio.sleep(2)
+        # Advance the fake redis clock past the TTL instead of sleeping
+        original_now = fake_redis_client._now
+        monkeypatch.setattr(fake_redis_client, "_now", lambda: original_now() + 2)
 
         # Verify stream keys expired in Redis
         redis = fake_redis_client

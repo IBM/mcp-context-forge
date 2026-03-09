@@ -193,8 +193,7 @@ class TestLogin:
             with pytest.raises(HTTPException) as exc_info:
                 await login(login_request, mock_request, mock_db)
 
-            # The 401 HTTPException is caught by except Exception and becomes 500
-            assert exc_info.value.status_code == 500
+            assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
     async def test_login_value_error(self, mock_request, mock_db):
@@ -252,3 +251,28 @@ class TestLogin:
 
         assert exc_info.value.status_code == 400
         assert "Username format not supported" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_login_non_admin_blocked_when_sso_preserve_admin_enabled(self, mock_request, mock_db, mock_user):
+        """Non-admin password login should be blocked when SSO preserve-admin mode is enabled."""
+        mock_user.is_admin = False
+
+        with (
+            patch("mcpgateway.routers.auth.EmailAuthService") as mock_auth_service,
+            patch("mcpgateway.routers.auth.create_access_token", new_callable=AsyncMock) as mock_create_token,
+            patch("mcpgateway.routers.auth.settings") as mock_settings,
+        ):
+            mock_service = MagicMock()
+            mock_service.authenticate_user = AsyncMock(return_value=mock_user)
+            mock_auth_service.return_value = mock_service
+            mock_settings.sso_enabled = True
+            mock_settings.sso_preserve_admin_auth = True
+
+            login_request = LoginRequest(email="test@example.com", password="password123")
+
+            with pytest.raises(HTTPException) as exc_info:
+                await login(login_request, mock_request, mock_db)
+
+            assert exc_info.value.status_code == 400
+            assert "restricted to admin accounts" in exc_info.value.detail
+            mock_create_token.assert_not_called()

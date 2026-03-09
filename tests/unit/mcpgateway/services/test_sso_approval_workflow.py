@@ -41,7 +41,7 @@ class TestSSOApprovalWorkflow:
     @pytest.mark.asyncio
     async def test_pending_approval_creation(self, sso_service):
         """Test that pending approval requests are created when required."""
-        user_info = {"email": "newuser@example.com", "full_name": "New User", "provider": "github"}
+        user_info = {"email": "newuser@example.com", "full_name": "New User", "provider": "github", "email_verified": True}
 
         # Mock settings to require approval
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -72,7 +72,7 @@ class TestSSOApprovalWorkflow:
     @pytest.mark.asyncio
     async def test_approved_user_creation(self, sso_service):
         """Test that approved users can be created successfully."""
-        user_info = {"email": "approved@example.com", "full_name": "Approved User", "provider": "github"}
+        user_info = {"email": "approved@example.com", "full_name": "Approved User", "provider": "github", "email_verified": True}
 
         # Mock settings to require approval
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -123,7 +123,7 @@ class TestSSOApprovalWorkflow:
     @pytest.mark.asyncio
     async def test_rejected_user_denied(self, sso_service):
         """Test that rejected users are denied access."""
-        user_info = {"email": "rejected@example.com", "full_name": "Rejected User", "provider": "github"}
+        user_info = {"email": "rejected@example.com", "full_name": "Rejected User", "provider": "github", "email_verified": True}
 
         # Mock settings to require approval
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:

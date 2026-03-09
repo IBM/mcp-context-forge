@@ -589,46 +589,18 @@ class TestOAuthManager:
         assert result is None
 
     def test_generate_state_format(self):
-        """Test state generation format with HMAC signature."""
-        # Standard
-        import base64
-        import hashlib
-        import hmac
-        import json
-        from unittest.mock import Mock, patch
+        """Test state generation uses opaque random tokens without embedded PII."""
+        manager = OAuthManager()
 
-        with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
-            mock_settings = Mock()
-            mock_settings.auth_encryption_secret = SecretStr("test-secret-key")
-            mock_get_settings.return_value = mock_settings
+        state = manager._generate_state("gateway123", "test@example.com")
+        state2 = manager._generate_state("gateway123", "test@example.com")
 
-            manager = OAuthManager()
-
-            state = manager._generate_state("gateway123", "test@example.com")
-
-            # State is now base64 encoded JSON with HMAC signature
-            state_with_sig = base64.urlsafe_b64decode(state.encode())
-
-            # Split state and signature (HMAC-SHA256 is 32 bytes)
-            state_bytes = state_with_sig[:-32]
-            received_signature = state_with_sig[-32:]
-
-            # Verify HMAC signature
-            secret_key = b"test-secret-key"  # Use the same secret we mocked
-            expected_signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
-            assert hmac.compare_digest(received_signature, expected_signature)
-
-            # Parse and verify state data
-            state_json = state_bytes.decode()
-            decoded = json.loads(state_json)
-            assert decoded["gateway_id"] == "gateway123"
-            assert decoded["app_user_email"] == "test@example.com"
-            assert "nonce" in decoded
-            assert "timestamp" in decoded
-
-            # Should generate different states each time (different nonce)
-            state2 = manager._generate_state("gateway123", "test@example.com")
-            assert state != state2
+        assert isinstance(state, str)
+        assert len(state) >= 43
+        assert state != state2
+        assert "gateway123" not in state
+        assert "test@example.com" not in state
+        assert all(ch.isalnum() or ch in "-_" for ch in state)
 
     @pytest.mark.asyncio
     async def test_store_authorization_state(self):

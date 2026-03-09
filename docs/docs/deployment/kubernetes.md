@@ -2,6 +2,11 @@
 
 You can deploy ContextForge to any K8s-compliant platform - including vanilla Kubernetes, OpenShift, and managed clouds like GKE, AKS, and EKS.
 
+> **Recommended:** For production deployments, use the **[Helm chart](helm.md)** at
+> `charts/mcp-stack`. It handles PostgreSQL, Redis, secrets, ingress, HPA,
+> health probes, and migrations out of the box. The raw manifests below are
+> provided as a reference for custom or minimal setups.
+
 ---
 
 ## 🚀 Quick Start with Manifest (YAML)

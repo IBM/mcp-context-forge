@@ -584,6 +584,7 @@ class TestWebSocketAuthentication:
             mock_settings.auth_required = True
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = True
+            mock_settings.trust_proxy_auth_dangerously = True
             mock_settings.proxy_user_header = "X-Authenticated-User"
 
             with (
@@ -938,7 +939,7 @@ class TestGetUserFromCredentials:
                 await rp._authenticate_reverse_proxy_websocket(websocket)
 
         assert exc_info.value.status_code == 403
-        assert exc_info.value.detail == "Insufficient permissions"
+        assert exc_info.value.detail == "Access denied"
 
     def test_dict_with_sub(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
@@ -1120,6 +1121,7 @@ class TestWebSocketAuthEdgeCases:
             mock_settings.auth_required = True
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = True
+            mock_settings.trust_proxy_auth_dangerously = True
             mock_settings.proxy_user_header = "X-Authenticated-User"
 
             await websocket_endpoint(mock_websocket, Mock())

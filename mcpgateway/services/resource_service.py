@@ -58,9 +58,11 @@ from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
+from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
@@ -77,7 +79,7 @@ from mcpgateway.utils.validate_signature import validate_signature
 # Plugin support imports (conditional)
 try:
     # First-Party
-    from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
+    from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
 
     PLUGINS_AVAILABLE = True
 except ImportError:
@@ -106,9 +108,10 @@ def _get_registry_cache():
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-# Initialize structured logger and audit trail for resource operations
+# Initialize structured logger, audit trail, and metrics buffer for resource operations
 structured_logger = get_structured_logger("resource_service")
 audit_trail = get_audit_trail_service()
+metrics_buffer = get_metrics_buffer_service()
 
 
 class ResourceError(Exception):
@@ -154,7 +157,7 @@ class ResourceLockConflictError(ResourceError):
     """
 
 
-class ResourceService:
+class ResourceService(BaseService):
     """Service for managing resources.
 
     Handles:
@@ -164,6 +167,8 @@ class ResourceService:
     - Content type detection
     - Active/inactive status management
     """
+
+    _visibility_model_cls = DbResource
 
     def __init__(self) -> None:
         """Initialize the resource service."""
@@ -175,21 +180,11 @@ class ResourceService:
         self._plugin_manager = None
         if PLUGINS_AVAILABLE:
             try:
-                # Support env overrides for testability without reloading settings
-                env_flag = os.getenv("PLUGINS_ENABLED")
-                if env_flag is not None:
-                    env_enabled = env_flag.strip().lower() in {"1", "true", "yes", "on"}
-                    plugins_enabled = env_enabled
-                else:
-                    plugins_enabled = settings.plugins_enabled
-
-                config_file = os.getenv("PLUGIN_CONFIG_FILE", settings.plugin_config_file)
-
-                if plugins_enabled:
-                    self._plugin_manager = PluginManager(config_file)
-                    logger.info(f"Plugin manager initialized for ResourceService with config: {config_file}")
+                self._plugin_manager = get_plugin_manager()
+                if self._plugin_manager:
+                    logger.info("Plugin manager initialized for ResourceService with config: %s", settings.plugins.config_file)
             except Exception as e:
-                logger.warning(f"Plugin manager initialization failed in ResourceService: {e}")
+                logger.warning("Plugin manager initialization failed in ResourceService: %s", e)
                 self._plugin_manager = None
 
         # Initialize mime types
@@ -893,8 +888,8 @@ class ResourceService:
         if is_public_only_token:
             return False  # Already checked public above
 
-        # Owner can always access their own resources
-        if resource_owner_email and resource_owner_email == user_email:
+        # Owner can access their own private resources
+        if visibility == "private" and resource_owner_email and resource_owner_email == user_email:
             return True
 
         # Team resources: check team membership (matches list_resources behavior)
@@ -1007,54 +1002,10 @@ class ResourceService:
         if not include_inactive:
             query = query.where(DbResource.enabled)
 
-        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
-        # This ensures unauthenticated requests with token_teams=[] only see public resources
-        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            if token_teams is not None:
-                team_ids = token_teams
-            elif user_email:
-                # First-Party
-                from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                team_ids = [team.id for team in user_teams]
-            else:
-                team_ids = []
-
-            # Check if this is a public-only token (empty teams array)
-            # Public-only tokens can ONLY see public resources - no owner access
-            is_public_only_token = token_teams is not None and len(token_teams) == 0
-
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)  # No access to this team
-
-                access_conditions = [
-                    and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(and_(DbResource.team_id == team_id, DbResource.owner_email == user_email))
-                query = query.where(or_(*access_conditions))
-            else:
-                # General access: public resources + team resources (+ owner resources if not public-only token)
-                access_conditions = [
-                    DbResource.visibility == "public",
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(DbResource.owner_email == user_email)
-                if team_ids:
-                    access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
-
-                query = query.where(or_(*access_conditions))
-
-            # Apply visibility filter if specified
-            if visibility:
-                query = query.where(DbResource.visibility == visibility)
+        if visibility:
+            query = query.where(DbResource.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
@@ -1419,6 +1370,7 @@ class ResourceService:
         meta_data: Optional[Dict[str, Any]] = None,  # Reserved for future MCP SDK support
         resource_obj: Optional[Any] = None,
         gateway_obj: Optional[Any] = None,
+        server_id: Optional[str] = None,
     ) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
@@ -1455,6 +1407,10 @@ class ResourceService:
                 Pre-fetched DbResource object to skip the internal resource lookup query.
             gateway_obj (Optional[Any]):
                 Pre-fetched DbGateway object to skip the internal gateway lookup query.
+            server_id (Optional[str]):
+                Virtual server ID for server metrics recording. When provided, indicates
+                the resource was invoked through a specific virtual server endpoint.
+                Direct resource calls (e.g., from admin UI) should pass None.
 
         Returns:
             Any: The text content returned by the remote resource, or ``None`` if the
@@ -1815,7 +1771,6 @@ class ResourceService:
                                     async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
                                         read_stream,
                                         write_stream,
-                                        _get_session_id,
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
@@ -1928,37 +1883,24 @@ class ResourceService:
                         error_message = str(e)
                         raise
                     finally:
-                        if resource_text:
+                        # Metrics are now recorded only in read_resource finally block
+                        # This eliminates duplicate metrics and provides a single source of truth
+                        # End Invoke resource span for Observability dashboard
+                        # NOTE: Use fresh_db_session() since the original db was released
+                        # before making HTTP calls to prevent connection pool exhaustion
+                        if db_span_id and observability_service and not db_span_ended:
                             try:
-                                # First-Party
-                                from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
-
-                                metrics_buffer = get_metrics_buffer_service()
-                                metrics_buffer.record_resource_metric(
-                                    resource_id=resource_id,
-                                    start_time=start_time,
-                                    success=success,
-                                    error_message=error_message,
-                                )
-                            except Exception as metrics_error:
-                                logger.warning(f"Failed to invoke resource metric: {metrics_error}")
-
-                            # End Invoke resource span for Observability dashboard
-                            # NOTE: Use fresh_db_session() since the original db was released
-                            # before making HTTP calls to prevent connection pool exhaustion
-                            if db_span_id and observability_service and not db_span_ended:
-                                try:
-                                    with fresh_db_session() as fresh_db:
-                                        observability_service.end_span(
-                                            db=fresh_db,
-                                            span_id=db_span_id,
-                                            status="ok" if success else "error",
-                                            status_message=error_message if error_message else None,
-                                        )
-                                    db_span_ended = True
-                                    logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
-                                except Exception as e:
-                                    logger.warning(f"Failed to end observability span for invoking resource: {e}")
+                                with fresh_db_session() as fresh_db:
+                                    observability_service.end_span(
+                                        db=fresh_db,
+                                        span_id=db_span_id,
+                                        status="ok" if success else "error",
+                                        status_message=error_message if error_message else None,
+                                    )
+                                db_span_ended = True
+                                logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
+                            except Exception as e:
+                                logger.warning(f"Failed to end observability span for invoking resource: {e}")
 
     async def read_resource(
         self,
@@ -2042,6 +1984,7 @@ class ResourceService:
         success = False
         error_message = None
         resource_db = None
+        server_scoped = False
         resource_db_gateway = None  # Only set when eager-loaded via Q2's joinedload
         content = None
         uri = resource_uri or "unknown"
@@ -2302,6 +2245,7 @@ class ResourceService:
                         ).first()
                         if not server_match:
                             raise ResourceNotFoundError(f"Resource not found: {resource_uri or resource_id}")
+                        server_scoped = True
 
                 # Set success attributes on span
                 if span:
@@ -2327,6 +2271,7 @@ class ResourceService:
                 # ResourceContent is the legacy model for backwards compatibility
 
                 if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
+                    # Metrics are recorded in read_resource finally block for all resources
                     resource_response = await self.invoke_resource(
                         db=db,
                         resource_id=getattr(content, "id"),
@@ -2336,11 +2281,13 @@ class ResourceService:
                         meta_data=meta_data,
                         resource_obj=resource_db,
                         gateway_obj=resource_db_gateway,
+                        server_id=server_id,
                     )
                     if resource_response:
                         setattr(content, "text", resource_response)
                 # If content is any object that quacks like content
                 elif hasattr(content, "text") or hasattr(content, "blob"):
+                    # Metrics are recorded in read_resource finally block for all resources
                     if hasattr(content, "blob"):
                         resource_response = await self.invoke_resource(
                             db=db,
@@ -2351,6 +2298,7 @@ class ResourceService:
                             meta_data=meta_data,
                             resource_obj=resource_db,
                             gateway_obj=resource_db_gateway,
+                            server_id=server_id,
                         )
                         if resource_response:
                             setattr(content, "blob", resource_response)
@@ -2364,6 +2312,7 @@ class ResourceService:
                             meta_data=meta_data,
                             resource_obj=resource_db,
                             gateway_obj=resource_db_gateway,
+                            server_id=server_id,
                         )
                         if resource_response:
                             setattr(content, "text", resource_response)
@@ -2392,12 +2341,10 @@ class ResourceService:
                 raise
             finally:
                 # Record metrics only if we found a resource (not for templates)
+                logger.debug(f"read_resource finally block: resource_db={'present' if resource_db else None}, resource_id={resource_db.id if resource_db else None}, server_id={server_id}")
+
                 if resource_db:
                     try:
-                        # First-Party
-                        from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
-
-                        metrics_buffer = get_metrics_buffer_service()
                         metrics_buffer.record_resource_metric(
                             resource_id=resource_db.id,
                             start_time=start_time,
@@ -2406,6 +2353,22 @@ class ResourceService:
                         )
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record resource metric: {metrics_error}")
+
+                # Record server metrics ONLY when the server scoping check passed.
+                # This prevents recording metrics with unvalidated server_id values
+                # from admin API headers (X-Server-ID) or RPC params.
+                if resource_db and server_scoped:
+                    try:
+                        logger.debug(f"Recording server metric for server_id={server_id}, resource_id={resource_db.id}, success={success}")
+                        # Record server metric only for the specific virtual server being accessed
+                        metrics_buffer.record_server_metric(
+                            server_id=server_id,
+                            start_time=start_time,
+                            success=success,
+                            error_message=error_message,
+                        )
+                    except Exception as metrics_error:
+                        logger.warning(f"Failed to record server metric: {metrics_error}")
 
                 # End database span for observability dashboard
                 # NOTE: Use fresh_db_session() since db may have been closed by invoke_resource
@@ -3543,6 +3506,7 @@ class ResourceService:
         token_teams: Optional[List[str]] = None,
         tags: Optional[List[str]] = None,
         visibility: Optional[str] = None,
+        server_id: Optional[str] = None,
     ) -> List[ResourceTemplate]:
         """
         List resource templates with visibility-based access control.
@@ -3555,6 +3519,7 @@ class ResourceService:
                          [] = public-only (no owner access), [...] = team-scoped
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
             visibility (Optional[str]): Filter by visibility (private, team, public).
+            server_id (Optional[str]): Filter by server ID. If provided, only templates associated with this server will be returned.
 
         Returns:
             List of ResourceTemplate objects the user has access to
@@ -3574,6 +3539,10 @@ class ResourceService:
             True
         """
         query = select(DbResource).where(DbResource.uri_template.isnot(None))
+
+        # Filter by server_id if provided (same pattern as list_server_resources)
+        if server_id:
+            query = query.join(server_resource_association, DbResource.id == server_resource_association.c.resource_id).where(server_resource_association.c.server_id == server_id)
 
         if not include_inactive:
             query = query.where(DbResource.enabled)

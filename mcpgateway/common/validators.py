@@ -295,7 +295,7 @@ class SecurityValidator:
     ALLOWED_URL_SCHEMES = settings.validation_allowed_url_schemes  # Default: ["http://", "https://", "ws://", "wss://"]
 
     # Character type patterns
-    NAME_PATTERN = settings.validation_name_pattern  # Default: ^[a-zA-Z0-9_\-\s]+$
+    NAME_PATTERN = settings.validation_name_pattern  # Default: ^[a-zA-Z0-9_.\- ]+$ (literal space, not \s)
     IDENTIFIER_PATTERN = settings.validation_identifier_pattern  # Default: ^[a-zA-Z0-9_\-\.]+$
     VALIDATION_SAFE_URI_PATTERN = settings.validation_safe_uri_pattern  # Default: ^[a-zA-Z0-9_\-.:/?=&%]+$
     VALIDATION_UNSAFE_URI_PATTERN = settings.validation_unsafe_uri_pattern  # Default: [<>"\'\\]
@@ -1085,7 +1085,7 @@ class SecurityValidator:
             raise ValueError(f"{field_name} contains line breaks which are not allowed")
 
         # Check for spaces in domain
-        if " " in value.split("?")[0]:  # Check only in the URL part, not query string
+        if " " in value.split("?", maxsplit=1)[0]:  # Check only in the URL part, not query string
             raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
 
         # Basic URL structure validation
@@ -1539,7 +1539,7 @@ class SecurityValidator:
         safe_mime_types = settings.validation_allowed_mime_types
         if value not in safe_mime_types:
             # Allow x- vendor types and + suffixes
-            base_type = value.split(";")[0].strip()
+            base_type = value.split(";", maxsplit=1)[0].strip()
             if not (base_type.startswith("application/x-") or base_type.startswith("text/x-") or "+" in base_type):
                 raise ValueError(f"MIME type '{value}' is not in the allowed list")
 
@@ -1728,3 +1728,19 @@ class SecurityValidator:
         if isinstance(data, list):
             return [cls.sanitize_json_response(item) for item in data]
         return data
+
+
+def validate_core_url(value: str, field_name: str = "URL") -> str:
+    """Core ContextForge URL validation entry point.
+
+    This wrapper provides an explicit core-only entry point so the core
+    processing path does not depend on plugin-framework validators.
+
+    Args:
+        value: The URL string to validate.
+        field_name: Descriptive name for error messages.
+
+    Returns:
+        The validated URL string.
+    """
+    return SecurityValidator.validate_url(value, field_name)

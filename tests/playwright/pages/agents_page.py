@@ -227,8 +227,8 @@ class AgentsPage(BasePage):
 
     @property
     def agents_table(self) -> Locator:
-        """Agents table (if exists)."""
-        return self.agents_panel.locator("table")
+        """Agents table (HTMX-loaded, excludes the hidden legacy table)."""
+        return self.agents_panel.locator("#agents-table")
 
     @property
     def agents_table_body(self) -> Locator:
@@ -434,9 +434,15 @@ class AgentsPage(BasePage):
             query: Search query
         """
         self.fill_locator(self.agents_search_input, query)
-        self.page.wait_for_timeout(500)  # Wait for search to filter
+        self.page.wait_for_function(
+            "() => !document.querySelector('#agents-loading.htmx-request')",
+            timeout=15000,
+        )
 
     def clear_search(self) -> None:
         """Clear the search input by clicking the clear button."""
         self.click_locator(self.agents_clear_search_btn)
-        self.page.wait_for_timeout(500)  # Wait for search to clear
+        self.page.wait_for_function(
+            "() => !document.querySelector('#agents-loading.htmx-request')",
+            timeout=15000,
+        )

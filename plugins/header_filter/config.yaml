@@ -1,0 +1,38 @@
+# plugins/header_filter/config.yaml - Header Filter Plugin Configuration
+
+plugins:
+  - name: "HeaderFilterPlugin"
+    kind: "plugins.header_filter.header_filter_plugin.HeaderFilter"
+    description: "Filters sensitive headers before sending to MCP endpoints"
+    version: "1.0.0"
+    author: "Adrian Popa"
+    hooks: ["tool_pre_invoke", "agent_pre_invoke"]
+    tags: ["security", "headers", "filtering"]
+    mode: "permissive"  # Start in permissive mode for safety
+    priority: 20  # Lower number = higher priority (runs first). Run after vault plugin (priority 10)
+    conditions:
+      - prompts: []  # Empty list = apply to all prompts
+        server_ids: []  # Apply to specific servers only - empty means none by default
+        tenant_ids: []  # Apply to all tenants
+    config:
+      # Headers to filter (case-insensitive) - conservative default list
+      filter_headers:
+        - "X-Vault-Tokens"  # Always filter vault tokens
+        - "Cookie"  # Filter cookies by default
+        - "Set-Cookie"  # Filter set-cookie
+      # Whether to log filtered headers
+      log_filtered_headers: true
+      # Headers to always allow through (overrides filter_headers)
+      allow_passthrough_headers: []
+
+# Plugin directories to scan
+plugin_dirs:
+  - "plugins/header_filter"
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

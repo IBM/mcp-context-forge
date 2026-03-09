@@ -194,11 +194,6 @@ repos:
         description: Removes UTF-8 byte order marker.
         types: [text]
 
-      - id: fix-encoding-pragma
-        name: 🧹 Fix Python Encoding Pragma
-        description: "Adds # -*- coding: utf-8 -*- to the top of python files."
-        types: [python]
-
       - id: mixed-line-ending
         name: 🧹 Mixed Line Ending
         description: Replaces or checks mixed line ending.
@@ -374,7 +369,7 @@ repos:
         description: Verifies test files in tests/ directories start with `test_`.
         language: python
         files: (^|/)tests/.+\.py$
-        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|loadtest|jmeter|client|populate)/.*\.py$
+        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|loadtest|jmeter|client|populate)/.*\.py$|^tests/e2e/mcp_test_helpers\.py$
         args: [--pytest-test-first] # `test_.*\.py`
 
   # - repo: https://github.com/pycqa/flake8

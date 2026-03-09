@@ -25,6 +25,129 @@ def test_utc_now_returns_utc_datetime():
     assert now.tzinfo == timezone.utc
 
 
+def test_encrypted_text_bind_encrypts_plaintext(monkeypatch):
+    """EncryptedText should encrypt plaintext bind params."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = False
+    mock_encryption.encrypt_secret.return_value = "v2:{ciphertext}"
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    encrypted = db.EncryptedText().process_bind_param("plain-token", None)
+    assert encrypted == "v2:{ciphertext}"
+    mock_encryption.encrypt_secret.assert_called_once_with("plain-token")
+
+
+def test_encrypted_text_bind_preserves_pre_encrypted_values(monkeypatch):
+    """EncryptedText should avoid double-encrypting existing encrypted values."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = True
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    value = db.EncryptedText().process_bind_param("v2:{already-encrypted}", None)
+    assert value == "v2:{already-encrypted}"
+    mock_encryption.encrypt_secret.assert_not_called()
+
+
+def test_encrypted_text_bind_raises_on_encrypt_failure(monkeypatch):
+    """EncryptedText should fail closed on encryption errors when encryption is enabled."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = False
+    mock_encryption.encrypt_secret.side_effect = RuntimeError("encrypt failed")
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    with pytest.raises(db.TokenEncryptionWriteError):
+        db.EncryptedText().process_bind_param("plain-token", None)
+
+
+def test_encrypted_text_result_decrypts_encrypted_values(monkeypatch):
+    """EncryptedText should decrypt values when reading from the database."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = True
+    mock_encryption.decrypt_secret_or_plaintext.return_value = "plain-token"
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    value = db.EncryptedText().process_result_value("v2:{ciphertext}", None)
+    assert value == "plain-token"
+
+
+def test_encrypted_text_result_preserves_plaintext_values(monkeypatch):
+    """EncryptedText should leave plaintext rows unchanged for compatibility."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = False
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    value = db.EncryptedText().process_result_value("legacy-plain-token", None)
+    assert value == "legacy-plain-token"
+
+
+def test_encrypted_text_python_type_and_literal_param(monkeypatch):
+    """EncryptedText exposes str python_type and delegates literal params via bind processing."""
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: None))
+    encrypted_type = db.EncryptedText()
+    assert encrypted_type.python_type is str
+    assert encrypted_type.process_literal_param("literal-token", None) == "literal-token"
+
+
+def test_encrypted_text_get_encryption_returns_none_when_secret_missing(monkeypatch):
+    """EncryptedText should skip encryption service setup when no secret is configured."""
+    monkeypatch.setattr(db.settings, "auth_encryption_secret", "")
+    assert db.EncryptedText._get_encryption() is None
+
+
+def test_encrypted_text_get_encryption_returns_none_on_import_error(monkeypatch):
+    """EncryptedText should degrade gracefully when encryption service import fails."""
+    # Standard
+    import builtins
+
+    monkeypatch.setattr(db.settings, "auth_encryption_secret", "test-secret")
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
+        if name == "mcpgateway.services.encryption_service":
+            raise ImportError("blocked for test")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    assert db.EncryptedText._get_encryption() is None
+
+
+def test_encrypted_text_get_encryption_returns_service_when_configured(monkeypatch):
+    """EncryptedText should return a configured encryption service instance."""
+    mock_service = MagicMock()
+    monkeypatch.setattr(db.settings, "auth_encryption_secret", "test-secret")
+    with patch("mcpgateway.services.encryption_service.get_encryption_service", return_value=mock_service) as mock_get:
+        service = db.EncryptedText._get_encryption()
+    assert service is mock_service
+    mock_get.assert_called_once_with("test-secret")
+
+
+def test_encrypted_text_bind_returns_original_for_non_string_and_without_encryption(monkeypatch):
+    """EncryptedText bind path should preserve values when encryption is unavailable or value is not a string."""
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: None))
+    encrypted_type = db.EncryptedText()
+    assert encrypted_type.process_bind_param(123, None) == 123
+    assert encrypted_type.process_bind_param("plain-token", None) == "plain-token"
+
+
+def test_encrypted_text_result_returns_original_for_non_string_and_without_encryption(monkeypatch):
+    """EncryptedText result path should preserve values when decryption is unavailable or value is not a string."""
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: None))
+    encrypted_type = db.EncryptedText()
+    assert encrypted_type.process_result_value({"token": "x"}, None) == {"token": "x"}
+    assert encrypted_type.process_result_value("stored-token", None) == "stored-token"
+
+
+def test_encrypted_text_result_returns_stored_value_when_decrypt_raises(monkeypatch):
+    """EncryptedText should return stored value if decrypting an encrypted token fails."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = True
+    mock_encryption.decrypt_secret_or_plaintext.side_effect = RuntimeError("decrypt failed")
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    stored = "v2:{ciphertext}"
+    assert db.EncryptedText().process_result_value(stored, None) == stored
+
+
 # --- Tool metrics properties ---
 def make_tool_with_metrics(metrics):
     tool = db.Tool()
@@ -1108,6 +1231,9 @@ def test_permissions_helpers():
     assert "tools.read" in permissions
     assert "llm.read" in permissions
     assert "llm.invoke" in permissions
+    assert "admin.metrics" in permissions
+    assert "admin.sso_providers:read" in permissions
+    assert "logs:read" in permissions
     assert db.Permissions.ALL_PERMISSIONS not in permissions
 
     by_resource = db.Permissions.get_permissions_by_resource()
@@ -1115,6 +1241,18 @@ def test_permissions_helpers():
     assert "tools.read" in by_resource["tools"]
     assert "llm" in by_resource
     assert "llm.read" in by_resource["llm"]
+    assert "logs" in by_resource
+    assert "logs:read" in by_resource["logs"]
+
+
+def test_permissions_helpers_without_separator(monkeypatch):
+    """Permissions without separators should map to their own resource bucket."""
+    monkeypatch.setattr(db.Permissions, "get_all_permissions", classmethod(lambda cls: ["standalone", "tools.read"]))
+
+    by_resource = db.Permissions.get_permissions_by_resource()
+
+    assert by_resource["standalone"] == ["standalone"]
+    assert by_resource["tools"] == ["tools.read"]
 
 
 # --- Email user helpers ---
@@ -1137,6 +1275,126 @@ def test_email_user_account_helpers():
     assert user.get_display_name() == "Test User"
     user.full_name = None
     assert user.get_display_name() == "user"
+
+
+def test_email_user_is_account_locked_naive_datetime():
+    """Test is_account_locked handles naive datetime (SQLite timezone handling)."""
+    user = db.EmailUser(email="user@example.com", password_hash="hash")
+
+    # Active lock: naive future UTC datetime (simulates SQLite stripping tzinfo)
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10)
+    user.failed_login_attempts = 3
+
+    assert user.is_account_locked() is True
+    # Method must not mutate the ORM field (avoids write-on-read in GET paths)
+    assert user.locked_until.tzinfo is None
+    # Counter must not be touched while the lock is still active
+    assert user.failed_login_attempts == 3
+
+    # Expired lock: should reset counters and return False
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+    user.failed_login_attempts = 3
+
+    assert user.is_account_locked() is False
+    assert user.failed_login_attempts == 0
+    assert user.locked_until is None
+
+
+def test_email_user_is_account_locked_aware_datetime():
+    """Test is_account_locked with timezone-aware datetimes (PostgreSQL path)."""
+    user = db.EmailUser(email="user@example.com", password_hash="hash")
+
+    # Active lock: aware datetime, no mutation expected
+    user.locked_until = db.utc_now() + timedelta(minutes=10)
+    original = user.locked_until
+    user.failed_login_attempts = 3
+
+    assert user.is_account_locked() is True
+    assert user.locked_until is original  # object not replaced
+    assert user.failed_login_attempts == 3
+
+    # Expired lock: should reset counters and return False
+    user.locked_until = db.utc_now() - timedelta(minutes=1)
+    user.failed_login_attempts = 3
+
+    assert user.is_account_locked() is False
+    assert user.failed_login_attempts == 0
+    assert user.locked_until is None
+
+    # No lock at all
+    user.locked_until = None
+    assert user.is_account_locked() is False
+
+
+def test_is_account_locked_naive_datetime_render_user_card_regression():
+    """Regression: _render_user_card_html must not crash on naive locked_until (SQLite)."""
+    # First-Party
+    from mcpgateway.admin import _render_user_card_html
+
+    user = db.EmailUser(
+        email="locked@example.com",
+        password_hash="hash",
+        full_name="Locked User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="local",
+        created_at=db.utc_now(),
+        password_change_required=False,
+    )
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10)
+    user.failed_login_attempts = 5
+
+    html = _render_user_card_html(user, "other@example.com", admin_count=1, root_path="")
+    assert "Locked" in html
+    assert "locked@example.com" in html
+
+
+def test_is_account_locked_naive_datetime_email_user_response_regression():
+    """Regression: EmailUserResponse.from_email_user must not crash on naive locked_until (SQLite)."""
+    # First-Party
+    from mcpgateway.schemas import EmailUserResponse
+
+    user = db.EmailUser(
+        email="locked@example.com",
+        password_hash="hash",
+        full_name="Locked User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="local",
+        created_at=db.utc_now(),
+        password_change_required=False,
+    )
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10)
+    user.failed_login_attempts = 5
+
+    response = EmailUserResponse.from_email_user(user)
+    assert response.is_locked is True
+    assert response.failed_login_attempts == 5
+    assert response.locked_until is not None
+
+
+def test_is_account_locked_expired_naive_datetime_clears_fields():
+    """Expired naive lock: from_email_user sees cleared fields after is_account_locked()."""
+    # First-Party
+    from mcpgateway.schemas import EmailUserResponse
+
+    user = db.EmailUser(
+        email="expired@example.com",
+        password_hash="hash",
+        full_name="Expired User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="local",
+        created_at=db.utc_now(),
+        password_change_required=False,
+    )
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+    user.failed_login_attempts = 5
+
+    response = EmailUserResponse.from_email_user(user)
+    assert response.is_locked is False
+    assert response.failed_login_attempts == 0
+    assert response.locked_until is None
 
 
 def test_email_user_failed_attempts_flow():
@@ -2587,3 +2845,9 @@ def test_slug_listeners_gateway_a2a_agent_email_team(monkeypatch):
     team = Target("Team Name")
     db.set_email_team_slug(None, None, team)
     assert team.slug == "team-name"
+
+    # Verify guard: pre-set slug is preserved
+    team_with_slug = Target("Team Name")
+    team_with_slug.slug = "workspace-alice-example-com"
+    db.set_email_team_slug(None, None, team_with_slug)
+    assert team_with_slug.slug == "workspace-alice-example-com"

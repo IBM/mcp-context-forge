@@ -242,6 +242,8 @@ curl http://localhost:8080/health
 ## Customising `values.yaml`
 
 Below is a minimal example. Copy the default file and adjust for your environment.
+Treat chart values as examples, not production-ready defaults.
+It is expected that users will change these values before deployment.
 
 ```yaml
 mcpContextForge:
@@ -298,6 +300,28 @@ helm diff upgrade mcp-stack . -n mcp-private-f my-values.yaml
 # Roll back to revision 1
 helm rollback mcp-stack 1 -n mcp
 ```
+
+### Upgrade Note for `1.0.0-BETA-2` Installations
+
+If your existing release was originally installed from chart/app `1.0.0-BETA-2`, a direct upgrade can fail on MinIO with:
+
+```text
+Deployment.apps "<release>-minio" is invalid: spec.selector ... field is immutable
+```
+
+Validated workaround:
+
+```bash
+# One-time: remove only the Deployment (keeps PVC/data)
+kubectl delete deployment -n mcp-private mcp-stack-minio
+
+# Retry upgrade
+helm upgrade mcp-stack charts/mcp-stack \
+  -n mcp-private \
+  --wait --timeout 15m
+```
+
+This recreates MinIO using current labels while preserving existing volumes.
 
 ---
 
@@ -419,6 +443,42 @@ For production deployments, consider:
 2. **Velero**: Add backup annotations shown above
 3. **Database Dumps**: Regular `pg_dump` for PostgreSQL
 4. **Monitoring**: Set up alerts for storage usage
+
+### PostgreSQL Upgrade Safety Defaults
+
+To reduce risk of PostgreSQL data corruption during chart upgrades, internal Postgres now uses:
+
+1. `Deployment` update strategy `Recreate` (prevents overlapping old/new DB pods on one PVC)
+2. `terminationGracePeriodSeconds: 120`
+3. `lifecycle.preStop` clean stop (`pg_ctl ... stop`) before termination
+4. `postgres.persistence.useReadWriteOncePod: true` (strict single-pod mount when supported)
+
+If your storage class does not support `ReadWriteOncePod`, set:
+
+```yaml
+postgres:
+  persistence:
+    useReadWriteOncePod: false
+    accessModes: [ReadWriteOnce]
+```
+
+### What MinIO Is Used For In This Chart
+
+MinIO is not on the normal request path for ContextForge traffic. In this chart, MinIO is used for PostgreSQL major-version upgrade backup/restore flow:
+
+1. `job-postgres-backup` (pre-upgrade hook) writes a `pg_dump` into MinIO bucket `postgres-backups`
+2. PostgreSQL upgrade init container reads the latest dump from MinIO and seeds the upgraded DB data directory
+
+MinIO is disabled by default. Enable it when you use the chart-managed PostgreSQL major-upgrade workflow:
+
+```yaml
+minio:
+  enabled: true
+```
+
+Use MinIO together with `postgres.upgrade.enabled=true`.
+The chart now fails fast at render time if `postgres.upgrade.enabled=true` and `minio.enabled=false`.
+If you are upgrading an existing release and still need MinIO, pin `minio.enabled=true` in your values before running `helm upgrade`.
 
 ### Manual Persistent Volume Creation (Advanced)
 

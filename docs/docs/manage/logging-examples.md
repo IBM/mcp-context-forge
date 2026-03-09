@@ -116,7 +116,7 @@ LOG_FOLDER=logs
 # docker-compose.yml
 services:
   mcpgateway:
-    image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+    image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
     environment:
 
       - LOG_LEVEL=INFO

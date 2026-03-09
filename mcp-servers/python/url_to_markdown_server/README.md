@@ -1,10 +1,16 @@
 # URL-to-Markdown MCP Server
 
-> Author: Mihai Criveti
+> Authors: Mihai Criveti, Jonathan Springer
 
 The ultimate MCP server for retrieving web content and files, then converting them to high-quality markdown format. Supports multiple content types, conversion engines, and processing options.
 
-**Now with FastMCP implementation!** Choose between the original MCP server or the new FastMCP-powered version with enhanced type safety and automatic validation.
+Built with **FastMCP** for enhanced type safety and automatic validation.
+
+> **Warning:** This is an unsupported sample server for demonstration and testing only.
+> Never run untrusted MCP servers directly on your local filesystem — always use a
+> sandbox, container, or microVM (e.g. Docker, gVisor, Firecracker) with restricted
+> capabilities. Perform your own security evaluation before registering any remote MCP
+> server, including servers from public catalogs.
 
 ## Features
 
@@ -108,51 +114,24 @@ The new FastMCP implementation requires:
 
 ## Usage
 
-### Running with FastMCP (Recommended)
-
-#### Stdio Mode (for Claude Desktop, IDEs)
+### Stdio Mode (for Claude Desktop, IDEs)
 ```bash
-make dev-fastmcp  # Run FastMCP implementation
+make dev
 ```
 
-#### HTTP Mode (via ContextForge)
+### HTTP Mode (via ContextForge)
 ```bash
-make serve-http-fastmcp  # Expose FastMCP server over HTTP
-```
-
-### Running Original MCP Implementation
-
-#### Stdio Mode
-```bash
-make dev  # Run original MCP server
-```
-
-#### HTTP Mode
-```bash
-make serve-http  # Expose original server over HTTP
+make serve-http
 ```
 
 ### MCP Client Configuration
 
-#### For FastMCP Server
 ```json
 {
   "mcpServers": {
     "url-to-markdown": {
       "command": "python",
       "args": ["-m", "url_to_markdown_server.server_fastmcp"]
-    }
-  }
-}
-```
-
-#### For Original Server
-```json
-{
-  "mcpServers": {
-    "url-to-markdown": {
-      "command": "python",
-      "args": ["-m", "url_to_markdown_server.server"]
     }
   }
 }
@@ -472,59 +451,6 @@ make dev
 - **Image Processing**: Images are referenced, not embedded
 - **Large Files**: Size limits prevent processing very large documents
 
-## FastMCP vs Original Implementation
-
-### Why Choose FastMCP?
-
-The FastMCP implementation provides:
-
-1. **Type-Safe Parameters**: Automatic validation using Pydantic Field constraints
-2. **Cleaner Code**: Decorator-based tool definitions (`@mcp.tool`)
-3. **Better Error Handling**: Built-in exception management
-4. **Automatic Schema Generation**: No manual JSON schema definitions
-5. **Modern Async Patterns**: Improved async/await implementation
-
-### Feature Comparison
-
-| Feature | Original MCP | FastMCP |
-|---------|-------------|---------|
-| Tool Definition | Manual JSON schemas | `@mcp.tool` decorator |
-| Parameter Validation | Manual checks | Automatic Pydantic validation |
-| Type Hints | Basic | Full typing support |
-| Error Handling | Manual try/catch | Built-in error management |
-| Schema Generation | Manual | Automatic from type hints |
-| Code Structure | Procedural | Object-oriented with decorators |
-
-### Code Example Comparison
-
-#### Original MCP:
-```python
-@server.list_tools()
-async def handle_list_tools() -> list[Tool]:
-    return [
-        Tool(
-            name="convert_url",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string"},
-                    "timeout": {"type": "integer"}
-                }
-            }
-        )
-    ]
-```
-
-#### FastMCP:
-```python
-@mcp.tool
-async def convert_url(
-    url: str = Field(..., description="URL to convert"),
-    timeout: int = Field(30, le=120, description="Timeout")
-) -> Dict[str, Any]:
-    # Implementation here
-```
-
 ## Contributing
 
 When adding new engines or formats:
@@ -533,4 +459,3 @@ When adding new engines or formats:
 3. Add comprehensive tests
 4. Document engine characteristics
 5. Update README examples
-6. Consider implementing in both original and FastMCP versions for compatibility

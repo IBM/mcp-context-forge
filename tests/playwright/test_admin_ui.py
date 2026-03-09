@@ -99,3 +99,51 @@ class TestAdminUI:
         admin_page.page.set_viewport_size({"width": 1920, "height": 1080})
         admin_page.navigate()
         expect(admin_page.servers_tab).to_be_visible()
+
+    def test_sidebar_visible_after_mobile_collapse_and_resize(self, admin_page: AdminPage):
+        """Test sidebar reappears when resizing from mobile back to desktop (#2947)."""
+        sidebar = admin_page.page.locator("#sidebar")
+
+        # Start at desktop size — sidebar should be visible
+        admin_page.page.set_viewport_size({"width": 1280, "height": 800})
+        admin_page.navigate()
+        expect(sidebar).to_be_visible()
+
+        # Shrink to mobile — hide sidebar via Alpine $dispatch, then verify hamburger toggle
+        admin_page.page.set_viewport_size({"width": 375, "height": 667})
+        admin_page.page.wait_for_timeout(300)
+        # Alpine keeps sidebarOpen=true from desktop; force it closed
+        admin_page.page.evaluate(
+            """() => {
+                const el = document.querySelector('[x-data]');
+                if (!el) return;
+                // Try Alpine v3 _x_dataStack, then v2 __x
+                if (el._x_dataStack) { el._x_dataStack[0].sidebarOpen = false; }
+                else if (el.__x) { el.__x.$data.sidebarOpen = false; }
+            }"""
+        )
+        admin_page.page.wait_for_timeout(500)
+
+        hamburger = admin_page.page.locator("button.lg\\:hidden")
+        expect(hamburger).to_be_visible(timeout=10000)
+
+        # Open sidebar via hamburger (use force to bypass any residual overlay)
+        hamburger.click(force=True, timeout=10000)
+        admin_page.page.wait_for_timeout(500)
+        expect(sidebar).to_be_visible(timeout=10000)
+
+        # Close sidebar again
+        admin_page.page.evaluate(
+            """() => {
+                const el = document.querySelector('[x-data]');
+                if (!el) return;
+                if (el._x_dataStack) { el._x_dataStack[0].sidebarOpen = false; }
+                else if (el.__x) { el.__x.$data.sidebarOpen = false; }
+            }"""
+        )
+        admin_page.page.wait_for_timeout(400)
+
+        # Resize back to desktop — sidebar must reappear without page reload
+        admin_page.page.set_viewport_size({"width": 1280, "height": 800})
+        admin_page.page.wait_for_timeout(300)
+        expect(sidebar).to_be_visible()

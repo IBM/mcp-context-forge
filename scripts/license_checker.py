@@ -105,8 +105,6 @@ def _classify_pyproject_scope(source: str, root: Path) -> str:
         return f"plugins/external/{rel_parts[2]}"
     if rel_parts[0] == "plugins":
         return "plugins"
-    if rel_parts[0] == "agent_runtimes" and len(rel_parts) >= 2:
-        return f"agents/{rel_parts[1]}"
     if rel_parts[0] == "a2a-agents" and len(rel_parts) >= 2:
         return f"a2a-agents/{rel_parts[1]}"
     if rel_parts[0] == "plugins_rust":

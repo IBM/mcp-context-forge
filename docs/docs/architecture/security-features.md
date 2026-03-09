@@ -1,6 +1,6 @@
 # ContextForge Security Features
 
-**Current Version: 1.0.0-RC-1** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
+**Current Version: 1.0.0-RC-2** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
 
 ## Security Posture Overview
 
@@ -15,6 +15,7 @@
 
 - **HTTP Basic Auth** is disabled by default for security. Enable with `API_ALLOW_BASIC_AUTH=true` for API endpoints or `DOCS_ALLOW_BASIC_AUTH=true` for docs. When enabled, credentials use `BASIC_AUTH_USER`/`BASIC_AUTH_PASSWORD`. The Admin UI uses email/password authentication, not Basic auth.
 - **JWT bearer tokens** are required for API access and MCP transports when `MCP_CLIENT_AUTH_ENABLED=true` (default). For reverse proxies you can opt into `TRUST_PROXY_AUTH=true` and provide the authenticated identity through `PROXY_USER_HEADER`.
+- **Per-server OAuth enforcement.** Virtual servers with `oauth_enabled=True` require authentication even when the global `MCP_REQUIRE_AUTH=false` (permissive mode). Unauthenticated requests to these servers receive a 401 with an RFC 9728 `WWW-Authenticate` header for OAuth discovery. If the database is unavailable during this check, the request is rejected with 503 (fail-closed). Enforcement is applied at both the middleware and handler levels as a defense-in-depth measure. See [RFC 9728 Compliance](rfc9728-compliance.md#per-server-oauth-enforcement) for details.
 - **Token issuance tooling.** `python -m mcpgateway.utils.create_jwt_token` produces gateway-signed tokens for automation. The helper respects configured expiry, issuer, and audience claims.
 
 ### JWT Token Management
@@ -78,14 +79,14 @@ For production deployments, always include JTI in issued tokens to enable proper
 
 - **Multi-provider SSO.** `mcpgateway/services/sso_service.py` supports GitHub, Google, IBM Security Verify, Microsoft Entra ID, Okta, Keycloak, and generic OIDC providers. Secrets are encrypted with a Fernet key derived from `AUTH_ENCRYPTION_SECRET`.
 - **Security-state tracking.** `SSOAuthSession` persists OAuth state tokens, PKCE `code_verifier`, and nonces to prevent CSRF and replay attacks.
-- **Per-user OAuth vault.** `TokenStorageService` encrypts access/refresh tokens using AES-GCM (`oauth_encryption.py`) and keys them by both gateway and gateway user to prevent cross-tenant leakage.
+- **Per-user OAuth vault.** `TokenStorageService` encrypts access/refresh tokens via `EncryptionService` (Argon2id-derived Fernet keys) and keys them by both gateway and gateway user to prevent cross-tenant leakage.
 - **Dynamic Client Registration (DCR).** `DcrService` discovers OAuth metadata (RFC 8414), honours issuer allowlists (`DCR_ALLOWED_ISSUERS`), registers clients, and encrypts the resulting client secrets and registration access tokens before storing them (`RegisteredOAuthClient`).
-- **Tool credential encryption.** The same `AUTH_ENCRYPTION_SECRET` powers `services_auth.encode_auth()` to store upstream tool auth blobs as AES-GCM tokens inside the database.
+- **Tool credential encryption.** The same `AUTH_ENCRYPTION_SECRET` powers `services_auth.encode_auth()` to store upstream tool auth blobs as AES-GCM encrypted values inside the database.
 
 ## Authorization & Access Control
 
 - **Role-Based Access Control (RBAC).** `PermissionService` and `RoleService` implement global/team/personal scopes with caching, inheritance, and audit logging (`PermissionAuditLog`). Admin bypass is explicit, and permission checks default to deny on error.
-- **Multi-tenancy primitives.** Teams, invites, and memberships (`EmailTeam`, `EmailTeamMember`, `TeamInvitationService`) enforce owner-only invitations, configurable expiry, and per-team quotas (`MAX_TEAMS_PER_USER`, `MAX_MEMBERS_PER_TEAM`). Personal teams can be auto-created with `AUTO_CREATE_PERSONAL_TEAMS=true`.
+- **Multi-tenancy primitives.** Teams, invites, and memberships (`EmailTeam`, `EmailTeamMember`, `TeamInvitationService`) enforce owner-only invitations, configurable expiry, and per-team quotas (`MAX_TEAMS_PER_USER`, `MAX_MEMBERS_PER_TEAM`). Personal teams can be auto-created with `AUTO_CREATE_PERSONAL_TEAMS=true`. Operators can disable self-service team creation (`ALLOW_TEAM_CREATION`), join requests (`ALLOW_TEAM_JOIN_REQUESTS`), and invitations (`ALLOW_TEAM_INVITATIONS`).
 - **Resource visibility.** Tools, prompts, resources, and gateways include a `visibility` flag (private/team/public) that PermissionService respects when resolving access.
 - **Feature gating.** Administrative capabilities stay off unless you opt in: `MCPGATEWAY_UI_ENABLED`, `MCPGATEWAY_ADMIN_API_ENABLED`, `MCPGATEWAY_BULK_IMPORT_ENABLED`, `MCPGATEWAY_CATALOG_ENABLED`, and `MCPGATEWAY_A2A_ENABLED` all default to safe values.
 - **Scoped API credentials.** Tokens can be restricted to individual virtual servers, explicit permission strings, and IP ranges; blocked requests are captured via `TokenUsageLog.blocked`.

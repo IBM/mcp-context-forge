@@ -20,7 +20,10 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
 # Third-Party
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# First-Party
+from mcpgateway.common.validators import SecurityValidator, validate_core_url
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -89,6 +92,63 @@ class LLMProviderBase(BaseModel):
     enabled: bool = Field(default=True, description="Whether provider is enabled")
     plugin_ids: List[str] = Field(default_factory=list, description="Attached plugin IDs")
 
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        """Sanitize provider name against XSS and injection.
+
+        Args:
+            v: Raw name value.
+
+        Returns:
+            str: Validated name.
+        """
+        return SecurityValidator.validate_name(v, "Provider name")
+
+    @field_validator("description")
+    @classmethod
+    def _validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Sanitize provider description for safe display.
+
+        Args:
+            v: Raw description value.
+
+        Returns:
+            Optional[str]: Sanitized description.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("api_base")
+    @classmethod
+    def _validate_api_base(cls, v: Optional[str]) -> Optional[str]:
+        """Validate provider API base URL.
+
+        Args:
+            v: Raw URL value.
+
+        Returns:
+            Optional[str]: Validated URL.
+        """
+        if v is None:
+            return v
+        return validate_core_url(v, "Provider API base URL")
+
+    @field_validator("config")
+    @classmethod
+    def _validate_config(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject excessively nested provider config.
+
+        Args:
+            v: Config dictionary.
+
+        Returns:
+            Dict[str, Any]: Validated config.
+        """
+        SecurityValidator.validate_json_depth(v)
+        return v
+
     def validate_provider_config(self) -> None:
         """Validate provider-specific configuration based on provider type.
 
@@ -130,6 +190,67 @@ class LLMProviderUpdate(BaseModel):
     default_max_tokens: Optional[int] = Field(None, ge=1)
     enabled: Optional[bool] = None
     plugin_ids: Optional[List[str]] = None
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: Optional[str]) -> Optional[str]:
+        """Sanitize provider name against XSS and injection.
+
+        Args:
+            v: Raw name value.
+
+        Returns:
+            Optional[str]: Validated name.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.validate_name(v, "Provider name")
+
+    @field_validator("description")
+    @classmethod
+    def _validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Sanitize provider description for safe display.
+
+        Args:
+            v: Raw description value.
+
+        Returns:
+            Optional[str]: Sanitized description.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("api_base")
+    @classmethod
+    def _validate_api_base(cls, v: Optional[str]) -> Optional[str]:
+        """Validate provider API base URL.
+
+        Args:
+            v: Raw URL value.
+
+        Returns:
+            Optional[str]: Validated URL.
+        """
+        if v is None:
+            return v
+        return validate_core_url(v, "Provider API base URL")
+
+    @field_validator("config")
+    @classmethod
+    def _validate_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Reject excessively nested provider config.
+
+        Args:
+            v: Config dictionary.
+
+        Returns:
+            Optional[Dict[str, Any]]: Validated config.
+        """
+        if v is None:
+            return v
+        SecurityValidator.validate_json_depth(v)
+        return v
 
 
 class LLMProviderResponse(BaseModel):
@@ -189,6 +310,71 @@ class LLMModelBase(BaseModel):
     enabled: bool = Field(default=True, description="Whether model is enabled")
     deprecated: bool = Field(default=False, description="Whether model is deprecated")
 
+    @field_validator("model_id")
+    @classmethod
+    def _validate_model_id(cls, v: str) -> str:
+        """Sanitize model ID against XSS while allowing provider punctuation.
+
+        Provider model IDs commonly contain colons (``llama3.2:latest``),
+        dots, slashes, and other punctuation.  Uses display-text sanitization
+        (rejects HTML tags / script injection) rather than the strict
+        tool-name pattern.
+
+        Args:
+            v: Raw model ID.
+
+        Returns:
+            str: Sanitized model ID.
+        """
+        return SecurityValidator.sanitize_display_text(v, "Model ID")
+
+    @field_validator("model_name")
+    @classmethod
+    def _validate_model_name(cls, v: str) -> str:
+        """Sanitize model display name against XSS while allowing display punctuation.
+
+        Model names from providers may contain parentheses, colons, and
+        other punctuation (e.g. ``GPT-4o (Latest)``).  Uses display-text
+        sanitization rather than strict name pattern.
+
+        Args:
+            v: Raw model name.
+
+        Returns:
+            str: Sanitized name.
+        """
+        return SecurityValidator.sanitize_display_text(v, "Model name")
+
+    @field_validator("model_alias")
+    @classmethod
+    def _validate_model_alias(cls, v: Optional[str]) -> Optional[str]:
+        """Sanitize model alias against XSS and injection.
+
+        Args:
+            v: Raw alias value.
+
+        Returns:
+            Optional[str]: Validated alias.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.validate_name(v, "Model alias")
+
+    @field_validator("description")
+    @classmethod
+    def _validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Sanitize model description for safe display.
+
+        Args:
+            v: Raw description value.
+
+        Returns:
+            Optional[str]: Sanitized description.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
 
 class LLMModelCreate(LLMModelBase):
     """Schema for creating a new LLM model."""
@@ -211,6 +397,66 @@ class LLMModelUpdate(BaseModel):
     max_output_tokens: Optional[int] = Field(None, ge=1)
     enabled: Optional[bool] = None
     deprecated: Optional[bool] = None
+
+    @field_validator("model_id")
+    @classmethod
+    def _validate_model_id(cls, v: Optional[str]) -> Optional[str]:
+        """Sanitize model ID against XSS while allowing provider punctuation.
+
+        Args:
+            v: Raw model ID.
+
+        Returns:
+            Optional[str]: Sanitized model ID.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.sanitize_display_text(v, "Model ID")
+
+    @field_validator("model_name")
+    @classmethod
+    def _validate_model_name(cls, v: Optional[str]) -> Optional[str]:
+        """Sanitize model display name against XSS while allowing display punctuation.
+
+        Args:
+            v: Raw model name.
+
+        Returns:
+            Optional[str]: Sanitized name.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.sanitize_display_text(v, "Model name")
+
+    @field_validator("model_alias")
+    @classmethod
+    def _validate_model_alias(cls, v: Optional[str]) -> Optional[str]:
+        """Sanitize model alias against XSS and injection.
+
+        Args:
+            v: Raw alias value.
+
+        Returns:
+            Optional[str]: Validated alias.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.validate_name(v, "Model alias")
+
+    @field_validator("description")
+    @classmethod
+    def _validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Sanitize model description for safe display.
+
+        Args:
+            v: Raw description value.
+
+        Returns:
+            Optional[str]: Sanitized description.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.sanitize_display_text(v, "Description")
 
 
 class LLMModelResponse(BaseModel):
