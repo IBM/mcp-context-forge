@@ -212,6 +212,36 @@ UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
     "tokens": ("tokens",),
     "settings": ("llm-settings",),
 }
+
+# Section-to-permission mapping for menu visibility
+# Maps UI section names to required RBAC permissions
+SECTION_PERMISSIONS: Dict[str, str] = {
+    # Admin-only sections
+    "users": "admin.users.read",
+    "maintenance": "admin.maintenance",
+    "logs": "admin.logs.read",
+    "export-import": "admin.export",
+    "plugins": "admin.plugins.read",
+    "metrics": "admin.metrics.read",
+    "version-info": "admin.version.read",
+    "settings": "admin.settings.read",
+    # Core sections (accessible to developers and above)
+    "tools": "tools.read",
+    "servers": "servers.read",
+    "resources": "resources.read",
+    "prompts": "prompts.read",
+    "gateways": "gateways.read",
+    # Team management sections
+    "teams": "teams.read",
+    "tokens": "tokens.read",
+    # A2A and agents
+    "agents": "agents.read",
+    # Overview and roots (generally accessible)
+    "overview": None,  # No specific permission required
+    "roots": "roots.read",
+    "mcp-registry": "servers.read",  # Catalog is part of servers
+}
+
 UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS: frozenset[str] = frozenset({"logout", "team_selector"})
 UI_HIDE_SECTIONS_COOKIE_NAME = "mcpgateway_ui_hide_sections"
 UI_HIDE_SECTIONS_COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
@@ -297,6 +327,81 @@ def get_ui_visibility_config(request: Request) -> Dict[str, Any]:
         "cookie_action": cookie_action,
         "cookie_value": cookie_value,
     }
+
+
+async def get_hidden_sections_for_user(
+    db: Session,
+    user_email: str,
+    is_admin: bool,
+    token_teams: Optional[List[str]],
+    static_hidden: set[str],
+) -> set[str]:
+    """Determine which menu sections should be hidden based on user permissions.
+
+    This function implements permission-based menu hiding by checking if the user
+    has the required permission for each section. Sections without required permissions
+    are added to the hidden set.
+
+    Args:
+        db: Database session
+        user_email: Email of the authenticated user
+        is_admin: Whether the user is a platform admin
+        token_teams: Normalized token team scope (None for unrestricted admin, [] for public-only)
+        static_hidden: Sections already hidden by static configuration (UI_HIDDEN_SECTIONS)
+
+    Returns:
+        set[str]: Complete set of sections to hide (static + permission-based)
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import Mock
+        >>> db = Mock()
+        >>> # Platform admin with unrestricted token sees all sections
+        >>> result = asyncio.run(get_hidden_sections_for_user(db, "admin@example.com", True, None, set()))
+        >>> isinstance(result, set)
+        True
+    """
+    # Start with static hidden sections (always hidden regardless of permissions)
+    hidden = set(static_hidden)
+
+    # Platform admins with unrestricted tokens (token_teams=None) bypass permission checks
+    if is_admin and token_teams is None:
+        return hidden
+
+    # Initialize permission service
+    permission_service = PermissionService(db, audit_enabled=False)
+
+    # Check each section's required permission
+    for section, required_permission in SECTION_PERMISSIONS.items():
+        # Skip if already hidden by static config
+        if section in hidden:
+            continue
+
+        # Skip sections with no permission requirement (e.g., overview)
+        if required_permission is None:
+            continue
+
+        # Check if user has the required permission
+        try:
+            has_permission = await permission_service.check_permission(
+                user_email=user_email,
+                permission=required_permission,
+                token_teams=token_teams,
+                allow_admin_bypass=True,  # Admins can see all sections
+                check_any_team=True,  # Check across all user's teams
+            )
+
+            # Hide section if user doesn't have permission
+            if not has_permission:
+                hidden.add(section)
+                LOGGER.debug(f"Hiding section '{section}' for user {user_email}: missing permission '{required_permission}'")
+
+        except Exception as e:
+            # On error, hide the section for safety (fail-closed)
+            LOGGER.warning(f"Error checking permission '{required_permission}' for user {user_email}: {e}")
+            hidden.add(section)
+
+    return hidden
 
 
 def set_logging_service(service: LoggingService):
