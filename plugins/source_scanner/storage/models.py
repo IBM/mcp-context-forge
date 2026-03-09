@@ -18,9 +18,10 @@ from datetime import datetime, timezone
 
 # Third-Party
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import declarative_base, Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-Base = declarative_base()
+# First-Party
+from mcpgateway.db import Base
 
 
 class ScanRecord(Base):

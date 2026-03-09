@@ -12,7 +12,7 @@ Policy evaluation for scan findings.
 from typing import List
 
 # Local
-from .types import Finding, PolicyDecision
+from .models import Finding, PolicyDecision
 
 
 class PolicyChecker:

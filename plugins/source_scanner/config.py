@@ -12,10 +12,10 @@ Configuration models for Source Scanner Plugin.
 from __future__ import annotations
 
 # Standard
-from typing import Any, List, Literal, Optional
+from typing import List, Literal, Optional
 
 # Third-Party
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SemgrepConfig(BaseModel):
@@ -37,7 +37,34 @@ class SemgrepConfig(BaseModel):
         ]
     )
     extra_args: List[str] = Field(default_factory=list)
-    timeout_seconds: int = 600  # Default scan timeout of 10 minutes
+
+    @field_validator("extra_args")
+    @classmethod
+    def validate_extra_args(cls, v: List[str]) -> List[str]:
+        """Validate extra_args against allowlist of safe flags."""
+        SAFE_FLAGS = {
+            "--verbose",
+            "--quiet",
+            "--debug",
+            "--json",
+            "--sarif",
+            "--text",
+            "--metrics=off",
+            "--metrics=on",
+            "--max-memory",
+            "--timeout",
+            "--no-git-ignore",
+            "--exclude",
+            "--strict",
+        }
+
+        for arg in v:
+            flag = arg.split("=")[0] if "=" in arg else arg
+
+            if flag not in SAFE_FLAGS:
+                raise ValueError(f"Unsafe extra_arg '{flag}' not in allowlist. " f"Allowed flags: {', '.join(SAFE_FLAGS)}")
+
+        return v
 
 
 class BanditConfig(BaseModel):
@@ -83,7 +110,6 @@ class SourceScannerConfig(BaseModel):
         cache_ttl_hours: Cache time-to-live in hours.
     """
 
-    scanners: Optional[ScannersConfig] = None
     semgrep: SemgrepConfig = Field(default_factory=SemgrepConfig)
     bandit: BanditConfig = Field(default_factory=BanditConfig)
 
@@ -95,10 +121,3 @@ class SourceScannerConfig(BaseModel):
     github_token_env: str = "GITHUB_TOKEN"
     cache_by_commit: bool = True
     cache_ttl_hours: int = 168  # 1 week
-
-    def model_post_init(self, __context: Any) -> None:
-        """Merge nested scanner configuration into top-level fields after validation."""
-        # If user provides config.scanners.*, merge into top-level fields
-        if self.scanners is not None:
-            self.semgrep = self.scanners.semgrep
-            self.bandit = self.scanners.bandit

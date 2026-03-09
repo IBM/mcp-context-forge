@@ -26,10 +26,26 @@ from mcpgateway.db import get_db
 from mcpgateway.services.logging_service import LoggingService
 from plugins.source_scanner.storage.repository import ScanRepository
 
-REPOSITORY_AVAILABLE = True
-
+# from plugins.source_scanner.storage.models import ScanDocument
 
 logger = LoggingService().get_logger(__name__)
+
+
+def check_repository_available(_db: Session) -> bool:
+    """Check if ScanRepository is available and functional."""
+    try:
+        return True
+    except Exception as e:
+        logger.error(f"Repository not available: {e}")
+        return False
+
+
+def require_repository(db: Session = Depends(get_db)) -> ScanRepository:
+    """Dependency that ensures repository is available."""
+    if not check_repository_available(db):
+        raise HTTPException(status_code=503, detail="Source Scanner repository not available")
+    return ScanRepository(db)
+
 
 source_scanner_router = APIRouter(
     prefix="/source-scanner",
@@ -53,6 +69,8 @@ class FindingResponse(BaseModel):
     help_url: Optional[str] = None
 
     class Config:
+        """Allow population by attributes for ORM compatibility."""
+
         from_attributes = True
 
 
@@ -78,6 +96,8 @@ class ScanResponse(BaseModel):
     created_at: str
 
     class Config:
+        """Allow population by attributes for ORM compatibility."""
+
         from_attributes = True
 
 
@@ -90,14 +110,10 @@ class ScanWithFindingsResponse(ScanResponse):
 @source_scanner_router.get("/scans/{scan_id}", response_model=ScanWithFindingsResponse)
 async def get_scan(
     scan_id: int,
-    db: Session = Depends(get_db),
-    current_user: Dict[str, Any] = Depends(get_current_user),
+    repository: ScanRepository = Depends(require_repository),
+    _current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Retrieve a scan record with all associated findings."""
-    if not REPOSITORY_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Repository not available")
-
-    repository = ScanRepository(db)
     scan = repository.get_scan_by_id(scan_id)
 
     if not scan:
@@ -142,17 +158,13 @@ async def get_scan(
 async def get_scan_findings(
     scan_id: int,
     severity: Optional[str] = Query(None, description="Filter by severity (ERROR|WARNING|INFO)"),
-    db: Session = Depends(get_db),
-    current_user: Dict[str, Any] = Depends(get_current_user),
+    repository: ScanRepository = Depends(require_repository),
+    _current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Retrieve findings for a scan with optional severity filtering."""
-    if not REPOSITORY_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Repository not available")
-
     if severity and severity not in ("ERROR", "WARNING", "INFO"):
         raise HTTPException(status_code=400, detail="Invalid severity")
 
-    repository = ScanRepository(db)
     scan = repository.get_scan_by_id(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
@@ -180,14 +192,10 @@ async def get_scan_findings(
 async def get_latest_scan(
     repo_url: str,
     commit_sha: str = Query(..., description="Commit SHA to lookup"),
-    db: Session = Depends(get_db),
-    current_user: Dict[str, Any] = Depends(get_current_user),
+    repository: ScanRepository = Depends(require_repository),
+    _current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Retrieve the latest scan for a repository and commit SHA."""
-    if not REPOSITORY_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Repository not available")
-
-    repository = ScanRepository(db)
     scan = repository.get_latest_scan_for_commit(repo_url, commit_sha)
 
     if not scan:
@@ -233,14 +241,10 @@ async def list_repo_scans(
     repo_url: str,
     limit: int = Query(10, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db),
-    current_user: Dict[str, Any] = Depends(get_current_user),
+    repository: ScanRepository = Depends(require_repository),
+    _current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Retrieve paginated list of scans for a repository."""
-    if not REPOSITORY_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Repository not available")
-
-    repository = ScanRepository(db)
     scans = repository.get_scans_for_repo(repo_url, limit=limit, offset=offset)
 
     return [
@@ -264,6 +268,7 @@ async def list_repo_scans(
 
 
 @source_scanner_router.get("/health")
-async def health_check(current_user: Dict[str, Any] = Depends(get_current_user)):
+async def health_check(db: Session = Depends(get_db), _current_user: Dict[str, Any] = Depends(get_current_user)):
     """Verify Source Scanner API is operational."""
-    return {"status": "ok", "repository_available": REPOSITORY_AVAILABLE}
+    repository_available = check_repository_available(db)
+    return {"status": "ok" if repository_available else "degraded", "repository_available": repository_available}

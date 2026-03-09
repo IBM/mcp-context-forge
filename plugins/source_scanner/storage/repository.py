@@ -20,10 +20,8 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 # First-Party
+from plugins.source_scanner.models import Finding
 from plugins.source_scanner.storage.models import FindingRecord, ScanRecord
-from plugins.source_scanner.types import Finding
-
-#
 
 
 class ScanRepository:
@@ -138,7 +136,6 @@ class ScanRepository:
         # Sort by severity first, then by file_path
         findings.sort(key=lambda f: (severity_order.get(getattr(f, "severity", ""), 3), getattr(f, "file_path", "") or ""))
 
-        # findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.file_path or ""))
         return findings
 
     def get_latest_scan_for_commit(
@@ -223,3 +220,21 @@ class ScanRepository:
         self.db.delete(scan)  # Cascade delete handles findings
         self.db.commit()
         return True
+
+    def get_all_scans(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[ScanRecord]:
+        """Retrieve recent scans across all repositories with pagination.
+
+        Used by admin UI to display dashboard of all security scans.
+
+        Args:
+            limit: Maximum number of results to return.
+            offset: Number of results to skip.
+
+        Returns:
+            List of ScanRecord objects ordered by creation time (newest first).
+        """
+        return self.db.query(ScanRecord).order_by(ScanRecord.created_at.desc()).offset(offset).limit(limit).all()

@@ -35,6 +35,22 @@ class LanguageDetector:
         ".cs": "csharp",
     }
 
+    # Directories to skip during scanning
+    SKIP_DIRS = {
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "build",
+        "dist",
+        ".pytest_cache",
+        ".mypy_cache",
+        "target",
+        "bin",
+        "obj",
+    }
+
     def detect(self, repo_path: str) -> List[str]:
         """
         Detect languages in repository
@@ -43,12 +59,14 @@ class LanguageDetector:
             repo_path: Path to repository
 
         Returns:
-            List of detected language names (e.f., ["Python", "javascript"])
+            List of detected language names (e.g., ["python", "javascript"])
         """
         path = Path(repo_path)
         languages: Set[str] = set()
 
         for file_path in path.rglob("*"):
+            if any(part.startswith(".") or part in self.SKIP_DIRS for part in file_path.parts):
+                continue
             if file_path.is_file():
                 ext = file_path.suffix.lower()
                 if ext in self.EXTENSION_MAP:

@@ -15,9 +15,9 @@ from unittest.mock import MagicMock, Mock
 import pytest
 
 # First-Party
+from plugins.source_scanner.models import Finding
 from plugins.source_scanner.storage.models import ScanRecord
 from plugins.source_scanner.storage.repository import ScanRepository
-from plugins.source_scanner.types import Finding
 
 
 @pytest.fixture
