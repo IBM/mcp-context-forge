@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">1186 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">531<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">655<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">529<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">657<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">1<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_role_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-07 09:48 +0000
+            created at 2026-03-03 18:07 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -2192,8 +2192,8 @@
     <p class="pln"><span class="n"><a id="t2110" href="#t2110">2110</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2111" href="#t2111">2111</a></span><span class="t">                <span class="com"># Validate resource path if experimental validation is enabled</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t2112" href="#t2112">2112</a></span><span class="t">                <span class="key">if</span> <span class="nam">getattr</span><span class="op">(</span><span class="nam">settings</span><span class="op">,</span> <span class="str">"experimental_validate_io"</span><span class="op">,</span> <span class="key">False</span><span class="op">)</span> <span class="key">and</span> <span class="nam">uri</span> <span class="key">and</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">uri</span><span class="op">,</span> <span class="nam">str</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t2113" href="#t2113">2113</a></span><span class="t">                    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t2114" href="#t2114">2114</a></span><span class="t">                        <span class="nam">SecurityValidator</span><span class="op">.</span><span class="nam">validate_path</span><span class="op">(</span><span class="nam">uri</span><span class="op">,</span> <span class="nam">getattr</span><span class="op">(</span><span class="nam">settings</span><span class="op">,</span> <span class="str">"allowed_roots"</span><span class="op">,</span> <span class="key">None</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t2113" href="#t2113">2113</a></span><span class="t">                    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t2114" href="#t2114">2114</a></span><span class="t">                        <span class="nam">SecurityValidator</span><span class="op">.</span><span class="nam">validate_path</span><span class="op">(</span><span class="nam">uri</span><span class="op">,</span> <span class="nam">getattr</span><span class="op">(</span><span class="nam">settings</span><span class="op">,</span> <span class="str">"allowed_roots"</span><span class="op">,</span> <span class="key">None</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t2115" href="#t2115">2115</a></span><span class="t">                    <span class="key">except</span> <span class="nam">ValueError</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t2116" href="#t2116">2116</a></span><span class="t">                        <span class="key">raise</span> <span class="nam">ResourceError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Path validation failed: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2117" href="#t2117">2117</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -3751,7 +3751,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_role_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-07 09:48 +0000
+            created at 2026-03-03 18:07 +0000
         </p>
     </div>
 </footer>

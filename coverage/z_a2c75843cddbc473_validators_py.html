@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">381 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">317<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">64<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">318<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">63<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_580dae60cda9039c_config_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-07 09:48 +0000
+            created at 2026-03-03 18:07 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -1331,7 +1331,7 @@
     <p class="pln"><span class="n"><a id="t1249" href="#t1249">1249</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1250" href="#t1250">1250</a></span><span class="t">            <span class="com"># Check private networks (if not allowed)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1251" href="#t1251">1251</a></span><span class="t">            <span class="key">if</span> <span class="key">not</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">ssrf_allow_private_networks</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1252" href="#t1252">1252</a></span><span class="t">                <span class="key">if</span> <span class="nam">ip_addr</span><span class="op">.</span><span class="nam">is_private</span> <span class="key">and</span> <span class="key">not</span> <span class="nam">ip_addr</span><span class="op">.</span><span class="nam">is_loopback</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1252" href="#t1252">1252</a></span><span class="t">                <span class="key">if</span> <span class="nam">ip_addr</span><span class="op">.</span><span class="nam">is_private</span> <span class="key">and</span> <span class="key">not</span> <span class="nam">ip_addr</span><span class="op">.</span><span class="nam">is_loopback</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t1253" href="#t1253">1253</a></span><span class="t">                    <span class="nam">allowed_private</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t1254" href="#t1254">1254</a></span><span class="t">                    <span class="nam">allowed_networks</span> <span class="op">=</span> <span class="nam">getattr</span><span class="op">(</span><span class="nam">settings</span><span class="op">,</span> <span class="str">"ssrf_allowed_networks"</span><span class="op">,</span> <span class="op">[</span><span class="op">]</span><span class="op">)</span> <span class="key">or</span> <span class="op">[</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t1255" href="#t1255">1255</a></span><span class="t">                    <span class="key">for</span> <span class="nam">network_str</span> <span class="key">in</span> <span class="nam">allowed_networks</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -1835,7 +1835,7 @@
             <a class="nav" href="z_580dae60cda9039c_config_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-07 09:48 +0000
+            created at 2026-03-03 18:07 +0000
         </p>
     </div>
 </footer>

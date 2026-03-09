@@ -3552,7 +3552,7 @@
       "type": "array"
     },
     "validation_name_pattern": {
-      "default": "^[a-zA-Z0-9_.\\-\\s]+$",
+      "default": "^[a-zA-Z0-9_.\\- ]+$",
       "title": "Validation Name Pattern",
       "type": "string"
     },
@@ -3817,8 +3817,8 @@
       "type": "string"
     },
     "ENABLE_METRICS": {
-      "default": true,
-      "description": "Enable Prometheus metrics instrumentation",
+      "default": false,
+      "description": "Enable Prometheus metrics endpoint at /metrics/prometheus (requires authentication)",
       "title": "Enable Metrics",
       "type": "boolean"
     },
