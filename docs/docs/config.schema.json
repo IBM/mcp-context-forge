@@ -1423,6 +1423,22 @@
       "title": "Mcpgateway Ui Hide Header Items",
       "type": "array"
     },
+    "mcpgateway_ui_hide_sections_admin": {
+      "description": "CSV/JSON list of UI sections to hide for admin users. Same valid values as mcpgateway_ui_hide_sections. When unset, admins see all sections.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Mcpgateway Ui Hide Sections Admin",
+      "type": "array"
+    },
+    "mcpgateway_ui_hide_header_items_admin": {
+      "description": "CSV/JSON list of header items to hide for admin users. Same valid values as mcpgateway_ui_hide_header_items.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Mcpgateway Ui Hide Header Items Admin",
+      "type": "array"
+    },
     "mcpgateway_bulk_import_enabled": {
       "default": true,
       "title": "Mcpgateway Bulk Import Enabled",
