@@ -1,0 +1,187 @@
+# Location: ./semgrep-rules/mcp/mcp-response-security.yaml
+# Copyright 2026
+# SPDX-License-Identifier: Apache-2.0
+# Authors: Arnav Sanghi
+#
+# MCP-specific Semgrep rules used by the source scanner (#2217).
+# These rules detect security issues relevant to MCP servers.
+# ============================================================================
+# Purpose of these rules:
+# These rules detect cases where user input or internal data could be exposed or misused in responses, such as:
+#
+# - Returning user-controlled data directly → prompt or response injection
+# - Returning exceptions or stack traces → info leaks
+# - Logging or printing credentials → secret exposure
+# - Returning unescaped HTML/Markdown → injection
+# - Returning data in invalid formats → schema/protocol errors
+#
+# In short, they catch places where user input or sensitive info could leak or be misused
+# in tool outputs, protecting the system and downstream consumers.
+# ============================================================================
+
+rules:
+  # ============================================================================
+  # Response Validation & Output Safety
+  # ============================================================================
+  - id: mcp-unvalidated-response-content
+    languages: [python]
+    message: >
+      Tool response contains potentially unvalidated or user-controlled input.
+      Ensure all data in responses is validated/sanitized to prevent
+      prompt injection and context poisoning attacks.
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: return {"text": $INPUT}
+          - pattern: return TextContent(text=$INPUT)
+          - pattern: return {..., "response": $INPUT, ...}
+    metadata:
+      category: injection
+      technology: mcp
+      cwe: CWE-20
+
+  - id: mcp-sensitive-data-in_error_response
+    languages: [python]
+    message: >
+      Sensitive error details (stack trace, exception, server path) exposed in response.
+      Never return exception details or traceback to users.
+      Return generic error messages and log details securely server-side.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: return {"text": str($EXCEPTION)}
+          - pattern: return {"error": traceback.format_exc()}
+          - pattern: return {"response": $EXCEPTION}
+          - pattern: return ErrorContent(message=str($EXC))
+    metadata:
+      category: info-leak
+      technology: mcp
+      cwe: CWE-209
+
+  - id: mcp-credentials-in_logs_or_output
+    languages: [python]
+    message: >
+      Credentials or sensitive data logged or printed from tool arguments.
+      Never log API keys, passwords, tokens, or user PII.
+      Be especially careful with error paths and debug output.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: logger.debug(f"...{args['api_key']}...")
+          - pattern: logger.info(f"...{args['password']}...")
+          - pattern: print(f"...{args['token']}...")
+          - pattern: logger.error(f"...{args['secret']}...")
+          - pattern: logger.warning(f"...{arguments['bearer']}...")
+    metadata:
+      category: info-leak
+      technology: mcp
+      cwe: CWE-532
+
+  - id: mcp-unescaped_output
+    languages: [python]
+    message: >
+      Tool returns data without escaping HTML/markdown special characters.
+      If tool output can be rendered as markup, escape or sanitize content.
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: return {"text": f"<{$X}>"}
+          - pattern: return {"text": "<script>"}
+          - pattern: return TextContent(text=f"...{{...}}...")
+    metadata:
+      category: injection
+      technology: mcp
+      cwe: CWE-79
+
+  # ============================================================================
+  # Information Disclosure & Exception Handling
+  # ============================================================================
+  - id: mcp-exception-leaks_in_response
+    languages: [python]
+    message: >
+      Exception or exception message returned directly in tool response.
+      Catch exceptions, log securely, and return a generic user-facing message.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: return {"text": $EXCEPTION}
+          - pattern: return str($EXCEPTION)
+          - pattern: return repr($EXCEPTION)
+    metadata:
+      category: info-leak
+      technology: mcp
+      cwe: CWE-209
+
+  - id: mcp-missing-try-except-wrapper
+    languages: [python]
+    message: >
+      External call (network, file, database) without try-except error handling.
+      Always wrap I/O operations in exception handlers to prevent unhandled errors
+      from leaking sensitive information.
+    severity: WARNING
+    patterns:
+      - pattern-inside: |
+          def $FUNC(...):
+              ...
+      - pattern-either:
+          - pattern: requests.get(...)
+          - pattern: open(...)
+          - pattern: cursor.execute(...)
+          - pattern: urllib.request.urlopen(...)
+    metadata:
+      category: error-handling
+      technology: mcp
+      cwe: CWE-248
+
+  # ============================================================================
+  # JSON & Schema Validation
+  # ============================================================================
+  - id: mcp-invalid_json_types_in_response
+    languages: [python]
+    message: >
+      Response contains non-JSON-serializable types (bytes, datetime, etc.).
+      Always ensure tool responses contain only JSON-compatible types
+      (str, int, float, bool, list, dict, None).
+    severity: WARNING
+    patterns:
+      - pattern: return {..., "data": bytes(...), ...}
+    metadata:
+      category: protocol-safety
+      technology: mcp
+      cwe: CWE-1287
+
+  - id: mcp-response_schema_mismatch
+    languages: [python]
+    message: >
+      Tool response structure may not match MCP response schema.
+      Validate response includes required fields (text, or result).
+    severity: INFO
+    patterns:
+      - pattern-inside: |
+          def $FUNC(...):
+              ...
+              return $RESP
+      - pattern: return {"...": ..., "...": ...}
+    metadata:
+      category: protocol-safety
+      technology: mcp
+      cwe: CWE-1287
+
+  # ============================================================================
+  # Argument Validation in Responses
+  # ============================================================================
+  - id: mcp-unvalidated-subprocess-args
+    languages: [python]
+    message: >
+      Tool passes user arguments to subprocess without list formatting or validation.
+      Always convert arguments to a list and validate each element.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.run(args[$KEY], shell=False)
+          - pattern: subprocess.Popen(args[$KEY])
+          - pattern: subprocess.call(args[$KEY])
+    metadata:
+      category: injection
+      technology: mcp
+      cwe: CWE-78

@@ -1,0 +1,267 @@
+# Location: ./semgrep-rules/mcp/mcp-security-critical.yaml
+# Copyright 2026
+# SPDX-License-Identifier: Apache-2.0
+# Authors: Arnav Sanghi
+#
+# MCP-specific Semgrep rules used by the source scanner (#2217).
+# These rules detect security issues relevant to MCP servers.
+# ============================================================================
+# Purpose of these rules:
+# These rules detect cases where user input can influence something powerful on the server, such as:
+#
+# - Executing commands → os.system(user_input)
+# - Querying databases → SQL injection
+# - Reading/writing files → path traversal (../../etc/passwd)
+# - Making server requests → SSRF (requests.get(user_url))
+# - Loading unsafe data → deserialization (pickle.loads)
+# - Returning unsafe data → response injection
+# - Exposing secrets → API keys, tokens, passwords
+#
+# In short, they detect places where user input could access, modify, execute,
+# or expose sensitive parts of the system.
+# ============================================================================
+
+rules:
+  # ============================================================================
+  # Command Injection - Multiple entry points
+  # ============================================================================
+  - id: mcp-command-injection-os-system
+    languages: [python]
+    message: >
+      Tool argument used directly in os.system() call.
+      This enables command injection. Use subprocess with shell=False,
+      validate arguments, and use proper escaping/quoting.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: os.system($ARG)
+          - pattern: os.system(f"...{$ARG}...")
+    metadata:
+      category: injection
+      technology: mcp
+      cwe: CWE-78
+      references:
+        - https://owasp.org/www-community/attacks/Command_Injection
+
+  - id: mcp-command-injection-subprocess-shell-true
+    languages: [python]
+    message: >
+      subprocess.call/run with shell=True and unsanitized arguments
+      enables command injection. Use shell=False and validate arguments instead.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.call($ARG, shell=True)
+          - pattern: subprocess.call(f"...{$ARG}...", shell=True)
+          - pattern: subprocess.run($ARG, shell=True)
+          - pattern: subprocess.run(f"...{$ARG}...", shell=True)
+    metadata:
+      category: injection
+      technology: mcp
+      cwe: CWE-78
+
+  - id: mcp-command-injection-popen
+    languages: [python]
+    message: >
+      Popen with shell=True and unsanitized arguments enables command injection.
+      Use shell=False and pass arguments as a list, not a command string.
+    severity: ERROR
+    patterns:
+      - pattern: subprocess.Popen($ARG, shell=True)
+    metadata:
+      category: injection
+      technology: mcp
+      cwe: CWE-78
+
+  # ============================================================================
+  # SQL Injection - Unparameterized queries
+  # ============================================================================
+  - id: mcp-sql-injection-dynamic-query
+    languages: [python]
+    message: >
+      SQL query constructed using string formatting with tool arguments.
+      This enables SQL injection. Use parameterized queries with bind variables.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: cursor.execute(f"SELECT ... {$ARG} ...")
+          - pattern: cursor.execute("SELECT ... " + $ARG)
+          - pattern: cursor.execute(f"DELETE ... WHERE id={$ARG}")
+          - pattern: cursor.execute("UPDATE ... %s ..." % ($ARG,))
+          - pattern: db.execute(f"UPDATE ... {$ARG}")
+          - pattern: db.query("SELECT ... " + $ARG)
+    metadata:
+      category: injection
+      technology: mcp
+      cwe: CWE-89
+      references:
+        - https://owasp.org/www-community/attacks/SQL_Injection
+
+  # ============================================================================
+  # Path Traversal - Arbitrary file access
+  # ============================================================================
+  - id: mcp-path-traversal-arbitrary-read
+    languages: [python]
+    message: >
+      Tool accepts file paths from user arguments without validation.
+      Attacker could read arbitrary files via path traversal (e.g., ../../etc/passwd).
+      Use os.path.abspath() and verify path is within allowed base directory.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: open(args[$KEY])
+          - pattern: open(arguments["file"])
+          - pattern: open(arguments.get("path"))
+          - pattern: pathlib.Path(args[$KEY]).read_text()
+          - pattern: pathlib.Path(args[$KEY]).open()
+    metadata:
+      category: path-traversal
+      technology: mcp
+      cwe: CWE-22
+      references:
+        - https://owasp.org/www-community/attacks/Path_Traversal
+
+  - id: mcp-arbitrary-file-write
+    languages: [python]
+    message: >
+      Tool writes to file path from user arguments without validation.
+      Attacker could write to arbitrary locations (e.g., /etc files, code paths).
+      Validate paths are within allowed directory and restrict permissions.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: open(args[$KEY], "w").write(...)
+          - pattern: open(args["file"], "w")
+          - pattern: pathlib.Path(args[$KEY]).write_text(...)
+    metadata:
+      category: file-access
+      technology: mcp
+      cwe: CWE-73
+      references:
+        - https://owasp.org/www-community/attacks/Arbitrary_File_Write
+
+  # ============================================================================
+  # SSRF - Unvalidated URL requests to arbitrary hosts
+  # ============================================================================
+  - id: mcp-ssrf-unvalidated-url-request
+    languages: [python]
+    message: >
+      Unvalidated URL from tool arguments used in HTTP request.
+      Attacker could trigger requests to internal services (SSRF).
+      Whitelist domains, validate protocol (http/https only), and reject localhost/internal IPs.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: requests.get(args["url"])
+          - pattern: requests.post(args["url"])
+          - pattern: requests.get(args[$KEY])
+          - pattern: urllib.request.urlopen(args["url"])
+          - pattern: urllib.request.urlopen(arguments.get("endpoint"))
+    metadata:
+      category: ssrf
+      technology: mcp
+      cwe: CWE-918
+      references:
+        - https://owasp.org/www-community/attacks/Server-Side_Request_Forgery
+
+  # ============================================================================
+  # Credential/Secret Exposure - Never return secrets in responses
+  # ============================================================================
+  - id: mcp-credential-or-key-in-response
+    languages: [python]
+    message: >
+      API key, password, token, or secret exposed in tool response.
+      Never include credentials or sensitive data in tool outputs.
+      Use secure credential management and return only necessary data.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: return {..., "api_key": ..., ...}
+          - pattern: return {..., "apiKey": ..., ...}
+          - pattern: return {..., "password": ..., ...}
+          - pattern: return {..., "token": ..., ...}
+          - pattern: return {..., "secret": ..., ...}
+          - pattern: return {..., "access_token": ..., ...}
+          - pattern: return {"text": $X, "api_key": ..., ...}
+    metadata:
+      category: info-leak
+      technology: mcp
+      cwe: CWE-200
+      references:
+        - https://owasp.org/www-community/attacks/Sensitive_Data_Exposure
+
+  - id: mcp-hardcoded-secrets-in-code
+    languages: [python]
+    message: >
+      Hardcoded credential in MCP tool code.
+      Never hardcode API keys, passwords, or tokens.
+      Use environment variables and rotate credentials regularly.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: api_key = "sk_..."
+          - pattern: password = "......"
+          - pattern: APIKEY="..."
+          - pattern: SECRET_KEY = "..."
+          - pattern: token = "Bearer ..."
+    metadata:
+      category: hardcoded-secret
+      technology: mcp
+      cwe: CWE-798
+
+  # ============================================================================
+  # Deserialization - Arbitrary code execution via untrusted data
+  # ============================================================================
+  - id: mcp-insecure-deserialization
+    languages: [python]
+    message: >
+      Untrusted data deserialized with pickle.loads() or yaml.load().
+      These allow arbitrary code execution. Use json instead, or safe_load().
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: pickle.loads($ARG)
+          - pattern: pickle.load(...)
+          - pattern: yaml.load($ARG)
+    metadata:
+      category: deserialization
+      technology: mcp
+      cwe: CWE-502
+      references:
+        - https://owasp.org/www-community/attacks/Deserialization
+
+  # ============================================================================
+  # Response Injection - LLM prompt/output injection via tool responses
+  # ============================================================================
+  - id: mcp-response-injection-external-data
+    languages: [python]
+    message: >
+      External/user data returned in tool response without sanitization.
+      This could enable injection attacks through LLM context.
+      Sanitize, validate, or escape all external data before inclusion in response.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-inside: |
+                  def $FUNC(...):
+                      ...
+              - pattern: |
+                  $DATA = requests.get(...)
+                  ...
+                  return {"text": ...$DATA...}
+          - patterns:
+              - pattern-inside: |
+                  def $FUNC(...):
+                      ...
+              - pattern: |
+                  $RESP = requests.post(...)
+                  ...
+                  return {"text": $RESP.text}
+    metadata:
+      category: injection
+      technology: mcp
+      cwe: CWE-94
+      references:
+        - https://owasp.org/www-community/attacks/Content_Injection
+        - https://github.com/IBM/mcp-context-forge/issues/2237
