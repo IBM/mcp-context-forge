@@ -12945,7 +12945,7 @@ async def admin_test_gateway(
     # (get_first_gateway_by_url returns a masked GatewayRead where
     # auth_value="*****", which cannot be decoded).
     try:
-        query = select(DbGateway).where(DbGateway.url == validated_base_url)
+        query = select(DbGateway).where(DbGateway.url == validated_base_url, DbGateway.enabled)
         if team_id:
             query = query.where(DbGateway.team_id == team_id)
         gateway = db.execute(query).scalars().first()

@@ -12892,6 +12892,102 @@ async def test_admin_test_gateway_no_auth_skips_decode(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_admin_test_gateway_preserves_caller_headers(monkeypatch, mock_db):
+    """Stored gateway auth merges with (and overrides) caller-supplied headers."""
+
+    class MockResponse:
+        status_code = 200
+
+        def json(self):
+            return {"message": "ok"}
+
+        @property
+        def text(self):
+            return "ok"
+
+    captured: dict = {}
+
+    class MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def request(self, **kwargs):
+            captured.update(kwargs)
+            return MockResponse()
+
+    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+
+    gateway = SimpleNamespace(
+        id="gw-4", name="GW4", auth_type="bearer", auth_value={"Authorization": "Bearer stored-token"}, oauth_config=None
+    )
+    mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
+
+    request = GatewayTestRequest(
+        base_url="https://api.example.com", path="/test", method="GET",
+        headers={"X-Custom": "keep-me", "Authorization": "Bearer caller-token"}, body=None,
+    )
+    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+    assert response.status_code == 200
+    # Caller custom header is preserved
+    assert captured["headers"]["X-Custom"] == "keep-me"
+    # Stored gateway auth takes precedence over caller-supplied Authorization
+    assert captured["headers"]["Authorization"] == "Bearer stored-token"
+
+
+@pytest.mark.asyncio
+async def test_admin_test_gateway_skips_disabled_gateway(monkeypatch, mock_db):
+    """Disabled gateways should not be matched; the enabled filter must be applied."""
+
+    class MockResponse:
+        status_code = 200
+
+        def json(self):
+            return {"message": "ok"}
+
+        @property
+        def text(self):
+            return "ok"
+
+    class MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def request(self, **kwargs):
+            return MockResponse()
+
+    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    mock_db.execute.return_value.scalars.return_value.first.return_value = None
+
+    request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
+    await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+
+    # Verify the query was executed with arguments that include the enabled filter.
+    # The select() call produces a SQL WHERE clause; inspect the compiled query args.
+    execute_call = mock_db.execute.call_args
+    query = execute_call[0][0]
+    # Compile the query to verify enabled filter is present
+    compiled = str(query.compile(compile_kwargs={"literal_binds": True}))
+    assert "enabled" in compiled.lower(), f"Query should filter by enabled column, got: {compiled}"
+
+    # Also verify team_id filter is applied when provided.
+    mock_db.reset_mock()
+    mock_db.execute.return_value.scalars.return_value.first.return_value = None
+    await admin_test_gateway(request, "team-123", user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+    execute_call = mock_db.execute.call_args
+    query = execute_call[0][0]
+    compiled = str(query.compile(compile_kwargs={"literal_binds": True}))
+    assert "team_id" in compiled.lower(), f"Query should filter by team_id, got: {compiled}"
+
+
+@pytest.mark.asyncio
 async def test_admin_list_tags(monkeypatch, mock_db):
     stats = SimpleNamespace(tools=1, resources=2, prompts=3, servers=4, gateways=5, total=15)
     entity = SimpleNamespace(id="tool-1", name="Tool", type="tool", description="desc")
