@@ -282,21 +282,46 @@ ContextForge includes [Locust](https://locust.io/) for comprehensive load testin
 ### Quick Start
 
 ```bash
-# Start Locust Web UI (default: 4000 users, 200 spawn/s)
+# Interactive Web UI — configure users, spawn rate, duration in browser
 make load-test-ui
+# Open http://localhost:8089, pick user classes, click Start
 
-# Open http://localhost:8089 in your browser
+# Headless CLI — runs to completion, prints live stats, generates reports
+make load-test-cli
+# Reports saved to reports/loadtest.html and reports/loadtest_*.csv
 ```
+
+Both targets use the same locustfile (`tests/loadtest/locustfile.py`) with all user classes. The Web UI (`load-test-ui`) lets you pick which user types to run interactively; the CLI (`load-test-cli`) runs all types at their configured weights.
 
 ### Available Targets
 
+**General load tests** (all endpoints — REST, admin, MCP JSON-RPC, tools):
+
+| Target | Users | Duration | Mode | Description |
+|--------|-------|----------|------|-------------|
+| `make load-test-ui` | 4000 | 5 min | Web UI | Interactive with class picker at `http://localhost:8089` |
+| `make load-test-cli` | 4000 | 5 min | Headless | Live CLI stats + HTML/CSV reports |
+| `make load-test-light` | 10 | 30s | Headless | Quick smoke test |
+| `make load-test-heavy` | 200 | 120s | Headless | Sustained moderate load |
+| `make load-test-sustained` | 25 | 300s | Headless | 5-minute endurance test |
+| `make load-test-stress` | 500 | 60s | Headless | Stress test (confirmation prompt) |
+| `make load-test-1000` | 1000 | 120s | Headless | High-load ~1000 RPS |
+
+**MCP protocol only** (Streamable HTTP `/servers/{id}/mcp` endpoint):
+
+| Target | Users | Duration | Mode | Description |
+|--------|-------|----------|------|-------------|
+| `make load-test-mcp-protocol` | 150 | 2 min | Headless | MCP-only with reports |
+| `make load-test-mcp-protocol-ui` | 150 | 2 min | Web UI | MCP-only with class picker |
+| `make load-test-mcp-protocol-heavy` | 500 | 5 min | Headless | Heavy MCP sustained load |
+
+**Component baselines** (individual servers, database, cache):
+
 | Target | Description |
 |--------|-------------|
-| `make load-test-ui` | Web UI with class picker (4000 users default) |
-| `make load-test` | Headless test with HTML/CSV reports |
-| `make load-test-light` | Light test (10 users, 30s) |
-| `make load-test-heavy` | Heavy test (200 users, 120s) |
-| `make load-test-stress` | Stress test (500 users, 60s) |
+| `make load-test-baseline` | Fast Time Server REST API (1000 users, 3 min) |
+| `make load-test-baseline-ui` | Baseline with class picker |
+| `make load-test-fasttime` | Fast Time MCP tools (50 users, 60s) |
 
 ### Configuration
 
@@ -306,11 +331,14 @@ Override defaults via environment variables:
 # Custom user count and spawn rate
 LOADTEST_USERS=2000 LOADTEST_SPAWN_RATE=100 make load-test-ui
 
-# Custom host
-LOADTEST_HOST=http://localhost:4444 make load-test-ui
+# Custom host (default: http://localhost:8080 via nginx)
+LOADTEST_HOST=http://localhost:4444 make load-test-cli
 
 # Limit worker processes (default: auto-detect CPUs)
 LOADTEST_PROCESSES=4 make load-test-ui
+
+# Custom run time
+LOADTEST_RUN_TIME=10m make load-test-cli
 ```
 
 ### User Classes
@@ -360,9 +388,12 @@ For testing with 4000+ concurrent users:
 
 | File | Purpose |
 |------|---------|
-| `tests/loadtest/locustfile.py` | Main locustfile with all user classes |
-| `tests/loadtest/locustfile_highthroughput.py` | Optimized for maximum RPS |
-| `tests/loadtest/locustfile_baseline.py` | Component baseline testing |
+| `tests/loadtest/locustfile.py` | Main locustfile — all endpoints, 20+ user classes |
+| `tests/loadtest/locustfile_mcp_protocol.py` | MCP Streamable HTTP protocol only — 6 user classes |
+| `tests/loadtest/locustfile_highthroughput.py` | Fast endpoints only — optimized for maximum RPS |
+| `tests/loadtest/locustfile_baseline.py` | Component baselines — REST, MCP direct, PostgreSQL, Redis |
+| `tests/loadtest/locustfile_spin_detector.py` | CPU spin loop detection (escalating waves) |
+| `tests/loadtest/locustfile_slow_time_server.py` | Timeout / circuit breaker testing |
 
 ### Performance Tips
 
@@ -372,6 +403,117 @@ For testing with 4000+ concurrent users:
 - **Check p95/p99**: Tail latency matters more than average
 - **Use `constant_throughput`**: For predictable RPS instead of random waits
 - **Nginx caching**: Admin pages use 5s TTL caching by default (see [Nginx Tuning](../manage/tuning.md#7-nginx-reverse-proxy-tuning))
+
+---
+
+## 📦 Test Data Generation
+
+Before running load tests against a realistic dataset, populate the database with synthetic data. The `tests/load/` framework generates production-scale data across 29 entity types (users, teams, tools, servers, metrics, sessions, etc.).
+
+### Quick Start
+
+```bash
+# Generate small dataset (100 users, ~74K records, <1 minute)
+make generate-small
+
+# Generate medium dataset (10K users, ~70M records, ~10 min, needs PostgreSQL)
+make generate-medium
+
+# View generated data report
+make generate-report
+```
+
+### Profiles
+
+| Profile | Users | Records | Time | Database | Command |
+|---------|-------|---------|------|----------|---------|
+| Small | 100 | ~74K | <1 min | SQLite OK | `make generate-small` |
+| Medium | 10K | ~70M | ~10 min | PostgreSQL | `make generate-medium` |
+| Large | 100K | ~700M | ~1-2 hrs | PostgreSQL | `make generate-large` |
+| Massive | 1M | ~7B | ~10-20 hrs | PostgreSQL + high-end | `make generate-massive` |
+
+**Why it matters for load testing:** Many performance bottlenecks (N+1 queries, sequential scans, pagination overhead) only manifest with realistic data volumes. Testing with an empty database hides these issues.
+
+For full documentation, configuration options, and custom profiles, see [`tests/load/README.md`](https://github.com/IBM/mcp-context-forge/blob/main/tests/load/README.md).
+
+---
+
+## 🔌 MCP Protocol Load Testing
+
+The MCP Streamable HTTP endpoint (`/servers/{id}/mcp`) has different performance characteristics than the REST API. A dedicated load test isolates MCP protocol overhead from other endpoints.
+
+### Quick Start
+
+```bash
+# MCP protocol test (150 users, 2 min, headless with reports)
+make load-test-mcp-protocol
+
+# MCP protocol test with Web UI (class picker to select user types)
+make load-test-mcp-protocol-ui
+
+# Heavy MCP test (500 users, 5 min)
+make load-test-mcp-protocol-heavy
+```
+
+### What It Tests
+
+The MCP protocol load test (`locustfile_mcp_protocol.py`) sends JSON-RPC requests exclusively to `/servers/{server_id}/mcp`. It auto-detects a virtual server with the most tools and discovers available tools, resources, and prompts via MCP protocol at startup.
+
+**User Classes (selectable via `--class-picker` in Web UI):**
+
+| User Class | Weight | Simulates |
+|------------|--------|-----------|
+| `MCPAgentUser` | 10 | Realistic AI agent with up to 6 tools — init, discover, call 1-3 tools per turn |
+| `MCPToolCallerUser` | 5 | Heavy `tools/call` in tight loop |
+| `MCPDiscoveryUser` | 3 | Discovery-heavy — `tools/list`, `resources/list`, `prompts/list`, templates |
+| `MCPSessionChurnUser` | 2 | New MCP session every cycle (serverless worst-case) |
+| `MCPStressUser` | 1 | `constant_throughput(5)` for predictable sustained load |
+| `RESTBaselineUser` | 0 | `/rpc` + REST comparison baseline (opt-in via class picker) |
+
+### Comparing MCP vs REST Performance
+
+To compare MCP Streamable HTTP overhead against the REST `/rpc` path:
+
+1. Open the Web UI: `make load-test-mcp-protocol-ui`
+2. In the class picker, enable **both** MCP user classes and `RESTBaselineUser`
+3. Run the test and compare per-endpoint RPS and latency in the statistics table
+
+The MCP path includes additional middleware (MCPPathRewrite, MCP SDK session manager, per-request auth/RBAC database queries) that the `/rpc` endpoint avoids via Redis-backed caching. Under load, this difference is significant — see the [Performance Profiling Guide](../development/profiling.md#mcp-protocol-profiling) for investigation steps.
+
+### Configuration
+
+```bash
+# Override the target server
+MCP_SERVER_ID=<uuid> make load-test-mcp-protocol
+
+# Override tool names (comma-separated)
+MCP_TOOL_NAMES=my-tool-1,my-tool-2 make load-test-mcp-protocol
+
+# Override target host
+MCP_PROTOCOL_HOST=http://my-gateway:8080 make load-test-mcp-protocol
+```
+
+### What to Look For
+
+- **RPS plateau**: MCP throughput saturates at a lower RPS than REST due to heavier per-request processing
+- **PgBouncer/PostgreSQL CPU**: If these are high during MCP load but low during REST load, the MCP path is doing more DB queries per request
+- **Redis utilization**: Low Redis CPU during MCP load indicates the MCP path is not leveraging the cache layer
+- **Session pool metrics**: Check `/admin/mcp-pool/metrics` to verify upstream connection reuse
+- **p99 latency**: Tail latency often reveals contention in the auth/RBAC path or upstream proxy
+
+### Prerequisites
+
+The test requires:
+
+- At least one virtual server registered with associated tools (`POST /servers`)
+- At least one MCP gateway connected (`POST /gateways`)
+- Authentication configured (JWT auto-generated from `.env`)
+
+Start the full testing stack with:
+
+```bash
+make testing-up      # Starts fast_test_server + locust + MCP inspector
+```
 
 ---
 
@@ -624,46 +766,38 @@ Based on benchmark results, orjson provides:
 
 ## 📈 JMeter Performance Testing
 
-ContextForge includes [Apache JMeter](https://jmeter.apache.org/) test plans for industry-standard performance baseline measurements and CI/CD integration.
+ContextForge includes [Apache JMeter](https://jmeter.apache.org/) test plans for industry-standard performance baseline measurements and CI/CD integration. JMeter is best suited for reproducible benchmarks and CI/CD gating; use Locust for interactive testing with complex user behavior.
 
-### Prerequisites
+### Install & Run
 
-**Recommended: Use the Makefile target** (installs JMeter 5.6.3 locally):
 ```bash
+# Install JMeter (one-time, downloads 5.6.3 locally)
 make jmeter-install
-make jmeter-check   # Verify installation (requires JMeter 5.x+)
-```
 
-**Alternative: Manual installation**
-```bash
-# macOS
-brew install jmeter
-
-# Linux
-wget https://dlcdn.apache.org/jmeter/binaries/apache-jmeter-5.6.3.tgz
-tar -xzf apache-jmeter-5.6.3.tgz
-export PATH=$PATH:$(pwd)/apache-jmeter-5.6.3/bin
-```
-
-### Quick Start
-
-```bash
-# Set up authentication token
+# Set up authentication
 export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com --exp 10080 --secret $JWT_SECRET_KEY)
 
-# Launch JMeter GUI for interactive editing
+# Run key baselines
+make jmeter-rest-baseline                                    # REST API — 1,000 RPS, 10 min
+make jmeter-mcp-baseline JMETER_SERVER_ID=<server-id>       # MCP JSON-RPC — 1,000 RPS, 15 min
+make jmeter-load JMETER_SERVER_ID=<server-id>               # Production load — 4,000 RPS, 30 min
+
+# Interactive GUI for editing test plans
 make jmeter-ui
-
-# Run REST API baseline
-make jmeter-rest-baseline
-
-# Run MCP JSON-RPC baseline (requires server ID)
-make jmeter-mcp-baseline JMETER_SERVER_ID=<your-server-id>
-
-# Run production load test
-make jmeter-load JMETER_SERVER_ID=<your-server-id>
 ```
+
+### When to Use JMeter vs Locust
+
+| Criterion | JMeter | Locust |
+|-----------|--------|--------|
+| Best for | CI/CD baselines, threshold gating | Interactive exploration, complex behavior |
+| Protocol | HTTP, WebSocket, JDBC, gRPC | HTTP primarily |
+| Config | XML test plans | Python code |
+| Output | JTL files, HTML reports | HTML reports, CSV |
+| Scaling | Distributed (controller/agent) | `--processes` multi-worker |
+
+Use both: JMeter for repeatable CI checks, Locust for ad-hoc investigation and MCP protocol profiling.
 
 ### Available Test Plans
 
@@ -798,3 +932,10 @@ For maximum performance, combine multiple optimizations:
 These optimizations are complementary and provide cumulative benefits.
 
 ---
+
+## See Also
+
+- [Performance Profiling Guide](../development/profiling.md) - py-spy, memray, PostgreSQL profiling, MCP bottleneck triage
+- [Gateway Tuning Guide](../manage/tuning.md) - Environment variables, MCP transport settings, session pool tuning, disable unused features
+- [Database Performance Guide](../development/db-performance.md) - N+1 detection, query logging, DB vs transport bottleneck triage
+- [Performance Architecture](../architecture/performance-architecture.md) - MCP request path, caching layers, scaling capacity

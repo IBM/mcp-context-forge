@@ -601,12 +601,20 @@ After configuration, test role assignment:
 curl -H "Authorization: Bearer YOUR_TOKEN" \
   http://localhost:8000/rbac/my/roles
 
-# Should return assigned roles:
+# Should return assigned roles (abbreviated):
 [
   {
+    "id": "...",
+    "user_email": "user@example.com",
+    "role_id": "...",
     "role_name": "developer",
     "scope": "team",
-    "granted_by": "sso_system"
+    "scope_id": null,
+    "granted_by": "user@example.com",
+    "granted_at": "2026-02-20T21:20:20Z",
+    "expires_at": null,
+    "is_active": true,
+    "grant_source": "sso"
   }
 ]
 ```
@@ -643,7 +651,7 @@ Roles are automatically synchronized:
 
 - Admins can manually assign additional roles via Admin UI
 - Manually assigned roles are preserved during sync
-- Only SSO-granted roles (granted_by='sso_system') are synchronized
+- Only SSO-granted roles (`grant_source='sso'`) are synchronized
 
 ### 8.5.7 Troubleshooting Role Mapping
 

@@ -978,6 +978,7 @@ class UserRole(Base):
     granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    grant_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)
 
     # Relationships
     role: Mapped["Role"] = relationship("Role", back_populates="user_assignments")
@@ -1273,7 +1274,11 @@ class EmailUser(Base):
         """
         if self.locked_until is None:
             return False
-        if utc_now() >= self.locked_until:
+        locked_until = self.locked_until
+        if locked_until.tzinfo is None:
+            # Treat naive datetimes as UTC (SQLite strips timezone info)
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+        if utc_now() >= locked_until:
             # Lockout expired: reset counters so users get a fresh attempt window.
             self.failed_login_attempts = 0
             self.locked_until = None
@@ -6379,7 +6384,8 @@ def set_email_team_slug(_mapper, _conn, target):
         _conn: Connection
         target: Target EmailTeam instance
     """
-    target.slug = slugify(target.name)
+    if not target.slug:
+        target.slug = slugify(target.name)
 
 
 @event.listens_for(Tool, "before_insert")

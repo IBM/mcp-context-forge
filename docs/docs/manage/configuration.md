@@ -609,11 +609,14 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | Setting                                  | Description                                      | Default    | Options |
 | ---------------------------------------- | ------------------------------------------------ | ---------- | ------- |
 | `AUTO_CREATE_PERSONAL_TEAMS`             | Enable automatic personal team creation for new users | `true`   | bool    |
-| `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix                      | `personal` | string  |
+| `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix (empty = derive from display name) | `""` | string  |
 | `MAX_TEAMS_PER_USER`                     | Maximum number of teams a user can belong to    | `50`       | int > 0 |
 | `MAX_MEMBERS_PER_TEAM`                   | Maximum number of members per team               | `100`      | int > 0 |
 | `INVITATION_EXPIRY_DAYS`                 | Number of days before team invitations expire   | `7`        | int > 0 |
 | `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` | Require email verification for team invitations | `true`     | bool    |
+| `ALLOW_TEAM_CREATION`                    | Allow users to create organizational teams (admins always can) | `true`  | bool    |
+| `ALLOW_TEAM_JOIN_REQUESTS`               | Allow users to request to join public teams | `true`  | bool    |
+| `ALLOW_TEAM_INVITATIONS`                 | Allow team owners to send invitations       | `true`  | bool    |
 
 ### MCP Server Catalog
 
@@ -812,7 +815,7 @@ ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed 
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | bool                                       |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
-| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-1`               | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-2`               | string                                     |
 | `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |
@@ -856,7 +859,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 
 | Setting                      | Description                                              | Default   | Options          |
 | ---------------------------- | -------------------------------------------------------- | --------- | ---------------- |
-| `ENABLE_METRICS`             | Enable Prometheus metrics instrumentation                | `true`    | bool             |
+| `ENABLE_METRICS`             | Enable Prometheus metrics endpoint (requires JWT auth)   | `false`   | bool             |
 | `METRICS_EXCLUDED_HANDLERS`  | Regex patterns for paths to exclude from metrics         | (empty)   | comma-separated  |
 | `METRICS_NAMESPACE`          | Prometheus metrics namespace (prefix)                    | `default` | string           |
 | `METRICS_SUBSYSTEM`          | Prometheus metrics subsystem (secondary prefix)          | (empty)   | string           |

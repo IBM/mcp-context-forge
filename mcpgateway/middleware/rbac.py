@@ -32,6 +32,9 @@ from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active
 
 logger = logging.getLogger(__name__)
 
+# Generic 403 message — intentionally vague to avoid leaking permission names to callers
+_ACCESS_DENIED_MSG = "Access denied"
+
 # HTTP Bearer security scheme for token extraction
 security = HTTPBearer(auto_error=False)
 
@@ -665,7 +668,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                         )
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
-                            detail=f"Insufficient permissions. Required: {permission}",
+                            detail=_ACCESS_DENIED_MSG,
                         )
 
             # No plugin handled it, fall through to standard RBAC check
@@ -703,7 +706,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
 
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permission={permission}, resource_type={resource_type}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required: {permission}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Permission granted, execute the original function
             return await func(*args, **kwargs)
@@ -783,7 +786,7 @@ def require_admin_permission():
 
             if not has_admin_permission:
                 logger.warning(f"Admin permission denied: user={user_context['email']}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin permissions required")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Admin permission granted, execute the original function
             return await func(*args, **kwargs)
@@ -923,7 +926,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
 
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permissions={permissions}, resource_type={resource_type}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required one of: {', '.join(permissions)}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Permission granted, execute the original function
             return await func(*args, **kwargs)
@@ -954,7 +957,7 @@ class PermissionChecker:
         self.user_context = user_context
         self.db_session = user_context.get("db")
 
-    async def has_permission(self, permission: str, resource_type: Optional[str] = None, resource_id: Optional[str] = None, team_id: Optional[str] = None) -> bool:
+    async def has_permission(self, permission: str, resource_type: Optional[str] = None, resource_id: Optional[str] = None, team_id: Optional[str] = None, check_any_team: bool = False) -> bool:
         """Check if user has specific permission.
 
         Args:
@@ -962,6 +965,7 @@ class PermissionChecker:
             resource_type: Optional resource type
             resource_id: Optional resource ID
             team_id: Optional team context
+            check_any_team: If True, check across all teams the user belongs to
 
         Returns:
             bool: True if user has permission
@@ -978,6 +982,7 @@ class PermissionChecker:
                 token_teams=self.user_context.get("token_teams"),
                 ip_address=self.user_context.get("ip_address"),
                 user_agent=self.user_context.get("user_agent"),
+                check_any_team=check_any_team,
             )
         # Create fresh db session
         with fresh_db_session() as db:
@@ -991,6 +996,7 @@ class PermissionChecker:
                 token_teams=self.user_context.get("token_teams"),
                 ip_address=self.user_context.get("ip_address"),
                 user_agent=self.user_context.get("user_agent"),
+                check_any_team=check_any_team,
             )
 
     async def has_admin_permission(self) -> bool:
@@ -1063,4 +1069,5 @@ class PermissionChecker:
             HTTPException: If permission is not granted
         """
         if not await self.has_permission(permission, resource_type, resource_id, team_id):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required: {permission}")
+            logger.warning(f"{_ACCESS_DENIED_MSG}: user '{self.user_context.get('email')}' missing permission '{permission}'")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)

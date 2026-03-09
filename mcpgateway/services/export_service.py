@@ -32,6 +32,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.utils.services_auth import encode_auth
 
 # Service singletons are imported lazily in __init__ to avoid circular imports
 
@@ -518,7 +519,8 @@ class ExportService:
                         auth_type, auth_value = auth_data_map[gateway.id]
                         if auth_value:
                             gateway_data["auth_type"] = auth_type
-                            gateway_data["auth_value"] = auth_value
+                            # DbGateway.auth_value is JSON (dict); export format expects encoded string.
+                            gateway_data["auth_value"] = encode_auth(auth_value) if isinstance(auth_value, dict) else auth_value
                 else:
                     # Auth value is not masked, use as-is
                     gateway_data["auth_type"] = gateway.auth_type
@@ -939,7 +941,9 @@ class ExportService:
             if db_gateway.auth_type:
                 gateway_data["auth_type"] = db_gateway.auth_type
                 if db_gateway.auth_value:
-                    gateway_data["auth_value"] = db_gateway.auth_value
+                    # DbGateway.auth_value is JSON (dict); export format expects an encoded string.
+                    raw = db_gateway.auth_value
+                    gateway_data["auth_value"] = encode_auth(raw) if isinstance(raw, dict) else raw
                 # Include query param auth if present
                 if db_gateway.auth_type == "query_param" and getattr(db_gateway, "auth_query_params", None):
                     gateway_data["auth_query_params"] = db_gateway.auth_query_params

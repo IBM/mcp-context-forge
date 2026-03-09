@@ -35,6 +35,7 @@ from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -451,7 +452,8 @@ async def oauth_callback(
         if error:
             error_text = escape(error)
             description_text = escape(error_description or "OAuth provider returned an authorization error.")
-            logger.warning(f"OAuth provider returned error callback: error={error}, description={error_description}")
+            # Sanitize untrusted query parameters before logging to prevent log injection
+            logger.warning(f"OAuth provider returned error callback: error={sanitize_for_log(error)}, description={sanitize_for_log(error_description)}")
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>

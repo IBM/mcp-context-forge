@@ -21,7 +21,10 @@ def db():
 
 @pytest.fixture
 def svc(db):
-    return TeamInvitationService(db)
+    s = TeamInvitationService(db)
+    # Default: user is below max teams limit (0 teams)
+    s._get_user_team_count = MagicMock(return_value=0)
+    return s
 
 
 def _mock_team(**overrides):
@@ -62,6 +65,9 @@ class TestCreateInvitationCoverage:
         team = _mock_team()
         inviter = MagicMock(spec=EmailUser)
         inviter.email = "owner@t.com"
+        invitee = MagicMock(spec=EmailUser)
+        invitee.email = "user@t.com"
+        invitee.email_verified_at = datetime.now(timezone.utc)  # verified
         inviter_membership = MagicMock(spec=EmailTeamMember)
         inviter_membership.role = "owner"
         inviter_membership.is_active = True
@@ -83,17 +89,19 @@ class TestCreateInvitationCoverage:
             def _first():
                 nonlocal call_count
                 call_count[0] += 1
-                # 1=team, 2=inviter user, 3=inviter membership,
-                # 4=existing active member, 5=existing invitation, 6=member count(not used for first)
+                # 1=team, 2=inviter user, 3=invitee user (email verification),
+                # 4=inviter membership, 5=existing active member, 6=existing invitation
                 if call_count[0] == 1:
                     return team
                 elif call_count[0] == 2:
                     return inviter
                 elif call_count[0] == 3:
-                    return inviter_membership
+                    return invitee
                 elif call_count[0] == 4:
-                    return None  # not already a member
+                    return inviter_membership
                 elif call_count[0] == 5:
+                    return None  # not already a member
+                elif call_count[0] == 6:
                     return existing_inv
                 return None
 
@@ -151,8 +159,7 @@ class TestAcceptInvitationCoverage:
 
         db.query = _query_side_effect
 
-        with patch.object(svc, "get_invitation_by_token", AsyncMock(return_value=invitation)), \
-             patch("asyncio.create_task", MagicMock(side_effect=RuntimeError("no loop"))):
+        with patch.object(svc, "get_invitation_by_token", AsyncMock(return_value=invitation)), patch("asyncio.create_task", MagicMock(side_effect=RuntimeError("no loop"))):
 
             result = await svc.accept_invitation("tok-123", "user@t.com")
 
@@ -191,8 +198,7 @@ class TestAcceptInvitationCoverage:
 
         db.query = _query_side_effect
 
-        with patch.object(svc, "get_invitation_by_token", AsyncMock(return_value=invitation)), \
-             patch("asyncio.create_task", MagicMock(side_effect=RuntimeError("no loop"))):
+        with patch.object(svc, "get_invitation_by_token", AsyncMock(return_value=invitation)), patch("asyncio.create_task", MagicMock(side_effect=RuntimeError("no loop"))):
 
             result = await svc.accept_invitation("tok-123", "user@t.com")
 
@@ -263,6 +269,9 @@ class TestCreateInvitationBranches:
         team = _mock_team(max_members=None)
         inviter = MagicMock(spec=EmailUser)
         inviter.email = "owner@t.com"
+        invitee = MagicMock(spec=EmailUser)
+        invitee.email = "new@t.com"
+        invitee.email_verified_at = datetime.now(timezone.utc)  # verified
         inviter_membership = MagicMock(spec=EmailTeamMember)
         inviter_membership.role = "owner"
         inviter_membership.is_active = True
@@ -276,15 +285,19 @@ class TestCreateInvitationBranches:
 
             def _first():
                 call_count[0] += 1
+                # 1=team, 2=inviter user, 3=invitee user (email verification),
+                # 4=inviter membership, 5=existing active member, 6=existing invitation
                 if call_count[0] == 1:
                     return team
                 elif call_count[0] == 2:
                     return inviter
                 elif call_count[0] == 3:
-                    return inviter_membership
+                    return invitee
                 elif call_count[0] == 4:
-                    return None  # not already a member
+                    return inviter_membership
                 elif call_count[0] == 5:
+                    return None  # not already a member
+                elif call_count[0] == 6:
                     return None  # no existing invitation
                 return None
 
@@ -341,8 +354,7 @@ class TestAcceptInvitationMoreBranches:
         mock_auth_cache.invalidate_user_teams = AsyncMock()
         mock_auth_cache.invalidate_team_membership = AsyncMock()
 
-        with patch.object(svc, "get_invitation_by_token", AsyncMock(return_value=invitation)), \
-             patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth_cache):
+        with patch.object(svc, "get_invitation_by_token", AsyncMock(return_value=invitation)), patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth_cache):
             result = await svc.accept_invitation("tok-123", "user@t.com")
 
         assert result is not None
