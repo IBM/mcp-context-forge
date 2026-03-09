@@ -4124,11 +4124,55 @@ class TestRpcHandling:
         mock_db = MagicMock()
 
         with (
-            patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])),
+            patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])) as mock_list_server_tools,
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
-            assert result["result"]["tools"][0]["id"] == "tool-1"
+            assert len(result["result"]["tools"]) == 1
+            assert mock_list_server_tools.await_args.args[1] == "srv"
+
+    async def test_handle_rpc_tools_list_uses_internal_rust_server_header(self):
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {"server_id": "body-srv"}}
+        request = self._make_request(payload)
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "header-srv",
+        }
+
+        tool = MagicMock()
+        tool.model_dump.return_value = {"id": "tool-header"}
+        mock_db = MagicMock()
+
+        with (
+            patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])) as mock_list_server_tools,
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+        ):
+            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+
+        assert len(result["result"]["tools"]) == 1
+        assert mock_list_server_tools.await_args.args[1] == "header-srv"
+
+    async def test_handle_rpc_ignores_internal_server_header_without_rust_runtime_marker(self):
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {
+            "x-contextforge-server-id": "spoofed-srv",
+        }
+
+        tool = MagicMock()
+        tool.model_dump.return_value = {"id": "tool-plain"}
+        mock_db = MagicMock()
+
+        with (
+            patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))) as mock_list_tools,
+            patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock()) as mock_list_server_tools,
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+        ):
+            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+
+        assert len(result["result"]["tools"]) == 1
+        mock_list_tools.assert_awaited_once()
+        mock_list_server_tools.assert_not_awaited()
 
     async def test_handle_rpc_list_tools_with_cursor(self):
         payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}

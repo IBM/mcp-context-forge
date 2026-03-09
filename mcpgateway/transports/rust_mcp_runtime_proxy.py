@@ -22,7 +22,6 @@ from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party
 import httpx
-import orjson
 from starlette.types import Receive, Scope, Send
 
 # First-Party
@@ -33,8 +32,9 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 logger = logging.getLogger(__name__)
 
 _SERVER_ID_RE = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp/?$")
+_CONTEXTFORGE_SERVER_ID_HEADER = "x-contextforge-server-id"
 _REQUEST_HOP_BY_HOP_HEADERS = frozenset({"host", "content-length", "connection", "transfer-encoding", "keep-alive"})
-_INTERNAL_ONLY_REQUEST_HEADERS = frozenset({"x-forwarded-internally", "x-mcp-session-id", "x-contextforge-mcp-runtime"})
+_INTERNAL_ONLY_REQUEST_HEADERS = frozenset({"x-forwarded-internally", "x-mcp-session-id", "x-contextforge-mcp-runtime", _CONTEXTFORGE_SERVER_ID_HEADER})
 _RESPONSE_HOP_BY_HOP_HEADERS = frozenset({"connection", "transfer-encoding", "keep-alive"})
 
 
@@ -58,8 +58,6 @@ class RustMCPRuntimeProxy:
 
         target_url = _build_runtime_mcp_url(scope)
         headers = _build_forward_headers(scope)
-        body, request_stream = await _prepare_runtime_request_body(scope, receive)
-
         timeout = httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds)
 
         try:
@@ -67,7 +65,7 @@ class RustMCPRuntimeProxy:
             async with client.stream(
                 "POST",
                 target_url,
-                content=body if body is not None else request_stream,
+                content=_stream_request_body(receive),
                 headers=headers,
                 timeout=timeout,
             ) as response:
@@ -104,20 +102,6 @@ class RustMCPRuntimeProxy:
             return
 
 
-async def _read_request_body(receive: Receive) -> bytes:
-    """Read the full ASGI request body into memory."""
-    body_parts: list[bytes] = []
-    while True:
-        message = await receive()
-        if message["type"] == "http.disconnect":
-            return b""
-        if message["type"] != "http.request":
-            continue
-        body_parts.append(message.get("body", b""))
-        if not message.get("more_body", False):
-            return b"".join(body_parts)
-
-
 async def _stream_request_body(receive: Receive):
     """Yield ASGI request body chunks without buffering the full request."""
     while True:
@@ -133,45 +117,11 @@ async def _stream_request_body(receive: Receive):
             return
 
 
-async def _prepare_runtime_request_body(scope: Scope, receive: Receive) -> tuple[bytes | None, object | None]:
-    """Return either a buffered body (when mutation is required) or a streaming body iterator."""
-    if _request_needs_server_id_injection(scope):
-        body = await _read_request_body(receive)
-        return _inject_server_id_from_path(scope, body), None
-    return None, _stream_request_body(receive)
-
-
-def _request_needs_server_id_injection(scope: Scope) -> bool:
-    """Return True when the mounted MCP path came from /servers/<id>/mcp."""
-    modified_path = str(scope.get("modified_path") or scope.get("path") or "")
-    return _SERVER_ID_RE.search(modified_path) is not None
-
-
-def _inject_server_id_from_path(scope: Scope, body: bytes) -> bytes:
-    """Inject server_id into JSON-RPC params for /servers/<id>/mcp requests."""
-    if not body:
-        return body
-
+def _extract_server_id_from_scope(scope: Scope) -> str | None:
+    """Extract server_id when the mounted MCP path came from /servers/<id>/mcp."""
     modified_path = str(scope.get("modified_path") or scope.get("path") or "")
     match = _SERVER_ID_RE.search(modified_path)
-    if not match:
-        return body
-
-    try:
-        payload = orjson.loads(body)
-    except orjson.JSONDecodeError:
-        return body
-
-    if not isinstance(payload, dict):
-        return body
-
-    params = payload.get("params")
-    if not isinstance(params, dict):
-        params = {}
-        payload["params"] = params
-
-    params["server_id"] = match.group("server_id")
-    return orjson.dumps(payload)
+    return match.group("server_id") if match else None
 
 
 def _build_runtime_mcp_url(scope: Scope) -> str:
@@ -203,4 +153,8 @@ def _build_forward_headers(scope: Scope) -> list[tuple[str, str]]:
         if header_name in _REQUEST_HOP_BY_HOP_HEADERS or header_name in _INTERNAL_ONLY_REQUEST_HEADERS:
             continue
         headers.append((header_name, value.decode("latin-1")))
+
+    server_id = _extract_server_id_from_scope(scope)
+    if server_id:
+        headers.append((_CONTEXTFORGE_SERVER_ID_HEADER, server_id))
     return headers

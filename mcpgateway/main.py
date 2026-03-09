@@ -6096,11 +6096,20 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     "id": None,
                 },
             )
+        headers = {k.lower(): v for k, v in request.headers.items()}
+        _rpc_client_host = getattr(getattr(request, "client", None), "host", None)
+        _rpc_from_loopback = _rpc_client_host in ("127.0.0.1", "::1") if _rpc_client_host else False
+        _internal_runtime_server_id = headers.get("x-contextforge-server-id") if headers.get("x-contextforge-mcp-runtime") == "rust" else None
+
         method = body["method"]
         req_id = body.get("id")
         if req_id is None:
             req_id = str(uuid.uuid4())
         params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+        if _internal_runtime_server_id:
+            params["server_id"] = _internal_runtime_server_id
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
 
@@ -6134,14 +6143,11 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         # This applies to ALL methods (except initialize which creates new sessions)
         # The x-forwarded-internally header marks requests that have already been forwarded
         # to prevent infinite forwarding loops
-        headers = {k.lower(): v for k, v in request.headers.items()}
         # Session ID can come from two sources:
         # 1. MCP-Session-Id (mcp-session-id) - MCP protocol header from Streamable HTTP clients
         # 2. x-mcp-session-id - our internal header from SSE session_registry calls
         mcp_session_id = headers.get("mcp-session-id") or headers.get("x-mcp-session-id")
         # Only trust x-forwarded-internally from loopback to prevent external spoofing
-        _rpc_client_host = request.client.host if request.client else None
-        _rpc_from_loopback = _rpc_client_host in ("127.0.0.1", "::1") if _rpc_client_host else False
         is_internally_forwarded = _rpc_from_loopback and headers.get("x-forwarded-internally") == "true"
 
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:

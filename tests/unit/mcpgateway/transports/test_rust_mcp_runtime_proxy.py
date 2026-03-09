@@ -26,8 +26,8 @@ def _make_receive(body: bytes):
 
 
 @pytest.mark.asyncio
-async def test_post_requests_proxy_to_rust_runtime_and_inject_server_id(monkeypatch):
-    """POST MCP traffic should be proxied to Rust with server-scoped params preserved."""
+async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_header(monkeypatch):
+    """POST MCP traffic should be proxied to Rust with server scope carried via an internal header."""
     captured = {}
 
     class FakeResponse:
@@ -94,6 +94,7 @@ async def test_post_requests_proxy_to_rust_runtime_and_inject_server_id(monkeypa
             (b"mcp-protocol-version", b"2025-11-25"),
             (b"x-forwarded-internally", b"true"),
             (b"x-mcp-session-id", b"internal-only"),
+            (b"x-contextforge-server-id", b"spoofed-by-client"),
         ],
     }
 
@@ -114,9 +115,8 @@ async def test_post_requests_proxy_to_rust_runtime_and_inject_server_id(monkeypa
     assert forwarded_headers["mcp-protocol-version"] == "2025-11-25"
     assert "x-forwarded-internally" not in forwarded_headers
     assert "x-mcp-session-id" not in forwarded_headers
-
-    payload = json.loads(captured["content"].decode())
-    assert payload["params"]["server_id"] == "123e4567-e89b-12d3-a456-426614174000"
+    assert forwarded_headers["x-contextforge-server-id"] == "123e4567-e89b-12d3-a456-426614174000"
+    assert json.loads(captured["content"].decode()) == {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
 
     assert events[0]["type"] == "http.response.start"
     assert events[0]["status"] == 200
