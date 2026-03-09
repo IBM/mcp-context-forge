@@ -7,7 +7,7 @@ Status focus in this update:
 - Unix domain socket handoff between Python and the managed Rust sidecar
 - a narrower trusted internal dispatcher route at `/_internal/mcp/rpc`
 - forwarded MCP auth context instead of recomputing auth on the internal hop
-- updated live load-test baseline before moving any DB reads into Rust
+- the final no-DB optimization pass before moving read-only DB paths into Rust
 
 ## Executive Summary
 
@@ -26,6 +26,8 @@ In practice, this means:
 - Python no longer reparses and rewrites server-scoped MCP JSON bodies just to inject `server_id`
 - the managed Python -> Rust hop can now run over a Unix domain socket instead of loopback TCP
 - Python forwards a trusted auth context to the internal dispatcher, so auth and RBAC stay Python-owned without being recomputed on the internal hop
+- the trusted internal MCP dispatcher now owns its SQLAlchemy session directly instead of paying FastAPI `Depends(get_db)` overhead on every Rust-backed call
+- trusted Rust -> Python MCP dispatch no longer re-runs Pydantic `RPCRequest` validation that Rust already performed
 - Rust is not yet the full MCP implementation for resumable Streamable HTTP or SSE/session orchestration
 - the current cut is viable, testable, containerized, and live behind an experimental flag
 
@@ -70,6 +72,8 @@ Integrated in the main application:
 - Rust now forwards backend calls to `/_internal/mcp/rpc` instead of the public `/rpc` route
 - Python forwards a trusted internal MCP auth blob via `x-contextforge-auth-context`
 - the proxy strips forwarded-chain headers like `x-forwarded-for` before the internal Rust -> Python hop so loopback trust stays real
+- the internal Rust-backed MCP route now creates its own `SessionLocal()` session instead of using FastAPI `Depends(get_db)`
+- trusted internal dispatch now lazily materializes lowered request headers only for branches that actually need them
 - the managed sidecar can be launched from `docker-entrypoint.sh`
 - `Containerfile.lite` includes the Rust runtime binary when built with `ENABLE_RUST=true`
 - `docker-compose.yml` exposes the Rust runtime env vars, including `MCP_RUST_LOG`
@@ -261,6 +265,8 @@ It has been reducing avoidable Python work around the Rust edge:
 - server scope now crosses the seam in an internal header instead of a body mutation
 - the managed sidecar can now use UDS instead of loopback HTTP
 - public transport auth is now forwarded as a trusted internal context instead of being recomputed on the internal backend hop
+- the trusted internal dispatcher no longer pays `Depends(get_db)` setup/teardown overhead on every Rust-backed call
+- trusted internal dispatch no longer revalidates JSON-RPC envelopes that Rust already validated
 
 This matters because the load-test target in `tests/loadtest/locustfile_mcp_protocol.py` is the server-scoped MCP path, so every unnecessary parse/serialize on that path shows up directly in throughput and latency.
 
@@ -332,6 +338,14 @@ Using the load-test tooling now on `origin/main`:
   - `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`
   - `EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true`
 
+### What profiling showed
+
+A short live `py-spy` sample on a loaded gunicorn worker was noisy, but directionally useful:
+
+- the worker spent most sampled time inside AnyIO / threadpool worker activity rather than in the Rust sidecar
+- that pointed at Python request/dependency machinery as the next no-DB optimization target
+- the biggest actionable item from that result was removing FastAPI `Depends(get_db)` from the trusted internal MCP route
+
 ### Important test hygiene note
 
 The first post-rebase comparison attempt produced invalid results because server-scoped MCP discovery briefly fell back to global discovery after an overly strict backend trust check for the internal `server_id` header.
@@ -343,66 +357,71 @@ Symptoms were:
 
 That bug was fixed by making `/rpc` honor `x-contextforge-server-id` whenever the request is marked as coming from the Rust runtime via `x-contextforge-mcp-runtime: rust`.
 
-### Current measured impact of the latest seam optimization
+### Current measured impact of the latest no-DB seam optimization batch
 
-The latest optimization stack was:
+The latest optimization stack is now:
 
 - narrower internal Python dispatcher at `/_internal/mcp/rpc`
 - trusted forwarded MCP auth context
 - no Python JSON body rewriting for `/servers/<id>/mcp`
 - UDS between Python and the managed Rust sidecar
+- admin-permission short-circuit after token-scope enforcement
+- direct `SessionLocal()` management on the trusted internal Rust -> Python MCP route
+- no Pydantic `RPCRequest` validation on trusted internal dispatch
+- lazy lower-casing of request headers only when needed
+- conversion of several hot-path f-string logs to lazy logging calls
 
-These numbers are the current live baseline on the server-scoped fast-time target, using 30-second Locust runs following `todo/performance/reproduce-testing.md`.
+These numbers are from live server-scoped `100 users / 30s` Locust runs following `todo/performance/reproduce-testing.md`.
 
-Current measured baseline:
+Repeated pre-batch runs on the same rebuilt Rust-enabled stack settled around:
 
 ```text
-Users | RPS    | Avg(ms) | p95 | p99 | Failures
-50    | 424.82 | 20.81   | 29  |  88 | 1.67%
-100   | 738.44 | 38.40   | 65  | 150 | 1.91%
+Run | RPS    | Avg(ms) | p95 | p99 | Failures
+1   | 671.73 | 51.48   | 84  | 210 | 1.88%
+2   | 671.64 | 52.51   | 91  | 200 | 1.95%
 ```
 
-Failure caveat:
+Post-batch runs on the same stack:
+
+```text
+Run | RPS    | Avg(ms) | p95 | p99 | Failures
+1   | 692.41 | 41.07   | 69  | 190 | 1.88%
+2   | 722.22 | 41.05   | 69  | 160 | 1.92%
+```
+
+Failure caveat for all of these runs:
 
 - the failures are all `resources/read`
 - they trace to duplicate seeded resource URIs on the benchmark server
 - they are not specific to the new Rust seam
 
-For context, the previous pre-UDS/header-forward baseline on the same broad server-scoped path was:
-
-```text
-Users | RPS    | Avg(ms) | p95 | p99 | Failures
-50    | 363.81 | 29.93   | 64  | 110 | 0%
-100   | 672.11 | 48.59   | 86  | 200 | 0%
-```
-
 Interpretation:
 
-- at 50 users, the current stack is about `+16.8%` RPS with materially lower average latency
-- at 100 users, the current stack is about `+9.9%` RPS with materially lower average latency
-- the comparison is directionally useful, but not perfectly apples-to-apples because the seeded `resources/read` issue polluted the latest run
+- the repeated pre-batch baseline is about `672 RPS`
+- the first post-batch run is about `+3.1%` RPS with about `-20%` average latency
+- the warmed post-batch rerun is about `+7.5%` RPS with about `-22%` average latency and materially lower `p95` / `p99`
+- the warmed best run is still slightly below the earlier one-off `738 RPS` UDS/header-forward peak, so that earlier number should be treated as a high-water mark, not the stable baseline
 
 Conclusion:
 
-- the seam optimization is worth keeping
-- the current bottleneck is still the Python/Rust handoff and Python backend dispatcher, not the Rust transport shell itself
-- there is still substantial headroom before Rust can show its full value because most MCP execution work remains in Python
+- this non-DB optimization batch is worth keeping
+- the current stable improvement comes from removing Python internal-dispatch overhead, not from changing Rust transport parsing
+- the current bottleneck is still Python-owned execution and data access behind the Rust edge
+- there is still headroom, but the remaining big wins are now unlikely to come from more Python-side no-DB micro-optimizations
 
 ### Next performance steps in priority order
 
-1. Keep the new UDS and internal-dispatch seam as the baseline; do not add Rust DB access until this path is fully characterized.
-2. Make the internal dispatcher narrower than generic JSON-RPC.
-   - pass method-specific internal payloads instead of a full `/rpc` envelope where practical
-   - avoid more Python envelope shaping than strictly necessary
-3. Let Rust own the mounted server-scoped MCP path directly.
-   - today Python still mounts `/servers/<id>/mcp` and translates path context into internal headers
-4. Fix or replace the seeded benchmark server so `resources/read` stops polluting load-test comparisons.
-5. Move read-heavy MCP methods first:
+1. Keep this no-DB seam as the new baseline.
+2. Fix or replace the seeded benchmark server so `resources/read` stops polluting load-test comparisons.
+3. Move read-heavy server-scoped MCP methods into Rust with direct read-only Postgres access:
    - `tools/list`
    - `resources/list`
    - `prompts/list`
-   - optionally `resources/templates/list`
-6. After that, revisit deeper Rust-side JSON parsing micro-optimizations only if profiling still points there.
+   - `resources/templates/list`
+4. Keep Redis/session/cancellation ownership in Python during that phase.
+   - those are not the first methods to move
+5. After the list/read path is Rust-owned, decide whether `initialize` stays Python-owned for session ownership semantics or gets a narrower Rust-aware session contract.
+6. Only after that start carving `tools/call` out of Python.
 
 ### Phase 2: remove Python `/rpc` coupling
 

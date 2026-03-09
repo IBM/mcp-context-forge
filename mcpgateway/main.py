@@ -638,6 +638,19 @@ def _extract_scoped_permissions(request: Request) -> set[str] | None:
     return set(permissions)
 
 
+def _is_permission_admin_user(user) -> bool:
+    """Return whether the caller already has permission-layer admin authority.
+
+    This is stricter than token-scope admin semantics. It is used only to skip
+    redundant RBAC DB lookups after token scope caps have already been enforced.
+    """
+    if hasattr(user, "is_admin"):
+        return bool(getattr(user, "is_admin", False))
+    if isinstance(user, dict):
+        return bool(user.get("is_admin", False))
+    return False
+
+
 async def _ensure_rpc_permission(user, db: Session, permission: str, method: str, request: Request | None = None) -> None:
     """Require a specific RPC permission for a method branch.
 
@@ -661,6 +674,9 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
         if scoped is not None and "*" not in scoped and permission not in scoped:
             logger.warning("RPC permission denied (token scope): method=%s, required=%s", method, permission)
             raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
+
+    if _is_permission_admin_user(user):
+        return
 
     # Layer 2: RBAC check
     # Session tokens have no explicit team_id, so check across all team-scoped roles.
@@ -6148,10 +6164,26 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
 @utility_router.post("/_internal/mcp/rpc/")
 @utility_router.post("/_internal/mcp/rpc")
-async def handle_internal_mcp_rpc(request: Request, db: Session = Depends(get_db)):
+async def handle_internal_mcp_rpc(request: Request):
     """Handle trusted MCP dispatch forwarded from the local Rust runtime."""
     user = _build_internal_mcp_forwarded_user(request)
-    return await _handle_rpc_authenticated(request, db=db, user=user)
+    db = SessionLocal()
+    try:
+        response = await _handle_rpc_authenticated(request, db=db, user=user)
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return response
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
+    finally:
+        db.close()
 
 
 async def _handle_rpc_authenticated(request: Request, db: Session, user):
@@ -6191,10 +6223,19 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     "id": None,
                 },
             )
-        headers = {k.lower(): v for k, v in request.headers.items()}
+        request_headers = request.headers
+        lowered_headers: Optional[Dict[str, str]] = None
+
+        def _lowered_request_headers() -> Dict[str, str]:
+            nonlocal lowered_headers
+            if lowered_headers is None:
+                lowered_headers = {k.lower(): v for k, v in request_headers.items()}
+            return lowered_headers
+
         _rpc_client_host = getattr(getattr(request, "client", None), "host", None)
         _rpc_from_loopback = _rpc_client_host in ("127.0.0.1", "::1") if _rpc_client_host else False
-        _internal_runtime_server_id = headers.get("x-contextforge-server-id") if headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        _trusted_internal_mcp_dispatch = _get_internal_mcp_auth_context(request) is not None
+        _internal_runtime_server_id = request_headers.get("x-contextforge-server-id") if request_headers.get("x-contextforge-mcp-runtime") == "rust" else None
 
         method = body["method"]
         req_id = body.get("id")
@@ -6237,7 +6278,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         elif _token_server_id is not None:
             server_id = _token_server_id
 
-        RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
+        if not _trusted_internal_mcp_dispatch:
+            RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
         # Multi-worker session affinity: check if we should forward to another worker
         # This applies to ALL methods (except initialize which creates new sessions)
@@ -6246,9 +6288,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         # Session ID can come from two sources:
         # 1. MCP-Session-Id (mcp-session-id) - MCP protocol header from Streamable HTTP clients
         # 2. x-mcp-session-id - our internal header from SSE session_registry calls
-        mcp_session_id = headers.get("mcp-session-id") or headers.get("x-mcp-session-id")
+        mcp_session_id = request_headers.get("mcp-session-id") or request_headers.get("x-mcp-session-id")
         # Only trust x-forwarded-internally from loopback to prevent external spoofing
-        is_internally_forwarded = _rpc_from_loopback and headers.get("x-forwarded-internally") == "true"
+        is_internally_forwarded = _rpc_from_loopback and request_headers.get("x-forwarded-internally") == "true"
 
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
             # First-Party
@@ -6258,7 +6300,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 logger.debug("Invalid MCP session id for affinity forwarding, executing locally")
             else:
                 session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-                logger.debug(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | RPC request received, checking affinity")
+                logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", WORKER_ID, session_short, method)
                 try:
                     # First-Party
                     from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
@@ -6266,11 +6308,11 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     pool = get_mcp_session_pool()
                     forwarded_response = await pool.forward_request_to_owner(
                         mcp_session_id,
-                        {"method": method, "params": params, "headers": dict(headers), "req_id": req_id},
+                        {"method": method, "params": params, "headers": _lowered_request_headers(), "req_id": req_id},
                     )
                     if forwarded_response is not None:
                         # Request was handled by another worker
-                        logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded response received")
+                        logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", WORKER_ID, session_short, method)
                         if "error" in forwarded_response:
                             raise JSONRPCError(
                                 forwarded_response["error"].get("code", -32603),
@@ -6280,13 +6322,13 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                         return {"jsonrpc": "2.0", "result": result, "id": req_id}
                 except RuntimeError:
                     # Pool not initialized - execute locally
-                    logger.debug(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Pool not initialized, executing locally")
+                    logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Pool not initialized, executing locally", WORKER_ID, session_short, method)
         elif is_internally_forwarded and mcp_session_id:
             # First-Party
             from mcpgateway.services.mcp_session_pool import WORKER_ID  # pylint: disable=import-outside-toplevel
 
             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-            logger.debug(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Internally forwarded request, executing locally")
+            logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", WORKER_ID, session_short, method)
 
         if method == "initialize":
             # Extract session_id from params or query string (for capability tracking)
@@ -6316,9 +6358,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     pool = get_mcp_session_pool()
                     # Claim-or-refresh ownership for this session (does not steal).
                     await pool.register_pool_session_owner(mcp_session_id)
-                    logger.debug(f"[AFFINITY_INIT] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Registered ownership after initialize")
+                    logger.debug("[AFFINITY_INIT] Worker %s | Session %s... | Registered ownership after initialize", WORKER_ID, mcp_session_id[:8])
                 except Exception as e:
-                    logger.warning(f"[AFFINITY_INIT] Failed to register session ownership: {e}")
+                    logger.warning("[AFFINITY_INIT] Failed to register session ownership: %s", e)
         elif method == "tools/list":
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
@@ -6483,7 +6525,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     result = {"contents": [result]}
             except (ValueError, ResourceNotFoundError):
                 # Resource not found in the gateway
-                logger.error(f"Resource not found: {uri}")
+                logger.error("Resource not found: %s", uri)
                 raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri})
             # Release transaction after resources/read completes
             db.commit()
@@ -6615,7 +6657,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     reason: Optional reason for cancellation.
                 """
                 if tool_task and not tool_task.done():
-                    logger.info(f"Cancelling tool task for run_id={run_id}, reason={reason}")
+                    logger.info("Cancelling tool task for run_id=%s, reason=%s", run_id, reason)
                     tool_task.cancel()
 
             if settings.mcpgateway_tool_cancellation_enabled and run_id:
@@ -6649,7 +6691,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                             db=db,
                             name=name,
                             arguments=arguments,
-                            request_headers=headers,
+                            request_headers=_lowered_request_headers(),
                             app_user_email=oauth_user_email,
                             user_email=auth_user_email,
                             token_teams=auth_token_teams,
@@ -6660,7 +6702,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                         )
                     except ValueError:
                         # Tool not found log error and raise JSONRPCError
-                        logger.error(f"Tool not found: {name}")
+                        logger.error("Tool not found: %s", name)
                         raise JSONRPCError(-32601, f"Tool not found: {name}", None)
 
                 tool_task = asyncio.create_task(execute_tool())
@@ -6678,7 +6720,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                         result = result.model_dump(by_alias=True, exclude_none=True)
                 except asyncio.CancelledError:
                     # Task was cancelled - return partial result or error
-                    logger.info(f"Tool execution cancelled for run_id={run_id}, tool={name}")
+                    logger.info("Tool execution cancelled for run_id=%s, tool=%s", run_id, name)
                     raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id, "partial": False})
             finally:
                 # Unregister the run when done (only if feature enabled)
@@ -6728,7 +6770,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             raw_request_id = params.get("requestId")
             request_id = str(raw_request_id) if raw_request_id is not None else None
             reason = params.get("reason")
-            logger.info(f"Request cancelled: {request_id}, reason: {reason}")
+            logger.info("Request cancelled: %s, reason: %s", request_id, reason)
             # Attempt local cancellation per MCP spec
             if request_id is not None:
                 await _authorize_run_cancellation(request, user, request_id, as_jsonrpc_error=True)
@@ -6778,7 +6820,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 if not capable_sessions:
                     raise JSONRPCError(-32000, "No elicitation-capable clients available", {"message": elicit_params.message})
                 target_session_id = capable_sessions[0]
-                logger.debug(f"Selected session {target_session_id} for elicitation")
+                logger.debug("Selected session %s for elicitation", target_session_id)
 
             # Verify session has elicitation capability
             if not await session_registry.has_elicitation_capability(target_session_id):
@@ -6821,7 +6863,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 }
 
                 await session_registry.broadcast(target_session_id, elicitation_request)
-                logger.debug(f"Sent elicitation request {pending.request_id} to session {target_session_id}")
+                logger.debug("Sent elicitation request %s to session %s", pending.request_id, target_session_id)
 
                 # Wait for response
                 elicit_result = await elicitation_task
@@ -6862,8 +6904,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             # Backward compatibility: Try to invoke as a tool directly
             # This allows both old format (method=tool_name) and new format (method=tools/call)
             await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
-            # Standard
-            headers = {k.lower(): v for k, v in request.headers.items()}
 
             # Get authorization context (same as tools/call)
             auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
@@ -6888,7 +6928,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     db=db,
                     name=method,
                     arguments=params,
-                    request_headers=headers,
+                    request_headers=_lowered_request_headers(),
                     app_user_email=oauth_user_email,
                     user_email=auth_user_email,
                     token_teams=auth_token_teams,
@@ -6903,7 +6943,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise
             except Exception:
                 # Log error and return invalid method
-                logger.error(f"Method not found: {method}")
+                logger.error("Method not found: %s", method)
                 raise JSONRPCError(-32000, "Invalid method", params)
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}

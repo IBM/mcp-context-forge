@@ -4199,15 +4199,23 @@ class TestRpcHandling:
             .rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
 
-        with patch("mcpgateway.main._handle_rpc_authenticated", new=AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": "1"})) as mock_dispatch:
-            result = await handle_internal_mcp_rpc(request, db=MagicMock())
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._handle_rpc_authenticated", new=AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": "1"})) as mock_dispatch,
+        ):
+            result = await handle_internal_mcp_rpc(request)
 
         assert result["jsonrpc"] == "2.0"
         forwarded_user = mock_dispatch.await_args.kwargs["user"]
         assert forwarded_user["email"] == "user@example.com"
         assert forwarded_user["is_admin"] is True
         assert request.state.token_teams == ["team-a"]
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called_once()
 
     async def test_handle_internal_mcp_rpc_rejects_non_loopback_requests(self):
         payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
@@ -4219,9 +4227,68 @@ class TestRpcHandling:
         request.client = SimpleNamespace(host="10.0.0.2")
 
         with pytest.raises(HTTPException) as excinfo:
-            await handle_internal_mcp_rpc(request, db=MagicMock())
+            await handle_internal_mcp_rpc(request)
 
         assert excinfo.value.status_code == 403
+
+    async def test_handle_internal_mcp_rpc_rolls_back_on_dispatch_error(self):
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._handle_rpc_authenticated", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await handle_internal_mcp_rpc(request)
+
+        mock_db.rollback.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    async def test_handle_internal_mcp_rpc_skips_jsonrpc_model_validation(self):
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": [],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": True,
+                        "scoped_permissions": ["tools.read"],
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        tool = MagicMock()
+        tool.model_dump.return_value = {"name": "tool-1", "description": "desc", "inputSchema": {"type": "object"}}
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main.RPCRequest", side_effect=AssertionError("trusted internal MCP dispatch should skip RPCRequest validation")),
+            patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+        ):
+            result = await handle_internal_mcp_rpc(request)
+
+        assert result["result"]["tools"][0]["name"] == "tool-1"
 
     async def test_handle_rpc_list_tools_with_cursor(self):
         payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
@@ -4259,6 +4326,18 @@ class TestRpcHandling:
             assert result["error"]["code"] == -32003
             assert "Access denied" in result["error"]["message"]
 
+    async def test_handle_rpc_list_roots_short_circuits_permission_admin(self):
+        payload = {"jsonrpc": "2.0", "id": "roots-admin", "method": "list_roots", "params": {}}
+        request = self._make_request(payload)
+
+        with (
+            patch("mcpgateway.main.root_service.list_roots", new=AsyncMock(return_value=[])),
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(side_effect=AssertionError("RBAC lookup should be skipped for admins"))),
+        ):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "admin@example.com", "is_admin": True})
+
+        assert result["result"]["roots"] == []
+
     async def test_handle_rpc_roots_list_requires_admin_permission(self):
         payload = {"jsonrpc": "2.0", "id": "roots-2", "method": "roots/list", "params": {}}
         request = self._make_request(payload)
@@ -4266,6 +4345,16 @@ class TestRpcHandling:
         with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["error"]["code"] == -32003
+
+    async def test_handle_rpc_admin_short_circuit_still_honors_token_scope_cap(self):
+        payload = {"jsonrpc": "2.0", "id": "roots-scope", "method": "roots/list", "params": {}}
+        request = self._make_request(payload)
+        request.state._mcp_internal_auth_context = {"scoped_permissions": ["tools.read"]}
+
+        with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(side_effect=AssertionError("RBAC lookup should not run when token scope already denies"))):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "admin@example.com", "is_admin": True})
+
+        assert result["error"]["code"] == -32003
 
     async def test_handle_rpc_resources_read_missing_uri(self):
         payload = {"jsonrpc": "2.0", "id": "1", "method": "resources/read", "params": {}}

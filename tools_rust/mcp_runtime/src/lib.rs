@@ -212,66 +212,27 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
 }
 
 fn decode_request(body: &[u8]) -> Result<JsonRpcRequest, Response> {
-    let parsed: Value = serde_json::from_slice(body).map_err(|_| {
-        json_response(
-            StatusCode::BAD_REQUEST,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32700,
-                    "message": "Parse error",
-                }
-            }),
-        )
-    })?;
+    let parsed: Value = serde_json::from_slice(body).map_err(|_| parse_error_response())?;
 
-    let object = parsed.as_object().ok_or_else(|| {
-        json_response(
-            StatusCode::BAD_REQUEST,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32600,
-                    "message": "Invalid Request",
-                }
-            }),
-        )
-    })?;
+    if parsed.is_array() {
+        return Err(batch_rejected_response());
+    }
 
+    let object = parsed
+        .as_object()
+        .ok_or_else(|| invalid_request_response(Value::Null))?;
+
+    let request_id = object.get("id").cloned().unwrap_or(Value::Null);
     if let Some(version) = object.get("jsonrpc").and_then(Value::as_str) {
         if version != JSONRPC_VERSION {
-            return Err(json_response(
-                StatusCode::BAD_REQUEST,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": object.get("id").cloned().unwrap_or(Value::Null),
-                    "error": {
-                        "code": -32600,
-                        "message": "Invalid Request",
-                    }
-                }),
-            ));
+            return Err(invalid_request_response(request_id));
         }
     }
 
     let method = object
         .get("method")
         .and_then(Value::as_str)
-        .ok_or_else(|| {
-            json_response(
-                StatusCode::BAD_REQUEST,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": object.get("id").cloned().unwrap_or(Value::Null),
-                    "error": {
-                        "code": -32600,
-                        "message": "Invalid Request",
-                    }
-                }),
-            )
-        })?;
+        .ok_or_else(|| invalid_request_response(request_id.clone()))?;
 
     Ok(JsonRpcRequest {
         jsonrpc: Some(JSONRPC_VERSION.to_string()),
@@ -362,6 +323,48 @@ fn validate_initialize_params(
     }
 
     Ok(())
+}
+
+fn parse_error_response() -> Response {
+    json_response(
+        StatusCode::BAD_REQUEST,
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": Value::Null,
+            "error": {
+                "code": -32700,
+                "message": "Parse error",
+            }
+        }),
+    )
+}
+
+fn invalid_request_response(id: Value) -> Response {
+    json_response(
+        StatusCode::BAD_REQUEST,
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": id,
+            "error": {
+                "code": -32600,
+                "message": "Invalid Request",
+            }
+        }),
+    )
+}
+
+fn batch_rejected_response() -> Response {
+    json_response(
+        StatusCode::BAD_REQUEST,
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": Value::Null,
+            "error": {
+                "code": -32600,
+                "message": "Batch requests are not supported",
+            }
+        }),
+    )
 }
 
 async fn forward_to_backend(
