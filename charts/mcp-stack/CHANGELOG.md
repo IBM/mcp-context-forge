@@ -6,6 +6,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+#### **🔐 Production-Hardened Default Values** ([#3550](https://github.com/IBM/mcp-context-forge/pull/3550))
+
+Aligned `values.yaml` with `config.py` secure defaults and tightened for production deployments.
+
+**Security defaults now match config.py:**
+* `ENVIRONMENT`: `development` → `production`
+* `PASSWORD_REQUIRE_UPPERCASE/LOWERCASE/SPECIAL`: `false` → `true`
+* `REQUIRE_STRONG_SECRETS`: `false` → `true`
+* `MCPGATEWAY_GRPC_REFLECTION_ENABLED`: `true` → `false` (exposes service definitions)
+* `OTEL_EXPORTER_OTLP_INSECURE`: `true` → removed (commented out; default false)
+* `OTEL_TRACES_EXPORTER`: `otlp` → `none` (no collector configured by default)
+* `APP_DOMAIN` / `ALLOWED_ORIGINS`: `http://localhost` → `https://gateway.local`
+* `pullPolicy`: `Always` → `IfNotPresent`
+
+**New security flags (all explicit deny):**
+* `ALLOW_UNAUTHENTICATED_ADMIN: "false"`
+* `TRUST_PROXY_AUTH_DANGEROUSLY: "false"`
+* `PUBLIC_REGISTRATION_ENABLED: "false"`
+* `MCPGATEWAY_STDIO_TRANSPORT_ENABLED: "false"`
+* `PLUGINS_CAN_OVERRIDE_RBAC: "false"`
+* `FAILED_LOGIN_MIN_RESPONSE_MS: "250"`
+* `TOKEN_USAGE_LOGGING_ENABLED: "true"` / `TOKEN_LAST_USED_UPDATE_INTERVAL_MINUTES: "5"`
+* `SSRF_BLOCKED_NETWORKS` / `SSRF_BLOCKED_HOSTS` (explicit cloud metadata blocklists)
+
+**Features disabled by default:**
+* `LLMCHAT_ENABLED`: `true` → `false` (enable only when LLM providers configured)
+* Roots: `DEFAULT_ROOTS/ALLOWED_ROOTS: "[]"`, hidden from UI via `MCPGATEWAY_UI_HIDE_SECTIONS`
+* gRPC, OTEL, plugins, session pool sub-settings collapsed behind disabled master switches
+
+**Removed unnecessary settings:**
+* `DB_DRIVER` (chart uses PostgreSQL), `DB_SQLITE_BUSY_TIMEOUT`, `DB_QUERY_LOG_*` (7 dev settings)
+* `MASKED_AUTH_VALUE`, `PLUGINS_CLI_*`, `TEMPLATES_DIR`/`STATIC_DIR`
+* `VALIDATION_*_PATTERN` regex patterns (18 patterns — config.py defaults are secure)
+* LLM settings (`GATEWAY_MODEL`, `GATEWAY_TEMPERATURE`, `LLM_*`)
+
+**Collapsed disabled feature sub-settings** (commented out with "uncomment when enabling"):
+* Plugins (17), SSO providers (~55), SMTP (9), Session Pool (13), Session Affinity (3)
+* Performance Monitoring (7), Security Logging (4), External Log Sinks (5)
+* Ed25519 (4), Header Passthrough (2), File Logging (6), gRPC (4)
+
+> **Migration:** If you previously relied on `ENVIRONMENT=development` behavior (relaxed CORS, insecure cookies), set `ENVIRONMENT: development` in your override values file. If you used LLM Chat, add `LLMCHAT_ENABLED: "true"` and the `LLM_*` / `GATEWAY_*` settings to your overrides.
+
+### Added
+
+* `charts/mcp-stack/values-minikube.yaml` — local development overlay for minikube (relaxed SSRF, dev credentials, single replica, `pullPolicy: Never`)
+
+---
+
 ## [1.0.0-RC2] - 2026-02-28
 
 ### Added
