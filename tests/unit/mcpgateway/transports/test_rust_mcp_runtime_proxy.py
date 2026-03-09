@@ -38,7 +38,11 @@ async def test_post_requests_proxy_to_rust_runtime_and_inject_server_id(monkeypa
             captured["timeout"] = timeout
             return httpx.Response(
                 200,
-                headers={"content-type": "application/json", "mcp-session-id": "session-1"},
+                headers={
+                    "content-type": "application/json",
+                    "mcp-session-id": "session-1",
+                    "x-contextforge-mcp-runtime": "rust",
+                },
                 json={"jsonrpc": "2.0", "id": 1, "result": {"ok": True}},
             )
 
@@ -92,6 +96,7 @@ async def test_post_requests_proxy_to_rust_runtime_and_inject_server_id(monkeypa
     assert events[0]["type"] == "http.response.start"
     assert events[0]["status"] == 200
     assert (b"mcp-session-id", b"session-1") in events[0]["headers"]
+    assert (b"x-contextforge-mcp-runtime", b"rust") in events[0]["headers"]
     assert events[1]["type"] == "http.response.body"
     assert json.loads(events[1]["body"].decode()) == {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
 

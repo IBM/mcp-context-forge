@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{path::Path, sync::Arc, time::Duration};
 use thiserror::Error;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::config::{ListenTarget, RuntimeConfig};
 
@@ -182,7 +182,14 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
         Err(response) => return response,
     };
 
-    debug!("received MCP method {}", request.method);
+    let mode = if request.is_notification() {
+        "notification-forward"
+    } else if request.method == "ping" {
+        "local"
+    } else {
+        "backend-forward"
+    };
+    info!("rust_mcp_runtime method={} mode={}", request.method, mode);
 
     if request.is_notification() {
         return forward_notification_to_backend(&state, headers, body).await;
