@@ -36,7 +36,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Prompt as DbPrompt
-from mcpgateway.schemas import GatewayCreate, GatewayUpdate
+from mcpgateway.schemas import GatewayCreate, GatewayCredentialRevealResponse, GatewayRead, GatewayUpdate
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
@@ -4538,6 +4538,47 @@ class TestGetGateway:
         db.execute.return_value = _make_execute_result(scalar=mock_gateway)
         with pytest.raises(GatewayNotFoundError):
             await gateway_service.get_gateway(db, "gw-1", include_inactive=False)
+
+
+# ---------------------------------------------------------------------------
+# get_gateway_with_credentials tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetGatewayWithCredentials:
+    @pytest.mark.asyncio
+    async def test_success_returns_reveal_response(self, gateway_service, mock_gateway, monkeypatch):
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(scalar=mock_gateway)
+
+        mock_full_read = MagicMock(spec=GatewayRead)
+        mock_full_read.auth_type = "bearer"
+        mock_full_read.auth_token_unmasked = "plaintext-token"
+        mock_full_read.auth_username = None
+        mock_full_read.auth_password_unmasked = None
+        mock_full_read.auth_header_key = None
+        mock_full_read.auth_header_value_unmasked = None
+        mock_full_read.auth_headers_unmasked = None
+
+        monkeypatch.setattr(gateway_service, "_prepare_gateway_for_read", Mock(return_value=MagicMock()))
+        import mcpgateway.services.gateway_service as _gs
+
+        monkeypatch.setattr(_gs.GatewayRead, "model_validate", staticmethod(lambda obj: mock_full_read))
+
+        result = await gateway_service.get_gateway_with_credentials(db, "gw-1")
+
+        assert isinstance(result, GatewayCredentialRevealResponse)
+        assert result.gateway_id == "gw-1"
+        assert result.auth_type == "bearer"
+        assert result.auth_token == "plaintext-token"
+
+    @pytest.mark.asyncio
+    async def test_not_found_raises_error(self, gateway_service):
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(scalar=None)
+
+        with pytest.raises(GatewayNotFoundError):
+            await gateway_service.get_gateway_with_credentials(db, "missing")
 
 
 # ---------------------------------------------------------------------------

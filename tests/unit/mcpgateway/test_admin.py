@@ -3061,7 +3061,7 @@ class TestAdminGatewayRoutes:
 
 
 class TestAdminRevealGatewayCredentials:
-    """Tests for POST /admin/gateways/{gateway_id}/reveal endpoint (issue #3435)."""
+    """Tests for POST /admin/gateways/{gateway_id}/reveal-credentials endpoint (issue #3435)."""
 
     @pytest.mark.asyncio
     @patch("mcpgateway.admin.gateway_service")

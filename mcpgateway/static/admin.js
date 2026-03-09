@@ -20241,15 +20241,15 @@ window.updateAvailableTags = updateAvailableTags;
  * @param {HTMLElement} button - Button triggering the toggle
  *
  * SECURITY NOTE: Stored secrets are retrieved on demand via the credential reveal
- * endpoint. The "Show" button calls POST /admin/gateways/{id}/reveal for stored
+ * endpoint. The "Show" button calls POST /admin/gateways/{id}/reveal-credentials for stored
  * credentials, which is audit-logged on every use.
  */
 
 /**
  * Populate data-real-value on credential input fields from a reveal response.
- * @param {Object} creds - Response from POST /admin/gateways/{id}/reveal
+ * @param {Object} creds - Response from POST /admin/gateways/{id}/reveal-credentials
  */
-function _populateRevealedCredentials(creds) {
+function populateRevealedCredentials(creds) {
     const tokenField = document.querySelector(
         "#auth-bearer-fields-gw-edit input[name='auth_token']",
     );
@@ -20294,14 +20294,14 @@ async function toggleInputMask(inputOrId, button) {
             button.textContent = "Loading…";
             try {
                 const response = await fetchWithTimeout(
-                    `${window.ROOT_PATH}/admin/gateways/${gatewayId}/reveal`,
+                    `${window.ROOT_PATH}/admin/gateways/${gatewayId}/reveal-credentials`,
                     { method: "POST" },
                 );
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}`);
                 }
                 const creds = await response.json();
-                _populateRevealedCredentials(creds);
+                populateRevealedCredentials(creds);
             } catch (err) {
                 button.title = `Could not reveal credentials: ${err.message}`;
                 button.classList.add("cursor-not-allowed", "opacity-50");
@@ -20312,7 +20312,10 @@ async function toggleInputMask(inputOrId, button) {
             button.disabled = false;
             button.textContent = originalText;
             // Re-check — realValue should now be populated
-            if (!input.dataset.realValue || input.dataset.realValue.trim() === "") {
+            if (
+                !input.dataset.realValue ||
+                input.dataset.realValue.trim() === ""
+            ) {
                 button.title = "No credentials stored for this field.";
                 button.classList.add("cursor-not-allowed", "opacity-50");
                 return;

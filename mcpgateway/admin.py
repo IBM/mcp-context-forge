@@ -11331,7 +11331,7 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         raise e
 
 
-@admin_router.post("/gateways/{gateway_id}/reveal", response_model=GatewayCredentialRevealResponse)
+@admin_router.post("/gateways/{gateway_id}/reveal-credentials", response_model=GatewayCredentialRevealResponse)
 @require_permission("gateways.read", allow_admin_bypass=False)
 async def admin_reveal_gateway_credentials(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> GatewayCredentialRevealResponse:
     """Reveal plaintext credentials for a gateway.
