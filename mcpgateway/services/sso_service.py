@@ -1893,9 +1893,9 @@ class SSOService:
 
         role_service = RoleService(self.db)
 
-        # Get current SSO-granted roles (granted_by='sso_system')
+        # Get current SSO-granted roles
         current_roles = await role_service.list_user_roles(user_email, include_expired=False)
-        sso_roles = [r for r in current_roles if r.granted_by == "sso_system"]
+        sso_roles = [r for r in current_roles if getattr(r, "grant_source", None) == "sso"]
 
         # Build set of desired role assignments
         desired_roles = {(r["role_name"], r["scope"], r.get("scope_id")) for r in role_assignments}
@@ -1921,7 +1921,9 @@ class SSOService:
 
                 if not existing or not existing.is_active:
                     # Assign role to user
-                    await role_service.assign_role_to_user(user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id"), granted_by="sso_system")
+                    await role_service.assign_role_to_user(
+                        user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id"), granted_by=user_email, grant_source="sso"
+                    )
                     logger.info(f"Assigned SSO role '{role.name}' to {user_email}")
 
             except Exception as e:

@@ -1,0 +1,130 @@
+# Minikube local development overrides
+# Usage: helm upgrade --install mcp-stack charts/mcp-stack \
+#   -n mcp-private --create-namespace \
+#   -f charts/mcp-stack/values.yaml \
+#   -f charts/mcp-stack/values-minikube.yaml
+
+mcpContextForge:
+  replicaCount: 1
+  hpa:
+    enabled: false
+
+  image:
+    repository: ghcr.io/ibm/mcp-context-forge
+    tag: "1.0.0-RC-2"
+    pullPolicy: Never              # image is pre-loaded via minikube image load
+
+  ingress:
+    className: nginx
+    enabled: true
+    host: gateway.local
+    tls:
+      enabled: false               # no TLS in minikube
+
+  metrics:
+    enabled: false
+    serviceMonitor:
+      enabled: false
+
+  resources:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+  # Minikube-specific config overrides (layered on top of values.yaml)
+  config:
+    GUNICORN_WORKERS: "2"
+    LOG_LEVEL: INFO
+    # Relax SSRF for in-cluster service registration
+    SSRF_ALLOW_LOCALHOST: "true"
+    SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+
+  secret:
+    # Dev credentials (match previous deployment)
+    BASIC_AUTH_USER: admin
+    BASIC_AUTH_PASSWORD: changeme
+    JWT_SECRET_KEY: my-test-key
+    AUTH_ENCRYPTION_SECRET: my-test-salt
+    AUTH_REQUIRED: "true"
+    MCP_REQUIRE_AUTH: "true"
+    PLATFORM_ADMIN_EMAIL: admin@example.com
+    PLATFORM_ADMIN_PASSWORD: changeme
+    # Relax password policy for local dev bootstrap
+    PASSWORD_REQUIRE_UPPERCASE: "false"
+    PASSWORD_REQUIRE_LOWERCASE: "false"
+    PASSWORD_REQUIRE_SPECIAL: "false"
+    REQUIRE_STRONG_SECRETS: "false"
+
+# Disable TLS on fast-time-server ingress for minikube
+mcpFastTimeServer:
+  ingress:
+    tls:
+      enabled: false
+
+# Infrastructure — minikube-sized
+postgres:
+  enabled: true
+  persistence:
+    size: 2Gi
+    storageClassName: standard
+    useReadWriteOncePod: false
+  resources:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  credentials:
+    database: postgresdb
+    user: admin
+    password: test123
+
+redis:
+  enabled: true
+  persistence:
+    size: 1Gi
+    storageClassName: standard
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# Disable everything not needed locally
+pgadmin:
+  enabled: false
+pgbouncer:
+  enabled: false
+redisCommander:
+  enabled: false
+minio:
+  enabled: false
+
+# Enable testing profile (fast-test-server + auto-registration)
+testing:
+  enabled: true
+  registration:
+    image:
+      repository: ghcr.io/ibm/mcp-context-forge
+      tag: "1.0.0-RC-2"
+      pullPolicy: Never
+    jwt:
+      secret: my-test-key
+  fastTime:
+    register:
+      enabled: true
+  fastTestServer:
+    enabled: true
+    image:
+      pullPolicy: Never
+  fastTest:
+    register:
+      enabled: true
+  a2aEchoAgent:
+    enabled: false

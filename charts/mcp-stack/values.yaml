@@ -85,9 +85,8 @@ mcpContextForge:
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: latest                 # pin a specific immutable tag in production
-    #pullPolicy: IfNotPresent
-    pullPolicy: Always          # always pull the latest image; useful for dev/testing
+    tag: latest                 # PRODUCTION: pin a specific immutable tag (e.g. "1.0.0-RC-2")
+    pullPolicy: IfNotPresent    # use Always only for dev/testing with mutable tags
 
   # Service that fronts the gateway
   service:
@@ -98,11 +97,20 @@ mcpContextForge:
   containerPort: 4444           # port the app listens on inside the pod
 
   # Metrics configuration
+  # The /metrics/prometheus endpoint requires JWT authentication.
+  # Create a Secret with a service JWT for Prometheus scraping:
+  #   kubectl create secret generic mcpgateway-metrics-token \
+  #     --from-literal=token="$(python -m mcpgateway.utils.create_jwt_token \
+  #       --username prometheus@monitoring --exp 0 --secret $JWT_SECRET_KEY)"
   metrics:
     enabled: true
     port: 8000
     serviceMonitor:
       enabled: true
+    # metricsToken: Uncomment and configure to enable authenticated scraping.
+    #   secretName: mcpgateway-metrics-token
+    #   key: token
+    metricsToken: {}
     customLabels: {}
 
   # Health & readiness probes
@@ -221,8 +229,6 @@ mcpContextForge:
     PORT: "4444"                     # internal container port
     APP_ROOT_PATH: ""                # e.g. "/gateway" when deploying under sub-path
     CLIENT_MODE: "false"             # gateway-as-client mode (true/false)
-    TEMPLATES_DIR: "/app/mcpgateway/templates" # override templates path (leave as default)
-    STATIC_DIR: "/app/mcpgateway/static"       # override static path (leave as default)
 
     # ─ Connection pooling ─
     # With PgBouncer enabled: smaller pools (PgBouncer handles connection multiplexing)
@@ -231,7 +237,6 @@ mcpContextForge:
     DB_MAX_OVERFLOW: "30"            # extra connections allowed beyond pool size
     DB_POOL_TIMEOUT: "30"            # seconds to wait for a connection
     DB_POOL_RECYCLE: "3600"          # recycle connections after N seconds
-    DB_SQLITE_BUSY_TIMEOUT: "5000"   # SQLite lock wait timeout in ms (1000-60000)
 
     # ─ Cache behaviour ─
     CACHE_TYPE: redis                # Backend cache driver (redis, memory, database)
@@ -321,9 +326,9 @@ mcpContextForge:
     MCPGATEWAY_A2A_MAX_RETRIES: "3"     # maximum retry attempts for A2A calls
     MCPGATEWAY_A2A_METRICS_ENABLED: "true" # enable A2A agent metrics collection
 
-    # ─ Direct Proxy Configuration ─
+    # ─ Direct Proxy (disabled) ─
     MCPGATEWAY_DIRECT_PROXY_ENABLED: "false"  # enable direct_proxy gateway mode
-    MCPGATEWAY_DIRECT_PROXY_TIMEOUT: "30"     # timeout for direct proxy operations (seconds)
+    # MCPGATEWAY_DIRECT_PROXY_TIMEOUT: "30"
 
     # ─ MCP Server Catalog Configuration ─
     MCPGATEWAY_CATALOG_ENABLED: "true"  # enable MCP server catalog feature
@@ -335,36 +340,27 @@ mcpContextForge:
     # ─ UI Configuration ─
     MCPGATEWAY_UI_TOOL_TEST_TIMEOUT: "60000" # tool test timeout in milliseconds for the admin UI
     MCPGATEWAY_UI_EMBEDDED: "false"          # embedded UI mode (hides logout + team selector by default)
-    MCPGATEWAY_UI_HIDE_SECTIONS: ""          # CSV/JSON list of UI sections to hide (e.g. prompts,resources,teams)
+    MCPGATEWAY_UI_HIDE_SECTIONS: '["roots"]'  # hide roots section (feature disabled by default)
     MCPGATEWAY_UI_HIDE_HEADER_ITEMS: ""      # CSV/JSON list of header items to hide (e.g. logout,team_selector)
 
-    # ─ ToolOps Feature ─
+    # ─ Feature Flags (disabled by default for production) ─
     TOOLOPS_ENABLED: "false"            # enable ToolOps feature
+    MCPGATEWAY_STDIO_TRANSPORT_ENABLED: "false" # DANGER: enables stdio process execution; only for trusted environments
+    PLUGINS_CAN_OVERRIDE_RBAC: "false"  # allow plugins to bypass built-in RBAC (audit-only when false)
 
     # ─ LLM Chat Feature ─
-    LLMCHAT_ENABLED: "true"            # enable LLM Chat feature
+    LLMCHAT_ENABLED: "false"            # disabled by default; enable only if LLM providers are configured
 
-    # ─ LLM Settings (Internal API) ─
-    # These settings control the internal LLM API that allows the gateway to
-    # act as a unified LLM provider. Configure external providers in the Admin UI.
-    LLM_API_PREFIX: "/v1"               # API prefix for internal LLM endpoints (OpenAI-compatible)
-    LLM_REQUEST_TIMEOUT: "120"          # request timeout in seconds for LLM API calls
-    LLM_STREAMING_ENABLED: "true"       # enable streaming responses for LLM Chat
-    LLM_HEALTH_CHECK_INTERVAL: "300"    # provider health check interval in seconds (5 minutes)
-    # Gateway provider settings (used when provider=gateway in LLM Chat)
-    GATEWAY_MODEL: "gpt-4o"             # default model for gateway provider
-    # GATEWAY_BASE_URL: ""              # optional, defaults to internal API
-    GATEWAY_TEMPERATURE: "0.7"          # sampling temperature for gateway provider
-
-    # ─ Default Configuration ─
-    DEFAULT_ROOTS: "[]"                 # default roots configuration (JSON array)
+    # ─ Roots (disabled by default) ─
+    DEFAULT_ROOTS: "[]"                 # no default roots (feature disabled)
+    ALLOWED_ROOTS: "[]"                 # no allowed root paths
 
     # ─ Security & CORS ─
-    ENVIRONMENT: development         # deployment environment (development/staging/production)
-    APP_DOMAIN: http://localhost            # domain for production CORS origins
+    ENVIRONMENT: production          # deployment environment (development/staging/production)
+    APP_DOMAIN: https://gateway.local       # domain for CORS origins (CHANGE to your FQDN)
     CORS_ENABLED: "true"             # enable CORS processing in gateway
     CORS_ALLOW_CREDENTIALS: "true"   # allow credentials in CORS requests
-    ALLOWED_ORIGINS: '["http://localhost","http://localhost:4444"]' # JSON list of allowed origins
+    ALLOWED_ORIGINS: '["https://gateway.local"]' # JSON list of allowed CORS origins (CHANGE to match APP_DOMAIN)
     SKIP_SSL_VERIFY: "false"         # skip TLS certificate verification on upstream calls
 
     # ─ Security Headers ─
@@ -385,8 +381,8 @@ mcpContextForge:
     # ─ Query Parameter Authentication (INSECURE) ─
     # WARNING: API keys in URLs may appear in proxy logs, browser history, server logs.
     # See CWE-598. Only use when upstream MCP server (e.g., Tavily) requires it.
-    INSECURE_ALLOW_QUERYPARAM_AUTH: "false"  # enable query param auth (default: disabled)
-    INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS: "[]"  # JSON array of allowed hosts, e.g. '["mcp.tavily.com"]'
+    INSECURE_ALLOW_QUERYPARAM_AUTH: "false"  # query param auth disabled (CWE-598)
+    # INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS: "[]"  # only relevant when enabled
 
     # ─ SSRF Protection (Server-Side Request Forgery) ─
     # Prevents gateway from accessing internal resources or cloud metadata services.
@@ -417,19 +413,21 @@ mcpContextForge:
     # ─ Logging ─
     LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
     LOG_FORMAT: json                 # json or text format
-    LOG_TO_FILE: "false"             # enable file logging
-    LOG_REQUESTS: "false"            # enable request payload logging with sensitive data masking
-    LOG_DETAILED_MAX_BODY_SIZE: "16384" # max request body size to log (bytes)
-    LOG_DETAILED_SKIP_ENDPOINTS: ""  # path prefixes to skip from detailed logging (comma-separated)
-    LOG_DETAILED_SAMPLE_RATE: "1.0"  # sampling rate for detailed logging (0.0-1.0)
-    LOG_RESOLVE_USER_IDENTITY: "false" # enable DB lookup for user identity in logs
-    LOG_FILEMODE: "a+"               # file write mode (append/overwrite)
-    LOG_FILE: ""                     # log filename when file logging enabled
-    LOG_FOLDER: ""                   # directory for log files
-    LOG_ROTATION_ENABLED: "false"    # enable log file rotation
-    LOG_MAX_SIZE_MB: "1"             # max file size before rotation (MB)
-    LOG_BACKUP_COUNT: "5"            # number of backup files to keep
+    LOG_TO_FILE: "false"             # file logging disabled (stdout/stderr in containers)
+    LOG_REQUESTS: "false"            # request payload logging (enable for debugging)
     LOG_BUFFER_SIZE_MB: "1.0"        # size of in-memory log buffer (MB)
+    # Uncomment when enabling LOG_TO_FILE:
+    # LOG_FILE: ""
+    # LOG_FOLDER: ""
+    # LOG_FILEMODE: "a+"
+    # LOG_ROTATION_ENABLED: "false"
+    # LOG_MAX_SIZE_MB: "1"
+    # LOG_BACKUP_COUNT: "5"
+    # Uncomment when enabling LOG_REQUESTS:
+    # LOG_DETAILED_MAX_BODY_SIZE: "16384"
+    # LOG_DETAILED_SKIP_ENDPOINTS: ""
+    # LOG_DETAILED_SAMPLE_RATE: "1.0"
+    # LOG_RESOLVE_USER_IDENTITY: "false"
 
     # ─ Audit Trail ─
     # Logs all CRUD operations on resources for compliance (SOC2, HIPAA, etc.)
@@ -469,28 +467,28 @@ mcpContextForge:
     YIELD_BATCH_SIZE: "1000" # rows per batch when streaming rollup queries (100-10000)
 
     # ─ Transports ─
-    TRANSPORT_TYPE: all              # comma-separated list: http, ws, sse, stdio, all
-    MCPGATEWAY_WS_RELAY_ENABLED: "false" # enable /ws JSON-RPC WebSocket relay (disabled by default)
-    MCPGATEWAY_REVERSE_PROXY_ENABLED: "false" # enable /reverse-proxy/* endpoints (disabled by default)
-    WEBSOCKET_PING_INTERVAL: "30"    # seconds between WS pings
-    SSE_RETRY_TIMEOUT: "5000"        # milliseconds before SSE client retries
+    TRANSPORT_TYPE: all              # valid: http, sse, streamablehttp, all (WS/stdio gated by their own flags)
+    MCPGATEWAY_WS_RELAY_ENABLED: "false" # /ws JSON-RPC relay (disabled)
+    MCPGATEWAY_REVERSE_PROXY_ENABLED: "false" # /reverse-proxy/* endpoints (disabled)
+    SSE_SEND_TIMEOUT: "30.0"         # ASGI send timeout (seconds), 0=disabled
     SSE_KEEPALIVE_ENABLED: "true"    # enable SSE keepalive events
     SSE_KEEPALIVE_INTERVAL: "30"     # seconds between keepalive events
-    SSE_SEND_TIMEOUT: "30.0"         # ASGI send timeout (seconds), 0=disabled
     SSE_RAPID_YIELD_WINDOW_MS: "1000" # time window for rapid yield detection
     SSE_RAPID_YIELD_MAX: "50"        # max yields per window before disconnect (0=disabled)
+    # WEBSOCKET_PING_INTERVAL: "30"  # only relevant when WS relay enabled
+    # SSE_RETRY_TIMEOUT: "5000"      # client-side retry hint (milliseconds)
 
     # ─ Streaming sessions ─
     USE_STATEFUL_SESSIONS: "false"   # true = use event store; false = stateless
     JSON_RESPONSE_ENABLED: "true"    # default to JSON; false for SSE stream
 
-    # ─ Multi-Worker Session Affinity (ADR-038) ─
-    # Routes client requests to same worker for session continuity
-    # Requires: CACHE_TYPE=redis, USE_STATEFUL_SESSIONS=true, Redis accessible
+    # ─ Multi-Worker Session Affinity (disabled) ─
+    # Requires: CACHE_TYPE=redis, USE_STATEFUL_SESSIONS=true
     MCPGATEWAY_SESSION_AFFINITY_ENABLED: "false"
-    MCPGATEWAY_SESSION_AFFINITY_TTL: "300"           # session ownership TTL (seconds)
-    MCPGATEWAY_SESSION_AFFINITY_MAX_SESSIONS: "1"   # max sessions per worker
-    MCPGATEWAY_POOL_RPC_FORWARD_TIMEOUT: "30"       # forwarded request timeout (seconds)
+    # Uncomment when enabling:
+    # MCPGATEWAY_SESSION_AFFINITY_TTL: "300"
+    # MCPGATEWAY_SESSION_AFFINITY_MAX_SESSIONS: "1"
+    # MCPGATEWAY_POOL_RPC_FORWARD_TIMEOUT: "30"
 
     # ─ Gateway/Server Connection Timeout ─
     FEDERATION_TIMEOUT: "120"        # HTTP timeout (seconds) for gateway and MCP server requests
@@ -522,57 +520,22 @@ mcpContextForge:
     AUTO_REFRESH_SERVERS: "false"      # automatic tools/prompts/resources refresh from the mcp servers during gateway health checks
     FILELOCK_NAME: gateway_healthcheck_init.lock # lock file used at start-up
 
-    # ─ MCP Session Pool ─
-    # Session pooling reduces per-request overhead from ~20ms to ~1-2ms (10-20x improvement)
-    # Sessions are isolated per user/tenant via identity hashing
-    # Disabled by default for safety; enable explicitly in production after testing
-    MCP_SESSION_POOL_ENABLED: "false"             # enable session pooling
-    MCP_SESSION_POOL_MAX_PER_KEY: "10"            # max sessions per (URL, identity, transport)
-    MCP_SESSION_POOL_TTL: "300.0"                 # session TTL in seconds
-    MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL: "60.0" # idle time before health check
-    MCP_SESSION_POOL_ACQUIRE_TIMEOUT: "30.0"      # timeout waiting for session slot
-    MCP_SESSION_POOL_CREATE_TIMEOUT: "30.0"       # timeout creating new session
-    MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD: "5" # failures before circuit opens
-    MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET: "60.0"  # seconds before circuit resets
-    MCP_SESSION_POOL_IDLE_EVICTION: "600.0"       # evict idle pool keys after (seconds)
-    MCP_SESSION_POOL_TRANSPORT_TIMEOUT: "30.0"   # timeout for all HTTP operations (connect, read, write)
-    MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC: "false" # force RPC on health checks (off for performance)
-    # Configurable health check chain - ordered list of methods to try (JSON array)
-    # Options: ping, list_tools, list_prompts, list_resources, skip
-    MCP_SESSION_POOL_HEALTH_CHECK_METHODS: '["ping", "skip"]' # try ping, skip if unsupported
-    MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT: "5.0"              # timeout per health check attempt
-    MCP_SESSION_POOL_IDENTITY_HEADERS: '["authorization", "x-tenant-id", "x-user-id", "x-api-key", "cookie"]' # headers used for session pool identity hashing
+    # ─ MCP Session Pool (disabled) ─
+    # Reduces per-request overhead from ~20ms to ~1-2ms. Enable after testing.
+    MCP_SESSION_POOL_ENABLED: "false"
+    # Uncomment when enabling (see config.py for full settings):
+    # MCP_SESSION_POOL_MAX_PER_KEY: "10"
+    # MCP_SESSION_POOL_TTL: "300.0"
+    # MCP_SESSION_POOL_TRANSPORT_TIMEOUT: "30.0"
+    # MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD: "5"
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # CPU Spin Loop Mitigation (Issue #2360, anyio#695)
-    # ═══════════════════════════════════════════════════════════════════════════
-    # These settings mitigate CPU spin loops that occur when SSE/MCP connections
-    # are cancelled and internal tasks don't respond to CancelledError. The spin
-    # happens in anyio's _deliver_cancellation method.
-    #
-    # Documentation: docs/docs/operations/cpu-spin-loop-mitigation.md
-    # GitHub Issue: https://github.com/IBM/mcp-context-forge/issues/2360
-    # Upstream Issue: https://github.com/agronholm/anyio/issues/695
-    #
-    # ─ Layer 1: SSE Connection Protection ─
-    # Detect and close dead SSE connections before they cause spin loops.
-    # Note: SSE_SEND_TIMEOUT, SSE_RAPID_YIELD_* are also in Transports section above
-    # SSE_SEND_TIMEOUT: "30.0"                                # ASGI send() timeout (seconds)
-    # SSE_RAPID_YIELD_WINDOW_MS: "1000"                       # detection window (ms)
-    # SSE_RAPID_YIELD_MAX: "50"                               # max yields before disconnect (0=disabled)
-    #
-    # ─ Layer 2: Cleanup Timeouts ─
-    # Limit how long cleanup waits for stuck tasks. Shorter = faster recovery but
-    # may interrupt legitimate cleanup. Only affects cancelled connections.
-    MCP_SESSION_POOL_CLEANUP_TIMEOUT: "5.0"                   # session __aexit__ timeout (default: 5.0)
-    SSE_TASK_GROUP_CLEANUP_TIMEOUT: "5.0"                     # SSE task group timeout (default: 5.0)
-    #
-    # ─ Layer 3: EXPERIMENTAL - anyio Monkey-Patch ─
-    # Last resort: patches anyio to limit _deliver_cancellation iterations.
-    # Enable only if Layers 1-2 don't fully resolve the issue.
-    # WARNING: May be removed when anyio/MCP SDK fix upstream issue.
-    ANYIO_CANCEL_DELIVERY_PATCH_ENABLED: "false"              # enable workaround (default: false)
-    ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS: "100"               # max iterations before giving up
+    # ─ CPU Spin Loop Mitigation (Issue #2360, anyio#695) ─
+    # See docs/docs/operations/cpu-spin-loop-mitigation.md
+    # Layer 1 (SSE_SEND_TIMEOUT, SSE_RAPID_YIELD_*) is in Transports above.
+    MCP_SESSION_POOL_CLEANUP_TIMEOUT: "5.0"   # Layer 2: session cleanup timeout
+    SSE_TASK_GROUP_CLEANUP_TIMEOUT: "5.0"     # Layer 2: SSE task group timeout
+    ANYIO_CANCEL_DELIVERY_PATCH_ENABLED: "false" # Layer 3 (EXPERIMENTAL): anyio monkey-patch
+    # ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS: "100"  # only relevant when patch enabled
 
     # ─ Development toggles ─
     DEV_MODE: "false"                # enable dev-mode features
@@ -607,98 +570,62 @@ mcpContextForge:
 
       # ContextForge is a private API gateway
       # Public crawling is disabled by default
-    WELL_KNOWN_SECURITY_TXT: ""      # security.txt content (RFC 9116)
-    WELL_KNOWN_SECURITY_TXT_ENABLED: "false" # enable security.txt endpoint (auto-enabled when content provided)
-    WELL_KNOWN_CUSTOM_FILES: "{}"    # additional custom well-known files (JSON)
+    WELL_KNOWN_SECURITY_TXT_ENABLED: "false" # enable security.txt endpoint (RFC 9116)
+    # WELL_KNOWN_SECURITY_TXT: ""    # populate content when enabling
+    # WELL_KNOWN_CUSTOM_FILES: "{}"  # additional custom well-known files (JSON)
     WELL_KNOWN_CACHE_MAX_AGE: "3600" # cache control for well-known files (seconds)
 
-    # ─ Plugin Configuration ─
-    PLUGINS_ENABLED: "false"         # enable the plugin framework
-    # PLUGINS_CONFIG_FILE: "plugins/config.yaml" # path to main plugins configuration file (PLUGIN_CONFIG_FILE also accepted)
-    # NOTE: intentionally not set here so that legacy PLUGIN_CONFIG_FILE overrides
-    # are not shadowed by the chart default.  The app falls back to
-    # "plugins/config.yaml" when neither env var is present.
-    PLUGINS_CLIENT_MTLS_CA_BUNDLE: ""        # default CA bundle for external plugins (optional)
-    PLUGINS_CLIENT_MTLS_CERTFILE: ""         # gateway client certificate for plugin mTLS
-    PLUGINS_CLIENT_MTLS_KEYFILE: ""          # gateway client key for plugin mTLS (optional)
-    PLUGINS_CLIENT_MTLS_KEYFILE_PASSWORD: "" # password for the plugin client key (optional)
-    PLUGINS_CLIENT_MTLS_VERIFY: "true"       # verify remote plugin certificates
-    PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME: "true" # enforce hostname verification when verifying certs
-    PLUGINS_SERVER_SSL_ENABLED: "false"      # enable TLS when exposing plugins over HTTP
-    PLUGINS_SERVER_SSL_KEYFILE: ""           # plugin server private key
-    PLUGINS_SERVER_SSL_CERTFILE: ""          # plugin server certificate
-    PLUGINS_SERVER_SSL_CA_CERTS: ""          # CA bundle for client cert verification
-    PLUGINS_SERVER_SSL_CERT_REQS: "2"        # client cert requirement (0=NONE,1=OPTIONAL,2=REQUIRED)
-    PLUGINS_SERVER_SSL_KEYFILE_PASSWORD: ""  # password for plugin server key (optional)
-    PLUGINS_CLI_COMPLETION: "false"  # enable auto-completion for plugins CLI
-    PLUGINS_CLI_MARKUP_MODE: "rich"  # set markup mode for plugins CLI (rich, markdown, or disabled)
-    PLUGINS_PLUGIN_TIMEOUT: "30"               # plugin execution timeout (seconds)
-    PLUGINS_LOG_LEVEL: "INFO"                  # plugin framework log level
-    PLUGINS_SKIP_SSL_VERIFY: "false"           # skip TLS verification for plugin HTTP requests
-    PLUGINS_HTTPX_CONNECT_TIMEOUT: "5.0"       # plugin HTTP client TCP connect timeout (seconds)
-    PLUGINS_HTTPX_READ_TIMEOUT: "120.0"        # plugin HTTP client read timeout (seconds)
-    PLUGINS_HTTPX_WRITE_TIMEOUT: "30.0"        # plugin HTTP client write timeout (seconds)
-    PLUGINS_HTTPX_POOL_TIMEOUT: "10.0"         # plugin HTTP client pool timeout (seconds)
-    PLUGINS_HTTPX_MAX_CONNECTIONS: "200"        # plugin HTTP client max connections
-    PLUGINS_HTTPX_MAX_KEEPALIVE_CONNECTIONS: "100" # plugin HTTP client max keepalive connections
-    PLUGINS_HTTPX_KEEPALIVE_EXPIRY: "30.0"     # plugin HTTP client keepalive expiry (seconds)
+    # ─ Plugin Configuration (disabled) ─
+    PLUGINS_ENABLED: "true"          # enable the plugin framework
+    # Uncomment when enabling plugins:
+    PLUGINS_PLUGIN_TIMEOUT: "30"
+    PLUGINS_LOG_LEVEL: "INFO"
+    # PLUGINS_SKIP_SSL_VERIFY: "false"
+    # See config.py for full PLUGINS_CLIENT_MTLS_*, PLUGINS_SERVER_SSL_*, PLUGINS_HTTPX_* settings
 
     # ─ OpenTelemetry Observability ─
+    # Disabled by default. To enable, set OTEL_ENABLE_OBSERVABILITY=true,
+    # configure an endpoint in the secret section, and set OTEL_TRACES_EXPORTER.
     OTEL_ENABLE_OBSERVABILITY: "false" # master switch for observability
-    OTEL_TRACES_EXPORTER: "otlp"     # traces exporter: otlp, jaeger, zipkin, console, none
-    OTEL_EXPORTER_OTLP_PROTOCOL: "grpc" # OTLP protocol: grpc or http
-    OTEL_EXPORTER_OTLP_INSECURE: "true" # use insecure connection for OTLP
+    OTEL_TRACES_EXPORTER: "none"      # no exporter configured; set to otlp/jaeger/zipkin when enabling
     OTEL_SERVICE_NAME: "mcp-gateway"  # service name for traces
-    OTEL_BSP_MAX_QUEUE_SIZE: "2048"   # max queue size for batch span processor
-    OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "512" # max export batch size
-    OTEL_BSP_SCHEDULE_DELAY: "5000"   # schedule delay in milliseconds
+    # Uncomment when enabling OTEL:
+    # OTEL_EXPORTER_OTLP_PROTOCOL: "grpc"
+    # OTEL_EXPORTER_OTLP_INSECURE: "false"
+    # OTEL_BSP_MAX_QUEUE_SIZE: "2048"
+    # OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "512"
+    # OTEL_BSP_SCHEDULE_DELAY: "5000"
 
     # ─ Internal Observability & Tracing ─
     OBSERVABILITY_ENABLED: "false"               # enable internal observability tracing and metrics
-    OBSERVABILITY_TRACE_HTTP_REQUESTS: "true"    # automatically trace HTTP requests
-    OBSERVABILITY_TRACE_RETENTION_DAYS: "7"      # number of days to retain trace data
-    OBSERVABILITY_MAX_TRACES: "100000"           # maximum number of traces to retain
-    OBSERVABILITY_SAMPLE_RATE: "1.0"             # trace sampling rate (0.0-1.0, 1.0 = trace everything)
-    OBSERVABILITY_INCLUDE_PATHS: '["^/rpc/?$", "^/sse$", "^/message$", "^/mcp(?:/|$)", "^/servers/[^/]+/mcp/?$", "^/servers/[^/]+/sse$", "^/servers/[^/]+/message$", "^/a2a(?:/|$)"]' # paths to include for tracing
-    OBSERVABILITY_EXCLUDE_PATHS: '["/health", "/healthz", "/ready", "/metrics", "/static/.*"]' # paths to exclude from tracing after include patterns
-    OBSERVABILITY_METRICS_ENABLED: "true"        # enable metrics collection
-    OBSERVABILITY_EVENTS_ENABLED: "true"         # enable event logging within spans
+    # Uncomment when enabling observability:
+    # OBSERVABILITY_TRACE_HTTP_REQUESTS: "true"
+    # OBSERVABILITY_TRACE_RETENTION_DAYS: "7"
+    # OBSERVABILITY_MAX_TRACES: "100000"
+    # OBSERVABILITY_SAMPLE_RATE: "1.0"
+    # OBSERVABILITY_INCLUDE_PATHS: '["^/rpc/?$", "^/sse$", "^/message$", "^/mcp(?:/|$)", "^/servers/[^/]+/mcp/?$", "^/servers/[^/]+/sse$", "^/servers/[^/]+/message$", "^/a2a(?:/|$)"]'
+    # OBSERVABILITY_EXCLUDE_PATHS: '["/health", "/healthz", "/ready", "/metrics", "/static/.*"]'
+    # OBSERVABILITY_METRICS_ENABLED: "true"
+    # OBSERVABILITY_EVENTS_ENABLED: "true"
 
     # ─ Prometheus Metrics ─
     ENABLE_METRICS: "true"                       # enable Prometheus metrics instrumentation
-    METRICS_EXCLUDED_HANDLERS: ""                # regex patterns for paths to exclude from metrics (comma-separated)
     METRICS_NAMESPACE: "default"                 # Prometheus metrics namespace (prefix for all metric names)
-    METRICS_SUBSYSTEM: ""                        # Prometheus metrics subsystem (secondary prefix)
-    METRICS_CUSTOM_LABELS: ""                    # static custom labels for app_info gauge (key=value,key2=value2)
+    # METRICS_EXCLUDED_HANDLERS: ""
+    # METRICS_SUBSYSTEM: ""
+    # METRICS_CUSTOM_LABELS: ""
 
-    # ─ Header Passthrough (Security Warning) ─
-    ENABLE_HEADER_PASSTHROUGH: "false" # enable HTTP header passthrough (security implications)
-    ENABLE_OVERWRITE_BASE_HEADERS: "false" # enable overwriting of base headers (advanced usage)
-    DEFAULT_PASSTHROUGH_HEADERS: '["X-Tenant-Id", "X-Trace-Id"]' # default headers to pass through (JSON array)
-    PASSTHROUGH_HEADERS_SOURCE: "db" # source priority: db (default), env (K8s-friendly), merge (both)
+    # ─ Header Passthrough (disabled by default — security implications) ─
+    ENABLE_HEADER_PASSTHROUGH: "false" # enable HTTP header passthrough
+    ENABLE_OVERWRITE_BASE_HEADERS: "false" # enable overwriting of base headers
+    # Uncomment when enabling header passthrough:
+    # DEFAULT_PASSTHROUGH_HEADERS: '["X-Tenant-Id", "X-Trace-Id"]'
+    # PASSTHROUGH_HEADERS_SOURCE: "db"
     GLOBAL_CONFIG_CACHE_TTL: "60" # in-memory cache TTL for GlobalConfig (seconds, 5-3600)
 
     # ─ Advanced Validation Configuration ─
-    # These are advanced security validation settings with sensible defaults.
-    # Most users won't need to change these values.
-    VALIDATION_ALLOWED_URL_SCHEMES: '["http://", "https://", "ws://", "wss://"]' # allowed URL schemes (JSON array)
-    VALIDATION_ALLOWED_MIME_TYPES: '["text/plain", "text/html", "text/css", "text/markdown", "text/javascript", "application/json", "application/xml", "application/pdf", "image/png", "image/jpeg", "image/gif", "image/svg+xml", "application/octet-stream"]' # allowed MIME types (JSON array)
-    VALIDATION_DANGEROUS_HTML_PATTERN: '<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>' # pattern to detect dangerous HTML tags
-    VALIDATION_DANGEROUS_JS_PATTERN: '(?i)(?:^|\s|[\"''`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)' # pattern to detect JavaScript injection
-    VALIDATION_NAME_PATTERN: '^[a-zA-Z0-9_.\-\s]+$' # pattern for validating names (allows spaces)
-    VALIDATION_IDENTIFIER_PATTERN: '^[a-zA-Z0-9_\-\.]+$' # pattern for validating IDs (no spaces)
-    VALIDATION_SAFE_URI_PATTERN: '^[a-zA-Z0-9_\-.:/?=&%{}]+$' # pattern for safe URI characters
-    VALIDATION_UNSAFE_URI_PATTERN: '[<>"''\\]' # pattern to detect unsafe URI characters
-    VALIDATION_TOOL_NAME_PATTERN: '^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$' # MCP tool naming pattern per SEP-986
-    VALIDATION_TOOL_METHOD_PATTERN: '^[a-zA-Z][a-zA-Z0-9_\./-]*$' # MCP tool method naming pattern
-    VALIDATION_MAX_NAME_LENGTH: "255" # maximum length for names
-    VALIDATION_MAX_DESCRIPTION_LENGTH: "8192" # maximum length for descriptions (8KB)
-    VALIDATION_MAX_TEMPLATE_LENGTH: "65536" # maximum length for templates (64KB)
-    VALIDATION_MAX_CONTENT_LENGTH: "1048576" # maximum length for content (1MB)
-    VALIDATION_MAX_JSON_DEPTH: "30" # maximum JSON nesting depth
-    VALIDATION_MAX_URL_LENGTH: "2048" # maximum URL length
-    VALIDATION_MAX_RPC_PARAM_SIZE: "262144" # maximum RPC parameter size (256KB)
-    VALIDATION_MAX_METHOD_LENGTH: "128" # maximum method name length
+    # Secure defaults are set in config.py. Override via extraEnv only if needed.
+    # See mcpgateway/config.py for VALIDATION_* pattern and limit defaults.
     VALIDATION_MAX_REQUESTS_PER_MINUTE: "60" # rate limiting: max requests per minute
 
     # ─ Pagination Configuration ─
@@ -721,7 +648,6 @@ mcpContextForge:
     VALIDATION_STRICT: "true" # reject requests with validation failures
     JSON_SCHEMA_VALIDATION_STRICT: "true" # reject tool registrations with invalid JSON schemas
     SANITIZE_OUTPUT: "true" # strip control characters from responses
-    ALLOWED_ROOTS: "[]" # allowed root paths (JSON array)
     MAX_PATH_DEPTH: "10" # maximum allowed path depth
     MAX_PARAM_LENGTH: "10000" # maximum parameter length (characters)
     DANGEROUS_PATTERNS: '["[;&|`$(){}\\[\\]<>]", "\\.\\.[\\\\/]", "[\\x00-\\x1f\\x7f-\\x9f]"]' # dangerous input patterns (JSON array)
@@ -756,29 +682,20 @@ mcpContextForge:
     # Database advanced settings
     DB_POOL_CLASS: "auto" # pool class: auto, null, queue
     DB_POOL_PRE_PING: "auto" # pre-ping setting: auto, true, false
-    DB_DRIVER: "mariadb+mariadbconnector" # SQLAlchemy driver identifier
     DB_PREPARE_THRESHOLD: "5" # psycopg server-side prepare threshold
 
     # Redis parser
     REDIS_PARSER: "auto" # redis parser: auto, hiredis, python
 
-    # DB query logging (advanced)
-    DB_QUERY_LOG_ENABLED: "false" # enable DB query logging
-    DB_QUERY_LOG_FILE: "logs/db-queries.log" # text log file path
-    DB_QUERY_LOG_JSON_FILE: "logs/db-queries.jsonl" # jsonl log file path
-    DB_QUERY_LOG_FORMAT: "both" # text/json/both
-    DB_QUERY_LOG_INCLUDE_PARAMS: "false" # include query params
-    DB_QUERY_LOG_MIN_QUERIES: "1" # minimum queries before logging
-    DB_QUERY_LOG_N1_THRESHOLD: "3" # threshold for N+1 detection
-    DB_QUERY_LOG_DETECT_N1: "true" # enable N+1 detection
+    # DB query logging omitted (dev/debug tooling; enable via extraEnv if needed)
 
-    # LLM Chat session storage
-    LLMCHAT_SESSION_TTL: "300" # active_session key TTL (seconds)
-    LLMCHAT_SESSION_LOCK_TTL: "30" # lock expiry (seconds)
-    LLMCHAT_SESSION_LOCK_RETRIES: "10" # lock retries
-    LLMCHAT_SESSION_LOCK_WAIT: "0.2" # seconds between lock polls
-    LLMCHAT_CHAT_HISTORY_TTL: "3600" # chat history TTL (seconds)
-    LLMCHAT_CHAT_HISTORY_MAX_MESSAGES: "50" # max messages per user
+    # LLM Chat session storage (only relevant when LLMCHAT_ENABLED=true)
+    # LLMCHAT_SESSION_TTL: "300"
+    # LLMCHAT_SESSION_LOCK_TTL: "30"
+    # LLMCHAT_SESSION_LOCK_RETRIES: "10"
+    # LLMCHAT_SESSION_LOCK_WAIT: "0.2"
+    # LLMCHAT_CHAT_HISTORY_TTL: "3600"
+    # LLMCHAT_CHAT_HISTORY_MAX_MESSAGES: "50"
 
     # Elicitation support
     MCPGATEWAY_ELICITATION_ENABLED: "true" # enable elicitation
@@ -788,30 +705,27 @@ mcpContextForge:
     # Tool cancellation
     MCPGATEWAY_TOOL_CANCELLATION_ENABLED: "true" # enable tool cancellation
 
-    # gRPC support (experimental)
+    # gRPC support (experimental — disabled by default)
     MCPGATEWAY_GRPC_ENABLED: "false" # enable gRPC
-    MCPGATEWAY_GRPC_TIMEOUT: "30" # gRPC timeout (seconds)
-    MCPGATEWAY_GRPC_MAX_MESSAGE_SIZE: "4194304" # max message size (bytes)
-    MCPGATEWAY_GRPC_REFLECTION_ENABLED: "true" # enable gRPC reflection
-    MCPGATEWAY_GRPC_TLS_ENABLED: "false" # enable gRPC TLS
+    # Uncomment when enabling gRPC:
+    # MCPGATEWAY_GRPC_TIMEOUT: "30"
+    # MCPGATEWAY_GRPC_MAX_MESSAGE_SIZE: "4194304"
+    # MCPGATEWAY_GRPC_REFLECTION_ENABLED: "false"  # keep false in production (exposes service definitions)
+    # MCPGATEWAY_GRPC_TLS_ENABLED: "false"
 
-    # Performance tracking (internal)
-    PERFORMANCE_TRACKING_ENABLED: "true" # enable performance tracking
-    PERFORMANCE_THRESHOLD_DATABASE_QUERY_MS: "100.0" # DB query threshold (ms)
-    PERFORMANCE_THRESHOLD_RESOURCE_READ_MS: "1000.0" # resource read threshold (ms)
-    PERFORMANCE_THRESHOLD_TOOL_INVOCATION_MS: "2000.0" # tool invocation threshold (ms)
-    PERFORMANCE_THRESHOLD_HTTP_REQUEST_MS: "500.0" # HTTP request threshold (ms)
-    PERFORMANCE_DEGRADATION_MULTIPLIER: "1.5" # alert multiplier vs baseline
+    # Performance tracking (internal thresholds — config.py defaults are fine)
+    PERFORMANCE_TRACKING_ENABLED: "false" # enable performance tracking
 
-    # Performance monitoring (net/host)
-    MCPGATEWAY_PERFORMANCE_TRACKING: "false" # enable gateway performance tracking
-    MCPGATEWAY_PERFORMANCE_COLLECTION_INTERVAL: "10" # collection interval (seconds)
-    MCPGATEWAY_PERFORMANCE_MAX_SNAPSHOTS: "10000" # max snapshots retained
-    MCPGATEWAY_PERFORMANCE_RETENTION_DAYS: "90" # snapshot retention (days)
-    MCPGATEWAY_PERFORMANCE_RETENTION_HOURS: "24" # snapshot retention (hours)
-    MCPGATEWAY_PERFORMANCE_DISTRIBUTED: "false" # distributed mode
-    MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_ENABLED: "true" # track net connections
-    MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_CACHE_TTL: "15" # net conn cache TTL (seconds)
+    # Performance monitoring (net/host — disabled by default)
+    MCPGATEWAY_PERFORMANCE_TRACKING: "false" # enable gateway performance monitoring UI tab
+    # Uncomment when enabling:
+    # MCPGATEWAY_PERFORMANCE_COLLECTION_INTERVAL: "10"
+    # MCPGATEWAY_PERFORMANCE_MAX_SNAPSHOTS: "10000"
+    # MCPGATEWAY_PERFORMANCE_RETENTION_DAYS: "90"
+    # MCPGATEWAY_PERFORMANCE_RETENTION_HOURS: "24"
+    # MCPGATEWAY_PERFORMANCE_DISTRIBUTED: "false"
+    # MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_ENABLED: "true"
+    # MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_CACHE_TTL: "15"
 
     # Metrics aggregation
     METRICS_AGGREGATION_ENABLED: "true" # enable log aggregation
@@ -819,30 +733,33 @@ mcpContextForge:
     METRICS_AGGREGATION_BACKFILL_HOURS: "6" # startup backfill window
     METRICS_AGGREGATION_WINDOW_MINUTES: "5" # aggregation window (minutes)
 
-    # Security logging and thresholds
+    # Security logging (disabled by default — enable for compliance)
     SECURITY_LOGGING_ENABLED: "false" # enable security event logging
-    SECURITY_LOGGING_LEVEL: "failures_only" # all, failures_only, high_severity
-    SECURITY_FAILED_AUTH_THRESHOLD: "5" # failed auth attempts before alert
-    SECURITY_THREAT_SCORE_ALERT: "0.7" # threat score threshold
-    SECURITY_RATE_LIMIT_WINDOW_MINUTES: "5" # rate limit window (minutes)
+    # Uncomment when enabling:
+    # SECURITY_LOGGING_LEVEL: "failures_only"  # all, failures_only, high_severity
+    # SECURITY_FAILED_AUTH_THRESHOLD: "5"
+    # SECURITY_THREAT_SCORE_ALERT: "0.7"
+    # SECURITY_RATE_LIMIT_WINDOW_MINUTES: "5"
 
-    # Structured logging / external sinks
+    # Structured logging
     STRUCTURED_LOGGING_ENABLED: "true" # enable structured logging
-    STRUCTURED_LOGGING_EXTERNAL_ENABLED: "false" # enable external structured log sink
-    STRUCTURED_LOGGING_DATABASE_ENABLED: "false" # persist structured logs to DB
-    SYSLOG_ENABLED: "false" # enable syslog output
-    SYSLOG_HOST: "" # syslog host
-    SYSLOG_PORT: "514" # syslog port
-    ELASTICSEARCH_ENABLED: "false" # enable Elasticsearch logging
-    ELASTICSEARCH_URL: "" # Elasticsearch URL
-    ELASTICSEARCH_INDEX_PREFIX: "mcpgateway-logs" # index prefix
-    WEBHOOK_LOGGING_ENABLED: "false" # enable webhook logging
-    WEBHOOK_LOGGING_URLS: "[]" # webhook URLs (JSON array)
+    STRUCTURED_LOGGING_DATABASE_ENABLED: "false" # persist structured logs to DB (impacts performance)
 
-    # Log search / masking
+    # External log sinks (all disabled by default)
+    STRUCTURED_LOGGING_EXTERNAL_ENABLED: "false"
+    SYSLOG_ENABLED: "false"
+    ELASTICSEARCH_ENABLED: "false"
+    WEBHOOK_LOGGING_ENABLED: "false"
+    # Uncomment and configure when enabling an external sink:
+    # SYSLOG_HOST: ""
+    # SYSLOG_PORT: "514"
+    # ELASTICSEARCH_URL: ""
+    # ELASTICSEARCH_INDEX_PREFIX: "mcpgateway-logs"
+    # WEBHOOK_LOGGING_URLS: "[]"
+
+    # Log search
     LOG_RETENTION_DAYS: "30" # retention in days
     LOG_SEARCH_MAX_RESULTS: "1000" # max results per search
-    MASKED_AUTH_VALUE: "*****" # masked auth value placeholder
 
   ####################################################################
   # SENSITIVE SETTINGS
@@ -866,6 +783,9 @@ mcpContextForge:
     REQUIRE_JTI: "true"                    # require JTI (JWT ID) claim for revocation support
     REQUIRE_USER_IN_DB: "false"            # require all users to exist in database (disables platform admin bootstrap)
     AUTH_ENCRYPTION_SECRET: my-test-salt   # passphrase to derive AES key for secure storage
+    ALLOW_UNAUTHENTICATED_ADMIN: "false"  # DANGER: grants admin to unauthenticated requests when AUTH_REQUIRED=false
+    TRUST_PROXY_AUTH_DANGEROUSLY: "false" # DANGER: trusts proxy identity headers without JWT verification
+    PUBLIC_REGISTRATION_ENABLED: "false"  # disable public self-registration (admin must create accounts)
 
     # ─ Email-Based Authentication ─
     EMAIL_AUTH_ENABLED: "true"             # enable email-based authentication system
@@ -880,10 +800,10 @@ mcpContextForge:
     ARGON2ID_MEMORY_COST: "65536"          # Argon2id memory cost in KiB
     ARGON2ID_PARALLELISM: "1"              # Argon2id parallelism (threads)
     PASSWORD_MIN_LENGTH: "8"               # minimum password length
-    PASSWORD_REQUIRE_UPPERCASE: "false"    # require uppercase letters in passwords
-    PASSWORD_REQUIRE_LOWERCASE: "false"    # require lowercase letters in passwords
+    PASSWORD_REQUIRE_UPPERCASE: "true"     # require uppercase letters in passwords
+    PASSWORD_REQUIRE_LOWERCASE: "true"     # require lowercase letters in passwords
     PASSWORD_REQUIRE_NUMBERS: "false"      # require numbers in passwords
-    PASSWORD_REQUIRE_SPECIAL: "false"      # require special characters in passwords
+    PASSWORD_REQUIRE_SPECIAL: "true"       # require special characters in passwords
     PASSWORD_CHANGE_ENFORCEMENT_ENABLED: "true" # enable password change enforcement checks
     ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: "true" # force admin to change password after bootstrap
     DETECT_DEFAULT_PASSWORD_ON_LOGIN: "true" # detect default passwords on login
@@ -893,6 +813,7 @@ mcpContextForge:
     PASSWORD_MAX_AGE_DAYS: "90"             # maximum password age in days
     MAX_FAILED_LOGIN_ATTEMPTS: "5"         # maximum failed login attempts before lockout
     ACCOUNT_LOCKOUT_DURATION_MINUTES: "30" # account lockout duration in minutes
+    FAILED_LOGIN_MIN_RESPONSE_MS: "250"    # minimum response time for failed logins (timing side-channel mitigation)
     ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED: "true" # send lockout notification emails
     PASSWORD_RESET_ENABLED: "true"          # master switch for forgot/reset password flow
     PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: "60" # reset token validity window in minutes
@@ -900,24 +821,33 @@ mcpContextForge:
     PASSWORD_RESET_RATE_WINDOW_MINUTES: "15" # reset request rate-limit window in minutes
     PASSWORD_RESET_INVALIDATE_SESSIONS: "true" # invalidate active sessions after reset
     PASSWORD_RESET_MIN_RESPONSE_MS: "250"   # minimum forgot-password response duration
-    SMTP_ENABLED: "false"                   # enable SMTP delivery for auth notifications
-    SMTP_HOST: ""                           # SMTP host (required when SMTP_ENABLED=true)
-    SMTP_PORT: "587"                        # SMTP port
-    SMTP_USER: ""                           # SMTP username
-    SMTP_PASSWORD: ""                       # SMTP password
-    SMTP_FROM_EMAIL: ""                     # sender email for auth notifications
-    SMTP_FROM_NAME: "ContextForge"           # sender display name for auth notifications
-    SMTP_USE_TLS: "true"                    # use STARTTLS for SMTP
-    SMTP_USE_SSL: "false"                   # use implicit SSL/TLS (typically port 465)
-    SMTP_TIMEOUT_SECONDS: "15"              # SMTP timeout in seconds
+    SMTP_ENABLED: "false"                   # SMTP disabled (no email notifications)
+    # Uncomment when enabling SMTP:
+    # SMTP_HOST: ""
+    # SMTP_PORT: "587"
+    # SMTP_USER: ""
+    # SMTP_PASSWORD: ""
+    # SMTP_FROM_EMAIL: ""
+    # SMTP_FROM_NAME: "ContextForge"
+    # SMTP_USE_TLS: "true"
+    # SMTP_USE_SSL: "false"
+    # SMTP_TIMEOUT_SECONDS: "15"
     MIN_PASSWORD_LENGTH: "12"              # minimum password length for validation
     MIN_SECRET_LENGTH: "32"                # minimum secret key length for validation
-    REQUIRE_STRONG_SECRETS: "false"        # enforce strong secrets (fail startup on weak secrets)
+    REQUIRE_STRONG_SECRETS: "true"         # enforce strong secrets (reject weak JWT/encryption keys)
 
     # ─ MCP Client Authentication ─
     MCP_CLIENT_AUTH_ENABLED: "true"        # enable JWT authentication for MCP client operations
     TRUST_PROXY_AUTH: "false"              # trust proxy authentication headers
     PROXY_USER_HEADER: X-Authenticated-User # header containing authenticated username from proxy
+
+    # ─ API Token Tracking ─
+    TOKEN_USAGE_LOGGING_ENABLED: "true"    # track API token usage (compliance/SOC2)
+    TOKEN_LAST_USED_UPDATE_INTERVAL_MINUTES: "5" # rate-limit last_used DB writes (minutes)
+
+    # ─ SSRF Blocklists (always enforced regardless of SSRF_ALLOW_* toggles) ─
+    SSRF_BLOCKED_NETWORKS: '["169.254.169.254/32","169.254.169.123/32","fd00::1/128","169.254.0.0/16","fe80::/10"]'
+    SSRF_BLOCKED_HOSTS: '["metadata.google.internal","metadata.internal"]'
 
     # ─ OAuth Configuration ─
     OAUTH_REQUEST_TIMEOUT: "30"            # OAuth request timeout in seconds
@@ -944,77 +874,24 @@ mcpContextForge:
     EMBED_ENVIRONMENT_IN_TOKENS: "false"   # embed env claim in gateway-issued JWTs
     VALIDATE_TOKEN_ENVIRONMENT: "false"    # reject tokens with mismatched env claim
 
-    # ─ SSO (Single Sign-On) Configuration ─
-    SSO_ENABLED: "false"                   # master switch for Single Sign-On authentication
-    SSO_AUTO_CREATE_USERS: "true"          # automatically create users from SSO providers
-    SSO_TRUSTED_DOMAINS: "[]"              # trusted email domains (JSON array)
-    SSO_PRESERVE_ADMIN_AUTH: "true"        # preserve local admin authentication when SSO enabled
-    SSO_REQUIRE_ADMIN_APPROVAL: "false"    # require admin approval for new SSO registrations
-    SSO_AUTO_ADMIN_DOMAINS: "[]"           # email domains that automatically get admin privileges
-    SSO_ISSUERS: "[]"                      # optional JSON array of issuer URLs for SSO providers
-
-    # ─ GitHub OAuth ─
-    SSO_GITHUB_ENABLED: "false"            # enable GitHub OAuth authentication
-    SSO_GITHUB_CLIENT_ID: ""               # GitHub OAuth client ID
-    SSO_GITHUB_CLIENT_SECRET: ""           # GitHub OAuth client secret
-    SSO_GITHUB_ADMIN_ORGS: "[]"            # GitHub orgs granting admin privileges (JSON)
-
-    # ─ Google OAuth ─
-    SSO_GOOGLE_ENABLED: "false"            # enable Google OAuth authentication
-    SSO_GOOGLE_CLIENT_ID: ""               # Google OAuth client ID
-    SSO_GOOGLE_CLIENT_SECRET: ""           # Google OAuth client secret
-    SSO_GOOGLE_ADMIN_DOMAINS: "[]"         # Google admin domains (JSON)
-
-    # ─ IBM Security Verify OIDC ─
-    SSO_IBM_VERIFY_ENABLED: "false"        # enable IBM Security Verify OIDC authentication
-    SSO_IBM_VERIFY_CLIENT_ID: ""           # IBM Security Verify client ID
-    SSO_IBM_VERIFY_CLIENT_SECRET: ""       # IBM Security Verify client secret
-    SSO_IBM_VERIFY_ISSUER: ""              # IBM Security Verify OIDC issuer URL
-
-    # ─ Okta OIDC ─
-    SSO_OKTA_ENABLED: "false"              # enable Okta OIDC authentication
-    SSO_OKTA_CLIENT_ID: ""                 # Okta client ID
-    SSO_OKTA_CLIENT_SECRET: ""             # Okta client secret
-    SSO_OKTA_ISSUER: ""                    # Okta issuer URL
-
-    # ─ Keycloak OIDC ─
-    SSO_KEYCLOAK_ENABLED: "false"          # enable Keycloak OIDC authentication
-    SSO_KEYCLOAK_BASE_URL: ""              # Keycloak base URL (e.g., https://keycloak.example.com)
-    SSO_KEYCLOAK_REALM: "master"           # Keycloak realm name
-    SSO_KEYCLOAK_CLIENT_ID: ""             # Keycloak client ID
-    SSO_KEYCLOAK_CLIENT_SECRET: ""         # Keycloak client secret
-    SSO_KEYCLOAK_MAP_REALM_ROLES: "true"   # map Keycloak realm roles to gateway teams
-    SSO_KEYCLOAK_MAP_CLIENT_ROLES: "false" # map Keycloak client roles to gateway RBAC
-    SSO_KEYCLOAK_USERNAME_CLAIM: "preferred_username" # JWT claim for username
-    SSO_KEYCLOAK_EMAIL_CLAIM: "email"      # JWT claim for email
-    SSO_KEYCLOAK_GROUPS_CLAIM: "groups"    # JWT claim for groups/roles
-
-    # ─ Microsoft Entra ID OIDC ─
-    SSO_ENTRA_ENABLED: "false"             # enable Microsoft Entra ID (Azure AD) OIDC authentication
-    SSO_ENTRA_CLIENT_ID: ""                # Microsoft Entra ID client ID
-    SSO_ENTRA_CLIENT_SECRET: ""            # Microsoft Entra ID client secret
-    SSO_ENTRA_TENANT_ID: ""                # Microsoft Entra ID tenant ID
-    SSO_ENTRA_GROUPS_CLAIM: "groups"       # EntraID groups claim (JWT)
-    SSO_ENTRA_ADMIN_GROUPS: "[]"           # groups granting platform_admin role (JSON)
-    SSO_ENTRA_ROLE_MAPPINGS: "{}"          # map groups to roles (JSON)
-    SSO_ENTRA_DEFAULT_ROLE: ""             # default role for unmapped users
-    SSO_ENTRA_SYNC_ROLES_ON_LOGIN: "true"  # sync roles on each login
-    SSO_ENTRA_GRAPH_API_ENABLED: "true"    # call Graph API for groups overage fallback
-    SSO_ENTRA_GRAPH_API_TIMEOUT: "10"      # timeout (seconds) for Graph fallback call
-    SSO_ENTRA_GRAPH_API_MAX_GROUPS: "0"    # cap Graph-fetched groups (0 = no cap)
-
-    # ─ Generic OIDC Provider (Keycloak, Auth0, Authentik, etc.) ─
-    SSO_GENERIC_ENABLED: "false"           # enable generic OIDC provider authentication
-    SSO_GENERIC_PROVIDER_ID: ""            # provider ID (e.g., keycloak, auth0, authentik)
-    SSO_GENERIC_DISPLAY_NAME: ""           # display name shown on login page
-    SSO_GENERIC_CLIENT_ID: ""              # generic OIDC client ID
-    SSO_GENERIC_CLIENT_SECRET: ""          # generic OIDC client secret
-    SSO_GENERIC_AUTHORIZATION_URL: ""      # authorization endpoint URL
-    SSO_GENERIC_TOKEN_URL: ""              # token endpoint URL
-    SSO_GENERIC_USERINFO_URL: ""           # userinfo endpoint URL
-    SSO_GENERIC_ISSUER: ""                 # OIDC issuer URL
-    SSO_GENERIC_JWKS_URI: ""               # OIDC JWKS endpoint URL (auto-discovered if empty)
-    SSO_GENERIC_SCOPE: "openid profile email" # OAuth scopes (space-separated)
+    # ─ SSO (Single Sign-On) — all providers disabled ─
+    SSO_ENABLED: "false"                   # master switch for Single Sign-On
+    # Common SSO settings (uncomment when enabling any provider):
+    # SSO_AUTO_CREATE_USERS: "true"
+    # SSO_TRUSTED_DOMAINS: "[]"
+    # SSO_PRESERVE_ADMIN_AUTH: "true"
+    # SSO_REQUIRE_ADMIN_APPROVAL: "false"
+    # SSO_AUTO_ADMIN_DOMAINS: "[]"
+    # SSO_ISSUERS: "[]"
+    # Individual SSO providers — enable one and populate credentials:
+    SSO_GITHUB_ENABLED: "false"
+    SSO_GOOGLE_ENABLED: "false"
+    SSO_IBM_VERIFY_ENABLED: "false"
+    SSO_OKTA_ENABLED: "false"
+    SSO_KEYCLOAK_ENABLED: "false"
+    SSO_ENTRA_ENABLED: "false"
+    SSO_GENERIC_ENABLED: "false"
+    # See .env.example for full SSO_*_CLIENT_ID, SSO_*_CLIENT_SECRET, etc.
 
     # ─ Default Role Configuration ─
     DEFAULT_ADMIN_ROLE: platform_admin     # global role assigned to admin users
@@ -1024,25 +901,29 @@ mcpContextForge:
 
     # ─ Personal Teams Configuration ─
     AUTO_CREATE_PERSONAL_TEAMS: "true"     # enable automatic personal team creation for new users
-    PERSONAL_TEAM_PREFIX: personal         # personal team naming prefix
+    PERSONAL_TEAM_PREFIX: ""               # personal team naming prefix (e.g. "personal" for email-based slugs)
     MAX_TEAMS_PER_USER: "50"               # maximum number of teams a user can belong to
     MAX_MEMBERS_PER_TEAM: "100"            # maximum number of members per team
     INVITATION_EXPIRY_DAYS: "7"            # number of days before team invitations expire
     REQUIRE_EMAIL_VERIFICATION_FOR_INVITES: "true" # require email verification for team invitations
+    ALLOW_TEAM_CREATION: "true"              # allow users to create organizational teams (admins always can)
+    ALLOW_TEAM_JOIN_REQUESTS: "true"         # allow users to request to join public teams
+    ALLOW_TEAM_INVITATIONS: "true"           # allow team owners to send invitations
 
-    # ─ Ed25519 Certificate Signing ─
+    # ─ Ed25519 Certificate Signing (disabled by default) ─
     ENABLE_ED25519_SIGNING: "false"        # enable Ed25519 signing for certificates
-    ED25519_PRIVATE_KEY: ""                # Ed25519 private key for signing (PEM format)
-    ED25519_PUBLIC_KEY: ""                 # Ed25519 public key (optional, derived if private key set)
-    PREV_ED25519_PRIVATE_KEY: ""           # previous Ed25519 private key for key rotation
-    PREV_ED25519_PUBLIC_KEY: ""            # previous Ed25519 public key (optional)
+    # Uncomment and populate when enabling:
+    # ED25519_PRIVATE_KEY: ""
+    # ED25519_PUBLIC_KEY: ""
+    # PREV_ED25519_PRIVATE_KEY: ""
+    # PREV_ED25519_PUBLIC_KEY: ""
 
-    # ─ OpenTelemetry Endpoints (Optional/Sensitive) ─
-    OTEL_EXPORTER_OTLP_ENDPOINT: ""        # OTLP endpoint (e.g., http://localhost:4317)
-    OTEL_EXPORTER_OTLP_HEADERS: ""         # OTLP headers (comma-separated key=value)
-    OTEL_EXPORTER_JAEGER_ENDPOINT: ""      # Jaeger endpoint
-    OTEL_EXPORTER_ZIPKIN_ENDPOINT: ""      # Zipkin endpoint
-    OTEL_RESOURCE_ATTRIBUTES: ""           # resource attributes (comma-separated key=value)
+    # ─ OpenTelemetry Endpoints (configure when OTEL_ENABLE_OBSERVABILITY=true) ─
+    # OTEL_EXPORTER_OTLP_ENDPOINT: ""       # e.g., http://otel-collector:4317
+    # OTEL_EXPORTER_OTLP_HEADERS: ""        # comma-separated key=value
+    # OTEL_EXPORTER_JAEGER_ENDPOINT: ""
+    # OTEL_EXPORTER_ZIPKIN_ENDPOINT: ""
+    # OTEL_RESOURCE_ATTRIBUTES: ""
 
     # ─ Documentation & UI Settings (Sensitive) ─
     DOCS_ALLOW_BASIC_AUTH: "false"         # allow basic auth for docs endpoints
@@ -1098,8 +979,7 @@ migration:
   image:
     repository: ghcr.io/ibm/mcp-context-forge
     tag: latest                             # Should match mcpContextForge.image.tag
-    #pullPolicy: IfNotPresent
-    pullPolicy: Always                      # always pull the latest image; useful for dev/testing
+    pullPolicy: IfNotPresent                # use Always only for dev/testing with mutable tags
 
   # Resource limits for the migration job
   resources:

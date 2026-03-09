@@ -70,12 +70,13 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
 )
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
-from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
+from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -136,10 +137,11 @@ def _get_tool_lookup_cache():
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-# Initialize performance tracker, structured logger, and audit trail for tool operations
+# Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
 perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
 audit_trail = get_audit_trail_service()
+metrics_buffer = get_metrics_buffer_service()
 
 _ENCRYPTED_TOOL_HEADER_VALUE_KEY = "_mcpgateway_encrypted_header_value_v1"
 _TOOL_HEADER_DATA_KEY = "data"
@@ -487,6 +489,8 @@ class ToolNameConflictError(ToolError):
         self.tool_id = tool_id
         if visibility == "team":
             vis_label = "Team-level"
+        elif visibility == "private":
+            vis_label = "Private"
         else:
             vis_label = "Public"
         message = f"{vis_label} Tool already exists with name: {name}"
@@ -870,13 +874,23 @@ class ToolService(BaseService):
                     "token": settings.masked_auth_value if decoded_auth_value["Authorization"] else None,
                 }
             elif tool.auth_type == "authheaders":
-                # Get first key
+                # Support multi-header format (list of {key, value} dicts)
                 if decoded_auth_value:
+                    # Convert decoded dict to list format for frontend
+                    auth_headers = [
+                        {
+                            "key": key,
+                            "value": settings.masked_auth_value if value else None,
+                        }
+                        for key, value in decoded_auth_value.items()
+                    ]
+                    # Also include legacy single-header fields for backward compatibility
                     first_key = next(iter(decoded_auth_value))
                     tool_dict["auth"] = {
                         "auth_type": "authheaders",
-                        "auth_header_key": first_key,
-                        "auth_header_value": settings.masked_auth_value if decoded_auth_value[first_key] else None,
+                        "authHeaders": auth_headers,  # Multi-header format (masked)
+                        "auth_header_key": first_key,  # Legacy format
+                        "auth_header_value": settings.masked_auth_value if decoded_auth_value[first_key] else None,  # Legacy format
                     }
                 else:
                     tool_dict["auth"] = None
@@ -2790,8 +2804,7 @@ class ToolService(BaseService):
             >>> pass  # doctest: +SKIP
         """
         # pylint: disable=comparison-with-callable
-        logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}")
-
+        logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}, server_id={server_id}")
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Check for X-Context-Forge-Gateway-Id header for direct_proxy mode (no DB lookup)
         # ═══════════════════════════════════════════════════════════════════════════
@@ -2822,7 +2835,8 @@ class ToolService(BaseService):
                     "name": gateway.name,
                     "url": gateway.url,
                     "auth_type": gateway.auth_type,
-                    "auth_value": gateway.auth_value,
+                    # DbGateway.auth_value is JSON (dict); downstream code expects an encoded str.
+                    "auth_value": encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
                     "auth_query_params": gateway.auth_query_params,
                     "oauth_config": gateway.oauth_config,
                     "ca_certificate": gateway.ca_certificate,
@@ -3009,7 +3023,9 @@ class ToolService(BaseService):
         gateway_oauth_config = gateway_payload.get("oauth_config") if has_gateway and isinstance(gateway_payload.get("oauth_config"), dict) else None
         if has_gateway and gateway is not None:
             runtime_gateway_auth_value = getattr(gateway, "auth_value", None)
-            if isinstance(runtime_gateway_auth_value, str):
+            if isinstance(runtime_gateway_auth_value, dict):
+                gateway_auth_value = encode_auth(runtime_gateway_auth_value)
+            elif isinstance(runtime_gateway_auth_value, str):
                 gateway_auth_value = runtime_gateway_auth_value
             runtime_gateway_query_params = getattr(gateway, "auth_query_params", None)
             if isinstance(runtime_gateway_query_params, dict):
@@ -3040,7 +3056,9 @@ class ToolService(BaseService):
                             tool_oauth_config = hydrated_tool_oauth_config
                         if has_gateway and tool_auth_row.gateway:
                             hydrated_gateway_auth_value = getattr(tool_auth_row.gateway, "auth_value", None)
-                            if isinstance(hydrated_gateway_auth_value, str):
+                            if isinstance(hydrated_gateway_auth_value, dict):
+                                gateway_auth_value = encode_auth(hydrated_gateway_auth_value)
+                            elif isinstance(hydrated_gateway_auth_value, str):
                                 gateway_auth_value = hydrated_gateway_auth_value
                             hydrated_gateway_query_params = getattr(tool_auth_row.gateway, "auth_query_params", None)
                             if isinstance(hydrated_gateway_query_params, dict):
@@ -3145,8 +3163,8 @@ class ToolService(BaseService):
             # Create new context (fallback when middleware didn't run)
             # Use correlation ID from context if available, otherwise generate new one
             request_id = get_correlation_id() or uuid.uuid4().hex
-            server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else "unknown"
-            global_context = GlobalContext(request_id=request_id, server_id=server_id, tenant_id=None, user=app_user_email)
+            context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else "unknown"
+            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email)
 
         start_time = time.monotonic()
         success = False
@@ -4065,10 +4083,6 @@ class ToolService(BaseService):
                 # Only record metrics if tool_id is valid (skip for direct_proxy mode)
                 if tool_id:
                     try:
-                        # First-Party
-                        from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
-
-                        metrics_buffer = get_metrics_buffer_service()
                         metrics_buffer.record_tool_metric(
                             tool_id=tool_id,
                             start_time=start_time,
@@ -4077,6 +4091,21 @@ class ToolService(BaseService):
                         )
                     except Exception as metric_error:
                         logger.warning(f"Failed to record tool metric: {metric_error}")
+
+                # Record server metrics ONLY when invoked through a specific virtual server
+                # When server_id is provided, it means the tool was called via a virtual server endpoint
+                # Direct tool calls via /rpc should NOT populate server metrics
+                if tool_id and server_id:
+                    try:
+                        # Record server metric only for the specific virtual server being accessed
+                        metrics_buffer.record_server_metric(
+                            server_id=server_id,
+                            start_time=start_time,
+                            success=success,
+                            error_message=error_message,
+                        )
+                    except Exception as metric_error:
+                        logger.warning(f"Failed to record server metric: {metric_error}")
 
                 # Log structured message with performance tracking (using local variables)
                 if success:
@@ -4104,6 +4133,59 @@ class ToolService(BaseService):
                 # Track performance with threshold checking
                 with perf_tracker.track_operation("tool_invocation", name):
                     pass  # Duration already captured above
+
+    @staticmethod
+    def _check_tool_name_conflict(db: Session, custom_name: str, visibility: str, tool_id: str, team_id: Optional[str] = None, owner_email: Optional[str] = None) -> None:
+        """Raise ToolNameConflictError if another tool with the same name exists in the target visibility scope.
+
+        Args:
+            db: The SQLAlchemy database session.
+            custom_name: The custom name to check for conflicts.
+            visibility: The target visibility scope (``public``, ``team``, or ``private``).
+            tool_id: The ID of the tool being updated (excluded from the conflict search).
+            team_id: Required when *visibility* is ``team``; scopes the uniqueness check to this team.
+            owner_email: Required when *visibility* is ``private``; scopes the uniqueness check to this owner.
+
+        Raises:
+            ToolNameConflictError: If a conflicting tool already exists in the target scope.
+        """
+        if visibility == "public":
+            existing_tool = get_for_update(
+                db,
+                DbTool,
+                where=and_(
+                    DbTool.custom_name == custom_name,
+                    DbTool.visibility == "public",
+                    DbTool.id != tool_id,
+                ),
+            )
+        elif visibility == "team" and team_id:
+            existing_tool = get_for_update(
+                db,
+                DbTool,
+                where=and_(
+                    DbTool.custom_name == custom_name,
+                    DbTool.visibility == "team",
+                    DbTool.team_id == team_id,
+                    DbTool.id != tool_id,
+                ),
+            )
+        elif visibility == "private" and owner_email:
+            existing_tool = get_for_update(
+                db,
+                DbTool,
+                where=and_(
+                    DbTool.custom_name == custom_name,
+                    DbTool.visibility == "private",
+                    DbTool.owner_email == owner_email,
+                    DbTool.id != tool_id,
+                ),
+            )
+        else:
+            logger.warning("Skipping conflict check for tool %s: visibility=%r requires %s but none provided", tool_id, visibility, "team_id" if visibility == "team" else "owner_email")
+            return
+        if existing_tool:
+            raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
 
     async def update_tool(
         self,
@@ -4175,39 +4257,28 @@ class ToolService(BaseService):
                 if not await permission_service.check_resource_ownership(user_email, tool):
                     raise PermissionError("Only the owner can update this tool")
 
+            # Track whether a name change occurred (before tool.name is mutated)
+            name_is_changing = bool(tool_update.name and tool_update.name != tool.name)
+
             # Check for name change and ensure uniqueness
-            if tool_update.name and tool_update.name != tool.name:
-                # Check for existing tool with the same name and visibility
-                if tool_update.visibility.lower() == "public":
-                    # Check for existing public tool with the same name (row-locked)
-                    existing_tool = get_for_update(
-                        db,
-                        DbTool,
-                        where=and_(
-                            DbTool.custom_name == tool_update.custom_name,
-                            DbTool.visibility == "public",
-                            DbTool.id != tool.id,
-                        ),
-                    )
-                    if existing_tool:
-                        raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
-                elif tool_update.visibility.lower() == "team" and tool_update.team_id:
-                    # Check for existing team tool with the same name
-                    existing_tool = get_for_update(
-                        db,
-                        DbTool,
-                        where=and_(
-                            DbTool.custom_name == tool_update.custom_name,
-                            DbTool.visibility == "team",
-                            DbTool.team_id == tool_update.team_id,
-                            DbTool.id != tool.id,
-                        ),
-                    )
-                    if existing_tool:
-                        raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
+            if name_is_changing:
+                # Always derive ownership fields from the DB record — never trust client-provided team_id/owner_email
+                tool_visibility_ref = tool.visibility if tool_update.visibility is None else tool_update.visibility.lower()
+                if tool_update.custom_name is not None:
+                    custom_name_ref = tool_update.custom_name
+                elif tool.name == tool.custom_name:
+                    custom_name_ref = tool_update.name  # custom_name will track the rename
+                else:
+                    custom_name_ref = tool.custom_name  # custom_name stays unchanged
+                self._check_tool_name_conflict(db, custom_name_ref, tool_visibility_ref, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
                 if tool_update.custom_name is None and tool.name == tool.custom_name:
                     tool.custom_name = tool_update.name
                 tool.name = tool_update.name
+
+            # Check for conflicts when visibility changes without a name change
+            if tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility and not name_is_changing:
+                new_visibility = tool_update.visibility.lower()
+                self._check_tool_name_conflict(db, tool.custom_name, new_visibility, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
 
             if tool_update.custom_name is not None:
                 tool.custom_name = tool_update.custom_name
@@ -4239,8 +4310,6 @@ class ToolService(BaseService):
                     tool.auth_type = tool_update.auth.auth_type
                 if tool_update.auth.auth_value is not None:
                     tool.auth_value = tool_update.auth.auth_value
-            else:
-                tool.auth_type = None
 
             # Update tags if provided
             if tool_update.tags is not None:
@@ -4585,7 +4654,7 @@ class ToolService(BaseService):
     #         self._event_subscribers.remove(queue)
 
     # --- Metrics ---
-    async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
+    async def aggregate_metrics(self, db: Session) -> ToolMetrics:
         """
         Aggregate metrics for all tool invocations across all tools.
 
@@ -4597,7 +4666,7 @@ class ToolService(BaseService):
             db: Database session
 
         Returns:
-            Aggregated metrics computed from raw ToolMetric + ToolMetricsHourly.
+            ToolMetrics: Aggregated metrics computed from raw ToolMetric + ToolMetricsHourly.
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
@@ -4613,18 +4682,27 @@ class ToolService(BaseService):
         if is_cache_enabled():
             cached = metrics_cache.get("tools")
             if cached is not None:
-                return cached
+                return ToolMetrics(**cached)
 
         # Use combined raw + rollup query for full historical coverage
         # First-Party
         from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
         result = aggregate_metrics_combined(db, "tool")
-        metrics = result.to_dict()
+        metrics = ToolMetrics(
+            total_executions=result.total_executions,
+            successful_executions=result.successful_executions,
+            failed_executions=result.failed_executions,
+            failure_rate=result.failure_rate,
+            min_response_time=result.min_response_time,
+            max_response_time=result.max_response_time,
+            avg_response_time=result.avg_response_time,
+            last_execution_time=result.last_execution_time,
+        )
 
-        # Cache the result (if enabled)
+        # Cache the result as dict for serialization compatibility (if enabled)
         if is_cache_enabled():
-            metrics_cache.set("tools", metrics)
+            metrics_cache.set("tools", metrics.model_dump())
 
         return metrics
 
