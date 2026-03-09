@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/scripts/validate_env.py: 75%</title>
+    <title>Coverage for mcpgateway/scripts/validate_env.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;scripts&#8201;/&#8201;validate_env.py</b>:
-            <span class="pc_cov">75%</span>
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">68 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">51<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">17<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">68<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">3<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-03 18:07 +0000
+            created at 2026-03-09 03:05 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -223,7 +223,7 @@
     <p class="pln"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t">    <span class="nam">min_length</span> <span class="op">=</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">password_min_length</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t">    <span class="key">if</span> <span class="nam">len</span><span class="op">(</span><span class="nam">basic_pw</span><span class="op">)</span> <span class="op">&lt;</span> <span class="nam">min_length</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">        <span class="nam">warnings</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="fst">f"</span><span class="fst">BASIC_AUTH_PASSWORD should be at least </span><span class="op">{</span><span class="nam">min_length</span><span class="op">}</span><span class="fst"> characters long. Current length: </span><span class="op">{</span><span class="nam">len</span><span class="op">(</span><span class="nam">basic_pw</span><span class="op">)</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">        <span class="nam">warnings</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="fst">f"</span><span class="fst">BASIC_AUTH_PASSWORD should be at least </span><span class="op">{</span><span class="nam">min_length</span><span class="op">}</span><span class="fst"> characters long. Current length: </span><span class="op">{</span><span class="nam">len</span><span class="op">(</span><span class="nam">basic_pw</span><span class="op">)</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t145" href="#t145">145</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t146" href="#t146">146</a></span><span class="t">    <span class="nam">complexity_count</span> <span class="op">=</span> <span class="nam">sum</span><span class="op">(</span><span class="op">[</span><span class="nam">any</span><span class="op">(</span><span class="nam">c</span><span class="op">.</span><span class="nam">isupper</span><span class="op">(</span><span class="op">)</span> <span class="key">for</span> <span class="nam">c</span> <span class="key">in</span> <span class="nam">basic_pw</span><span class="op">)</span><span class="op">,</span> <span class="nam">any</span><span class="op">(</span><span class="nam">c</span><span class="op">.</span><span class="nam">islower</span><span class="op">(</span><span class="op">)</span> <span class="key">for</span> <span class="nam">c</span> <span class="key">in</span> <span class="nam">basic_pw</span><span class="op">)</span><span class="op">,</span> <span class="nam">any</span><span class="op">(</span><span class="nam">c</span><span class="op">.</span><span class="nam">isdigit</span><span class="op">(</span><span class="op">)</span> <span class="key">for</span> <span class="nam">c</span> <span class="key">in</span> <span class="nam">basic_pw</span><span class="op">)</span><span class="op">,</span> <span class="nam">any</span><span class="op">(</span><span class="nam">c</span> <span class="key">in</span> <span class="nam">string</span><span class="op">.</span><span class="nam">punctuation</span> <span class="key">for</span> <span class="nam">c</span> <span class="key">in</span> <span class="nam">basic_pw</span><span class="op">)</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t147" href="#t147">147</a></span><span class="t">    <span class="key">if</span> <span class="nam">complexity_count</span> <span class="op">&lt;</span> <span class="num">3</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -310,29 +310,29 @@
     <p class="pln"><span class="n"><a id="t228" href="#t228">228</a></span><span class="t"><span class="str">        >>> is_prod</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t229" href="#t229">229</a></span><span class="t"><span class="str">        False</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t230" href="#t230">230</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t231" href="#t231">231</a></span><span class="t">    <span class="nam">logging</span><span class="op">.</span><span class="nam">getLogger</span><span class="op">(</span><span class="str">"mcpgateway.config"</span><span class="op">)</span><span class="op">.</span><span class="nam">setLevel</span><span class="op">(</span><span class="nam">logging</span><span class="op">.</span><span class="nam">ERROR</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t231" href="#t231">231</a></span><span class="t">    <span class="nam">logging</span><span class="op">.</span><span class="nam">getLogger</span><span class="op">(</span><span class="str">"mcpgateway.config"</span><span class="op">)</span><span class="op">.</span><span class="nam">setLevel</span><span class="op">(</span><span class="nam">logging</span><span class="op">.</span><span class="nam">ERROR</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t232" href="#t232">232</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t233" href="#t233">233</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t234" href="#t234">234</a></span><span class="t">        <span class="nam">settings</span> <span class="op">=</span> <span class="nam">Settings</span><span class="op">(</span><span class="nam">_env_file</span><span class="op">=</span><span class="nam">env_file</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t235" href="#t235">235</a></span><span class="t">    <span class="key">except</span> <span class="nam">ValidationError</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t236" href="#t236">236</a></span><span class="t">        <span class="nam">print</span><span class="op">(</span><span class="str">"&#10060; Invalid configuration:"</span><span class="op">,</span> <span class="nam">e</span><span class="op">,</span> <span class="nam">file</span><span class="op">=</span><span class="nam">sys</span><span class="op">.</span><span class="nam">stderr</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t237" href="#t237">237</a></span><span class="t">        <span class="key">return</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t233" href="#t233">233</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t234" href="#t234">234</a></span><span class="t">        <span class="nam">settings</span> <span class="op">=</span> <span class="nam">Settings</span><span class="op">(</span><span class="nam">_env_file</span><span class="op">=</span><span class="nam">env_file</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t235" href="#t235">235</a></span><span class="t">    <span class="key">except</span> <span class="nam">ValidationError</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t236" href="#t236">236</a></span><span class="t">        <span class="nam">print</span><span class="op">(</span><span class="str">"&#10060; Invalid configuration:"</span><span class="op">,</span> <span class="nam">e</span><span class="op">,</span> <span class="nam">file</span><span class="op">=</span><span class="nam">sys</span><span class="op">.</span><span class="nam">stderr</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t237" href="#t237">237</a></span><span class="t">        <span class="key">return</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t238" href="#t238">238</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t239" href="#t239">239</a></span><span class="t">    <span class="nam">warnings</span> <span class="op">=</span> <span class="nam">get_security_warnings</span><span class="op">(</span><span class="nam">settings</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t240" href="#t240">240</a></span><span class="t">    <span class="nam">is_prod</span> <span class="op">=</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">environment</span><span class="op">.</span><span class="nam">lower</span><span class="op">(</span><span class="op">)</span> <span class="op">==</span> <span class="str">"production"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t239" href="#t239">239</a></span><span class="t">    <span class="nam">warnings</span> <span class="op">=</span> <span class="nam">get_security_warnings</span><span class="op">(</span><span class="nam">settings</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t240" href="#t240">240</a></span><span class="t">    <span class="nam">is_prod</span> <span class="op">=</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">environment</span><span class="op">.</span><span class="nam">lower</span><span class="op">(</span><span class="op">)</span> <span class="op">==</span> <span class="str">"production"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t241" href="#t241">241</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t242" href="#t242">242</a></span><span class="t">    <span class="key">if</span> <span class="nam">warnings</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t243" href="#t243">243</a></span><span class="t">        <span class="key">for</span> <span class="nam">w</span> <span class="key">in</span> <span class="nam">warnings</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t244" href="#t244">244</a></span><span class="t">            <span class="nam">print</span><span class="op">(</span><span class="fst">f"</span><span class="fst">&#9888;&#65039; </span><span class="op">{</span><span class="nam">w</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t242" href="#t242">242</a></span><span class="t">    <span class="key">if</span> <span class="nam">warnings</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t243" href="#t243">243</a></span><span class="t">        <span class="key">for</span> <span class="nam">w</span> <span class="key">in</span> <span class="nam">warnings</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t244" href="#t244">244</a></span><span class="t">            <span class="nam">print</span><span class="op">(</span><span class="fst">f"</span><span class="fst">&#9888;&#65039; </span><span class="op">{</span><span class="nam">w</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t245" href="#t245">245</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t246" href="#t246">246</a></span><span class="t">        <span class="key">if</span> <span class="nam">is_prod</span> <span class="key">or</span> <span class="nam">exit_on_warnings</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t247" href="#t247">247</a></span><span class="t">            <span class="key">return</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t246" href="#t246">246</a></span><span class="t">        <span class="key">if</span> <span class="nam">is_prod</span> <span class="key">or</span> <span class="nam">exit_on_warnings</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t247" href="#t247">247</a></span><span class="t">            <span class="key">return</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t248" href="#t248">248</a></span><span class="t">        <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t249" href="#t249">249</a></span><span class="t">            <span class="nam">print</span><span class="op">(</span><span class="str">"&#9888;&#65039; Warnings detected, but continuing in non-production environment."</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t249" href="#t249">249</a></span><span class="t">            <span class="nam">print</span><span class="op">(</span><span class="str">"&#9888;&#65039; Warnings detected, but continuing in non-production environment."</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t250" href="#t250">250</a></span><span class="t">    <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t251" href="#t251">251</a></span><span class="t">        <span class="nam">print</span><span class="op">(</span><span class="str">"&#9989; .env validated successfully with no warnings."</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t251" href="#t251">251</a></span><span class="t">        <span class="nam">print</span><span class="op">(</span><span class="str">"&#9989; .env validated successfully with no warnings."</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t252" href="#t252">252</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t253" href="#t253">253</a></span><span class="t">    <span class="key">return</span> <span class="num">0</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t253" href="#t253">253</a></span><span class="t">    <span class="key">return</span> <span class="num">0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t254" href="#t254">254</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t255" href="#t255">255</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="exc show_exc"><span class="n"><a id="t256" href="#t256">256</a></span><span class="t"><span class="key">if</span> <span class="nam">__name__</span> <span class="op">==</span> <span class="str">"__main__"</span><span class="op">:</span>  <span class="com"># pragma: no cover</span>&nbsp;</span><span class="r"></span></p>
@@ -347,7 +347,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-03 18:07 +0000
+            created at 2026-03-09 03:05 +0000
         </p>
     </div>
 </footer>

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/utils/metadata_capture.py: 95%</title>
+    <title>Coverage for mcpgateway/utils/metadata_capture.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;utils&#8201;/&#8201;metadata_capture.py</b>:
-            <span class="pc_cov">95%</span>
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,17 +55,17 @@
         </aside>
         <h2>
             <span class="text">55 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">52<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">3<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">55<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
-            <a id="prevFileLink" class="nav" href="z_095c6c0b4411cdd5_keycloak_discovery_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a id="prevFileLink" class="nav" href="z_095c6c0b4411cdd5_log_sanitizer_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_095c6c0b4411cdd5_metrics_common_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-03 18:07 +0000
+            created at 2026-03-09 03:05 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -154,7 +154,7 @@
     <p class="run"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t">        <span class="nam">forwarded_for</span> <span class="op">=</span> <span class="nam">request</span><span class="op">.</span><span class="nam">headers</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"x-forwarded-for"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t">        <span class="key">if</span> <span class="nam">forwarded_for</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">            <span class="com"># Take the first IP in the chain (original client)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">            <span class="nam">client_ip</span> <span class="op">=</span> <span class="nam">forwarded_for</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="str">","</span><span class="op">)</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">            <span class="nam">client_ip</span> <span class="op">=</span> <span class="nam">forwarded_for</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="str">","</span><span class="op">)</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t76" href="#t76">76</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t77" href="#t77">77</a></span><span class="t">        <span class="com"># Extract user agent</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t78" href="#t78">78</a></span><span class="t">        <span class="nam">user_agent</span> <span class="op">=</span> <span class="nam">request</span><span class="op">.</span><span class="nam">headers</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"user-agent"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -198,7 +198,7 @@
     <p class="pln"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">            <span class="com"># Try to extract username from JWT payload or user context</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t">            <span class="key">return</span> <span class="nam">user</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"username"</span><span class="op">)</span> <span class="key">or</span> <span class="nam">user</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"sub"</span><span class="op">)</span> <span class="key">or</span> <span class="nam">user</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"email"</span><span class="op">)</span> <span class="key">or</span> <span class="str">"unknown"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">        <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t">            <span class="key">return</span> <span class="str">"unknown"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t">            <span class="key">return</span> <span class="str">"unknown"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t121" href="#t121">121</a></span><span class="t">    <span class="op">@</span><span class="nam">staticmethod</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t122" href="#t122">122</a></span><span class="t">    <span class="key">def</span> <span class="nam">extract_creation_metadata</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -372,19 +372,19 @@
     <p class="pln"><span class="n"><a id="t290" href="#t290">290</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t291" href="#t291">291</a></span><span class="t">        <span class="com"># Basic validation - store as-is but limit length</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t292" href="#t292">292</a></span><span class="t">        <span class="key">if</span> <span class="nam">len</span><span class="op">(</span><span class="nam">ip_address</span><span class="op">)</span> <span class="op">></span> <span class="num">45</span><span class="op">:</span>  <span class="com"># Max length for IPv6</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t293" href="#t293">293</a></span><span class="t">            <span class="key">return</span> <span class="nam">ip_address</span><span class="op">[</span><span class="op">:</span><span class="num">45</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t293" href="#t293">293</a></span><span class="t">            <span class="key">return</span> <span class="nam">ip_address</span><span class="op">[</span><span class="op">:</span><span class="num">45</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t294" href="#t294">294</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t295" href="#t295">295</a></span><span class="t">        <span class="key">return</span> <span class="nam">ip_address</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
         <p>
-            <a class="nav" href="z_095c6c0b4411cdd5_keycloak_discovery_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a class="nav" href="z_095c6c0b4411cdd5_log_sanitizer_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_095c6c0b4411cdd5_metrics_common_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-03 18:07 +0000
+            created at 2026-03-09 03:05 +0000
         </p>
     </div>
 </footer>

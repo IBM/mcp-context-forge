@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/middleware/security_headers.py: 79%</title>
+    <title>Coverage for mcpgateway/middleware/security_headers.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;middleware&#8201;/&#8201;security_headers.py</b>:
-            <span class="pc_cov">79%</span>
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">62 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">49<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">13<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">62<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_7c505f6fa7f5f82c_token_scoping_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-03 18:07 +0000
+            created at 2026-03-09 03:05 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -331,7 +331,7 @@
     <p class="pln"><span class="n"><a id="t249" href="#t249">249</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t250" href="#t250">250</a></span><span class="t">        <span class="com"># Only apply security headers if enabled</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t251" href="#t251">251</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">security_headers_enabled</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t252" href="#t252">252</a></span><span class="t">            <span class="key">return</span> <span class="nam">response</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t252" href="#t252">252</a></span><span class="t">            <span class="key">return</span> <span class="nam">response</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t253" href="#t253">253</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t254" href="#t254">254</a></span><span class="t">        <span class="com"># Essential security headers (configurable)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t255" href="#t255">255</a></span><span class="t">        <span class="key">if</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">x_content_type_options_enabled</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -341,7 +341,7 @@
     <p class="pln"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t">        <span class="com"># Note: config validator normalizes ""/"null"/"none" to None, but we guard here too for safety</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t">        <span class="nam">x_frame</span> <span class="op">=</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">x_frame_options</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t">        <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">x_frame</span><span class="op">,</span> <span class="nam">str</span><span class="op">)</span> <span class="key">and</span> <span class="key">not</span> <span class="nam">x_frame</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t">            <span class="nam">x_frame</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t">            <span class="nam">x_frame</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t263" href="#t263">263</a></span><span class="t">        <span class="key">if</span> <span class="nam">x_frame</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t264" href="#t264">264</a></span><span class="t">            <span class="nam">response</span><span class="op">.</span><span class="nam">headers</span><span class="op">[</span><span class="str">"X-Frame-Options"</span><span class="op">]</span> <span class="op">=</span> <span class="nam">x_frame</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t265" href="#t265">265</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -371,16 +371,16 @@
     <p class="pln"><span class="n"><a id="t289" href="#t289">289</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t290" href="#t290">290</a></span><span class="t">            <span class="key">if</span> <span class="nam">x_frame_upper</span> <span class="op">==</span> <span class="str">"DENY"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t291" href="#t291">291</a></span><span class="t">                <span class="nam">frame_ancestors</span> <span class="op">=</span> <span class="str">"'none'"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t292" href="#t292">292</a></span><span class="t">            <span class="key">elif</span> <span class="nam">x_frame_upper</span> <span class="op">==</span> <span class="str">"SAMEORIGIN"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t293" href="#t293">293</a></span><span class="t">                <span class="nam">frame_ancestors</span> <span class="op">=</span> <span class="str">"'self'"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t294" href="#t294">294</a></span><span class="t">            <span class="key">elif</span> <span class="nam">x_frame_upper</span><span class="op">.</span><span class="nam">startswith</span><span class="op">(</span><span class="str">"ALLOW-FROM"</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t295" href="#t295">295</a></span><span class="t">                <span class="nam">allowed_uri</span> <span class="op">=</span> <span class="nam">x_frame</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="str">" "</span><span class="op">,</span> <span class="num">1</span><span class="op">)</span><span class="op">[</span><span class="num">1</span><span class="op">]</span> <span class="key">if</span> <span class="str">" "</span> <span class="key">in</span> <span class="nam">x_frame</span> <span class="key">else</span> <span class="str">"'none'"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t296" href="#t296">296</a></span><span class="t">                <span class="nam">frame_ancestors</span> <span class="op">=</span> <span class="nam">allowed_uri</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t297" href="#t297">297</a></span><span class="t">            <span class="key">elif</span> <span class="nam">x_frame_upper</span> <span class="op">==</span> <span class="str">"ALLOW-ALL"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t298" href="#t298">298</a></span><span class="t">                <span class="nam">frame_ancestors</span> <span class="op">=</span> <span class="str">"* file: http: https:"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t292" href="#t292">292</a></span><span class="t">            <span class="key">elif</span> <span class="nam">x_frame_upper</span> <span class="op">==</span> <span class="str">"SAMEORIGIN"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t293" href="#t293">293</a></span><span class="t">                <span class="nam">frame_ancestors</span> <span class="op">=</span> <span class="str">"'self'"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t294" href="#t294">294</a></span><span class="t">            <span class="key">elif</span> <span class="nam">x_frame_upper</span><span class="op">.</span><span class="nam">startswith</span><span class="op">(</span><span class="str">"ALLOW-FROM"</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t295" href="#t295">295</a></span><span class="t">                <span class="nam">allowed_uri</span> <span class="op">=</span> <span class="nam">x_frame</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="str">" "</span><span class="op">,</span> <span class="num">1</span><span class="op">)</span><span class="op">[</span><span class="num">1</span><span class="op">]</span> <span class="key">if</span> <span class="str">" "</span> <span class="key">in</span> <span class="nam">x_frame</span> <span class="key">else</span> <span class="str">"'none'"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t296" href="#t296">296</a></span><span class="t">                <span class="nam">frame_ancestors</span> <span class="op">=</span> <span class="nam">allowed_uri</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t297" href="#t297">297</a></span><span class="t">            <span class="key">elif</span> <span class="nam">x_frame_upper</span> <span class="op">==</span> <span class="str">"ALLOW-ALL"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t298" href="#t298">298</a></span><span class="t">                <span class="nam">frame_ancestors</span> <span class="op">=</span> <span class="str">"* file: http: https:"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t299" href="#t299">299</a></span><span class="t">            <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t300" href="#t300">300</a></span><span class="t">                <span class="com"># Default to none for unknown values (matches DENY default)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t301" href="#t301">301</a></span><span class="t">                <span class="nam">frame_ancestors</span> <span class="op">=</span> <span class="str">"'none'"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t301" href="#t301">301</a></span><span class="t">                <span class="nam">frame_ancestors</span> <span class="op">=</span> <span class="str">"'none'"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t302" href="#t302">302</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t303" href="#t303">303</a></span><span class="t">            <span class="nam">csp_directives</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="fst">f"</span><span class="fst">frame-ancestors </span><span class="op">{</span><span class="nam">frame_ancestors</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t304" href="#t304">304</a></span><span class="t">        <span class="nam">response</span><span class="op">.</span><span class="nam">headers</span><span class="op">[</span><span class="str">"Content-Security-Policy"</span><span class="op">]</span> <span class="op">=</span> <span class="str">"; "</span><span class="op">.</span><span class="nam">join</span><span class="op">(</span><span class="nam">csp_directives</span><span class="op">)</span> <span class="op">+</span> <span class="str">";"</span>&nbsp;</span><span class="r"></span></p>
@@ -395,9 +395,9 @@
     <p class="pln"><span class="n"><a id="t313" href="#t313">313</a></span><span class="t">        <span class="com"># Remove sensitive headers that might disclose server information (configurable)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t314" href="#t314">314</a></span><span class="t">        <span class="key">if</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">remove_server_headers</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t315" href="#t315">315</a></span><span class="t">            <span class="key">if</span> <span class="str">"X-Powered-By"</span> <span class="key">in</span> <span class="nam">response</span><span class="op">.</span><span class="nam">headers</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t316" href="#t316">316</a></span><span class="t">                <span class="key">del</span> <span class="nam">response</span><span class="op">.</span><span class="nam">headers</span><span class="op">[</span><span class="str">"X-Powered-By"</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t316" href="#t316">316</a></span><span class="t">                <span class="key">del</span> <span class="nam">response</span><span class="op">.</span><span class="nam">headers</span><span class="op">[</span><span class="str">"X-Powered-By"</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t317" href="#t317">317</a></span><span class="t">            <span class="key">if</span> <span class="str">"Server"</span> <span class="key">in</span> <span class="nam">response</span><span class="op">.</span><span class="nam">headers</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t318" href="#t318">318</a></span><span class="t">                <span class="key">del</span> <span class="nam">response</span><span class="op">.</span><span class="nam">headers</span><span class="op">[</span><span class="str">"Server"</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t318" href="#t318">318</a></span><span class="t">                <span class="key">del</span> <span class="nam">response</span><span class="op">.</span><span class="nam">headers</span><span class="op">[</span><span class="str">"Server"</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t319" href="#t319">319</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t320" href="#t320">320</a></span><span class="t">        <span class="com"># Lightweight dynamic CORS reflection based on current settings</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t321" href="#t321">321</a></span><span class="t">        <span class="nam">origin</span> <span class="op">=</span> <span class="nam">request</span><span class="op">.</span><span class="nam">headers</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"Origin"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -405,7 +405,7 @@
     <p class="run"><span class="n"><a id="t323" href="#t323">323</a></span><span class="t">            <span class="nam">allow</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t324" href="#t324">324</a></span><span class="t">            <span class="key">if</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">environment</span> <span class="op">!=</span> <span class="str">"production"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t325" href="#t325">325</a></span><span class="t">                <span class="com"># In non-production, honor allowed_origins dynamically</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t326" href="#t326">326</a></span><span class="t">                <span class="nam">allow</span> <span class="op">=</span> <span class="op">(</span><span class="key">not</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">allowed_origins</span><span class="op">)</span> <span class="key">or</span> <span class="op">(</span><span class="nam">origin</span> <span class="key">in</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">allowed_origins</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t326" href="#t326">326</a></span><span class="t">                <span class="nam">allow</span> <span class="op">=</span> <span class="op">(</span><span class="key">not</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">allowed_origins</span><span class="op">)</span> <span class="key">or</span> <span class="op">(</span><span class="nam">origin</span> <span class="key">in</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">allowed_origins</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t327" href="#t327">327</a></span><span class="t">            <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t328" href="#t328">328</a></span><span class="t">                <span class="com"># In production, require explicit allow-list</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t329" href="#t329">329</a></span><span class="t">                <span class="nam">allow</span> <span class="op">=</span> <span class="nam">origin</span> <span class="key">in</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">allowed_origins</span>&nbsp;</span><span class="r"></span></p>
@@ -432,7 +432,7 @@
             <a class="nav" href="z_7c505f6fa7f5f82c_token_scoping_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-03 18:07 +0000
+            created at 2026-03-09 03:05 +0000
         </p>
     </div>
 </footer>

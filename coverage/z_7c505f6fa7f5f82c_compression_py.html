@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/middleware/compression.py: 73%</title>
+    <title>Coverage for mcpgateway/middleware/compression.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;middleware&#8201;/&#8201;compression.py</b>:
-            <span class="pc_cov">73%</span>
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">22 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">16<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">6<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">22<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_7c505f6fa7f5f82c_correlation_id_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-03 18:07 +0000
+            created at 2026-03-09 03:05 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -186,7 +186,7 @@
     <p class="pln"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t"><span class="str">            True if the path is an MCP endpoint, False otherwise.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">        <span class="key">return</span> <span class="nam">path</span> <span class="key">in</span> <span class="op">{</span><span class="str">"/mcp"</span><span class="op">,</span> <span class="str">"/mcp/"</span><span class="op">}</span> <span class="key">or</span> <span class="nam">path</span><span class="op">.</span><span class="nam">endswith</span><span class="op">(</span><span class="str">"/mcp"</span><span class="op">)</span> <span class="key">or</span> <span class="nam">path</span><span class="op">.</span><span class="nam">endswith</span><span class="op">(</span><span class="str">"/mcp/"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">        <span class="key">return</span> <span class="nam">path</span> <span class="key">in</span> <span class="op">{</span><span class="str">"/mcp"</span><span class="op">,</span> <span class="str">"/mcp/"</span><span class="op">}</span> <span class="key">or</span> <span class="nam">path</span><span class="op">.</span><span class="nam">endswith</span><span class="op">(</span><span class="str">"/mcp"</span><span class="op">)</span> <span class="key">or</span> <span class="nam">path</span><span class="op">.</span><span class="nam">endswith</span><span class="op">(</span><span class="str">"/mcp/"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">__call__</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">scope</span><span class="op">:</span> <span class="nam">Scope</span><span class="op">,</span> <span class="nam">receive</span><span class="op">:</span> <span class="nam">Receive</span><span class="op">,</span> <span class="nam">send</span><span class="op">:</span> <span class="nam">Send</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">        <span class="str">"""</span>&nbsp;</span><span class="r"></span></p>
@@ -214,17 +214,17 @@
     <p class="run"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t">            <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">compress_app</span><span class="op">(</span><span class="nam">scope</span><span class="op">,</span> <span class="nam">receive</span><span class="op">,</span> <span class="nam">send</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t133" href="#t133">133</a></span><span class="t">            <span class="key">return</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t">        <span class="nam">path</span> <span class="op">=</span> <span class="nam">scope</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"path"</span><span class="op">,</span> <span class="str">""</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t">        <span class="nam">path</span> <span class="op">=</span> <span class="nam">scope</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"path"</span><span class="op">,</span> <span class="str">""</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t136" href="#t136">136</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t137" href="#t137">137</a></span><span class="t">        <span class="com"># When SSE mode is enabled (json_response_enabled=False), skip compression</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t138" href="#t138">138</a></span><span class="t">        <span class="com"># for MCP paths to prevent buffering of streaming responses</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t139" href="#t139">139</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">json_response_enabled</span> <span class="key">and</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_is_mcp_path</span><span class="op">(</span><span class="nam">path</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t139" href="#t139">139</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">json_response_enabled</span> <span class="key">and</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_is_mcp_path</span><span class="op">(</span><span class="nam">path</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t140" href="#t140">140</a></span><span class="t">            <span class="com"># SSE mode for MCP - bypass compression entirely</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t">            <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">app</span><span class="op">(</span><span class="nam">scope</span><span class="op">,</span> <span class="nam">receive</span><span class="op">,</span> <span class="nam">send</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t">            <span class="key">return</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t">            <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">app</span><span class="op">(</span><span class="nam">scope</span><span class="op">,</span> <span class="nam">receive</span><span class="op">,</span> <span class="nam">send</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t">            <span class="key">return</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">        <span class="com"># For all other requests (including MCP in JSON mode), use compression</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t145" href="#t145">145</a></span><span class="t">        <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">compress_app</span><span class="op">(</span><span class="nam">scope</span><span class="op">,</span> <span class="nam">receive</span><span class="op">,</span> <span class="nam">send</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t145" href="#t145">145</a></span><span class="t">        <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">compress_app</span><span class="op">(</span><span class="nam">scope</span><span class="op">,</span> <span class="nam">receive</span><span class="op">,</span> <span class="nam">send</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -234,7 +234,7 @@
             <a class="nav" href="z_7c505f6fa7f5f82c_correlation_id_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-03 18:07 +0000
+            created at 2026-03-09 03:05 +0000
         </p>
     </div>
 </footer>
