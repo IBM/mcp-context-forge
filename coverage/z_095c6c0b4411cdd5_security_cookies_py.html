@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/utils/security_cookies.py: 74%</title>
+    <title>Coverage for mcpgateway/utils/security_cookies.py: 76%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;utils&#8201;/&#8201;security_cookies.py</b>:
-            <span class="pc_cov">74%</span>
+            <span class="pc_cov">76%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">46 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">34<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">12<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">35<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">11<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_095c6c0b4411cdd5_services_auth_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-07 09:48 +0000
+            created at 2026-03-03 18:07 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -174,7 +174,7 @@
     <p class="pln"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t">    <span class="com"># The cookie name, value, and attributes all count toward the limit</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t93" href="#t93">93</a></span><span class="t">    <span class="nam">cookie_header</span> <span class="op">=</span> <span class="fst">f"</span><span class="fst">jwt_token=</span><span class="op">{</span><span class="nam">token</span><span class="op">}</span><span class="fst">; HttpOnly; SameSite=</span><span class="op">{</span><span class="nam">samesite</span><span class="op">}</span><span class="fst">; Path=</span><span class="op">{</span><span class="nam">path</span><span class="op">}</span><span class="fst">; Max-Age=</span><span class="op">{</span><span class="nam">max_age</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t94" href="#t94">94</a></span><span class="t">    <span class="key">if</span> <span class="nam">use_secure</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t95" href="#t95">95</a></span><span class="t">        <span class="nam">cookie_header</span> <span class="op">+=</span> <span class="str">"; Secure"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t95" href="#t95">95</a></span><span class="t">        <span class="nam">cookie_header</span> <span class="op">+=</span> <span class="str">"; Secure"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t96" href="#t96">96</a></span><span class="t">    <span class="nam">cookie_size</span> <span class="op">=</span> <span class="nam">len</span><span class="op">(</span><span class="nam">cookie_header</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="str">"ascii"</span><span class="op">,</span> <span class="nam">errors</span><span class="op">=</span><span class="str">"replace"</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t97" href="#t97">97</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t98" href="#t98">98</a></span><span class="t">    <span class="com"># Extract sub claim for log context (best-effort, don't build control flow on it)</span>&nbsp;</span><span class="r"></span></p>
@@ -306,7 +306,7 @@
             <a class="nav" href="z_095c6c0b4411cdd5_services_auth_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-07 09:48 +0000
+            created at 2026-03-03 18:07 +0000
         </p>
     </div>
 </footer>
