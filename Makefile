@@ -7864,10 +7864,14 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-build-all-platforms              - Build for all platforms (Linux, macOS, Windows)
 # help: rust-cross                            - Install targets + build all Linux (convenience)
 # help: rust-cross-install-build              - Install targets + build all platforms (one command)
+# help: rust-mcp-runtime-build                - Build the experimental Rust MCP runtime
+# help: rust-mcp-runtime-test                 - Run tests for the experimental Rust MCP runtime
+# help: rust-mcp-runtime-run                  - Run the experimental Rust MCP runtime against local gateway /rpc
 
 .PHONY: rust-build rust-dev rust-test rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
+.PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
 
 rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and all plugins are installed
 	@if ! command -v rustup > /dev/null 2>&1; then \
@@ -7993,6 +7997,18 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
+
+rust-mcp-runtime-build:                    ## Build the experimental Rust MCP runtime
+	@echo "🦀 Building experimental Rust MCP runtime..."
+	@cd tools_rust/mcp_runtime && cargo build --release
+
+rust-mcp-runtime-test:                     ## Run tests for the experimental Rust MCP runtime
+	@echo "🧪 Running Rust MCP runtime tests..."
+	@cd tools_rust/mcp_runtime && cargo test --release
+
+rust-mcp-runtime-run:                      ## Run the experimental Rust MCP runtime against local gateway /rpc
+	@echo "🚀 Starting Rust MCP runtime on http://127.0.0.1:8787 with backend http://127.0.0.1:4444/rpc"
+	@cd tools_rust/mcp_runtime && cargo run --release -- --backend-rpc-url http://127.0.0.1:4444/rpc --listen-http 127.0.0.1:8787
 
 .PHONY: conc-02-gateways
 conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)
