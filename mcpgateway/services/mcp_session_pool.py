@@ -141,10 +141,28 @@ class PooledSession:
     def is_closed(self) -> bool:
         """Return whether this session has been closed.
 
+        Checks both the internal closed flag and the underlying transport stream
+        state to detect sessions broken by server restarts or network drops before
+        they raise ClosedResourceError at the call site.
+
         Returns:
-            bool: True if session is closed, False otherwise.
+            bool: True if session is closed or transport is broken, False otherwise.
         """
-        return self._closed
+        if self._closed:
+            return True
+        # Detect externally-broken transport (e.g. server restart, network drop).
+        # MCP's BaseSession stores the write stream as _write_stream. Check it with
+        # getattr fallbacks so this degrades gracefully if MCP internals change.
+        write_stream = getattr(self.session, "_write_stream", None)
+        if write_stream is not None:
+            if getattr(write_stream, "_closed", False) is True:
+                return True
+            state = getattr(write_stream, "_state", None)
+            if state is not None:
+                open_rx = getattr(state, "open_receive_channels", 1)
+                if isinstance(open_rx, int) and open_rx == 0:
+                    return True
+        return False
 
     def mark_closed(self) -> None:
         """Mark this session as closed."""

@@ -747,6 +747,81 @@ class TestPooledSession:
         session_set = {session}
         assert session in session_set
 
+    def test_is_closed_detects_explicitly_closed_write_stream(self):
+        """is_closed must return True when the underlying write stream is explicitly closed."""
+        mock_write_stream = MagicMock()
+        mock_write_stream._closed = True
+        mock_mcp_session = MagicMock()
+        mock_mcp_session._write_stream = mock_write_stream
+
+        pooled = PooledSession(
+            session=mock_mcp_session,
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="test",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+
+        assert pooled.is_closed is True
+
+    def test_is_closed_detects_broken_receive_channels(self):
+        """is_closed must return True when the receiving end of the write stream has closed."""
+        mock_state = MagicMock()
+        mock_state.open_receive_channels = 0
+        mock_write_stream = MagicMock()
+        mock_write_stream._closed = False
+        mock_write_stream._state = mock_state
+        mock_mcp_session = MagicMock()
+        mock_mcp_session._write_stream = mock_write_stream
+
+        pooled = PooledSession(
+            session=mock_mcp_session,
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="test",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+
+        assert pooled.is_closed is True
+
+    def test_is_closed_false_when_stream_healthy(self):
+        """is_closed must return False when the write stream is open and healthy."""
+        mock_state = MagicMock()
+        mock_state.open_receive_channels = 1
+        mock_write_stream = MagicMock()
+        mock_write_stream._closed = False
+        mock_write_stream._state = mock_state
+        mock_mcp_session = MagicMock()
+        mock_mcp_session._write_stream = mock_write_stream
+
+        pooled = PooledSession(
+            session=mock_mcp_session,
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="test",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+
+        assert pooled.is_closed is False
+
+    def test_is_closed_degrades_gracefully_without_write_stream(self):
+        """is_closed must not raise when session has no _write_stream attribute."""
+        mock_mcp_session = MagicMock(spec=[])  # no attributes at all
+
+        pooled = PooledSession(
+            session=mock_mcp_session,
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="test",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+
+        assert pooled.is_closed is False
+
 
 class TestPoolMetrics:
     """Tests for pool metrics."""
