@@ -2764,8 +2764,41 @@ def _set_proxy_user_context(proxy_user: str) -> None:
             "teams": [],
             "is_authenticated": True,
             "is_admin": False,
+            "permission_is_admin": False,
         }
     )
+
+
+def get_streamable_http_auth_context() -> dict[str, Any]:
+    """Return the current StreamableHTTP auth context for trusted internal forwarding.
+
+    The Rust MCP proxy uses this to carry already-authenticated MCP request context
+    across the Python -> Rust -> Python seam so the internal dispatcher does not
+    need to repeat JWT verification and team normalization on the hot path.
+    """
+    user_context = user_context_var.get()
+    if not isinstance(user_context, dict):
+        return {}
+
+    forwarded: dict[str, Any] = {}
+    for key in (
+        "email",
+        "teams",
+        "is_authenticated",
+        "is_admin",
+        "token_use",
+        "permission_is_admin",
+        "scoped_permissions",
+        "scoped_server_id",
+    ):
+        if key not in user_context:
+            continue
+        value = user_context[key]
+        if isinstance(value, list):
+            forwarded[key] = list(value)
+        else:
+            forwarded[key] = value
+    return forwarded
 
 
 class _StreamableHttpAuthHandler:
@@ -2899,6 +2932,7 @@ class _StreamableHttpAuthHandler:
                 "teams": [],  # Empty list = public-only access
                 "is_authenticated": False,
                 "is_admin": False,
+                "permission_is_admin": False,
             }
         )
         return True  # Allow request to proceed with public-only access
@@ -2932,6 +2966,7 @@ class _StreamableHttpAuthHandler:
                     return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
 
             user_email = user_payload.get("sub") or user_payload.get("email")
+            db_user_is_admin = False
             if user_email:
                 # First-Party
                 from mcpgateway.auth import _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
@@ -2947,6 +2982,8 @@ class _StreamableHttpAuthHandler:
                 if user_lookup_succeeded:
                     if user_record and not getattr(user_record, "is_active", True):
                         return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
+                    if user_record:
+                        db_user_is_admin = bool(getattr(user_record, "is_admin", False))
                     if user_record is None and settings.require_user_in_db and user_email != getattr(settings, "platform_admin_email", "admin@example.com"):
                         return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
 
@@ -3029,6 +3066,7 @@ class _StreamableHttpAuthHandler:
                 "teams": final_teams,
                 "is_authenticated": True,
                 "is_admin": is_admin,
+                "permission_is_admin": db_user_is_admin or is_admin,
                 "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }
             # Extract scoped permissions from JWT for per-method enforcement
@@ -3036,6 +3074,9 @@ class _StreamableHttpAuthHandler:
             jwt_scoped_perms = jwt_scopes.get("permissions") or [] if isinstance(jwt_scopes, dict) else []
             if jwt_scoped_perms:
                 auth_user_ctx["scoped_permissions"] = jwt_scoped_perms
+            scoped_server_id = jwt_scopes.get("server_id") if isinstance(jwt_scopes, dict) else None
+            if isinstance(scoped_server_id, str) and scoped_server_id:
+                auth_user_ctx["scoped_server_id"] = scoped_server_id
             user_context_var.set(auth_user_ctx)
         except HTTPException:
             # JWT verification failed (expired, malformed, bad signature, etc.)

@@ -5,6 +5,7 @@ HTTP_SERVER="${HTTP_SERVER:-gunicorn}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED="${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED:-false}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED="${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED:-true}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_URL="${EXPERIMENTAL_RUST_MCP_RUNTIME_URL:-http://127.0.0.1:8787}"
+EXPERIMENTAL_RUST_MCP_RUNTIME_UDS="${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-}"
 CONTEXTFORGE_ENABLE_RUST_BUILD="${CONTEXTFORGE_ENABLE_RUST_BUILD:-false}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,8 +54,9 @@ build_server_command() {
 start_managed_rust_mcp_runtime() {
     local runtime_bin="/app/bin/contextforge-mcp-runtime"
     local rust_listen_http="${MCP_RUST_LISTEN_HTTP:-127.0.0.1:8787}"
+    local rust_listen_uds="${MCP_RUST_LISTEN_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-}}"
     local app_root_path="${APP_ROOT_PATH:-}"
-    local backend_rpc_url="${MCP_RUST_BACKEND_RPC_URL:-http://127.0.0.1:${PORT:-4444}${app_root_path}/rpc}"
+    local backend_rpc_url="${MCP_RUST_BACKEND_RPC_URL:-http://127.0.0.1:${PORT:-4444}${app_root_path}/_internal/mcp/rpc}"
 
     if [[ "${CONTEXTFORGE_ENABLE_RUST_BUILD}" != "true" ]]; then
         echo "ERROR: EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true but this image was built without Rust artifacts."
@@ -68,13 +70,21 @@ start_managed_rust_mcp_runtime() {
     fi
 
     export MCP_RUST_LISTEN_HTTP="${rust_listen_http}"
+    if [[ -n "${rust_listen_uds}" ]]; then
+        export MCP_RUST_LISTEN_UDS="${rust_listen_uds}"
+    fi
     export MCP_RUST_BACKEND_RPC_URL="${backend_rpc_url}"
 
-    echo "Starting experimental Rust MCP runtime on ${MCP_RUST_LISTEN_HTTP} (backend: ${MCP_RUST_BACKEND_RPC_URL})..."
+    if [[ -n "${rust_listen_uds}" ]]; then
+        echo "Starting experimental Rust MCP runtime on unix://${MCP_RUST_LISTEN_UDS} (backend: ${MCP_RUST_BACKEND_RPC_URL})..."
+    else
+        echo "Starting experimental Rust MCP runtime on ${MCP_RUST_LISTEN_HTTP} (backend: ${MCP_RUST_BACKEND_RPC_URL})..."
+    fi
     "${runtime_bin}" &
     RUST_MCP_PID=$!
 
     python3 - <<'PY'
+import httpx
 import os
 import sys
 import time
@@ -83,14 +93,26 @@ import urllib.request
 
 base_url = os.environ.get("EXPERIMENTAL_RUST_MCP_RUNTIME_URL", "http://127.0.0.1:8787").rstrip("/")
 health_url = f"{base_url}/health"
+uds_path = os.environ.get("EXPERIMENTAL_RUST_MCP_RUNTIME_UDS") or os.environ.get("MCP_RUST_LISTEN_UDS")
 
 for _ in range(60):
-    try:
-        with urllib.request.urlopen(health_url, timeout=2) as response:
-            if response.status == 200:
-                sys.exit(0)
-    except (OSError, urllib.error.URLError):
-        time.sleep(0.5)
+    if uds_path:
+        try:
+            with httpx.Client(transport=httpx.HTTPTransport(uds=uds_path), timeout=2.0) as client:
+                response = client.get(health_url)
+                if response.status_code == 200:
+                    sys.exit(0)
+        except OSError:
+            time.sleep(0.5)
+        except httpx.HTTPError:
+            time.sleep(0.5)
+    else:
+        try:
+            with urllib.request.urlopen(health_url, timeout=2) as response:
+                if response.status == 200:
+                    sys.exit(0)
+        except (OSError, urllib.error.URLError):
+            time.sleep(0.5)
 
 print(f"ERROR: Experimental Rust MCP runtime failed health check at {health_url}", file=sys.stderr)
 sys.exit(1)

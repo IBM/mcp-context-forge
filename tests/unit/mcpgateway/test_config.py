@@ -1052,7 +1052,15 @@ def test_experimental_rust_mcp_runtime_defaults():
     s = Settings(_env_file=None)
     assert s.experimental_rust_mcp_runtime_enabled is False
     assert s.experimental_rust_mcp_runtime_url == "http://127.0.0.1:8787"
+    assert s.experimental_rust_mcp_runtime_uds is None
     assert s.experimental_rust_mcp_runtime_timeout_seconds == 30
+
+
+def test_experimental_rust_mcp_runtime_uds_accepts_absolute_path(tmp_path: Path):
+    """The optional Rust runtime UDS path should round-trip when configured."""
+    uds_path = tmp_path / "contextforge-rust.sock"
+    s = Settings(experimental_rust_mcp_runtime_uds=str(uds_path), _env_file=None)
+    assert s.experimental_rust_mcp_runtime_uds == str(uds_path)
 
 
 def test_auth_required_true_with_explicit_mcp_permissive_warns(caplog):

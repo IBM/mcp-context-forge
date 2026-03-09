@@ -16,25 +16,39 @@ is still transport-focused.
 from __future__ import annotations
 
 # Standard
+import asyncio
+import base64
 import logging
 import re
 from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party
 import httpx
+import orjson
 from starlette.types import Receive, Scope, Send
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.services.http_client_service import get_http_client
+from mcpgateway.services.http_client_service import get_http_client, get_http_limits
+from mcpgateway.transports.streamablehttp_transport import get_streamable_http_auth_context
 from mcpgateway.utils.orjson_response import ORJSONResponse
 
 logger = logging.getLogger(__name__)
 
 _SERVER_ID_RE = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp/?$")
 _CONTEXTFORGE_SERVER_ID_HEADER = "x-contextforge-server-id"
+_CONTEXTFORGE_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
 _REQUEST_HOP_BY_HOP_HEADERS = frozenset({"host", "content-length", "connection", "transfer-encoding", "keep-alive"})
-_INTERNAL_ONLY_REQUEST_HEADERS = frozenset({"x-forwarded-internally", "x-mcp-session-id", "x-contextforge-mcp-runtime", _CONTEXTFORGE_SERVER_ID_HEADER})
+_FORWARDED_CHAIN_HEADERS = frozenset({"forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto"})
+_INTERNAL_ONLY_REQUEST_HEADERS = frozenset(
+    {
+        "x-forwarded-internally",
+        "x-mcp-session-id",
+        "x-contextforge-mcp-runtime",
+        _CONTEXTFORGE_SERVER_ID_HEADER,
+        _CONTEXTFORGE_AUTH_CONTEXT_HEADER,
+    }
+)
 _RESPONSE_HOP_BY_HOP_HEADERS = frozenset({"connection", "transfer-encoding", "keep-alive"})
 
 
@@ -44,6 +58,8 @@ class RustMCPRuntimeProxy:
     def __init__(self, python_fallback_app) -> None:
         """Initialize the proxy with the existing Python MCP transport fallback."""
         self.python_fallback_app = python_fallback_app
+        self._uds_client: httpx.AsyncClient | None = None
+        self._uds_client_lock = asyncio.Lock()
 
     async def handle_streamable_http(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Route POST requests to the Rust runtime and preserve Python fallback for others."""
@@ -61,7 +77,7 @@ class RustMCPRuntimeProxy:
         timeout = httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds)
 
         try:
-            client = await get_http_client()
+            client = await self._get_runtime_client()
             async with client.stream(
                 "POST",
                 target_url,
@@ -100,6 +116,25 @@ class RustMCPRuntimeProxy:
             )
             await error_response(scope, receive, send)
             return
+
+    async def _get_runtime_client(self) -> httpx.AsyncClient:
+        """Return the client used for Python -> Rust runtime proxying."""
+        uds_path = settings.experimental_rust_mcp_runtime_uds
+        if not uds_path:
+            return await get_http_client()
+
+        if self._uds_client is not None:
+            return self._uds_client
+
+        async with self._uds_client_lock:
+            if self._uds_client is None:
+                self._uds_client = httpx.AsyncClient(
+                    transport=httpx.AsyncHTTPTransport(uds=uds_path),
+                    limits=get_http_limits(),
+                    timeout=httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds),
+                    follow_redirects=True,
+                )
+            return self._uds_client
 
 
 async def _stream_request_body(receive: Receive):
@@ -150,11 +185,24 @@ def _build_forward_headers(scope: Scope) -> list[tuple[str, str]]:
         if not isinstance(name, (bytes, bytearray)) or not isinstance(value, (bytes, bytearray)):
             continue
         header_name = name.decode("latin-1").lower()
-        if header_name in _REQUEST_HOP_BY_HOP_HEADERS or header_name in _INTERNAL_ONLY_REQUEST_HEADERS:
+        if header_name in _REQUEST_HOP_BY_HOP_HEADERS or header_name in _FORWARDED_CHAIN_HEADERS or header_name in _INTERNAL_ONLY_REQUEST_HEADERS:
             continue
         headers.append((header_name, value.decode("latin-1")))
 
     server_id = _extract_server_id_from_scope(scope)
     if server_id:
         headers.append((_CONTEXTFORGE_SERVER_ID_HEADER, server_id))
+
+    auth_context = _build_forwarded_auth_context_header()
+    if auth_context is not None:
+        headers.append((_CONTEXTFORGE_AUTH_CONTEXT_HEADER, auth_context))
     return headers
+
+
+def _build_forwarded_auth_context_header() -> str | None:
+    """Serialize the authenticated MCP context for the trusted internal Python dispatcher."""
+    auth_context = get_streamable_http_auth_context()
+    if not auth_context:
+        return None
+    encoded = base64.urlsafe_b64encode(orjson.dumps(auth_context)).decode("ascii")
+    return encoded.rstrip("=")

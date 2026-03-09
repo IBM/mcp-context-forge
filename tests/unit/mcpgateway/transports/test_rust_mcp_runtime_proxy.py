@@ -2,11 +2,13 @@
 """Unit tests for the experimental Rust MCP runtime proxy."""
 
 # Standard
+import base64
 import json
 from unittest.mock import AsyncMock
 
 # Third-Party
 import httpx
+import orjson
 import pytest
 
 # First-Party
@@ -72,6 +74,19 @@ async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_h
 
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_timeout_seconds", 17)
+    monkeypatch.setattr(
+        "mcpgateway.transports.rust_mcp_runtime_proxy.get_streamable_http_auth_context",
+        lambda: {
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_authenticated": True,
+            "is_admin": False,
+            "permission_is_admin": True,
+            "token_use": "session",
+            "scoped_permissions": ["tools.read"],
+            "scoped_server_id": "server-scope-1",
+        },
+    )
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_http_client", AsyncMock(return_value=FakeClient()))
 
     fallback = AsyncMock()
@@ -92,6 +107,7 @@ async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_h
             (b"authorization", b"Bearer test-token"),
             (b"cookie", b"jwt_token=cookie-token"),
             (b"mcp-protocol-version", b"2025-11-25"),
+            (b"x-forwarded-for", b"203.0.113.10"),
             (b"x-forwarded-internally", b"true"),
             (b"x-mcp-session-id", b"internal-only"),
             (b"x-contextforge-server-id", b"spoofed-by-client"),
@@ -113,9 +129,21 @@ async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_h
     assert forwarded_headers["authorization"] == "Bearer test-token"
     assert forwarded_headers["cookie"] == "jwt_token=cookie-token"
     assert forwarded_headers["mcp-protocol-version"] == "2025-11-25"
+    assert "x-forwarded-for" not in forwarded_headers
     assert "x-forwarded-internally" not in forwarded_headers
     assert "x-mcp-session-id" not in forwarded_headers
     assert forwarded_headers["x-contextforge-server-id"] == "123e4567-e89b-12d3-a456-426614174000"
+    auth_context = orjson.loads(base64.urlsafe_b64decode(f"{forwarded_headers['x-contextforge-auth-context']}=="))
+    assert auth_context == {
+        "email": "user@example.com",
+        "teams": ["team-a"],
+        "is_authenticated": True,
+        "is_admin": False,
+        "permission_is_admin": True,
+        "token_use": "session",
+        "scoped_permissions": ["tools.read"],
+        "scoped_server_id": "server-scope-1",
+    }
     assert json.loads(captured["content"].decode()) == {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
 
     assert events[0]["type"] == "http.response.start"
@@ -204,6 +232,71 @@ async def test_post_requests_without_server_scope_stream_body_to_rust(monkeypatc
     assert captured["method"] == "POST"
     assert captured["url"] == "http://127.0.0.1:8787/mcp/"
     assert captured["content"] == b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}'
+    assert events[-1] == {"type": "http.response.body", "body": b"", "more_body": False}
+
+
+@pytest.mark.asyncio
+async def test_post_requests_use_uds_client_when_configured(monkeypatch):
+    """Configured Rust runtime UDS should use a dedicated client instead of the shared HTTP client."""
+    constructed = {}
+
+    class FakeResponse:
+        status_code = 200
+        headers = httpx.Headers({"content-type": "application/json"})
+
+        async def aiter_bytes(self):
+            yield b'{"jsonrpc":"2.0","id":1,"result":{}}'
+
+    class FakeStreamContext:
+        async def __aenter__(self):
+            return FakeResponse()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            constructed["kwargs"] = kwargs
+
+        def stream(self, method, url, *, content, headers, timeout):  # noqa: ANN001
+            constructed["method"] = method
+            constructed["url"] = url
+            constructed["headers"] = headers
+            constructed["timeout"] = timeout
+            return FakeStreamContext()
+
+    get_http_client_mock = AsyncMock()
+
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://localhost")
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_uds", "/tmp/contextforge-mcp-rust.sock")
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_timeout_seconds", 9)
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_http_client", get_http_client_mock)
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.httpx.AsyncClient", FakeAsyncClient)
+
+    fallback = AsyncMock()
+    proxy = RustMCPRuntimeProxy(fallback)
+    events = []
+
+    async def send(message):
+        events.append(message)
+
+    await proxy.handle_streamable_http(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "modified_path": "/mcp/",
+            "query_string": b"",
+            "headers": [(b"content-type", b"application/json")],
+        },
+        _make_receive(b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}'),
+        send,
+    )
+
+    get_http_client_mock.assert_not_awaited()
+    assert constructed["method"] == "POST"
+    assert constructed["url"] == "http://localhost/mcp/"
+    assert constructed["kwargs"]["transport"]._pool._uds == "/tmp/contextforge-mcp-rust.sock"  # pylint: disable=protected-access
     assert events[-1] == {"type": "http.response.body", "body": b"", "more_body": False}
 
 
