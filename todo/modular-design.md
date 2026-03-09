@@ -769,6 +769,49 @@ In order:
 
 ## Final Recommendation
 
+## Implementation Update: Integrated Rust MCP Edge
+
+The MCP Rust runtime is now integrated into the real gateway path behind an
+experimental flag.
+
+New runtime settings:
+
+- `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED`
+- `EXPERIMENTAL_RUST_MCP_RUNTIME_URL`
+- `EXPERIMENTAL_RUST_MCP_RUNTIME_TIMEOUT_SECONDS`
+
+Container/launcher support:
+
+- `Containerfile.lite` now copies a bundled `contextforge-mcp-runtime` binary
+  when built with `--build-arg ENABLE_RUST=true`
+- `docker-entrypoint.sh` can supervise that sidecar with
+  `EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true`
+
+Important design decision:
+
+- the mounted `/mcp` app is now hybrid
+- POST MCP traffic proxies to Rust
+- non-POST MCP traffic still falls back to the Python streamable HTTP transport
+
+Why this matters:
+
+- it keeps existing session-management behavior available while the Rust runtime
+  is still POST-focused
+- it makes the integration safe enough to run in the actual gateway instead of
+  only in a synthetic standalone demo
+
+Correctness fix added during integration:
+
+- server-scoped `/servers/<id>/mcp` requests now preserve semantics because the
+  Python proxy injects `server_id` into forwarded JSON-RPC params before the
+  Rust runtime passes the request to Python `/rpc`
+
+Hardening fix added during integration:
+
+- the Rust runtime now strips internal-only headers such as
+  `x-forwarded-internally` and `x-mcp-session-id` instead of forwarding them
+  back into Python `/rpc`
+
 If the question is “how easy is it to rewrite MCP in Rust and then do the same for A2A?”
 
 My answer is:

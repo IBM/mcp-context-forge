@@ -235,6 +235,20 @@ class Settings(BaseSettings):
 
     # Protocol
     protocol_version: str = "2025-11-25"
+    experimental_rust_mcp_runtime_enabled: bool = Field(
+        default=False,
+        description="Proxy POST /mcp traffic through the experimental Rust MCP runtime sidecar.",
+    )
+    experimental_rust_mcp_runtime_url: str = Field(
+        default="http://127.0.0.1:8787",
+        description="Base URL for the experimental Rust MCP runtime sidecar.",
+    )
+    experimental_rust_mcp_runtime_timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=300,
+        description="Timeout in seconds for Python-to-Rust MCP runtime proxy requests.",
+    )
 
     # Authentication
     basic_auth_user: str = "admin"

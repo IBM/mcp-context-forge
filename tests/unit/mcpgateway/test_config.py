@@ -1047,6 +1047,14 @@ def test_mcp_require_auth_defaults_to_auth_required_false():
     assert s.mcp_require_auth is False
 
 
+def test_experimental_rust_mcp_runtime_defaults():
+    """Experimental Rust MCP runtime settings should default to disabled with local sidecar URL."""
+    s = Settings(_env_file=None)
+    assert s.experimental_rust_mcp_runtime_enabled is False
+    assert s.experimental_rust_mcp_runtime_url == "http://127.0.0.1:8787"
+    assert s.experimental_rust_mcp_runtime_timeout_seconds == 30
+
+
 def test_auth_required_true_with_explicit_mcp_permissive_warns(caplog):
     """AUTH_REQUIRED=true with explicit MCP_REQUIRE_AUTH=false should warn."""
     caplog.set_level("WARNING", logger="mcpgateway.config")

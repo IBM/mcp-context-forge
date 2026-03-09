@@ -81,7 +81,7 @@ Reason:
 - matches the repo's MCP-2025 compliance expectations for Streamable HTTP notifications
 - keeps side effects in Python while moving transport semantics into Rust
 
-### 4. `/mcp` is currently POST-only JSON mode
+### 4. `/mcp` is currently POST-first JSON mode
 
 This prototype supports `POST /mcp` as a Rust-owned MCP edge alias.
 
@@ -92,7 +92,8 @@ Reason:
 
 Current limitation:
 
-- GET/DELETE stream management is not yet implemented here
+- GET/DELETE stream management is not yet implemented here, so the integrated
+  gateway currently keeps those methods on the Python transport
 
 ### 5. UDS is preferred over loopback TCP
 
@@ -195,15 +196,60 @@ Implemented:
 - local `ping`
 - `202 Accepted` notification handling
 - backend forwarding for all other JSON-RPC methods
-- propagation of `Authorization`, `mcp-session-id`, `x-mcp-session-id`, and other non-hop-by-hop headers
+- propagation of `Authorization`, cookies, `mcp-session-id`, and other non-hop-by-hop headers
+- stripping of internal-only forwarded headers such as `x-forwarded-internally`
+- Python-side embedding for the mounted `/mcp` route:
+  - Python auth and path rewriting stay in front
+  - server-scoped `/servers/<id>/mcp` requests have `server_id` injected before reaching `/rpc`
+  - non-POST MCP session-management requests still fall back to the Python transport
 
 Not yet implemented:
 
 - resumable Streamable HTTP session orchestration
 - SSE event streaming
-- Python auth/path-rewrite embedding around the Rust runtime
 - direct Rust ownership of `tools/list`, `tools/call`, `resources/*`, `prompts/*`
 - backend contract narrower than `/rpc`
+
+## Gateway integration
+
+The gateway now supports an integrated experimental mode:
+
+- `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`
+- `EXPERIMENTAL_RUST_MCP_RUNTIME_URL=http://127.0.0.1:8787`
+- `EXPERIMENTAL_RUST_MCP_RUNTIME_TIMEOUT_SECONDS=30`
+
+Behavior in this mode:
+
+- Python still performs MCP auth, token scoping, and path rewriting
+- POST `/mcp` traffic is proxied to the Rust runtime
+- GET/DELETE `/mcp` traffic still uses the Python `StreamableHTTPSessionManager`
+- server-scoped `/servers/<id>/mcp` requests preserve semantics by injecting `server_id`
+  into the forwarded JSON-RPC params
+
+## Container integration
+
+`Containerfile.lite` now includes the runtime behind the existing build flag:
+
+```bash
+docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
+```
+
+When the image contains Rust artifacts, the bundled entrypoint can supervise the
+sidecar automatically:
+
+```bash
+docker run \
+  -e EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true \
+  -e EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true \
+  -e HTTP_SERVER=gunicorn \
+  mcpgateway
+```
+
+Optional launcher/runtime envs:
+
+- `EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true|false`
+- `MCP_RUST_LISTEN_HTTP=127.0.0.1:8787`
+- `MCP_RUST_BACKEND_RPC_URL=http://127.0.0.1:4444/rpc`
 
 ## Testing
 

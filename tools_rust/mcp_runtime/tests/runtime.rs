@@ -386,6 +386,63 @@ async fn notifications_are_forwarded_but_return_accepted() {
 }
 
 #[tokio::test]
+async fn internal_only_headers_are_not_forwarded_to_backend() {
+    let backend = Router::new().route(
+        "/rpc",
+        post(|headers: HeaderMap| async move {
+            Json(json!({
+                "jsonrpc":"2.0",
+                "id": 1,
+                "result": {
+                    "x_forwarded_internally": headers.get("x-forwarded-internally").and_then(|value| value.to_str().ok()),
+                    "x_mcp_session_id": headers.get("x-mcp-session-id").and_then(|value| value.to_str().ok()),
+                    "runtime_header": headers.get("x-contextforge-mcp-runtime").and_then(|value| value.to_str().ok()),
+                }
+            }))
+        }),
+    );
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            log_filter: "error".to_string(),
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("x-forwarded-internally", "true")
+        .header("x-mcp-session-id", "internal-only")
+        .header("x-contextforge-mcp-runtime", "spoofed")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": {}
+        }))
+        .send()
+        .await
+        .expect("runtime response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["result"]["x_forwarded_internally"], Value::Null);
+    assert_eq!(body["result"]["x_mcp_session_id"], Value::Null);
+    assert_eq!(body["result"]["runtime_header"], "rust");
+}
+
+#[tokio::test]
 async fn initialize_missing_protocol_version_returns_invalid_params() {
     let backend = Router::new().route(
         "/rpc",
