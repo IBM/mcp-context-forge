@@ -4116,7 +4116,7 @@ async def get_tool(
         request: The incoming HTTP request.
         db:     Active SQLAlchemy session (dependency).
         user:   Authenticated username (dependency).
-        apijsonpath: Optional JSON-Path modifier supplied in the body.
+        apijsonpath: Optional JSON-Path modifier supplied as query parameter
 
     Returns:
         The raw ``ToolRead`` model **or** a JSON-transformed ``dict`` if
