@@ -1,7 +1,8 @@
 # Rust MCP Runtime Status
 
 Last updated: March 9, 2026
-Current reference commit: `2f31415e1`
+Current branch head: `562311419`
+Current upstream base: `origin/main@8cc5cc96b`
 
 ## Executive Summary
 
@@ -56,7 +57,7 @@ Integrated in the main application:
 - Python mounts a hybrid MCP transport app
 - `POST /mcp` is proxied to the Rust runtime when enabled
 - non-`POST` MCP traffic still falls back to the Python transport
-- `/servers/<id>/mcp` requests preserve semantics by injecting `server_id` before `/rpc`
+- `/servers/<id>/mcp` requests preserve semantics by carrying `server_id` across the Python -> Rust -> Python seam via `x-contextforge-server-id`
 - the managed sidecar can be launched from `docker-entrypoint.sh`
 - `Containerfile.lite` includes the Rust runtime binary when built with `ENABLE_RUST=true`
 - `docker-compose.yml` exposes the Rust runtime env vars, including `MCP_RUST_LOG`
@@ -216,7 +217,19 @@ That means:
 - the current performance gains are mostly transport-edge gains
 - the real modularity win still requires extracting a cleaner dispatcher/core contract
 
-### 3. Wider regression coverage is still in progress
+### 3. Performance is still dominated by the seam
+
+The highest-leverage performance work so far has not been inside Rust business logic.
+
+It has been reducing avoidable Python work around the Rust edge:
+
+- Rust backend responses now stream back to the client instead of buffering in Python first
+- Python no longer reparses and rewrites JSON request bodies just to attach `server_id` for `/servers/<id>/mcp`
+- server scope now crosses the seam in an internal header instead of a body mutation
+
+This matters because the load-test target in `tests/loadtest/locustfile_mcp_protocol.py` is the server-scoped MCP path, so every unnecessary parse/serialize on that path shows up directly in throughput and latency.
+
+### 4. Wider regression coverage is still in progress
 
 As of March 9, 2026:
 
@@ -227,7 +240,7 @@ As of March 9, 2026:
 
 So the Rust transport edge is proven on the main MCP CLI path, but wider regression parity is not yet fully signed off.
 
-### 4. Startup noise in compose
+### 5. Startup noise in compose
 
 The current compose stack still emits pre-existing bootstrap duplicate-key warnings during startup in some seeded environments.
 
@@ -252,6 +265,76 @@ Immediate priorities:
   - `tools/call`
   - server-scoped `/servers/<id>/mcp`
 - add regression coverage for non-`POST` fallback behavior so the hybrid boundary stays intentional
+- keep validating load runs with an explicit server-scope sanity check before each run, so benchmark results are not polluted by accidental global discovery
+
+## Performance Investigation Update
+
+### What was tested on the rebased branch
+
+Using the load-test tooling now on `origin/main`:
+
+- `tests/loadtest/locustfile_mcp_protocol.py`
+- direct `locust` runs following `todo/performance/reproduce-testing.md`
+- live compose stack built from the rebased image with:
+  - `ENABLE_RUST_BUILD=true`
+  - `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`
+  - `EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true`
+
+### Important test hygiene note
+
+The first post-rebase comparison attempt produced invalid results because server-scoped MCP discovery briefly fell back to global discovery after an overly strict backend trust check for the internal `server_id` header.
+
+Symptoms were:
+
+- `tools/list` on `/servers/<id>/mcp` returning global tools/resources/prompts instead of the selected server scope
+- `resources/read` failures in Locust because discovery and execution no longer matched
+
+That bug was fixed by making `/rpc` honor `x-contextforge-server-id` whenever the request is marked as coming from the Rust runtime via `x-contextforge-mcp-runtime: rust`.
+
+### Current measured impact of the latest seam optimization
+
+These numbers are the valid before/after comparison on the same server-scoped fast-time SSE target, using 20-second Locust runs.
+
+Before removing Python JSON body rewriting:
+
+```text
+Users | RPS    | Avg(ms) | p95 | p99 | Failures
+50    | 379.15 | 30.86   | 65  | 120 | 0%
+100   | 588.08 | 61.48   | 110 | 200 | 0%
+```
+
+After switching `/servers/<id>/mcp` to the internal-header seam:
+
+```text
+Users | RPS    | Avg(ms) | p95 | p99 | Failures
+50    | 363.81 | 29.93   | 64  | 110 | 0%
+100   | 672.11 | 48.59   | 86  | 200 | 0%
+```
+
+Interpretation:
+
+- the 50-user point is roughly flat and likely within normal run-to-run noise
+- the 100-user point improved materially:
+  - about `+14.3%` RPS
+  - about `-21.0%` average latency
+  - about `-21.8%` p95 latency
+
+Conclusion:
+
+- the seam optimization is worth keeping
+- the current bottleneck is still the Python/Rust handoff and Python `/rpc` backend, not the Rust transport shell itself
+- there is still substantial headroom before Rust can show its full value because most MCP execution work remains in Python
+
+### Next performance steps in priority order
+
+1. Move the Python -> Rust hop from loopback TCP to Unix domain sockets.
+2. Let Rust own the server-scoped MCP path directly instead of depending on Python to translate mounted paths.
+3. Extract a real internal dispatcher contract so Rust stops proxying generic JSON-RPC to Python `/rpc`.
+4. Move read-heavy MCP methods first:
+   - `tools/list`
+   - `resources/list`
+   - `prompts/list`
+5. After that, revisit deeper Rust-side JSON parsing micro-optimizations only if profiling still points there.
 
 ### Phase 2: remove Python `/rpc` coupling
 
@@ -337,6 +420,22 @@ curl -i http://localhost:8080/mcp/ \
   --data '{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}'
 ```
 
+For the server-scoped path used by the MCP load test, a stronger verification is:
+
+```bash
+TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 60 --secret my-test-key | tail -n1)
+SERVER_ID=<server-id>
+
+curl -s -X POST http://localhost:8080/servers/$SERVER_ID/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "mcp-protocol-version: 2024-11-05" \
+  -d '{"jsonrpc":"2.0","id":"1","method":"tools/list","params":{}}' \
+  | python3 -c 'import json,sys; data=json.load(sys.stdin); print(len(data.get("result",{}).get("tools",[])))'
+```
+
+If server scoping is correct, this should return the tool count for that specific virtual server, not the global registry.
+
 ### 2. Check the logs
 
 ```bash
@@ -383,6 +482,18 @@ JWT_SECRET_KEY=my-test-key \
 PLATFORM_ADMIN_EMAIL=admin@example.com \
 MCP_CLI_TIMEOUT=60 \
 uv run pytest tests/e2e/test_mcp_cli_protocol.py -v -s --tb=short
+```
+
+### Reproduce the protocol load test directly
+
+```bash
+source .venv/bin/activate
+locust -f tests/loadtest/locustfile_mcp_protocol.py \
+  --host=http://localhost:8080 \
+  --users=100 \
+  --spawn-rate=100 \
+  --run-time=20s \
+  --headless
 ```
 
 ### Broader regression suites
