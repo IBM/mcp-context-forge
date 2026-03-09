@@ -5,7 +5,7 @@
 ###############################################################################
 ARG ENABLE_RUST=false
 
-FROM quay.io/pypa/manylinux2014:2026.02.06-1 AS rust-builder-base
+FROM quay.io/pypa/manylinux2014:2026.03.06-3 AS rust-builder-base
 ARG ENABLE_RUST
 
 # Set shell with pipefail for safety
@@ -48,10 +48,10 @@ FROM rust-builder-base AS rust-builder
 ###############################################################################
 # Main application stage
 ###############################################################################
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1770180557
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
-      version="1.0.0-RC-1" \
+      version="1.0.0-RC-2" \
       description="ContextForge: An enterprise-ready Model Context Protocol Gateway"
 
 ARG PYTHON_VERSION=3.12
