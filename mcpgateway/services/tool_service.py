@@ -435,7 +435,16 @@ def extract_using_jq(data, jq_filter=""):
 
     return result
 
+
 def apply_mapping_into_target(data_obj: dict, mapping_obj: dict | None, target_obj=None) -> dict:
+    """Gets all data_obj fields and maps them using the mapping_obj into target_obj.
+    If no mapping_obj it will just return the target_obj
+    If no target_obj provided it will just create an empty dict as target
+
+    Returns:
+        A new dict containing all fields from target_obj and all ampped fields from data_obj.
+    """
+
     if target_obj is None:
         target_obj = {}
 
@@ -450,6 +459,7 @@ def apply_mapping_into_target(data_obj: dict, mapping_obj: dict | None, target_o
             if k in mapping_obj
         }
     }
+
 
 class ToolError(Exception):
     """Base class for tool-related errors.
