@@ -237,6 +237,7 @@ RUN chown -R 1001:0 /app \
 FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549 AS runtime
 
 ARG PYTHON_VERSION=3.12
+ARG ENABLE_RUST=false
 ARG ENABLE_PROFILING=false
 
 # ----------------------------------------------------------------------------

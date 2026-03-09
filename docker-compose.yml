@@ -117,6 +117,8 @@ services:
     build:
       context: .
       dockerfile: Containerfile.lite     # Same one the Makefile builds
+      args:
+        ENABLE_RUST: ${ENABLE_RUST_BUILD:-false}
     restart: unless-stopped
     # NOTE: When using replicas > 1, access via nginx:8080 instead of direct port 4444
     # ports:
@@ -146,6 +148,14 @@ services:
       - APP_DOMAIN=${APP_DOMAIN:-http://localhost:8080}
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
+      # Experimental Rust MCP runtime (disabled by default). When enabled with the
+      # default managed mode, docker-entrypoint.sh launches the bundled runtime
+      # sidecar inside the gateway container.
+      - EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED:-false}
+      - EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED:-true}
+      - EXPERIMENTAL_RUST_MCP_RUNTIME_URL=${EXPERIMENTAL_RUST_MCP_RUNTIME_URL:-http://127.0.0.1:8787}
+      - EXPERIMENTAL_RUST_MCP_RUNTIME_TIMEOUT_SECONDS=${EXPERIMENTAL_RUST_MCP_RUNTIME_TIMEOUT_SECONDS:-30}
+      - MCP_RUST_LISTEN_HTTP=${MCP_RUST_LISTEN_HTTP:-127.0.0.1:8787}
       # WebSocket transport features (disabled by default; opt-in only)
       - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
       - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}
