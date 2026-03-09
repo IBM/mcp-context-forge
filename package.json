@@ -1,4 +1,5 @@
 {
+    "name": "mcp-context-forge",
     "devDependencies": {
         "@biomejs/biome": "^2.4.4",
         "@stylistic/eslint-plugin": "^5.9.0",
