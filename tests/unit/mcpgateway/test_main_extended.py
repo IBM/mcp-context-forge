@@ -34,6 +34,7 @@ from mcpgateway.main import (
     AdminAuthMiddleware,
     DocsAuthMiddleware,
     MCPPathRewriteMiddleware,
+    _serialize_mcp_tool_definition,
     app,
     create_prompt,
     create_resource,
@@ -192,6 +193,34 @@ class TestConditionalPaths:
         # Test the functionality that exercises the loop path
         response = test_client.get("/health", headers=auth_headers)
         assert response.status_code == 200
+
+
+class TestMcpSerialization:
+    """Test MCP-specific response shaping helpers."""
+
+    def test_serialize_mcp_tool_definition_strips_api_only_fields(self):
+        """MCP tool payloads should exclude API-only metadata like dict-shaped tags."""
+        payload = _serialize_mcp_tool_definition(
+            {
+                "name": "a2a-test-agent",
+                "description": "A2A tool",
+                "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+                "outputSchema": {"type": "object"},
+                "annotations": {"title": "A2A tool"},
+                "tags": [{"id": "ai", "label": "ai"}],
+                "url": "https://example.com/agent",
+            }
+        )
+
+        assert payload == {
+            "name": "a2a-test-agent",
+            "description": "A2A tool",
+            "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+            "outputSchema": {"type": "object"},
+            "annotations": {"title": "A2A tool"},
+        }
+        assert "tags" not in payload
+        assert "url" not in payload
 
 
 class TestEndpointErrorHandling:

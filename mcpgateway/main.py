@@ -590,6 +590,37 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
         raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
 
+def _serialize_mcp_tool_definition(tool: Any) -> Dict[str, Any]:
+    """Return an MCP-compliant tool definition without API-only metadata fields."""
+    if hasattr(tool, "model_dump"):
+        data = tool.model_dump(by_alias=True, exclude_none=True)
+    elif isinstance(tool, dict):
+        data = dict(tool)
+    else:
+        data = {}
+
+    payload: Dict[str, Any] = {
+        "name": data.get("name", getattr(tool, "name", None)),
+        "description": data.get("description", getattr(tool, "description", None)),
+        "inputSchema": data.get("inputSchema", getattr(tool, "input_schema", None)),
+    }
+
+    output_schema = data.get("outputSchema", getattr(tool, "output_schema", None))
+    if output_schema is not None:
+        payload["outputSchema"] = output_schema
+
+    annotations = data.get("annotations", getattr(tool, "annotations", None))
+    if annotations is not None:
+        payload["annotations"] = annotations
+
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def _serialize_mcp_tool_definitions(tools: List[Any]) -> List[Dict[str, Any]]:
+    """Serialize tool records to MCP tool definitions."""
+    return [_serialize_mcp_tool_definition(tool) for tool in tools]
+
+
 def _enforce_scoped_resource_access(request: Request, db: Session, user, resource_path: str) -> None:
     """Apply token-scope ownership checks for a concrete resource path.
 
@@ -6207,7 +6238,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 # Release DB connection early to prevent idle-in-transaction under load
                 db.commit()
                 db.close()
-                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                result = {"tools": _serialize_mcp_tool_definitions(tools)}
             else:
                 tools, next_cursor = await tool_service.list_tools(
                     db,
@@ -6222,7 +6253,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 # Release DB connection early to prevent idle-in-transaction under load
                 db.commit()
                 db.close()
-                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                result = {"tools": _serialize_mcp_tool_definitions(tools)}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "list_tools":  # Legacy endpoint
@@ -6250,7 +6281,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 )
                 db.commit()
                 db.close()
-                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                result = {"tools": _serialize_mcp_tool_definitions(tools)}
             else:
                 tools, next_cursor = await tool_service.list_tools(
                     db,
@@ -6264,7 +6295,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 )
                 db.commit()
                 db.close()
-                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                result = {"tools": _serialize_mcp_tool_definitions(tools)}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "list_gateways":
