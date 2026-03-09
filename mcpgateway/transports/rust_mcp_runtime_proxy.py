@@ -56,16 +56,36 @@ class RustMCPRuntimeProxy:
             await self.python_fallback_app(scope, receive, send)
             return
 
-        body = await _read_request_body(receive)
-        body = _inject_server_id_from_path(scope, body)
         target_url = _build_runtime_mcp_url(scope)
         headers = _build_forward_headers(scope)
+        body, request_stream = await _prepare_runtime_request_body(scope, receive)
 
         timeout = httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds)
 
         try:
             client = await get_http_client()
-            response = await client.post(target_url, content=body, headers=headers, timeout=timeout)
+            async with client.stream(
+                "POST",
+                target_url,
+                content=body if body is not None else request_stream,
+                headers=headers,
+                timeout=timeout,
+            ) as response:
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": response.status_code,
+                        "headers": [
+                            (name, value)
+                            for name, value in response.headers.raw
+                            if name.decode("latin-1").lower() not in _RESPONSE_HOP_BY_HOP_HEADERS
+                        ],
+                    }
+                )
+                async for chunk in response.aiter_bytes():
+                    if chunk:
+                        await send({"type": "http.response.body", "body": chunk, "more_body": True})
+                await send({"type": "http.response.body", "body": b"", "more_body": False})
         except httpx.HTTPError as exc:
             logger.error("Experimental Rust MCP runtime request failed: %s", exc)
             error_response = ORJSONResponse(
@@ -83,19 +103,6 @@ class RustMCPRuntimeProxy:
             await error_response(scope, receive, send)
             return
 
-        await send(
-            {
-                "type": "http.response.start",
-                "status": response.status_code,
-                "headers": [
-                    (name, value)
-                    for name, value in response.headers.raw
-                    if name.decode("latin-1").lower() not in _RESPONSE_HOP_BY_HOP_HEADERS
-                ],
-            }
-        )
-        await send({"type": "http.response.body", "body": response.content})
-
 
 async def _read_request_body(receive: Receive) -> bytes:
     """Read the full ASGI request body into memory."""
@@ -109,6 +116,35 @@ async def _read_request_body(receive: Receive) -> bytes:
         body_parts.append(message.get("body", b""))
         if not message.get("more_body", False):
             return b"".join(body_parts)
+
+
+async def _stream_request_body(receive: Receive):
+    """Yield ASGI request body chunks without buffering the full request."""
+    while True:
+        message = await receive()
+        if message["type"] == "http.disconnect":
+            return
+        if message["type"] != "http.request":
+            continue
+        body = message.get("body", b"")
+        if body:
+            yield body
+        if not message.get("more_body", False):
+            return
+
+
+async def _prepare_runtime_request_body(scope: Scope, receive: Receive) -> tuple[bytes | None, object | None]:
+    """Return either a buffered body (when mutation is required) or a streaming body iterator."""
+    if _request_needs_server_id_injection(scope):
+        body = await _read_request_body(receive)
+        return _inject_server_id_from_path(scope, body), None
+    return None, _stream_request_body(receive)
+
+
+def _request_needs_server_id_injection(scope: Scope) -> bool:
+    """Return True when the mounted MCP path came from /servers/<id>/mcp."""
+    modified_path = str(scope.get("modified_path") or scope.get("path") or "")
+    return _SERVER_ID_RE.search(modified_path) is not None
 
 
 def _inject_server_id_from_path(scope: Scope, body: bytes) -> bytes:
