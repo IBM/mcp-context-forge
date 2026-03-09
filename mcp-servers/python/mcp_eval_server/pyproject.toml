@@ -25,18 +25,18 @@ requires-python = ">=3.11"
 dependencies = [
     "aiofiles>=25.1.0",
     "aiohttp>=3.13.3",
-    "cachetools>=7.0.1",
+    "cachetools>=7.0.4",
     "diskcache>=5.6.3",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
     "mcp>=1.26.0",
     "numpy>=2.4.2",
-    "openai>=2.24.0",
+    "openai>=2.26.0",
     "orjson>=3.11.7",
     "psutil>=7.2.2",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.13.1",
-    "python-dotenv>=1.2.1",
+    "python-dotenv>=1.2.2",
     "PyYAML>=6.0.3",
     "scikit-learn>=1.8.0",
     "scipy>=1.17.1",
@@ -46,9 +46,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "black>=26.1.0",
+    "black>=26.3.0",
     "flake8>=7.3.0",
-    "isort>=8.0.0",
+    "isort>=8.0.1",
     "mypy>=1.19.1",
     "pre-commit>=4.5.1",
     "pytest>=9.0.2",
@@ -58,7 +58,7 @@ dev = [
 ]
 docs = [
     "mkdocs>=1.6.1",
-    "mkdocs-material>=9.7.3",
+    "mkdocs-material>=9.7.4",
     "mkdocstrings[python]>=1.0.3",
 ]
 benchmark = [
@@ -69,8 +69,8 @@ anthropic = [
     "anthropic>=0.84.0",
 ]
 aws = [
-    "boto3>=1.42.58",
-    "botocore>=1.42.58",
+    "boto3>=1.42.63",
+    "botocore>=1.42.63",
 ]
 ollama = []
 gemini = [
@@ -80,15 +80,15 @@ watsonx = [
     "ibm-watsonx-ai>=1.5.3",
 ]
 rest = [
-    "fastapi>=0.133.1",
+    "fastapi>=0.135.1",
     "python-multipart>=0.0.22",
     "uvicorn[standard]>=0.41.0",
 ]
 all = [
     "anthropic>=0.84.0",
-    "boto3>=1.42.58",
-    "botocore>=1.42.58",
-    "fastapi>=0.133.1",
+    "boto3>=1.42.63",
+    "botocore>=1.42.63",
+    "fastapi>=0.135.1",
     "google-generativeai>=0.8.6",
     "ibm-watsonx-ai>=1.5.3",
     "python-multipart>=0.0.22",

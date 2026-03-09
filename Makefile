@@ -3911,7 +3911,14 @@ jsonlint:                         ## 📑 JSON validation (jq)
 		exit 1; \
 	}
 	@echo '📑  jsonlint (jq) ...'
-	@find . -type f -name '*.json' -not -path './node_modules/*' -print0 \
+	@find . -type f -name '*.json' \
+	  -not -path './node_modules/*' \
+	  -not -path './.venv/*' \
+	  -not -path './.git/*' \
+	  -not -path './.cache/*' \
+	  -not -path './coverage/*' \
+	  -not -path './.depupdate.*' \
+	  -print0 \
 	  | xargs -0 -I{} sh -c 'jq empty "{}"' \
 	&& echo '✅  All JSON valid'
 

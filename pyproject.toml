@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.0-RC-1"
+version = "1.0.0-RC-2"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -177,12 +177,12 @@ dev = [
 # Redis with hiredis C parser for up to 83x faster response parsing
 # See ADR-026 for benchmarks and decision rationale
 redis = [
-    "redis[hiredis]>=7.2.1",
+    "redis[hiredis]>=7.3.0",
 ]
 
 # Pure-Python Redis parser fallback (for environments where hiredis wheels aren't available)
 redis-pure = [
-    "redis>=7.2.1",
+    "redis>=7.3.0",
 ]
 
 # PostgreSQL adapter with psycopg3
@@ -213,7 +213,7 @@ fuzz = [
     "hypothesis>=6.151.9",
     "pytest-benchmark>=5.2.3",
     "pytest-xdist>=3.8.0",
-    "schemathesis>=4.10.2,<4.11.0",  # 4.11.0 requires pytest>=9; pytest-md-report 0.7.0 caps at <9
+    "schemathesis>=4.10.2,<4.11.0", # 4.11.0 requires pytest>=9; pytest-md-report 0.7.0 caps at <9
 ]
 
 # Coverage-guided fuzzing (requires clang/libfuzzer)
@@ -223,10 +223,10 @@ fuzz-atheris = [
 
 # Observability dependencies (optional)
 observability = [
-    "opentelemetry-api>=1.39.1",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.39.1",
-    "opentelemetry-exporter-otlp-proto-http>=1.39.1",
-    "opentelemetry-sdk>=1.39.1",
+    "opentelemetry-api>=1.40.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.40.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.40.0",
+    "opentelemetry-sdk>=1.40.0",
 ]
 
 # Granian HTTP server (optional, alternative to Gunicorn+Uvicorn)
@@ -259,7 +259,7 @@ profiling = [
 
 # Plugin templating tools (optional)
 templating = [
-    "cookiecutter>=2.7.0",
+    "cookiecutter>=2.7.1",
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
@@ -268,7 +268,7 @@ grpc = [
     "grpcio>=1.78.0",
     "grpcio-reflection>=1.78.0",
     "grpcio-tools>=1.78.0",
-    "protobuf>=6.31.1,<7.0.0",  # grpcio-reflection 1.78.x caps at <7.0.0; bump when grpcio ecosystem supports protobuf 7.x
+    "protobuf>=6.31.1,<7.0.0", # grpcio-reflection 1.78.x caps at <7.0.0; bump when grpcio ecosystem supports protobuf 7.x
 ]
 
 # UI Testing
