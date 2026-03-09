@@ -2,7 +2,7 @@
 """Add admin.overview and servers.use permissions to viewer roles.
 
 Revision ID: abf8ac3b6008
-Revises: d9e0f1a2b3c4
+Revises: e1f2a3b4c5d6
 Create Date: 2026-03-02 21:54:28.873091
 
 Backfills default role permission sets so existing deployments receive:
@@ -29,7 +29,7 @@ from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision: str = "abf8ac3b6008"
-down_revision: Union[str, Sequence[str], None] = "d9e0f1a2b3c4"
+down_revision: Union[str, Sequence[str], None] = "e1f2a3b4c5d6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
