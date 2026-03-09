@@ -68,7 +68,8 @@ FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-
 EXTRA_DIRS_TO_CLEAN := reports test-results tests/playwright/reports \
 	tests/playwright/screenshots tests/playwright/videos \
 	tests/jmeter/results tests/async/profiles tests/async/reports \
-	tests/migration/reports tests/migration/logs .jmeter plugins_rust/target
+	tests/migration/reports tests/migration/logs .jmeter target plugins_rust/target \
+	benchmarks/reports
 
 EXTRA_FILES_TO_CLEAN := docs/docs/security/report.md \
 	playwright-report-*.html test-results-*.xml \
@@ -178,8 +179,8 @@ install-db: venv
 install-dev: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install --group dev ."
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust plugins..."; \
-		$(MAKE) rust-dev || echo "⚠️  Rust plugins not available (optional)"; \
+		echo "🦀 Building Rust..."; \
+		$(MAKE) rust-dev || echo "⚠️  Rust not available (optional)"; \
 	else \
 		echo "⏭️  Rust builds disabled (set ENABLE_RUST_BUILD=1 to enable)"; \
 	fi
@@ -593,6 +594,7 @@ clean:
 # help:                        Override gateway URL: MCP_CLI_BASE_URL=http://localhost:4444 make test-mcp-cli
 # help:                        No LLM or API key required - tests MCP protocol only
 # help: test                 - Run unit tests with pytest
+# help: test-with-rust       - Install Rust extension and run full test suite (CI-equivalent; requires rustup)
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
 # help: coverage             - Run tests with coverage, emit HTML/XML + badge
@@ -617,8 +619,14 @@ clean:
 # help: query-log-tail       - Tail the database query log file
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
+# help:
+# help: 🧪 BENCHMARKS (top-level: benchmarks/ and make benchmark)
+# help: benchmark           - Run all benchmarks (pytest, async, JSON script, Rust plugins)
+# help: benchmark-python    - Run Python benchmarks only (pytest + async + JSON serialization)
+# help: benchmark-rust      - Run Rust plugin benchmarks and Rust vs Python comparison
+# help: bench               - Run pytest benchmarks only; use BENCH=name or "make bench <name>" to filter
 
-.PHONY: smoketest test-mcp-cli test-mcp-rbac test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test-mcp-cli test-mcp-rbac test test-with-rust test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time benchmark benchmark-ensure-rust benchmark-python benchmark-rust bench
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -646,18 +654,41 @@ test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway
 			|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }; \
 		echo "✅ MCP RBAC transport tests passed!"'
 
+# Use -n 0 when REQUIRE_RUST=1 so Rust extension modules load in the main process (xdist workers may not see them).
+# When REQUIRE_RUST=1 use "uv run pytest" (no activate) so uv uses the project .venv where rust-install put the extensions.
+TEST_NPROC := $(if $(REQUIRE_RUST),0,auto)
 test:
 	@echo "🧪 Running tests..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	@/bin/bash -c "$(if $(REQUIRE_RUST),,source $(VENV_DIR)/bin/activate && ) \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n auto --maxfail=0 -v --durations=5 \
+		uv run pytest -n $(TEST_NPROC) --maxfail=0 -v --durations=5 \
 			--ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py \
 			--ignore=tests/e2e/test_mcp_cli_protocol.py \
 			--ignore=tests/e2e/test_mcp_rbac_transport.py"
+
+# Full test suite with Rust extension (same as .github/workflows/pytest.yml). Requires Rust: https://rustup.rs
+# Uses project .venv (uv) so pytest workers see the same gateway_rs as rust-install; no sourcing required.
+test-with-rust:
+	@echo "🦀 Installing Rust extension and running full test suite (CI-equivalent)..."
+	@test -d ".venv" || (uv venv && uv pip install -e ".[dev]" && echo "✅ Project .venv ready")
+	@/bin/bash -c "source \"$$HOME/.cargo/env\" 2>/dev/null || true; \
+		$(MAKE) --no-print-directory rust-clean-stubs && \
+		$(MAKE) --no-print-directory rust-install && \
+		$(MAKE) --no-print-directory rust-verify-stubs" || { echo "❌ Rust build/install failed. Install Rust: https://rustup.rs"; exit 1; }
+	@/bin/bash -c "export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		export REQUIRE_RUST=1 && \
+		.venv/bin/python -m pytest -n auto --maxfail=0 -v --durations=5 \
+			--ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py \
+			--cov=mcpgateway --cov-report=xml --cov-report=html --cov-report=term \
+			--cov-branch --cov-fail-under=95" || exit 1
+	@echo "✅ test-with-rust passed"
 
 test-verbose:
 	@echo "🧪 Running tests (verbose, sequential)..."
@@ -758,6 +789,54 @@ htmlcov:
 	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -i -d $(COVERAGE_DIR)"
 	@echo "✅  HTML coverage report ready → $(COVERAGE_DIR)/index.html"
+
+# -----------------------------------------------------------------------------
+# 🧪 BENCHMARKS (top-level benchmarks/; run all with make benchmark)
+# -----------------------------------------------------------------------------
+BENCHMARKS_REPORTS_DIR := benchmarks/reports
+# Filter by name: make bench BENCH=<name> or make bench <name>
+ifeq ($(firstword $(MAKECMDGOALS)),bench)
+BENCH ?= $(word 2,$(MAKECMDGOALS))
+endif
+BENCH ?=
+# -k matches test names only; if BENCH looks like a file stem, run that file so "make bench a2a_service" works
+BENCH_PATH := $(shell find benchmarks -maxdepth 4 -name '*.py' -path '*$(BENCH)*' 2>/dev/null | head -1)
+BENCH_K := $(if $(BENCH),$(if $(BENCH_PATH),,-k $(BENCH)),)
+BENCH_V := $(if $(BENCH),-vv,-v)
+# Dummy target so "make bench <name>" does not fail (second goal is not a real target)
+ifneq ($(word 2,$(MAKECMDGOALS)),)
+$(word 2,$(MAKECMDGOALS)):
+	@true
+endif
+
+# No-op when mcpgateway_rust is not present (benchmarks branch from main)
+benchmark-ensure-rust:
+	@:
+
+bench: benchmark-ensure-rust
+	@echo "📊 Running pytest benchmarks$(if $(BENCH), matching '$(BENCH)',)..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@DATABASE_URL='sqlite:///:memory:' TEST_DATABASE_URL='sqlite:///:memory:' ARGON2ID_TIME_COST=1 ARGON2ID_MEMORY_COST=1024 \
+		uv run --active --extra fuzz pytest $(if $(BENCH_PATH),$(BENCH_PATH),benchmarks/) $(BENCH_K) --benchmark-only $(BENCH_V)
+
+benchmark: benchmark-python
+	@echo "🦀 Running Rust plugin benchmarks..."
+	@$(MAKE) --no-print-directory benchmark-rust || true
+	@echo "✅ All benchmarks finished."
+
+benchmark-python: benchmark-ensure-rust
+	@echo "📊 Running all Python benchmarks..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@echo "  → Pytest benchmarks (benchmarks/)..."
+	@DATABASE_URL='sqlite:///:memory:' TEST_DATABASE_URL='sqlite:///:memory:' ARGON2ID_TIME_COST=1 ARGON2ID_MEMORY_COST=1024 \
+		uv run --active --extra fuzz pytest benchmarks/ --benchmark-only -v
+	@echo "  → Async benchmarks..."
+	@$(MAKE) --no-print-directory async-benchmark
+	@echo "  → JSON serialization (orjson vs stdlib)..."
+	@uv run --active python scripts/benchmark_json_serialization.py
+	@echo "✅ Python benchmarks finished."
+
+benchmark-rust: rust-bench rust-bench-compare
 
 diff-cover:
 	@echo "📊  Running diff-cover against main branch..."
@@ -1501,6 +1580,7 @@ resilience-jmeter: jmeter-check            ## Run JMeter baseline test against s
 # help: benchmark-clean        - Stop and remove all benchmark data (volumes)
 # help: benchmark-status       - Show status of benchmark services
 # help: benchmark-logs         - Show benchmark stack logs
+# help: bench-compare          - Run performance comparisons for Rust (maturin crates)
 # help:
 # help: Environment variables:
 # help:   BENCHMARK_SERVER_COUNT  - Number of MCP servers to spawn (default: 10)
@@ -1549,6 +1629,9 @@ benchmark-status:                          ## Show status of benchmark services
 .PHONY: benchmark-logs
 benchmark-logs:                            ## Show benchmark stack logs
 	$(COMPOSE_CMD_MONITOR) --profile benchmark logs -f --tail=100
+
+bench-compare:                             ## Run performance comparisons for Rust (maturin crates)
+	@$(MAKE) rust-bench-compare
 
 # =============================================================================
 # 🖼️  EMBEDDED / EMBEDDED / IFRAME STACK - iframe mode with benchmark servers
@@ -4364,13 +4447,13 @@ containerfile-update:
 # =============================================================================
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust plugins)
+dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust)
 	@echo "📦 Building Python package..."
 	@uv build
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust plugins..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
-		echo '🦀 Rust wheels written to ./plugins_rust/target/wheels/'; \
+		echo "🦀 Building Rust..."; \
+		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
+		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
 	fi
@@ -4385,8 +4468,8 @@ wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@uv build --wheel
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
-		echo '🦀 Rust wheels written to ./plugins_rust/target/wheels/'; \
+		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
+		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
 	fi
@@ -4481,8 +4564,8 @@ endef
 # help: container-build      - Build image using detected runtime
 # help: container-build-multi - Build multiplatform image (amd64/arm64/s390x,ppc64le) locally
 # help: container-inspect-manifest - Inspect multiplatform manifest in registry
-# help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
-# help: container-build-rust-lite - Build lite image WITH Rust plugins
+# help: container-build-rust - Build image WITH Rust (ENABLE_RUST_BUILD=1)
+# help: container-build-rust-lite - Build lite image WITH Rust
 # help: container-rust       - Build with Rust and run container (all-in-one)
 # help: container-run        - Run container using detected runtime
 # help: container-run-host   - Run container using detected runtime with host networking
@@ -4538,10 +4621,10 @@ container-build:
 	@echo "🔨 Building with $(CONTAINER_RUNTIME) for platform $(PLATFORM)..."
 	@RUST_ARG=""; PROFILING_ARG=""; \
 	if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building container WITH Rust plugins..."; \
+		echo "🦀 Building container WITH Rust..."; \
 		RUST_ARG="--build-arg ENABLE_RUST=true"; \
 	else \
-		echo "⏭️  Building container WITHOUT Rust plugins (set ENABLE_RUST_BUILD=1 to enable)"; \
+		echo "⏭️  Building container WITHOUT Rust (set ENABLE_RUST_BUILD=1 to enable)"; \
 		RUST_ARG="--build-arg ENABLE_RUST=false"; \
 	fi; \
 	if [ "$(ENABLE_PROFILING_BUILD)" = "1" ]; then \
@@ -4561,15 +4644,15 @@ container-build:
 	$(CONTAINER_RUNTIME) images $(IMAGE_BASE):$(IMAGE_TAG)
 
 container-build-rust:
-	@echo "🦀 Building container WITH Rust plugins..."
+	@echo "🦀 Building container WITH Rust..."
 	$(MAKE) container-build ENABLE_RUST_BUILD=1
 
 container-build-rust-lite:
-	@echo "🦀 Building lite container WITH Rust plugins..."
+	@echo "🦀 Building lite container WITH Rust..."
 	$(MAKE) container-build ENABLE_RUST_BUILD=1 CONTAINER_FILE=Containerfile.lite
 
 container-rust: container-build-rust
-	@echo "🦀 Building and running container with Rust plugins..."
+	@echo "🦀 Building and running container with Rust..."
 	$(MAKE) container-run
 
 .PHONY: container-run
@@ -7045,8 +7128,9 @@ async-debug:
 .PHONY: async-benchmark
 async-benchmark:
 	@echo "⚡ Running async performance benchmarks..."
-	@$(VENV_PYTHON) $(ASYNC_TEST_DIR)/benchmarks.py \
-		--output $(REPORTS_DIR)/benchmark-results.json \
+	@mkdir -p $(BENCHMARKS_REPORTS_DIR)
+	@uv run --active python $(ASYNC_TEST_DIR)/benchmarks.py \
+		--output $(BENCHMARKS_REPORTS_DIR)/benchmark-results.json \
 		--iterations 1000
 
 .PHONY: profile-compare
@@ -7837,100 +7921,321 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 	@BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🦀 RUST PLUGIN FRAMEWORK (OPTIONAL)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# help:
-# help: Rust Plugin Framework (Optional - requires Rust toolchain)
+# 🦀 RUST
+# =============================================================================
+# 🦀 RUST (workspace: crates/mcpgateway, crates/mcp-servers, crates/plugins, crates/tools)
+# =============================================================================
+# help: 🦀 RUST
+# help: -----------------------------------------------------------------------------
+# help: Rust (auto-installs Rust + maturin if needed)
 # help: ========================================================================================================
-# help: rust-build          - Build Rust plugins in release mode (native)
-# help: rust-dev            - Build and install Rust plugins in development mode
-# help: rust-test           - Run Rust plugin tests
-# help: rust-test-all       - Run all Rust and Python integration tests
-# help: rust-bench          - Run Rust plugin benchmarks
-# help: rust-bench-compare  - Compare Rust vs Python performance
-# help: rust-check          - Run all Rust checks (format, lint, test)
-# help: rust-clean          - Clean Rust build artifacts
-# help: rust-verify         - Verify Rust plugin installation
+# help: rust-install                          - Install maturin crates into venv
+# help: rust-ensure-deps                      - Ensure Rust toolchain and maturin are available
+# help: rust-build                            - Build Rust workspace (release)
+# help: rust-dev                              - Build and install maturin crates (development mode)
+# help: rust-test                             - Run Rust workspace tests
+# help: rust-test-integration                 - Run Rust integration tests
+# help: rust-test-all                         - Run all Rust and Python integration tests
+# help: rust-bench                            - Run Rust workspace benchmarks
+# help: rust-bench-compare                    - Compare Rust vs Python performance (with benchmarks)
+# help: rust-compare                          - Run compare_performance.py only (skip benchmarks)
+# help: rust-check                            - Run all Rust checks (build, fmt, clippy, test)
+# help: rust-build-check                      - Build workspace (debug, no release)
+# help: rust-format                           - Format Rust code (cargo fmt)
+# help: rust-fmt-check                        - Check formatting (cargo fmt --check)
+# help: rust-lint                             - Lint Rust code (cargo clippy)
+# help: rust-verify                           - Verify maturin crate installation
+# help: rust-verify-stubs                     - Verify stub generation and pyproject.toml for maturin crates
+# help: rust-stub-gen                         - Generate Python type stubs for maturin crates (workspace)
+# help: rust-clean                            - Clean Rust build artifacts
+# help: rust-licenses                         - Run cargo-deny license check (workspace)
 # help:
-# help: rust-check-maturin       - Check/install maturin (auto-runs before builds)
-# help: rust-install-deps        - Install all Rust build dependencies
-# help: rust-install-targets     - Install all Rust cross-compilation targets
-# help: rust-build-x86_64        - Build for Linux x86_64
-# help: rust-build-aarch64       - Build for Linux arm64/aarch64
-# help: rust-build-armv7         - Build for Linux armv7 (32-bit ARM)
-# help: rust-build-s390x         - Build for Linux s390x (IBM mainframe)
-# help: rust-build-ppc64le       - Build for Linux ppc64le (IBM POWER)
-# help: rust-build-all-linux     - Build for all Linux architectures
-# help: rust-build-all-platforms - Build for all platforms (Linux, macOS, Windows)
-# help: rust-cross               - Install targets + build all Linux (convenience)
-# help: rust-cross-install-build - Install targets + build all platforms (one command)
+# help: rust-install-deps                     - Install all Rust build dependencies
+# help: rust-install-targets                  - Install all Rust cross-compilation targets
+# help: rust-build-<TARGET>                   - Build for specific target (use rust-build-<TARGET>)
+# help: rust-build-all-linux                  - Build for all Linux architectures
+# help: rust-build-all-platforms              - Build for all platforms (Linux, macOS, Windows)
+# help: rust-cross                            - Install targets + build all Linux (convenience)
+# help: rust-cross-install-build              - Install targets + build all platforms (one command)
+# help:
+# help: Gateway (core only; skips plugins, mcp-servers, tools):
+# help: gateway-rs                             - Build and install gateway Rust extensions (convenience)
+# help: gateway-rs-build                       - Build gateway crates (release)
+# help: gateway-rs-install                     - Install gateway PyO3 extensions (e.g. a2a_service)
+# help: gateway-rs-test                        - Run Rust tests for gateway crates
+# help: gateway-rs-check                       - Run cargo check on gateway crates
+# help: gateway-rs-fmt                         - Format gateway Rust code
+# help: gateway-rs-clippy                      - Run clippy on gateway crates
+# help: gateway-rs-clean                       - Clean gateway build artifacts
+# help: gateway-rs-verify                      - Build + test gateway crates
+# help: gateway-rs-info                        - List gateway Rust crates
 
-.PHONY: rust-build rust-dev rust-test rust-test-all rust-bench rust-bench-compare rust-check rust-clean rust-verify
-.PHONY: rust-check-maturin rust-install-deps rust-install-targets
-.PHONY: rust-build-x86_64 rust-build-aarch64 rust-build-armv7 rust-build-s390x rust-build-ppc64le
+.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses
+.PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
+.PHONY: gateway-rs gateway-rs-build gateway-rs-install gateway-rs-test gateway-rs-check gateway-rs-fmt gateway-rs-clippy gateway-rs-clean gateway-rs-verify gateway-rs-info
+.PHONY: rust-gateway-build rust-gateway-install rust-gateway-test rust-gateway-test-verbose rust-gateway-check rust-gateway-fmt rust-gateway-fmt-check rust-gateway-clippy rust-gateway-clean rust-gateway-verify rust-gateway-info
+.PHONY: rust-mcp-build rust-mcp-test rust-mcp-fmt-check rust-mcp-clippy
+.PHONY: rust-plugins-build rust-plugins-test rust-plugins-fmt-check rust-plugins-clippy
+.PHONY: rust-tools-build rust-tools-test rust-tools-fmt-check rust-tools-clippy
+.PHONY: rust-ensure-deps
 
-rust-build: rust-check-maturin          ## Build Rust plugins (release)
-	@echo "🦀 Building Rust plugins (release mode)..."
-	@cd plugins_rust && maturin build --release
+# Maturin crates: all directories under crates/ with both Cargo.toml and pyproject.toml (plugins, tools, gateway, etc.)
+RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
+# Gateway: core crates (e.g. a2a_service); skips plugins, mcp-servers, tools
+RUST_GATEWAY_CRATES := $(shell find crates/gateway_rs -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
 
-rust-dev:                               ## Build and install Rust plugins (development mode)
-	@echo "🦀 Building and installing Rust plugins (development mode)..."
-	@cd plugins_rust && maturin develop --release
+# Per-subfolder crate directories (for build/test/fmt/clippy)
+RUST_GATEWAY_DIRS   := $(shell find crates/mcpgateway -maxdepth 3 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
+RUST_MCP_DIRS       := $(shell find crates/mcp-servers -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
+RUST_PLUGINS_DIRS   := $(shell find crates/plugins -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
+RUST_TOOLS_DIRS     := $(shell find crates/tools -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
 
-rust-test:                              ## Run Rust plugin tests
-	@echo "🦀 Running Rust plugin tests..."
-	@cd plugins_rust && cargo test --release
-
-rust-test-integration:                  ## Run Rust integration tests
-	@echo "🦀 Running Rust integration tests..."
-	@cd plugins_rust && cargo test --test '*' --release
-
-rust-test-all: rust-test                ## Run all Rust and Python tests
-	@echo "🧪 Running Python tests for Rust plugins..."
-	pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py -v
-
-rust-bench:                             ## Run Rust benchmarks
-	@echo "🦀 Running Rust benchmarks..."
-	@cd plugins_rust && cargo bench
-
-rust-bench-compare:                     ## Compare Rust vs Python performance
-	@echo "📊 Comparing Rust vs Python performance..."
-	@cd plugins_rust/benchmarks && python3 compare_pii_filter.py
-
-rust-check:                             ## Run all Rust checks (format, lint, test)
-	@echo "🦀 Running Rust checks..."
-	@cd plugins_rust && cargo fmt --check
-	@cd plugins_rust && cargo clippy --lib -- -D warnings -A deprecated
-	@cd plugins_rust && cargo test --lib --release
-
-rust-clean:                             ## Clean Rust build artifacts
-	@echo "🧹 Cleaning Rust build artifacts..."
-	@cd plugins_rust && cargo clean
-	@rm -rf plugins_rust/target/
-
-rust-verify:                            ## Verify Rust plugin installation
-	@echo "🔍 Verifying Rust plugin installation..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -c 'from plugins_rust import PIIDetectorRust; print(\"✅ Rust PII filter available\")' || \
-		echo '❌ Rust plugins not installed'"
-
-rust-check-maturin:                     ## Check/install maturin
-	@which maturin > /dev/null 2>&1 || { \
-		echo "📦 Installing maturin..."; \
-		/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"; \
-	}
-
-rust-install-deps:                      ## Install all Rust build dependencies
-	@echo "📦 Installing Rust build dependencies..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"
-	@rustup --version > /dev/null 2>&1 || { \
-		echo "❌ Rust not installed. Install with:"; \
-		echo "   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
+rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are available
+	@if ! command -v rustup > /dev/null 2>&1; then \
+		echo "🦀 Rust not found. Installing Rust toolchain..."; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component rustfmt clippy; \
+		echo "✅ Rust installed successfully."; \
+		echo "⚠️  Please run 'source \"$$HOME/.cargo/env\"' or restart your shell, then run 'make' again."; \
 		exit 1; \
-	}
+	fi
+	@if ! command -v cargo > /dev/null 2>&1; then \
+		echo "⚠️  cargo not in PATH. Please run 'source \"$$HOME/.cargo/env\"' or restart your shell."; \
+		exit 1; \
+	fi
+	@rustup component add rustfmt clippy 2>/dev/null || true
+	@if ! command -v maturin > /dev/null 2>&1; then \
+		if [ -f "$(VENV_DIR)/bin/activate" ]; then \
+			echo "📦 Installing maturin into venv..."; \
+			/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"; \
+		elif command -v pip > /dev/null 2>&1; then \
+			echo "📦 Installing maturin globally (venv not found)..."; \
+			pip install maturin; \
+		else \
+			echo "⚠️  maturin not found and cannot be installed (no venv or pip available)"; \
+			echo "   For building wheels, install maturin: pip install maturin"; \
+		fi; \
+	fi
 
-rust-install-targets:                   ## Install all Rust cross-compilation targets
+rust-install: rust-ensure-deps rust-stub-gen  ## Install maturin crates into venv
+	@echo "🦀 Installing maturin crates into venv (from workspace root)..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Installing $$crate..."; \
+		uv run maturin develop --release --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ All maturin crates installed"
+
+# --- Gateway (core only) ---
+gateway-rs-build: rust-ensure-deps  ## Build gateway crates (release)
+	@echo "🦀 Building gateway Rust crates (release)..."
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			echo "  Building $$crate..."; \
+			cargo build --release --manifest-path $$crate/Cargo.toml || exit 1; \
+		done; \
+		echo "✅ Gateway Rust crates built"; \
+	else \
+		echo "⚠️  No gateway maturin crates found"; \
+	fi
+
+gateway-rs-install: rust-ensure-deps  ## Install gateway PyO3 extensions (e.g. a2a_service)
+	@echo "🦀 Installing gateway maturin crates into venv..."
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			echo "  Installing $$crate..."; \
+			uv run maturin develop --release --manifest-path $$crate/Cargo.toml || exit 1; \
+		done; \
+		echo "✅ Gateway extensions installed"; \
+	else \
+		echo "⚠️  No gateway maturin crates found"; \
+	fi
+
+gateway-rs-test: rust-ensure-deps  ## Run Rust tests for gateway crates only
+	@echo "🦀 Running Rust tests for gateway crates..."
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			echo "  Testing $$crate..."; \
+			cargo test --manifest-path $$crate/Cargo.toml || exit 1; \
+		done; \
+		echo "✅ Gateway Rust tests passed"; \
+	else \
+		echo "⚠️  No gateway crates found"; \
+	fi
+
+
+rust-build: rust-ensure-deps            ## Build Rust workspace (release)
+	@echo "🦀 Building Rust workspace (release)..."
+	@cargo build --workspace --release
+	@echo "✅ Rust workspace built"
+
+rust-build-check: rust-ensure-deps                   ## Build Rust workspace + verify all maturin crates build (debug, for CI)
+	@echo "🦀 Building Rust workspace..."
+	@cargo build --workspace
+	@echo "🦀 Verifying all maturin crates build..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Building maturin crate: $$crate"; \
+		uv run maturin build --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ Rust workspace and all maturin crates build OK"
+
+rust-dev: rust-install                 ## Build and install maturin crates (development mode)
+
+rust-test: rust-ensure-deps             ## Run Rust workspace tests
+	@echo "🦀 Running Rust workspace tests..."
+	@cargo test --workspace
+	@echo "✅ Rust tests passed"
+
+rust-format: rust-ensure-deps           ## Format Rust code (cargo fmt)
+	@echo "🦀 Formatting Rust code..."
+	@cargo fmt --all
+	@echo "✅ Rust code formatted"
+
+rust-fmt-check: rust-ensure-deps        ## Check formatting (cargo fmt --check)
+	@echo "🦀 Checking Rust code format..."
+	@cargo fmt --all -- --check
+	@echo "✅ Rust format check passed"
+
+rust-lint: rust-ensure-deps            ## Lint Rust code (cargo clippy)
+	@echo "🦀 Linting Rust workspace..."
+	@cargo clippy --workspace --all-targets -- -D warnings
+	@echo "✅ Rust lint passed"
+
+rust-check: rust-build-check rust-fmt-check rust-lint rust-test  ## Run all Rust checks (build, fmt, clippy, test)
+	@echo "✅ Rust check passed"
+
+rust-python-test: rust-install          ## Run Python tests for maturin crates (installs first)
+	@echo "🦀 Running Python tests for maturin crates..."
+	@k=$$(for crate in $(RUST_MATURIN_CRATES); do basename $$crate; done | tr '\n' ' ' | sed 's/ / or /g'); \
+	uv run pytest tests -k "$$k" -v 2>/dev/null || uv run pytest tests -v
+	@echo "✅ Maturin crate Python tests passed"
+
+rust-test-all: rust-test rust-python-test  ## Run all Rust and Python tests
+
+rust-bench: rust-ensure-deps            ## Run Rust benchmarks
+	@echo "🦀 Running Rust workspace benchmarks..."
+	@cargo bench --workspace
+	@echo "✅ Rust benchmarks done"
+
+rust-bench-compare: rust-ensure-deps    ## Compare Rust vs Python performance
+	@echo "🦀 Running performance comparisons..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		if [ -f $$crate/compare_performance.py ]; then \
+			echo "  Comparing $$crate..."; \
+			uv run python3 $$crate/compare_performance.py || exit 1; \
+		fi; \
+	done
+	@echo "✅ Rust bench-compare done"
+
+rust-compare: rust-install              ## Run compare_performance.py only (skip Rust benchmarks)
+	@echo "🦀 Running compare_performance.py for crates that have it..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		if [ -f $$crate/compare_performance.py ]; then \
+			echo "  Comparing $$crate..."; \
+			uv run python3 $$crate/compare_performance.py || exit 1; \
+		fi; \
+	done
+	@echo "✅ Rust compare done"
+
+rust-doc: rust-ensure-deps              ## Build Rust documentation
+	@echo "🦀 Building Rust documentation..."
+	@cargo doc --workspace --no-deps --document-private-items
+	@echo "✅ Rust doc built"
+
+rust-build-wheels: rust-ensure-deps rust-stub-gen  ## Build Python wheels for maturin crates
+	@echo "🦀 Building wheels for maturin crates (from workspace root)..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Building wheel: $$crate"; \
+		uv run maturin build --release --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ All wheels built"
+
+rust-audit: rust-ensure-deps            ## Run security audit on Rust workspace
+	@echo "🦀 Running cargo audit..."
+	@cargo audit
+	@echo "✅ Rust audit done"
+
+rust-licenses: rust-ensure-deps         ## Run cargo-deny license check (workspace)
+	@echo "🦀 Running cargo-deny license check (workspace)..."
+	@command -v cargo-deny >/dev/null 2>&1 || { echo "Installing cargo-deny..."; cargo install cargo-deny; }
+	@cargo deny check licenses
+	@echo "✅ Rust license check done"
+
+rust-coverage: rust-ensure-deps         ## Run coverage for Rust workspace
+	@echo "🦀 Running coverage (workspace)..."
+	@command -v cargo-llvm-cov >/dev/null 2>&1 || { echo "Install cargo-llvm-cov: cargo install cargo-llvm-cov"; exit 1; }
+	@mkdir -p coverage
+	@cargo llvm-cov --workspace --cobertura --output-path coverage/cobertura.xml
+	@echo "✅ Coverage written to coverage/cobertura.xml"
+
+rust-release: rust-build-wheels        ## Build release wheels for maturin crates
+
+rust-release-publish: rust-ensure-deps  ## Publish release wheels to PyPI
+	@echo "🦀 Publishing maturin crate wheels to PyPI..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Publishing: $$crate"; \
+		uv run maturin publish --manifest-path $$crate/Cargo.toml --username __token__ --password "$${MATURIN_PYPI_TOKEN}" || exit 1; \
+	done
+	@echo "✅ Publish done (set MATURIN_PYPI_TOKEN)"
+
+rust-uninstall-plugins: rust-ensure-deps ## Uninstall maturin crates from Python environment
+	@echo "🦀 Uninstalling maturin crates from venv..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		pkg=$$(grep '^name = ' $$crate/pyproject.toml 2>/dev/null | head -1 | sed 's/.*"\(.*\)".*/\1/'); \
+		[ -n "$$pkg" ] && uv pip uninstall -y "$$pkg" 2>/dev/null || true; \
+	done
+	@echo "✅ Maturin crates uninstalled"
+
+rust-clean: rust-ensure-deps            ## Clean Rust build artifacts and uninstall maturin crates
+	@$(MAKE) --no-print-directory rust-uninstall-plugins
+	@echo "🦀 Cleaning Rust build artifacts..."
+	@cargo clean
+	@rm -rf target
+	@echo "✅ Rust clean done"
+
+rust-verify: rust-ensure-deps           ## Verify maturin crate installation
+	@echo "🦀 Verifying maturin crate installations..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		pkg=$$(sed -n '/^\[lib\]/,/^\[/p' $$crate/Cargo.toml 2>/dev/null | grep '^name = ' | head -1 | sed 's/.*"\([^"]*\)".*/\1/'); \
+		[ -z "$$pkg" ] && { echo "  ❌ $$crate: no [lib] name in Cargo.toml"; exit 1; }; \
+		uv run python -c "import $$pkg; print('  ✅ $$pkg')" || { echo "  ❌ $$pkg not installed"; exit 1; }; \
+	done
+	@echo "✅ All maturin crates verified"
+
+rust-verify-stubs: rust-ensure-deps     ## Verify stub generation and pyproject.toml for maturin crates
+	@echo "🦀 Verifying stub files and pyproject.toml..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		if [ ! -f $$crate/pyproject.toml ]; then echo "❌ $$crate: pyproject.toml missing"; exit 1; fi; \
+		if [ -f $$crate/src/bin/stub_gen.rs ]; then \
+			pyi=$$(find $$crate/python -name "__init__.pyi" 2>/dev/null | head -1); \
+			if [ -z "$$pyi" ]; then echo "❌ $$crate: no __init__.pyi (run make rust-stub-gen)"; exit 1; fi; \
+			if [ ! -s "$$pyi" ]; then echo "❌ $$crate: stub file empty"; exit 1; fi; \
+		fi; \
+		echo "  ✅ $$crate"; \
+	done
+	@echo "✅ All stubs verified"
+
+rust-clean-stubs: rust-ensure-deps      ## Remove generated stub files from maturin crates
+	@echo "🦀 Removing generated stub files..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		find $$crate/python -name "__init__.pyi" -type f -delete 2>/dev/null || true; \
+	done
+	@echo "✅ Rust clean-stubs done"
+
+rust-stub-gen: rust-ensure-deps         ## Generate Python type stubs for maturin crates that have stub_gen
+	@echo "🦀 Generating Python type stubs..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		if [ -f $$crate/src/bin/stub_gen.rs ]; then \
+			pkg=$$(grep '^name = ' $$crate/Cargo.toml 2>/dev/null | head -1 | sed 's/.*"\(.*\)".*/\1/'); \
+			echo "  Stub-gen: $$pkg"; \
+			cargo run -p $$pkg --bin "$${pkg}_stub_gen" || exit 1; \
+		fi; \
+	done
+	@echo "✅ All stub files generated"
+
+rust-install-deps: rust-ensure-deps     ## Install all Rust build dependencies
+	@echo "✅ Rust build dependencies installed"
+
+rust-install-targets: rust-ensure-deps  ## Install all Rust cross-compilation targets
 	@echo "🎯 Installing Rust cross-compilation targets..."
 	@rustup target add x86_64-unknown-linux-gnu
 	@rustup target add aarch64-unknown-linux-gnu
@@ -7941,35 +8246,25 @@ rust-install-targets:                   ## Install all Rust cross-compilation ta
 	@rustup target add aarch64-apple-darwin
 	@rustup target add x86_64-pc-windows-msvc
 
-rust-build-x86_64: rust-check-maturin   ## Build for Linux x86_64
-	@echo "🦀 Building for x86_64-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target x86_64-unknown-linux-gnu
+rust-build-%: rust-ensure-deps               ## Build for specific target (use rust-build-<TARGET>)
+	@echo "🎯 Ensuring Rust target $* is installed..."
+	@rustup target add $*
+	@echo "🦀 Building maturin crates for target $*..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Building $$crate for $*..."; \
+		uv run maturin build --release --manifest-path $$crate/Cargo.toml --target $* || exit 1; \
+	done
+	@echo "✅ Built for $*"
 
-rust-build-aarch64: rust-check-maturin  ## Build for Linux arm64/aarch64
-	@echo "🦀 Building for aarch64-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target aarch64-unknown-linux-gnu
-
-rust-build-armv7: rust-check-maturin    ## Build for Linux armv7 (32-bit ARM)
-	@echo "🦀 Building for armv7-unknown-linux-gnueabihf..."
-	@cd plugins_rust && maturin build --release --target armv7-unknown-linux-gnueabihf
-
-rust-build-s390x: rust-check-maturin    ## Build for Linux s390x (IBM mainframe)
-	@echo "🦀 Building for s390x-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target s390x-unknown-linux-gnu
-
-rust-build-ppc64le: rust-check-maturin  ## Build for Linux ppc64le (IBM POWER)
-	@echo "🦀 Building for powerpc64le-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target powerpc64le-unknown-linux-gnu
-
-rust-build-all-linux: rust-build-x86_64 rust-build-aarch64 rust-build-armv7 rust-build-s390x rust-build-ppc64le  ## Build for all Linux architectures
+rust-build-all-linux: rust-build-x86_64-unknown-linux-gnu rust-build-aarch64-unknown-linux-gnu rust-build-armv7-unknown-linux-gnueabihf rust-build-s390x-unknown-linux-gnu rust-build-powerpc64le-unknown-linux-gnu  ## Build for all Linux architectures
 	@echo "✅ Built for all Linux architectures"
 
 rust-build-all-platforms: rust-build-all-linux  ## Build for all platforms (Linux, macOS, Windows)
 	@echo "🦀 Building for macOS..."
-	@cd plugins_rust && maturin build --release --target x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
-	@cd plugins_rust && maturin build --release --target aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
+	@$(MAKE) --no-print-directory rust-build-x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
+	@$(MAKE) --no-print-directory rust-build-aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
 	@echo "🦀 Building for Windows..."
-	@cd plugins_rust && maturin build --release --target x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
+	@$(MAKE) --no-print-directory rust-build-x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
 	@echo "✅ Built for all platforms"
 
 rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + build all Linux (convenience)
@@ -7977,6 +8272,131 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
+
+# -----------------------------------------------------------------------------
+# 🦀 Rust Gateway Workspace (gateway-rs)
+# -----------------------------------------------------------------------------
+# rust-ensure-deps is defined earlier in this Makefile (see rust-ensure-deps target).
+
+gateway-rs: gateway-rs-build gateway-rs-install  ## Build and install gateway Rust extensions (convenience)
+gateway-rs-build: rust-ensure-deps  ## Build gateway crates (release)
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			echo "  Building $$crate..."; cargo build --release --manifest-path $$crate/Cargo.toml || exit 1; \
+		done; \
+	fi
+gateway-rs-install: rust-ensure-deps  ## Install gateway PyO3 extensions (e.g. a2a_service)
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			echo "  Installing $$crate..."; (cd "$$crate" && maturin develop --release) || exit 1; \
+		done; \
+	fi
+gateway-rs-test: rust-ensure-deps  ## Run Rust tests for gateway crates
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			cargo test --manifest-path $$crate/Cargo.toml || exit 1; \
+		done; \
+	fi
+gateway-rs-check: rust-ensure-deps  ## Run cargo check on gateway crates
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			cargo check --manifest-path $$crate/Cargo.toml || exit 1; \
+		done; \
+	fi
+gateway-rs-fmt: rust-ensure-deps  ## Format gateway Rust code
+	@cargo fmt --manifest-path crates/gateway_rs/services/a2a_service/Cargo.toml 2>/dev/null || true
+gateway-rs-clippy: rust-ensure-deps  ## Run clippy on gateway crates
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			cargo clippy --manifest-path $$crate/Cargo.toml -- -D warnings || exit 1; \
+		done; \
+	fi
+gateway-rs-clean: rust-ensure-deps  ## Clean gateway build artifacts
+	@if [ -n "$(RUST_GATEWAY_CRATES)" ]; then \
+		for crate in $(RUST_GATEWAY_CRATES); do \
+			cargo clean --manifest-path $$crate/Cargo.toml; \
+		done; \
+	fi
+gateway-rs-verify: gateway-rs-build gateway-rs-test  ## Build + test gateway crates
+gateway-rs-info:  ## List gateway Rust crates
+	@echo "RUST_GATEWAY_CRATES: $(RUST_GATEWAY_CRATES)"
+
+# -----------------------------------------------------------------------------
+# Per subfolder: crates/mcp-servers, crates/plugins, crates/tools
+# -----------------------------------------------------------------------------
+
+define rust_subfolder_build
+	@[ -n "$(1)" ] && for d in $(1); do echo "  Building $$d..."; cargo build --release --manifest-path $$d/Cargo.toml || exit 1; done || echo "  (no crates)"
+endef
+define rust_subfolder_test
+	@[ -n "$(1)" ] && for d in $(1); do echo "  Testing $$d..."; cargo test --manifest-path $$d/Cargo.toml || exit 1; done || echo "  (no crates)"
+endef
+define rust_subfolder_fmt_check
+	@[ -n "$(1)" ] && for d in $(1); do echo "  Checking $$d..."; cargo fmt --manifest-path $$d/Cargo.toml -- --check || exit 1; done || echo "  (no crates)"
+endef
+define rust_subfolder_clippy
+	@[ -n "$(1)" ] && for d in $(1); do echo "  Clippy $$d..."; cargo clippy --manifest-path $$d/Cargo.toml -- -D warnings || exit 1; done || echo "  (no crates)"
+endef
+
+rust-mcp-build: rust-ensure-deps        ## Build crates in crates/mcp-servers
+	@echo "🦀 Building mcp-servers crates..."
+	$(call rust_subfolder_build,$(RUST_MCP_DIRS))
+	@echo "✅ MCP build done"
+
+rust-mcp-test: rust-ensure-deps        ## Test crates in crates/mcp-servers
+	@echo "🦀 Testing mcp-servers crates..."
+	$(call rust_subfolder_test,$(RUST_MCP_DIRS))
+	@echo "✅ MCP tests done"
+
+rust-mcp-fmt-check: rust-ensure-deps   ## Check format for crates/mcp-servers
+	@echo "🦀 Checking mcp-servers format..."
+	$(call rust_subfolder_fmt_check,$(RUST_MCP_DIRS))
+	@echo "✅ MCP fmt check done"
+
+rust-mcp-clippy: rust-ensure-deps      ## Clippy for crates/mcp-servers
+	@echo "🦀 Clippy mcp-servers crates..."
+	$(call rust_subfolder_clippy,$(RUST_MCP_DIRS))
+	@echo "✅ MCP clippy done"
+
+rust-plugins-build: rust-ensure-deps   ## Build crates in crates/plugins
+	@echo "🦀 Building plugins crates..."
+	$(call rust_subfolder_build,$(RUST_PLUGINS_DIRS))
+	@echo "✅ Plugins build done"
+
+rust-plugins-test: rust-ensure-deps   ## Test crates in crates/plugins
+	@echo "🦀 Testing plugins crates..."
+	$(call rust_subfolder_test,$(RUST_PLUGINS_DIRS))
+	@echo "✅ Plugins tests done"
+
+rust-plugins-fmt-check: rust-ensure-deps ## Check format for crates/plugins
+	@echo "🦀 Checking plugins format..."
+	$(call rust_subfolder_fmt_check,$(RUST_PLUGINS_DIRS))
+	@echo "✅ Plugins fmt check done"
+
+rust-plugins-clippy: rust-ensure-deps  ## Clippy for crates/plugins
+	@echo "🦀 Clippy plugins crates..."
+	$(call rust_subfolder_clippy,$(RUST_PLUGINS_DIRS))
+	@echo "✅ Plugins clippy done"
+
+rust-tools-build: rust-ensure-deps    ## Build crates in crates/tools
+	@echo "🦀 Building tools crates..."
+	$(call rust_subfolder_build,$(RUST_TOOLS_DIRS))
+	@echo "✅ Tools build done"
+
+rust-tools-test: rust-ensure-deps     ## Test crates in crates/tools
+	@echo "🦀 Testing tools crates..."
+	$(call rust_subfolder_test,$(RUST_TOOLS_DIRS))
+	@echo "✅ Tools tests done"
+
+rust-tools-fmt-check: rust-ensure-deps ## Check format for crates/tools
+	@echo "🦀 Checking tools format..."
+	$(call rust_subfolder_fmt_check,$(RUST_TOOLS_DIRS))
+	@echo "✅ Tools fmt check done"
+
+rust-tools-clippy: rust-ensure-deps   ## Clippy for crates/tools
+	@echo "🦀 Clippy tools crates..."
+	$(call rust_subfolder_clippy,$(RUST_TOOLS_DIRS))
+	@echo "✅ Tools clippy done"
 
 # -----------------------------------------------------------------------------
 # Temporary CI toggle for Conventional Commit message linting

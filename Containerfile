@@ -14,7 +14,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Only build if ENABLE_RUST=true
 RUN if [ "$ENABLE_RUST" != "true" ]; then \
         echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
-        mkdir -p /build/plugins_rust/target/wheels; \
+        mkdir -p /build/rust-wheels; \
         exit 0; \
     fi
 
@@ -26,19 +26,22 @@ ENV PATH="/root/.cargo/bin:$PATH"
 
 WORKDIR /build
 
-# Copy only Rust plugin files (only if ENABLE_RUST=true)
-COPY plugins_rust/ /build/plugins_rust/
+# Copy workspace and crates (only if ENABLE_RUST=true)
+COPY Cargo.toml Cargo.lock /build/
+COPY crates/ /build/crates/
 
-# Switch to Rust plugin directory
-WORKDIR /build/plugins_rust
-
-# Build Rust plugins using Python 3.12 from manylinux image (only if ENABLE_RUST=true)
-# The manylinux2014 image has Python 3.12 at /opt/python/cp312-cp312/bin/python
+# Build each maturin crate (any dir under crates/ with Cargo.toml + pyproject.toml)
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        rm -rf target/wheels && \
+        mkdir -p /build/rust-wheels && \
         /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin && \
-        /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 && \
-        echo "✅ Rust plugins built successfully"; \
+        for plugin_dir in $$(find /build/crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done); do \
+            [ -z "$$plugin_dir" ] && continue; \
+            plugin_name=$$(basename "$$plugin_dir"); \
+            echo "🦀 Building Rust crate: $$plugin_name"; \
+            /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 \
+                --manifest-path "$$plugin_dir/Cargo.toml" --out /build/rust-wheels; \
+        done && \
+        echo "✅ Rust crates built successfully"; \
     else \
         echo "⏭️  Skipping Rust plugin build"; \
     fi
@@ -85,7 +88,7 @@ RUN chmod 644 /etc/profile.d/use-openssl.sh
 COPY . /app
 
 # Copy Rust plugin wheels from builder (if any exist)
-COPY --from=rust-builder /build/plugins_rust/target/wheels/ /tmp/rust-wheels/
+COPY --from=rust-builder /build/rust-wheels/ /tmp/rust-wheels/
 
 # Create virtual environment, upgrade pip and install dependencies using uv for speed
 # Including observability packages for OpenTelemetry support and Rust plugins (if built)
@@ -97,8 +100,8 @@ RUN python3 -m venv /app/.venv && \
     /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,mysql,alembic,observability,granian]" && \
     if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing Rust plugins..."; \
-        /app/.venv/bin/python3 -m pip install /tmp/rust-wheels/mcpgateway_rust-*-manylinux*.whl && \
-        /app/.venv/bin/python3 -c "from plugins_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')"; \
+        /app/.venv/bin/python3 -m pip install /tmp/rust-wheels/*.whl && \
+        /app/.venv/bin/python3 -c "from pii_filter_rust.pii_filter_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')"; \
     else \
         echo "⏭️  Rust plugins not available - using Python implementations"; \
     fi && \

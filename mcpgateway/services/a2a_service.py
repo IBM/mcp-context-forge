@@ -15,7 +15,7 @@ and interactions with A2A-compatible agents.
 # Standard
 import binascii
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, TypedDict, Union
 
 # Third-Party
 from pydantic import ValidationError
@@ -99,6 +99,27 @@ class A2AAgentNotFoundError(A2AAgentError):
         ...     isinstance(e, A2AAgentError)  # Should inherit from A2AAgentError
         True
     """
+
+
+class _InvokeAgentRequestRequired(TypedDict):
+    agent_name: str
+    parameters: Dict[str, Any]
+
+
+class InvokeAgentRequest(_InvokeAgentRequestRequired, total=False):
+    """Single request for invoke_agent. Required: agent_name, parameters. Optional: rest."""
+
+    interaction_type: str
+    user_id: Optional[str]
+    user_email: Optional[str]
+    token_teams: Optional[List[str]]
+
+
+def _result_from_db_error(p: Dict[str, Any]) -> Dict[str, Any]:
+    """Turn a DB-phase error dict into a result slot with status_code for uniform parsing (Rust/Python)."""
+    code = p.get("code", "agent_error")
+    status_code = 404 if code == "not_found" else 400
+    return {"error": p["error"], "code": code, "agent_name": p.get("agent_name"), "status_code": status_code}
 
 
 class A2AAgentNameConflictError(A2AAgentError):
@@ -256,13 +277,62 @@ class A2AAgentService(BaseService):
         if agent.visibility == "private" and agent.owner_email and agent.owner_email == user_email:
             return True
 
-        # Team agents: check team membership
-        # At this point token_teams is guaranteed to be a non-empty list
-        # (None handled by admin bypass, [] by public-only check)
+        # Team agents: check team membership (token_teams can be None when token has no teams claim)
         if agent.visibility == "team":
+            if token_teams is None:
+                return False
             return agent.team_id in token_teams
 
         return False
+
+    async def _apply_access_control(
+        self,
+        query: Any,
+        db: Session,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        team_id: Optional[str],
+    ) -> Any:
+        """Apply access control to list query (owner, team, public). Admin when user_email and token_teams are None.
+        When user_email is None we do not add owner conditions to avoid SQL owner_email IS NULL matching agents
+        with null owner_email and leaking them to tokens without an email claim.
+        """
+        if user_email is None and token_teams is None:
+            return query
+        if token_teams is not None:
+            team_ids = list(token_teams)
+        else:
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email or "")
+            team_ids = [t.id for t in user_teams]
+        if team_id:
+            if team_id not in team_ids:
+                return query.where(DbA2AAgent.id.is_(None))
+            access_conditions = [
+                and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])),
+            ]
+            if user_email is not None:
+                access_conditions.append(
+                    and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email),
+                )
+            return query.where(or_(*access_conditions))
+        access_conditions = [
+            and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])),
+            DbA2AAgent.visibility == "public",
+        ]
+        if user_email is not None:
+            access_conditions.insert(0, DbA2AAgent.owner_email == user_email)
+        return query.where(or_(*access_conditions))
+
+    def _apply_visibility_filter(
+        self,
+        query: Any,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        team_id: Optional[str] = None,
+    ) -> Any:
+        """Apply visibility/team filter to query. Used by list paths."""
+        return query.where(DbA2AAgent.id.isnot(None))
 
     async def register_agent(
         self,
@@ -1277,244 +1347,176 @@ class A2AAgentService(BaseService):
     async def invoke_agent(
         self,
         db: Session,
-        agent_name: str,
-        parameters: Dict[str, Any],
-        interaction_type: str = "query",
-        *,
-        user_id: Optional[str] = None,
-        user_email: Optional[str] = None,
-        token_teams: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
-        """Invoke an A2A agent.
+        requests: List[InvokeAgentRequest],
+    ) -> List[Dict[str, Any]]:
+        """Invoke an A2A agent (1 to N requests).
 
         Args:
             db: Database session.
-            agent_name: Name of the agent to invoke.
-            parameters: Parameters for the interaction.
-            interaction_type: Type of interaction.
-            user_id: Identifier of the user initiating the call.
-            user_email: Email of the user initiating the call.
-            token_teams: Teams from JWT token. None = admin (no filtering),
-                         [] = public-only, [...] = team-scoped access.
+            requests: List of invoke requests (agent_name, parameters, optional interaction_type, user_id, user_email, token_teams).
 
         Returns:
-            Agent response.
+            List of agent responses (one per request).
 
         Raises:
-            A2AAgentNotFoundError: If the agent is not found or user lacks access.
-            A2AAgentError: If the agent is disabled or invocation fails.
+            A2AAgentNotFoundError: If an agent is not found or user lacks access.
+            A2AAgentError: If requests is empty, an agent is disabled, or invocation/DB fails.
         """
-        # ═══════════════════════════════════════════════════════════════════════════
-        # PHASE 1: Acquire a short row lock to read `enabled` + `auth_value`,
-        # then release the lock before performing the external HTTP call.
-        # This avoids TOCTOU for the critical checks while not holding DB
-        # connections during the potentially slow HTTP request.
-        # ═══════════════════════════════════════════════════════════════════════════
-
-        # Lookup the agent id, then lock the row by id using get_for_update
-        agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
-        if not agent_row:
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
-
-        agent = get_for_update(db, DbA2AAgent, agent_row)
-        if not agent:
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+        if not requests:
+            raise A2AAgentError("At least one invoke request is required")
 
         # ═══════════════════════════════════════════════════════════════════════════
-        # SECURITY: Check visibility/team access WHILE ROW IS LOCKED
-        # Return 404 (not 403) to avoid leaking existence of private agents
+        # PHASE 1 (batch, best-effort): Load and lock all distinct agents in one read,
+        # then validate each request; collect a payload or an error per index.
         # ═══════════════════════════════════════════════════════════════════════════
-        if not self._check_agent_access(agent, user_email, token_teams):
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
-
-        if not agent.enabled:
-            raise A2AAgentError(f"A2A Agent '{agent_name}' is disabled")
-
-        # Extract all needed data to local variables before releasing DB connection
-        agent_id = agent.id
-        agent_endpoint_url = agent.endpoint_url
-        agent_type = agent.agent_type
-        agent_protocol_version = agent.protocol_version
-        agent_auth_type = agent.auth_type
-        agent_auth_value = agent.auth_value
-        agent_auth_query_params = agent.auth_query_params
-
-        # Handle query_param auth - decrypt and apply to URL
-        auth_query_params_decrypted: Optional[Dict[str, str]] = None
-        if agent_auth_type == "query_param" and agent_auth_query_params:
-            # First-Party
-            from mcpgateway.utils.url_auth import apply_query_param_auth  # pylint: disable=import-outside-toplevel
-
-            auth_query_params_decrypted = {}
-            for param_key, encrypted_value in agent_auth_query_params.items():
-                if encrypted_value:
-                    try:
-                        decrypted = decode_auth(encrypted_value)
-                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
-                    except Exception:
-                        logger.debug(f"Failed to decrypt query param '{param_key}' for A2A agent invocation")
-            if auth_query_params_decrypted:
-                agent_endpoint_url = apply_query_param_auth(agent_endpoint_url, auth_query_params_decrypted)
-
-        # Decode auth_value for supported auth types (before closing session)
-        auth_headers = {}
-        if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
-            # Decrypt auth_value and extract headers (follows gateway_service pattern)
-            if isinstance(agent_auth_value, str):
-                try:
-                    auth_headers = decode_auth(agent_auth_value)
-                except Exception as e:
-                    raise A2AAgentError(f"Failed to decrypt authentication for agent '{agent_name}': {e}")
-            elif isinstance(agent_auth_value, dict):
-                auth_headers = {str(k): str(v) for k, v in agent_auth_value.items()}
-
-        # ═══════════════════════════════════════════════════════════════════════════
-        # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
-        # This prevents connection pool exhaustion during slow upstream requests.
-        # ═══════════════════════════════════════════════════════════════════════════
-        db.commit()  # End read-only transaction cleanly (commit not rollback to avoid inflating rollback stats)
-        db.close()
-
-        start_time = datetime.now(timezone.utc)
-        success = False
-        error_message = None
-        response = None
-
-        # ═══════════════════════════════════════════════════════════════════════════
-        # PHASE 2: Make HTTP call (no DB connection held)
-        # ═══════════════════════════════════════════════════════════════════════════
-
-        # Create sanitized URL for logging (redacts auth query params)
-        # First-Party
-        from mcpgateway.utils.url_auth import sanitize_exception_message, sanitize_url_for_logging  # pylint: disable=import-outside-toplevel
-
-        sanitized_endpoint_url = sanitize_url_for_logging(agent_endpoint_url, auth_query_params_decrypted)
 
         try:
-            # Prepare the request to the A2A agent
-            # Format request based on agent type and endpoint
-            if agent_type in ["generic", "jsonrpc"] or agent_endpoint_url.endswith("/"):
-                # Use JSONRPC format for agents that expect it
-                request_data = {"jsonrpc": "2.0", "method": parameters.get("method", "message/send"), "params": parameters.get("params", parameters), "id": 1}
-            else:
-                # Use custom A2A format
-                request_data = {"interaction_type": interaction_type, "parameters": parameters, "protocol_version": agent_protocol_version}
-
-            # Make HTTP request to the agent endpoint using shared HTTP client
-            # First-Party
-            from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
-
-            client = await get_http_client()
-            headers = {"Content-Type": "application/json"}
-
-            # Add authentication if configured (using decoded auth headers)
-            headers.update(auth_headers)
-
-            # Add correlation ID to outbound headers for distributed tracing
-            correlation_id = get_correlation_id()
-            if correlation_id:
-                headers["X-Correlation-ID"] = correlation_id
-
-            # Log A2A external call start (with sanitized URL to prevent credential leakage)
-            call_start_time = datetime.now(timezone.utc)
-            structured_logger.log(
-                level="INFO",
-                message=f"A2A external call started: {agent_name}",
-                component="a2a_service",
-                user_id=user_id,
-                user_email=user_email,
-                correlation_id=correlation_id,
-                metadata={
-                    "event": "a2a_call_started",
-                    "agent_name": agent_name,
-                    "agent_id": agent_id,
-                    "endpoint_url": sanitized_endpoint_url,
-                    "interaction_type": interaction_type,
-                    "protocol_version": agent_protocol_version,
-                },
+            unique_names = list(dict.fromkeys(req["agent_name"] for req in requests))
+            agent_rows = (
+                db.execute(select(DbA2AAgent).where(DbA2AAgent.name.in_(unique_names)).order_by(DbA2AAgent.id))
+                .scalars()
+                .all()
             )
 
-            http_response = await client.post(agent_endpoint_url, json=request_data, headers=headers)
-            call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
+            # Lock all rows in id order to avoid deadlocks
+            agents_by_name: Dict[str, DbA2AAgent] = {}
+            for row in agent_rows:
+                locked = get_for_update(db, DbA2AAgent, row.id)
+                if locked:
+                    agents_by_name[locked.name] = locked
 
-            if http_response.status_code == 200:
-                response = http_response.json()
-                success = True
+            batch_payloads: List[Dict[str, Any]] = []
+            for req in requests:
+                agent_name = req["agent_name"]
+                parameters = req["parameters"]
+                interaction_type = req.get("interaction_type", "query")
+                user_id = req.get("user_id")
+                user_email = req.get("user_email")
+                token_teams = req.get("token_teams")
+                agent = agents_by_name.get(agent_name)
 
-                # Log successful A2A call
-                structured_logger.log(
-                    level="INFO",
-                    message=f"A2A external call completed: {agent_name}",
-                    component="a2a_service",
-                    user_id=user_id,
-                    user_email=user_email,
-                    correlation_id=correlation_id,
-                    duration_ms=call_duration_ms,
-                    metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code, "success": True},
-                )
-            else:
-                # Sanitize error message to prevent URL secrets from leaking in logs
-                raw_error = f"HTTP {http_response.status_code}: {http_response.text}"
-                error_message = sanitize_exception_message(raw_error, auth_query_params_decrypted)
+                if not agent:
+                    batch_payloads.append({"error": f"A2A Agent not found with name: {agent_name}", "code": "not_found", "agent_name": agent_name})
+                    continue
 
-                # Log failed A2A call
-                structured_logger.log(
-                    level="ERROR",
-                    message=f"A2A external call failed: {agent_name}",
-                    component="a2a_service",
-                    user_id=user_id,
-                    user_email=user_email,
-                    correlation_id=correlation_id,
-                    duration_ms=call_duration_ms,
-                    error_details={"error_type": "A2AHTTPError", "error_message": error_message},
-                    metadata={"event": "a2a_call_failed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code},
-                )
+                if not self._check_agent_access(agent, user_email, token_teams):
+                    batch_payloads.append({"error": f"A2A Agent not found with name: {agent_name}", "code": "not_found", "agent_name": agent_name})
+                    continue
+                if not agent.enabled:
+                    batch_payloads.append({"error": f"A2A Agent '{agent_name}' is disabled", "code": "agent_error", "agent_name": agent_name})
+                    continue
 
-                raise A2AAgentError(error_message)
+                base_url = agent.endpoint_url
+                agent_auth_type = agent.auth_type
+                agent_auth_value = agent.auth_value
+                agent_auth_query_params = agent.auth_query_params
 
-        except A2AAgentError:
-            # Re-raise A2AAgentError without wrapping
+                auth_query_params_decrypted: Optional[Dict[str, str]] = None
+                if agent_auth_type == "query_param" and agent_auth_query_params:
+                    auth_query_params_decrypted = {}
+                    for param_key, encrypted_value in agent_auth_query_params.items():
+                        if encrypted_value:
+                            try:
+                                decrypted = decode_auth(encrypted_value)
+                                auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
+                            except Exception:
+                                logger.debug(f"Failed to decrypt query param '{param_key}' for A2A agent invocation")
+
+                auth_headers: Dict[str, str] = {}
+                if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
+                    if isinstance(agent_auth_value, str):
+                        try:
+                            auth_headers = decode_auth(agent_auth_value)
+                        except Exception as e:
+                            batch_payloads.append({"error": str(e), "code": "agent_error", "agent_name": agent_name})
+                            continue
+                    elif isinstance(agent_auth_value, dict):
+                        auth_headers = {str(k): str(v) for k, v in agent_auth_value.items()}
+
+                batch_payloads.append({
+                    "agent_id": agent.id,
+                    "agent_name": agent_name,
+                    "base_url": base_url,
+                    "agent_type": agent.agent_type,
+                    "agent_protocol_version": agent.protocol_version,
+                    "auth_query_params_decrypted": auth_query_params_decrypted,
+                    "auth_headers": auth_headers,
+                    "parameters": parameters,
+                    "interaction_type": interaction_type,
+                    "user_id": user_id,
+                    "user_email": user_email,
+                    "token_teams": token_teams,
+                })
+
+            if not any(p.get("agent_id") for p in batch_payloads):
+                first_err = next(p for p in batch_payloads if "code" in p)
+                if first_err.get("code") == "not_found":
+                    raise A2AAgentNotFoundError(first_err["error"])
+                raise A2AAgentError(first_err["error"])
+
+            db.commit()
+        except (A2AAgentNotFoundError, A2AAgentError):
+            db.rollback()
             raise
         except Exception as e:
-            # Sanitize error message to prevent URL secrets from leaking in logs
-            error_message = sanitize_exception_message(str(e), auth_query_params_decrypted)
-            logger.error(f"Failed to invoke A2A agent '{agent_name}': {error_message}")
-            raise A2AAgentError(f"Failed to invoke A2A agent: {error_message}")
+            db.rollback()
+            raise A2AAgentError(f"A2A agent DB phase failed: {e!s}") from e
 
-        finally:
-            # ═══════════════════════════════════════════════════════════════════════════
-            # PHASE 3: Record metrics via buffered service (batches writes for performance)
-            # ═══════════════════════════════════════════════════════════════════════════
-            end_time = datetime.now(timezone.utc)
-            response_time = (end_time - start_time).total_seconds()
+        # PHASE 2: Batch HTTP via Rust invoker
+        from gateway_rs import a2a_service as rust_a2a  # pylint: disable=import-outside-toplevel
 
-            try:
-                # First-Party
-                from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+        from mcpgateway.config import get_settings  # pylint: disable=import-outside-toplevel
 
-                metrics_buffer = get_metrics_buffer_service()
-                metrics_buffer.record_a2a_agent_metric_with_duration(
-                    a2a_agent_id=agent_id,
-                    response_time=response_time,
-                    success=success,
-                    interaction_type=interaction_type,
-                    error_message=error_message,
-                )
-            except Exception as metrics_error:
-                logger.warning(f"Failed to record A2A metrics for '{agent_name}': {metrics_error}")
+        timeout_secs = get_settings().httpx_read_timeout + 60
+        correlation_id = get_correlation_id()
 
-            # Update last interaction timestamp (quick separate write)
-            try:
-                with fresh_db_session() as ts_db:
-                    # Reacquire short lock and re-check enabled before writing
-                    db_agent = get_for_update(ts_db, DbA2AAgent, agent_id)
-                    if db_agent and getattr(db_agent, "enabled", False):
-                        db_agent.last_interaction = end_time
-                        ts_db.commit()
-            except Exception as ts_error:
-                logger.warning(f"Failed to update last_interaction for '{agent_name}': {ts_error}")
+        rust_requests: List[tuple] = []
+        for idx, p in enumerate(batch_payloads):
+            if "code" in p:
+                continue
+            base_url = p["base_url"]
+            params = p["parameters"]
+            interaction_type = p["interaction_type"]
+            agent_type = p["agent_type"]
+            agent_protocol_version = p["agent_protocol_version"]
+            if agent_type in ["generic", "jsonrpc"] or base_url.endswith("/"):
+                request_data = {"jsonrpc": "2.0", "method": params.get("method", "message/send"), "params": params.get("params", params), "id": 1}
+            else:
+                request_data = {"interaction_type": interaction_type, "parameters": params, "protocol_version": agent_protocol_version}
+            headers = {"Content-Type": "application/json"}
+            headers.update(p["auth_headers"])
+            if correlation_id:
+                headers["X-Correlation-ID"] = correlation_id
+            rust_requests.append((idx, base_url, p.get("auth_query_params_decrypted"), headers, request_data))
 
-        return response or {"error": error_message}
+        if not rust_requests:
+            return [_result_from_db_error(p) for p in batch_payloads]
+
+        raw_results = await rust_a2a.invoke(rust_requests, timeout_secs)
+        result_by_id: Dict[int, tuple] = {rid: (resp, duration_secs) for rid, resp, duration_secs in raw_results}
+
+        ordered_results: List[Dict[str, Any]] = []
+        for idx, p in enumerate(batch_payloads):
+            if "code" in p:
+                ordered_results.append(_result_from_db_error(p))
+            else:
+                resp, _ = result_by_id[idx]
+                ordered_results.append({
+                    "status_code": resp.status_code,
+                    "body": resp.body,
+                    "parsed": resp.parsed,
+                })
+
+        try:
+            from mcpgateway.services.metrics_buffer_service import (  # pylint: disable=import-outside-toplevel
+                record_a2a_invoke_results_batch,
+            )
+
+            record_a2a_invoke_results_batch(batch_payloads, result_by_id, datetime.now(timezone.utc))
+        except Exception as e:
+            logger.warning("Failed to record A2A invoke metrics batch: %s", e)
+
+        return ordered_results
 
     async def aggregate_metrics(self, db: Session) -> A2AAgentAggregateMetrics:
         """Aggregate metrics for all A2A agents.

@@ -98,6 +98,7 @@ tests/playwright/screenshots/
 tests/jmeter/results/
 tests/async/reports/
 tests/async/profiles/
+benchmarks/reports/
 tests/migration/reports/
 tests/migration/logs/
 test-results-*.xml

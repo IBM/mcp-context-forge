@@ -5297,6 +5297,12 @@ class A2AAgentInvocation(BaseModelWithConfigDict):
         return v
 
 
+class A2AInvokeBatchRequest(BaseModelWithConfigDict):
+    """Request body for POST /a2a/invoke/batch: list of invokes to run concurrently."""
+
+    invokes: List[A2AAgentInvocation] = Field(..., description="List of A2A agent invocations to run in one batch")
+
+
 # ---------------------------------------------------------------------------
 # Email-Based Authentication Schemas
 # ---------------------------------------------------------------------------

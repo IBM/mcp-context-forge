@@ -1,0 +1,96 @@
+{
+  "scenarios": {
+    "single_light": {
+      "mean_ms": 122.57092199979525,
+      "median_ms": 120.58545850049995,
+      "rounds": 8,
+      "iterations": 1
+    },
+    "single_heavy": {
+      "mean_ms": 127.84121277784128,
+      "median_ms": 127.65029100046377,
+      "rounds": 9,
+      "iterations": 1
+    },
+    "single_slow": {
+      "mean_ms": 131.60845800121024,
+      "median_ms": 131.60845800121024,
+      "rounds": 2,
+      "iterations": 1
+    },
+    "10_single_light": {
+      "mean_ms": 1259.0553750014806,
+      "median_ms": 1259.0553750014806,
+      "rounds": 2,
+      "iterations": 1
+    },
+    "10_single_heavy": {
+      "mean_ms": 1284.0187500005413,
+      "median_ms": 1284.0187500005413,
+      "rounds": 2,
+      "iterations": 1
+    },
+    "10_batch_light": {
+      "mean_ms": 1295.6111460007378,
+      "median_ms": 1295.6111460007378,
+      "rounds": 2,
+      "iterations": 1
+    },
+    "10_batch_heavy": {
+      "mean_ms": 1295.2266039992537,
+      "median_ms": 1295.2266039992537,
+      "rounds": 2,
+      "iterations": 1
+    },
+    "10_single_slow": {
+      "mean_ms": 1266.0729170002014,
+      "median_ms": 1266.0729170002014,
+      "rounds": 2,
+      "iterations": 1
+    },
+    "10_batch_slow": {
+      "mean_ms": 1287.3387499985256,
+      "median_ms": 1287.3387499985256,
+      "rounds": 2,
+      "iterations": 1
+    },
+    "100_single_light": {
+      "mean_ms": 12868.629437500203,
+      "median_ms": 12868.629437500203,
+      "rounds": 2,
+      "iterations": 1
+    },
+    "100_single_heavy": {
+      "mean_ms": 12999.482562501726,
+      "median_ms": 12999.482562501726,
+      "rounds": 2,
+      "iterations": 1
+    },
+    "100_single_slow": {
+      "mean_ms": 13363.714687498941,
+      "median_ms": 13363.714687498941,
+      "rounds": 2,
+      "iterations": 1
+    },
+    "100_batch_light": {
+      "mean_ms": 33109.83881250104,
+      "median_ms": 33109.83881250104,
+      "rounds": 2,
+      "iterations": 1
+    },
+    "100_batch_heavy": {
+      "mean_ms": 12966.908270500426,
+      "median_ms": 12966.908270500426,
+      "rounds": 2,
+      "iterations": 1
+    },
+    "100_batch_slow": {
+      "mean_ms": 12981.29033350051,
+      "median_ms": 12981.29033350051,
+      "rounds": 2,
+      "iterations": 1
+    }
+  },
+  "commit": "b4d87709421ca2b0aab648ad145ecc50bd316433",
+  "delay_seed": 42
+}

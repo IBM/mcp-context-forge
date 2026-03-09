@@ -97,7 +97,7 @@ def tool_service():
 
 @pytest.fixture
 def mock_gateway():
-    """Create a mock gateway model."""
+    """Create a mock gateway model (includes CommonAttributes for PydanticGateway.model_validate)."""
     gw = MagicMock(spec=DbGateway)
     gw.id = "gw-1"
     gw.name = "test_gateway"
@@ -119,6 +119,20 @@ def mock_gateway():
     gw.owner_email = None
     gw.visibility = "public"
     gw.tags = []
+    # CommonAttributes (required for PydanticGateway.model_validate in invoke_tool)
+    gw.created_by = None
+    gw.created_from_ip = None
+    gw.created_via = None
+    gw.created_user_agent = None
+    gw.modified_by = None
+    gw.modified_from_ip = None
+    gw.modified_via = None
+    gw.modified_user_agent = None
+    gw.import_batch_id = None
+    gw.federation_source = None
+    gw.created_at = None
+    gw.updated_at = None
+    gw.last_seen = None
     return gw
 
 
@@ -5494,6 +5508,21 @@ class TestInvokeToolGatewayQueryParams:
         mock_gateway.ca_certificate = None
         mock_gateway.ca_certificate_sig = None
         mock_gateway.passthrough_headers = None
+        # PydanticGateway.model_validate(gateway) requires these as real strings (not MagicMock)
+        mock_gateway.created_by = None
+        mock_gateway.created_from_ip = None
+        mock_gateway.created_via = None
+        mock_gateway.created_user_agent = None
+        mock_gateway.modified_by = None
+        mock_gateway.modified_from_ip = None
+        mock_gateway.modified_via = None
+        mock_gateway.modified_user_agent = None
+        mock_gateway.import_batch_id = None
+        mock_gateway.federation_source = None
+        mock_gateway.capabilities = {}
+        mock_gateway.slug = "test_gw"
+        mock_gateway.transport = "SSE"
+        mock_gateway.last_seen = None
 
         mock_tool.id = "tool-uuid-1"
         mock_tool.original_name = "test_tool"

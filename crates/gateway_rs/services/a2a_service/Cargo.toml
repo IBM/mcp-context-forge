@@ -1,0 +1,28 @@
+[package]
+name = "a2a_service"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "High-performance A2A agent invocation service with PyO3 bindings"
+
+[lib]
+name = "a2a_service"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+futures = "0.3"
+pyo3.workspace = true
+pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
+pythonize = "0.28"
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+thiserror = { workspace = true }
+dashmap = { workspace = true }
+url = { workspace = true }
+tracing = "0.1"
+
+[dev-dependencies]
+wiremock = "0.6"

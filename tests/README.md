@@ -47,6 +47,7 @@ tests/
 | Purpose                              | Command                                              |
 | ------------------------------------ | ---------------------------------------------------- |
 | **Run unit tests (CI default)**      | `make test`                                          |
+| Run tests matching a name            | `make test <name>` or `make test TEST=<name>`        |
 | Run full suite                       | `pytest -q`                                          |
 | Unit tests only                      | `pytest tests/unit`                                  |
 | Integration tests                    | `pytest tests/integration`                           |
@@ -168,7 +169,7 @@ Combine markers: `pytest -m "api and not slow"`
 
 | Target                | Description                                                      |
 | --------------------- | ---------------------------------------------------------------- |
-| `make test`           | Run unit tests with coverage.                                    |
+| `make test`           | Run unit tests with coverage. Use `make test <name>` or `TEST=<name>` to filter by name. |
 | `make doctest`        | Run doctests in modules.                                         |
 | `make htmlcov`        | Generate HTML coverage report → `docs/docs/coverage/index.html`. |
 | `make coverage`       | Full coverage (md + HTML + XML + badge + annotated).             |

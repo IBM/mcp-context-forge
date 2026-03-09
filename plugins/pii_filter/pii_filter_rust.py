@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Location: ./plugins/pii_filter/pii_filter_rust.py
+"""Rust PII Filter Wrapper
+
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Rust PII Filter Wrapper
-
-Thin Python wrapper around the Rust implementation for seamless integration.
+Thin Python wrapper around the Rust pii_filter implementation for seamless integration.
 """
 
 # Standard
@@ -27,18 +26,22 @@ try:
     import os
     import sys
 
-    # Temporarily remove current directory from path if it contains plugins_rust source
+    # Temporarily remove crate source dirs from path so the installed wheel is used
     original_path = sys.path.copy()
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     plugins_rust_src = os.path.join(project_root, "plugins_rust")
+    crates_plugins_src = os.path.join(project_root, "crates", "plugins", "pii_filter")
 
-    # Remove source directory from path temporarily
-    filtered_path = [p for p in sys.path if not p.startswith(plugins_rust_src)]
+    # Remove source directories from path temporarily
+    filtered_path = [
+        p for p in sys.path
+        if not p.startswith(plugins_rust_src) and not p.startswith(crates_plugins_src)
+    ]
     sys.path = filtered_path
 
     try:
         # First-Party
-        from plugins_rust import PIIDetectorRust as _RustDetector
+        from pii_filter_rust.pii_filter_rust import PIIDetectorRust as _RustDetector
 
         RUST_AVAILABLE = True
         logger.info("🦀 Rust PII filter module imported successfully")

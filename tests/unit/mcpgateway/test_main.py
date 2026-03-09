@@ -2905,14 +2905,23 @@ class TestA2AAgentEndpoints:
     @patch("mcpgateway.main.a2a_service")
     def test_invoke_a2a_agent(self, mock_service, test_client, auth_headers):
         """Test invoking A2A agent."""
-        mock_service.invoke_agent = AsyncMock(return_value={"response": "Agent response", "status": "success"})
+        mock_service.invoke_agent = AsyncMock(
+            return_value=[{"status_code": 200, "parsed": {"response": "Agent response", "status": "success"}}]
+        )
         response = test_client.post(
             "/a2a/agent-1/invoke",
             json={"parameters": {"query": "test"}, "interaction_type": "query"},
             headers=auth_headers,
         )
         assert response.status_code == 200
+        assert response.json()["response"] == "Agent response"
+        assert response.json()["status"] == "success"
         mock_service.invoke_agent.assert_called_once()
+        call_args = mock_service.invoke_agent.call_args
+        assert len(call_args[0]) >= 2
+        assert isinstance(call_args[0][1], list)
+        assert len(call_args[0][1]) == 1
+        assert call_args[0][1][0]["agent_name"] == "agent-1"
 
 
 # ----------------------------------------------------- #

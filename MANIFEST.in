@@ -97,13 +97,25 @@ recursive-include plugins *.sh
 recursive-include plugins *.yaml
 recursive-include plugins *.md
 
-# Rust plugins (optional - exclude build artifacts)
-recursive-include plugins_rust *.rs
-recursive-include plugins_rust *.toml
-recursive-include plugins_rust *.md
-recursive-include plugins_rust *.py
-include plugins_rust/Makefile
-prune plugins_rust/target
+# Rust plugins (optional - exclude build artifacts; under crates/plugins/)
+recursive-include crates/plugins *.rs
+recursive-include crates/plugins *.toml
+recursive-include crates/plugins *.md
+recursive-include crates/plugins *.py
+recursive-include crates/plugins *.pyi
+recursive-include crates/plugins *.lock
+recursive-include crates/plugins Makefile
+prune crates/plugins/encoded_exfil_detection/target
+prune crates/plugins/pii_filter/target
+prune crates/plugins/secrets_detection/target
+
+# Rust service components (crates/gateway_rs)
+recursive-include crates/gateway_rs *.rs
+recursive-include crates/gateway_rs *.toml
+recursive-include crates/gateway_rs *.lock
+recursive-include crates/gateway_rs *.md
+recursive-include crates/gateway_rs *.py
+prune crates/gateway_rs/services/a2a_service/target
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs
@@ -127,7 +139,7 @@ prune mcp-servers
 prune a2a-agents
 prune agent_runtimes
 prune llms
-prune tools_rust
+prune crates/tools
 
 # Development and CI/CD artifacts
 prune .github

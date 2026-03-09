@@ -37,6 +37,8 @@ Run the full test suite or specific categories:
 
 ```bash
 make test                      # full suite
+make test <name>               # only tests matching <name> (e.g. make test a2a_service)
+make test TEST=<name>          # same, using variable
 pytest tests/unit/             # unit tests only
 pytest tests/integration/      # integration tests
 pytest tests/e2e/              # end-to-end scenarios

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for secrets detection plugin regex patterns."""
 
+import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,12 +12,14 @@ from plugins.secrets_detection.secrets_detection import SecretsDetectionPlugin
 
 # Try to import Rust implementation
 try:
-    import secret_detection as rust_secret_detection
+    import secrets_detection_rust.secrets_detection_rust  # noqa: F401 - imported to check availability
 
     RUST_AVAILABLE = True
 except ImportError:
     RUST_AVAILABLE = False
-    rust_secret_detection = None
+    # Fail in CI if Rust plugins are required
+    if os.environ.get("REQUIRE_RUST") == "1":
+        raise ImportError("Rust plugin 'secrets_detection' is required in CI but not available")
 
 
 @pytest.mark.asyncio
@@ -358,6 +361,7 @@ def test_implementation_info():
     else:
         print("\n⚠ Tests will run with Python implementation only")
         print("  To enable Rust tests, build the Rust plugin:")
-        print("  cd plugins_rust/secrets_detection && maturin develop --release")
+        print("  From repo root: make rust-install")
+        print("  Or: cd crates/plugins/secrets_detection && maturin develop --release")
 
     print("=" * 60)

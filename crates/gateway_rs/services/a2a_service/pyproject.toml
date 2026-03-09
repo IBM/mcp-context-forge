@@ -1,0 +1,22 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "mcpgateway-a2a-service"
+version = "1.0.0-BETA-2"
+description = "High-performance A2A agent invocation service (PyO3 extension for ContextForge)"
+authors = [{ name = "ContextForge Contributors" }]
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[tool.maturin]
+module-name = "gateway_rs.a2a_service"
+python-source = "python"
+features = ["pyo3/extension-module"]

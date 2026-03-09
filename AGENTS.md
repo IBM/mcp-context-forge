@@ -31,14 +31,15 @@ mcpgateway/                 # Core FastAPI application
 └── alembic/                # Database migrations
 
 tests/                      # Test suite (see tests/AGENTS.md)
+benchmarks/                 # Top-level benchmarks (make benchmark; see benchmarks/README.md)
 plugins/                    # Plugin implementations (see plugins/AGENTS.md)
-plugins_rust/               # Rust plugin implementations for performance-sensitive paths
+crates/plugins/              # Rust plugin implementations for performance-sensitive paths
 plugin_templates/           # Starter templates for building new plugins
 charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
-tools_rust/                 # Rust utilities (for example stdio wrapper tooling)
+crates/tools/               # Rust utilities (for example stdio wrapper tooling)
 llms/                       # End-user LLM guidance (not for code agents)
 ```
 

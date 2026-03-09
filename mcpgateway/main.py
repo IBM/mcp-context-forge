@@ -90,8 +90,10 @@ from mcpgateway.routers.server_well_known import router as server_well_known_rou
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
+    A2AAgentInvocation,
     A2AAgentRead,
     A2AAgentUpdate,
+    A2AInvokeBatchRequest,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
     CursorPaginatedPromptsResponse,
@@ -122,7 +124,8 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, InvokeAgentRequest
+from gateway_rs import a2a_service as rust_a2a
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.email_auth_service import EmailAuthService
@@ -3793,6 +3796,71 @@ async def delete_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@a2a_router.post("/invoke/batch", response_model=List[Dict[str, Any]])
+@require_permission("a2a.invoke")
+async def invoke_a2a_agent_batch(
+    request: Request,
+    body: A2AInvokeBatchRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> List[Dict[str, Any]]:
+    """
+    Invoke multiple A2A agents in one request. All invokes run concurrently (no queue).
+    Returns a list of results in the same order as the request; each element is the
+    agent response (parsed JSON or body) on success, or an error payload with
+    status_code/code/error for not_found, agent_error, or 502.
+    """
+    try:
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
+
+        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        if is_admin and token_teams is None:
+            token_teams = None
+        elif token_teams is None:
+            token_teams = []
+        user_id = None
+        if isinstance(user, dict):
+            user_id = str(user.get("id") or user.get("sub") or user_email)
+        else:
+            user_id = str(user)
+
+        requests_list: List[InvokeAgentRequest] = [
+            {
+                "agent_name": item.agent_name,
+                "parameters": item.parameters,
+                "interaction_type": item.interaction_type,
+                "user_id": user_id,
+                "user_email": user_email,
+                "token_teams": token_teams,
+            }
+            for item in body.invokes
+        ]
+        if not requests_list:
+            raise HTTPException(status_code=400, detail="At least one invoke is required")
+
+        results: List[Dict[str, Any]] = await a2a_service.invoke_agent(db, requests_list)
+        out: List[Dict[str, Any]] = []
+        for r in results:
+            if r.get("code") == "not_found":
+                out.append({"error": r["error"], "code": "not_found", "status_code": 404})
+            elif r.get("code") == "agent_error":
+                out.append({"error": r["error"], "code": "agent_error", "status_code": 400})
+            elif r.get("status_code") == 200:
+                out.append(r.get("parsed") if r.get("parsed") is not None else r.get("body", {}))
+            else:
+                out.append({
+                    "error": r.get("body") or r.get("error", "Agent request failed"),
+                    "code": "agent_error",
+                    "status_code": r.get("status_code", 502),
+                })
+        return out
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent(
@@ -3806,6 +3874,10 @@ async def invoke_a2a_agent(
     """
     Invokes an A2A agent with the specified parameters.
 
+    The agent's endpoint URL is validated at invoke time: only **http** and **https**
+    schemes are allowed (e.g. ``file:`` is rejected). Agent response bodies are
+    capped at 10 MiB; larger responses cause a 502 with an error message.
+
     Args:
         agent_name (str): The name of the agent to invoke.
         request (Request): The FastAPI request object for team_id retrieval.
@@ -3815,10 +3887,14 @@ async def invoke_a2a_agent(
         user (str): The authenticated user making the request.
 
     Returns:
-        Dict[str, Any]: The response from the A2A agent.
+        Dict[str, Any]: The response from the A2A agent (parsed JSON or body).
 
     Raises:
-        HTTPException: If the agent is not found, user lacks access, or there is an error during invocation.
+        HTTPException: 404 if the agent is not found or user lacks access;
+            400 for agent/validation errors (e.g. disabled agent);
+            502 if the outbound request fails (e.g. invalid endpoint URL scheme,
+            response body exceeds size limit, network/timeout error). The 502
+            detail includes the underlying error message when available.
     """
     try:
         logger.debug(f"User {user} is invoking A2A agent '{agent_name}' with type '{interaction_type}'")
@@ -3840,14 +3916,38 @@ async def invoke_a2a_agent(
         else:
             user_id = str(user)
 
-        return await a2a_service.invoke_agent(
-            db,
-            agent_name,
-            parameters,
-            interaction_type,
-            user_id=user_id,
-            user_email=user_email,
-            token_teams=token_teams,
+        single_request: InvokeAgentRequest = {
+            "agent_name": agent_name,
+            "parameters": parameters,
+            "interaction_type": interaction_type,
+            "user_id": user_id,
+            "user_email": user_email,
+            "token_teams": token_teams,
+        }
+
+        rust_a2a.init_queue(settings.mcpgateway_a2a_invoke_max_concurrent)
+        loop = asyncio.get_running_loop()
+        timeout_secs = getattr(settings, "httpx_read_timeout", 30) + 60
+
+        def _queue_job() -> Any:
+            # Called by the Rust queue worker (queue.rs: callable.call0(py)), not from Python.
+            # Create a fresh coroutine per invocation; coroutines are single-use and cannot be re-awaited.
+            coro = a2a_service.invoke_agent(db, [single_request])
+            return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=timeout_secs)
+
+        # submit_queue sends _queue_job to the Rust worker; runs immediately when a slot is free.
+        results: List[Dict[str, Any]] = await rust_a2a.submit_queue(_queue_job, None)
+        first = results[0]
+        # Keep API response body backward compatible: return agent body on 200, raise on errors.
+        if first.get("code") == "not_found":
+            raise HTTPException(status_code=404, detail=first["error"])
+        if first.get("code") == "agent_error":
+            raise HTTPException(status_code=400, detail=first["error"])
+        if first.get("status_code") == 200:
+            return first.get("parsed") if first.get("parsed") is not None else first.get("body", {})
+        raise HTTPException(
+            status_code=502,
+            detail=first.get("body") or first.get("error", "Agent request failed"),
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
