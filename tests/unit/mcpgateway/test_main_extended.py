@@ -167,6 +167,18 @@ def _import_fresh_main_module(
 class TestConditionalPaths:
     """Test conditional code paths to improve coverage."""
 
+    def test_import_uses_rust_mcp_proxy_when_enabled(self, monkeypatch):
+        """Module import should swap the mounted /mcp app to the Rust proxy when enabled."""
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": True,
+                "experimental_rust_mcp_runtime_url": "http://127.0.0.1:8787",
+            },
+        )
+
+        assert module.mcp_transport_app.__class__.__name__ == "RustMCPRuntimeProxy"
+
     def test_redis_initialization_path(self, test_client, auth_headers):
         """Test Redis initialization path by mocking settings."""
         # Test that the Redis path is covered indirectly through existing functionality

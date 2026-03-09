@@ -489,7 +489,14 @@ fn response_from_backend(backend_response: BackendHttpResponse) -> Response {
 fn should_forward_header(name: &HeaderName) -> bool {
     !matches!(
         name.as_str(),
-        "host" | "content-length" | "connection" | "transfer-encoding" | "keep-alive"
+        "host"
+            | "content-length"
+            | "connection"
+            | "transfer-encoding"
+            | "keep-alive"
+            | "x-forwarded-internally"
+            | "x-mcp-session-id"
+            | RUNTIME_HEADER
     )
 }
 

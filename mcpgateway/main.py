@@ -143,6 +143,7 @@ from mcpgateway.services.resource_service import ResourceError, ResourceLockConf
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
+from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, set_shared_session_registry, streamable_http_auth
 from mcpgateway.utils.db_isready import wait_for_db_ready
@@ -7921,8 +7922,22 @@ if ADMIN_API_ENABLED:
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 
+
+def _build_mcp_transport_app():
+    """Choose the MCP transport app for the mounted /mcp path."""
+    if settings.experimental_rust_mcp_runtime_enabled:
+        logger.warning(
+            "EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true. POST /mcp requests will be proxied to %s while non-POST MCP session management stays on Python.",
+            settings.experimental_rust_mcp_runtime_url,
+        )
+        return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
+    return streamable_http_session
+
+
+mcp_transport_app = _build_mcp_transport_app()
+
 # Streamable http Mount
-app.mount("/mcp", app=streamable_http_session.handle_streamable_http)
+app.mount("/mcp", app=mcp_transport_app.handle_streamable_http)
 
 # Conditional static files mounting and root redirect
 if UI_ENABLED:
