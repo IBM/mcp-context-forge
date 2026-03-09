@@ -4918,7 +4918,42 @@ class TestRpcHandling:
         payload_missing_method = {"jsonrpc": "2.0", "id": "err-1", "params": {}}
         request_missing_method = self._make_request(payload_missing_method)
         result = await handle_rpc(request_missing_method, db=MagicMock(), user={"email": "user@example.com"})
-        assert result["error"]["message"] == "Internal error"
+        assert result["error"]["code"] == -32600
+        assert result["error"]["message"] == "Invalid Request"
+
+    async def test_handle_rpc_session_owner_check_not_found(self, monkeypatch):
+        """RPC should return -32002 when stateful session is not found."""
+        monkeypatch.setattr(settings, "use_stateful_sessions", True)
+
+        payload = {"jsonrpc": "2.0", "id": "s-1", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {"mcp-session-id": "sess-gone"}
+
+        async def _deny(req, user, sid):
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        with patch("mcpgateway.main._assert_session_owner_or_admin", new=_deny):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+
+        assert result["error"]["code"] == -32002
+        assert "Session not found" in result["error"]["message"]
+
+    async def test_handle_rpc_session_owner_check_forbidden(self, monkeypatch):
+        """RPC should return -32003 when session access is denied."""
+        monkeypatch.setattr(settings, "use_stateful_sessions", True)
+
+        payload = {"jsonrpc": "2.0", "id": "s-2", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {"mcp-session-id": "sess-owned"}
+
+        async def _deny(req, user, sid):
+            raise HTTPException(status_code=403, detail="Session access denied")
+
+        with patch("mcpgateway.main._assert_session_owner_or_admin", new=_deny):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "attacker@example.com"})
+
+        assert result["error"]["code"] == -32003
+        assert "Session access denied" in result["error"]["message"]
 
     async def test_handle_rpc_tools_call_cancel_callback_cancels_task(self, monkeypatch):
         """Cover inner cancel_tool_task() callback cancelling a live asyncio task."""

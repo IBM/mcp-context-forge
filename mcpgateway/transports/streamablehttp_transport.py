@@ -55,7 +55,7 @@ import orjson
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
-from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND
+from starlette.status import HTTP_200_OK, HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND, HTTP_500_INTERNAL_SERVER_ERROR
 from starlette.types import Receive, Scope, Send
 
 # First-Party
@@ -756,6 +756,72 @@ async def _validate_streamable_session_access(
     if session_exists is False:
         return False, HTTP_404_NOT_FOUND, "Session not found"
     return False, HTTP_403_FORBIDDEN, "Session owner metadata unavailable"
+
+
+async def _send_streamable_http_json_response(send: Send, *, status_code: int, payload: dict[str, Any]) -> None:
+    """Send a JSON response for Streamable HTTP request handling paths.
+
+    Args:
+        send: ASGI send callable.
+        status_code: HTTP status code for the response.
+        payload: JSON-serializable response payload.
+    """
+    body = orjson.dumps(payload)
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status_code,
+            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+async def _close_streamable_http_session(
+    *,
+    mcp_session_id: str,
+    user_context: Optional[dict[str, Any]],
+) -> tuple[int, dict[str, Any]]:
+    """Close a stateful Streamable HTTP session deterministically.
+
+    Args:
+        mcp_session_id: Stateful MCP session identifier to close.
+        user_context: Authenticated requester context used for ownership checks.
+
+    Returns:
+        Tuple ``(status_code, payload)``.
+    """
+    session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
+        mcp_session_id=mcp_session_id,
+        user_context=user_context,
+        rpc_method=None,
+    )
+    if not session_allowed:
+        return deny_status, {"detail": deny_detail}
+
+    session_registry = _get_shared_session_registry()
+    if session_registry is None:
+        return HTTP_403_FORBIDDEN, {"detail": "Session ownership unavailable"}
+
+    try:
+        await session_registry.remove_session(mcp_session_id)
+    except Exception as exc:
+        logger.warning(f"Failed to remove streamable session {mcp_session_id}: {exc}")
+        return HTTP_500_INTERNAL_SERVER_ERROR, {"detail": "Failed to close session"}
+
+    # Best-effort cleanup for multi-worker pool ownership/mapping records.
+    try:
+        # First-Party
+        from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+        pool = get_mcp_session_pool()
+        await pool.clear_pool_session_owner(mcp_session_id)
+    except RuntimeError:
+        pass
+    except Exception as exc:
+        logger.debug(f"Failed to clear affinity owner for session {mcp_session_id}: {exc}")
+
+    return HTTP_200_OK, {"jsonrpc": "2.0", "result": {}}
 
 
 async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
@@ -2372,6 +2438,17 @@ class SessionManagerWrapper:
                 )
                 await response(scope, receive, send)
                 return
+
+        # Deterministic stateful lifecycle close:
+        # When a valid MCP session ID is provided for DELETE, perform explicit
+        # ownership-checked teardown instead of relying on SDK manager behavior.
+        if method == "DELETE" and settings.use_stateful_sessions and mcp_session_id != "not-provided":
+            status_code, payload = await _close_streamable_http_session(
+                mcp_session_id=mcp_session_id,
+                user_context=user_context,
+            )
+            await _send_streamable_http_json_response(send, status_code=status_code, payload=payload)
+            return
 
         if is_internally_forwarded:
             logger.debug("[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: %s | Session: %s", method, mcp_session_id)

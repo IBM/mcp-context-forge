@@ -89,8 +89,8 @@ def _build_app(monkeypatch: pytest.MonkeyPatch, auth_ok: bool = True) -> FastAPI
     monkeypatch.setattr(ver_mod, "REDIS_AVAILABLE", False, raising=False)
 
     # Auth override
-    async def _allow() -> Dict[str, str]:
-        return {"user": "tester"}
+    async def _allow() -> Dict[str, Any]:
+        return {"email": "admin@example.com", "is_admin": True, "teams": None}
 
     async def _deny() -> None:
         raise HTTPException(status_code=401)
@@ -147,6 +147,19 @@ def test_version_requires_admin_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     unauth_client = TestClient(_build_app(monkeypatch, auth_ok=False))
     rsp = unauth_client.get("/version")
     assert rsp.status_code == 401
+
+
+def test_version_requires_admin_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_app(monkeypatch, auth_ok=True)
+
+    async def _viewer() -> Dict[str, Any]:
+        return {"email": "viewer@example.com", "is_admin": False, "teams": ["team-1"]}
+
+    from mcpgateway import version as ver_mod
+
+    app.dependency_overrides[ver_mod.require_auth] = _viewer
+    rsp = TestClient(app).get("/version")
+    assert rsp.status_code == 403
 
 
 # --------------------------------------------------------------------------- #

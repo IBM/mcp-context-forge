@@ -1252,6 +1252,61 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # Cleanup failure is non-fatal
             logger.debug(f"Failed to cleanup pool session owner in Redis: {e}")
 
+    async def clear_pool_session_owner(self, mcp_session_id: str) -> None:
+        """Remove Streamable HTTP affinity ownership for a specific session ID.
+
+        This is used by explicit transport lifecycle teardown (for example
+        deterministic DELETE semantics) and therefore performs forceful cleanup
+        of owner and mapping records regardless of current owner worker.
+
+        Args:
+            mcp_session_id: The MCP session ID to clear.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            logger.debug("Invalid mcp_session_id for owner cleanup, skipping")
+            return
+
+        # Clean local in-memory mapping entries for this session ID.
+        async with self._mcp_session_mapping_lock:
+            stale_keys = [key for key in self._mcp_session_mapping if key[0] == mcp_session_id]
+            for key in stale_keys:
+                self._mcp_session_mapping.pop(key, None)
+
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if not redis:
+                return
+
+            # Remove pool owner key unconditionally - session is being torn down.
+            await redis.delete(self._pool_owner_key(mcp_session_id))
+
+            # Remove Redis mapping keys for this session ID (best effort).
+            cursor: Any = 0
+            pattern = f"mcpgw:session_mapping:{mcp_session_id}:*"
+            while True:
+                cursor, keys = await redis.scan(cursor=cursor, match=pattern, count=100)
+                if keys:
+                    await redis.delete(*keys)
+
+                if isinstance(cursor, bytes):
+                    done = cursor == b"0"
+                elif isinstance(cursor, str):
+                    done = cursor == "0"
+                else:
+                    done = int(cursor) == 0
+                if done:
+                    break
+            logger.debug(f"Cleared affinity ownership for session {mcp_session_id[:8]}...")
+        except Exception as e:
+            # Cleanup failure is non-fatal for request completion.
+            logger.debug(f"Failed to clear pool session owner for {mcp_session_id[:8]}...: {e}")
+
     async def close_all(self) -> None:
         """
         Gracefully close all pooled and active sessions.
