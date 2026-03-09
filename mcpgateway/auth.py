@@ -453,28 +453,31 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
         result = db.execute(select(EmailApiToken).where(EmailApiToken.token_hash == token_hash, EmailApiToken.is_active.is_(True)))
         api_token = result.scalar_one_or_none()
 
-        if api_token:
-            # Check expiration
-            if api_token.expires_at and api_token.expires_at < datetime.now(timezone.utc):
+        if not api_token:
+            return None
+
+        # Check expiration
+        if api_token.expires_at:
+            expires_at = api_token.expires_at.replace(tzinfo=timezone.utc) if api_token.expires_at.tzinfo is None else api_token.expires_at
+            if utc_now() > expires_at:
                 return {"expired": True}
 
-            # Check revocation
-            # First-Party
-            from mcpgateway.db import TokenRevocation  # pylint: disable=import-outside-toplevel
+        # Check revocation
+        # First-Party
+        from mcpgateway.db import TokenRevocation  # pylint: disable=import-outside-toplevel
 
-            revoke_result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == api_token.jti))
-            if revoke_result.scalar_one_or_none() is not None:
-                return {"revoked": True}
+        revoke_result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == api_token.jti))
+        if revoke_result.scalar_one_or_none() is not None:
+            return {"revoked": True}
 
-            # Update last_used timestamp
-            api_token.last_used = utc_now()
-            db.commit()
+        # Update last_used timestamp
+        api_token.last_used = utc_now()
+        db.commit()
 
-            return {
-                "user_email": api_token.user_email,
-                "jti": api_token.jti,
-            }
-        return None
+        return {
+            "user_email": api_token.user_email,
+            "jti": api_token.jti,
+        }
 
 
 def _get_sync_redis_client():
