@@ -36,6 +36,7 @@ pub enum RuntimeError {
 #[derive(Debug, Clone)]
 pub struct AppState {
     backend_rpc_url: Arc<str>,
+    backend_tools_list_url: Arc<str>,
     client: Client,
     protocol_version: Arc<str>,
     supported_protocol_versions: Arc<Vec<String>>,
@@ -87,6 +88,7 @@ impl AppState {
 
         Ok(Self {
             backend_rpc_url: Arc::from(config.backend_rpc_url.clone()),
+            backend_tools_list_url: Arc::from(derive_backend_tools_list_url(&config.backend_rpc_url)),
             client,
             protocol_version: Arc::from(config.protocol_version.clone()),
             supported_protocol_versions: Arc::new(config.effective_supported_protocol_versions()),
@@ -98,6 +100,10 @@ impl AppState {
 
     pub fn backend_rpc_url(&self) -> &str {
         &self.backend_rpc_url
+    }
+
+    pub fn backend_tools_list_url(&self) -> &str {
+        &self.backend_tools_list_url
     }
 
     pub fn protocol_version(&self) -> &str {
@@ -176,10 +182,14 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
         Err(response) => return response,
     };
 
+    let server_scoped_tools_list = request.method == "tools/list" && is_server_scoped_tools_list(&headers);
+
     let mode = if request.is_notification() {
         "notification-forward"
     } else if request.method == "ping" {
         "local"
+    } else if server_scoped_tools_list {
+        "backend-tools-list-direct"
     } else {
         "backend-forward"
     };
@@ -208,7 +218,34 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
         }
     }
 
+    if server_scoped_tools_list {
+        return forward_server_tools_list_to_backend(&state, headers, request.id.clone()).await;
+    }
+
     forward_to_backend(&state, headers, body).await
+}
+
+fn derive_backend_tools_list_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/tools/list");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/tools/list");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/tools/list");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/tools/list");
+    }
+    format!(
+        "{}/_internal/mcp/tools/list",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
+fn is_server_scoped_tools_list(headers: &HeaderMap) -> bool {
+    headers.contains_key("x-contextforge-server-id")
 }
 
 fn decode_request(body: &[u8]) -> Result<JsonRpcRequest, Response> {
@@ -380,6 +417,54 @@ async fn forward_to_backend(
     response_from_backend(backend_response)
 }
 
+async fn forward_server_tools_list_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    request_id: Option<Value>,
+) -> Response {
+    let backend_response = match send_tools_list_to_backend(state, incoming_headers).await {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
+    let status = backend_response.status();
+    let backend_headers = backend_response.headers().clone();
+    let payload: Value = match backend_response.json().await {
+        Ok(payload) => payload,
+        Err(err) => {
+            error!("backend MCP tools/list response decode failed: {err}");
+            return json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request_id,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP tools/list decode failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            );
+        }
+    };
+
+    let response_payload = if status.is_success() {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "result": payload,
+        })
+    } else {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "error": payload,
+        })
+    };
+
+    response_from_json_with_headers(status, response_payload, &backend_headers)
+}
+
 async fn forward_notification_to_backend(
     state: &AppState,
     incoming_headers: HeaderMap,
@@ -439,6 +524,46 @@ async fn send_to_backend(
         })
 }
 
+async fn send_tools_list_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+) -> Result<reqwest::Response, Response> {
+    let mut forwarded_headers = reqwest::header::HeaderMap::new();
+
+    for (name, value) in incoming_headers.iter() {
+        if should_forward_header(name) {
+            forwarded_headers.insert(name.clone(), value.clone());
+        }
+    }
+
+    forwarded_headers.insert(
+        HeaderName::from_static(RUNTIME_HEADER),
+        HeaderValue::from_static(RUNTIME_NAME),
+    );
+
+    state
+        .client
+        .post(state.backend_tools_list_url())
+        .headers(forwarded_headers)
+        .send()
+        .await
+        .map_err(|err| {
+            error!("backend MCP tools/list dispatch failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP tools/list dispatch failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            )
+        })
+}
+
 fn response_from_backend(backend_response: reqwest::Response) -> Response {
     let status = backend_response.status();
     let headers = backend_response.headers().clone();
@@ -471,6 +596,35 @@ fn response_from_backend(backend_response: reqwest::Response) -> Response {
     builder
         .body(body)
         .unwrap_or_else(|_| Response::new(Body::from("internal response construction error")))
+}
+
+fn response_from_json_with_headers(
+    status: StatusCode,
+    payload: Value,
+    headers: &reqwest::header::HeaderMap,
+) -> Response {
+    let mut response = json_response(status, payload);
+    let response_headers = response.headers_mut();
+
+    if let Some(value) = headers.get(CONTENT_TYPE) {
+        response_headers.insert(CONTENT_TYPE, value.clone());
+    }
+
+    for header_name in [
+        "mcp-session-id",
+        "x-mcp-session-id",
+        "www-authenticate",
+        "x-request-id",
+        "x-correlation-id",
+    ] {
+        if let Some(value) = headers.get(header_name) {
+            if let Ok(name) = HeaderName::from_bytes(header_name.as_bytes()) {
+                response_headers.insert(name, value.clone());
+            }
+        }
+    }
+
+    response
 }
 
 fn should_forward_header(name: &HeaderName) -> bool {

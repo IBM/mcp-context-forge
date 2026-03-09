@@ -72,6 +72,9 @@ start_managed_rust_mcp_runtime() {
     export MCP_RUST_LISTEN_HTTP="${rust_listen_http}"
     if [[ -n "${rust_listen_uds}" ]]; then
         export MCP_RUST_LISTEN_UDS="${rust_listen_uds}"
+    else
+        unset MCP_RUST_LISTEN_UDS || true
+        unset EXPERIMENTAL_RUST_MCP_RUNTIME_UDS || true
     fi
     export MCP_RUST_BACKEND_RPC_URL="${backend_rpc_url}"
 

@@ -370,6 +370,10 @@ The latest optimization stack is now:
 - no Pydantic `RPCRequest` validation on trusted internal dispatch
 - lazy lower-casing of request headers only when needed
 - conversion of several hot-path f-string logs to lazy logging calls
+- dedicated internal `/_internal/mcp/tools/list` path for server-scoped discovery
+- lean `tool_service.list_server_mcp_tool_definitions(...)` output that skips `ToolRead` conversion
+- Rust-side specialized mode logging: `rust_mcp_runtime method=tools/list mode=backend-tools-list-direct`
+- container launch hardening so an empty `MCP_RUST_LISTEN_UDS` env no longer breaks the managed sidecar startup
 
 These numbers are from live server-scoped `100 users / 30s` Locust runs following `todo/performance/reproduce-testing.md`.
 
@@ -409,19 +413,68 @@ Conclusion:
 - the current bottleneck is still Python-owned execution and data access behind the Rust edge
 - there is still headroom, but the remaining big wins are now unlikely to come from more Python-side no-DB micro-optimizations
 
+### Follow-up result: dedicated server-scoped `tools/list` seam
+
+After the generic `/_internal/mcp/rpc` trimming work, one more Python-owned seam optimization was added:
+
+- server-scoped `tools/list` now goes to `/_internal/mcp/tools/list`
+- Python still owns auth/RBAC and DB access for that path
+- Rust no longer forwards that method through the generic JSON-RPC switch
+- Python no longer builds full `ToolRead` models for this path
+
+Live validation on the rebuilt Rust-enabled compose stack:
+
+- public MCP responses still include `x-contextforge-mcp-runtime: rust`
+- gateway logs now show:
+
+```text
+rust_mcp_runtime method=tools/list mode=backend-tools-list-direct
+```
+
+- full `tests/e2e/test_mcp_cli_protocol.py` still passes against the rebuilt image (`22 passed`)
+
+Measured `100 users / 30s` runs after this dedicated `tools/list` cut:
+
+```text
+Run | RPS    | Avg(ms) | p95 | p99 | Failures
+1   | 672.23 | 45.01   | 83  | 180 | 1.94%
+2   | 700.04 | 45.94   | 87  | 170 | 1.86%
+```
+
+Endpoint-level effect from the warmed second run:
+
+- `MCP tools/list`: `51.87 RPS`, `28.8ms avg`, `130ms p99`
+- `MCP tools/list [churn]`: `31.48 RPS`, `28.9ms avg`, `110ms p99`
+- `MCP tools/list [rapid]`: `11.34 RPS`, `27.8ms avg`, `80ms p99`
+
+Interpretation:
+
+- this seam is correct, live, and leaner than the generic `/rpc` path
+- it improves the `tools/list` slice, but it does **not** materially move the full protocol mix by itself
+- that is expected because `tools/call` remains the dominant request class in the load test
+- this is the clearest point where further Python-owned no-DB seam work has diminishing returns
+
 ### Next performance steps in priority order
 
 1. Keep this no-DB seam as the new baseline.
 2. Fix or replace the seeded benchmark server so `resources/read` stops polluting load-test comparisons.
-3. Move read-heavy server-scoped MCP methods into Rust with direct read-only Postgres access:
-   - `tools/list`
+3. Start the first Rust-owned read-only DB path with server-scoped `tools/list`.
+   - preserve Python auth/RBAC ownership first
+   - keep Redis/session/cancellation out of scope for this cut
+4. Then move the remaining read-heavy server-scoped MCP discovery methods into Rust with direct read-only Postgres access:
    - `resources/list`
    - `prompts/list`
    - `resources/templates/list`
-4. Keep Redis/session/cancellation ownership in Python during that phase.
+5. Keep Redis/session/cancellation ownership in Python during that phase.
    - those are not the first methods to move
-5. After the list/read path is Rust-owned, decide whether `initialize` stays Python-owned for session ownership semantics or gets a narrower Rust-aware session contract.
-6. Only after that start carving `tools/call` out of Python.
+6. After the list/read path is Rust-owned, decide whether `initialize` stays Python-owned for session ownership semantics or gets a narrower Rust-aware session contract.
+7. Only after that start carving `tools/call` out of Python.
+
+The practical lesson from the latest run is simple:
+
+- removing generic dispatcher overhead from Python helped
+- removing a single read method from the generic dispatcher helped less than the earlier seam cuts
+- the next meaningful gains now require Rust to own the actual read queries, not just the transport and routing shell
 
 ### Phase 2: remove Python `/rpc` coupling
 
@@ -632,12 +685,15 @@ Python integration:
 
 The Rust MCP runtime is already real enough to use as the live `POST /mcp` transport edge.
 
+It now also owns a specialized server-scoped `tools/list` routing path that bypasses the generic Python JSON-RPC dispatcher.
+
 It is not yet the complete MCP implementation for ContextForge.
 
 The remaining work is mostly:
 
 - parity hardening across broader test suites
-- replacing the Python `/rpc` coupling with a cleaner internal dispatcher seam
-- moving session orchestration and more MCP execution logic into Rust
+- moving the read-only discovery queries (`tools/list`, `resources/list`, `prompts/list`, `resources/templates/list`) into Rust with direct Postgres reads
+- keeping Redis/session/cancellation Python-owned until the read path is solid
+- only then moving session orchestration and heavier execution logic like `tools/call`
 
 That is a credible migration path. The current implementation is strong stage-1 infrastructure, not yet the final Rust end state.

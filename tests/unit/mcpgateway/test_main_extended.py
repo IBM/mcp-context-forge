@@ -46,6 +46,7 @@ from mcpgateway.main import (
     export_configuration,
     export_selective_configuration,
     get_a2a_agent,
+    handle_internal_mcp_tools_list,
     handle_internal_mcp_rpc,
     handle_rpc,
     import_configuration,
@@ -4289,6 +4290,56 @@ class TestRpcHandling:
             result = await handle_internal_mcp_rpc(request)
 
         assert result["result"]["tools"][0]["name"] == "tool-1"
+
+    async def test_handle_internal_mcp_tools_list_returns_direct_definitions(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": True,
+                        "scoped_permissions": ["tools.read"],
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", ["team-a"], False)),
+            patch(
+                "mcpgateway.main.tool_service.list_server_mcp_tool_definitions",
+                new=AsyncMock(return_value=[{"name": "echo", "inputSchema": {"type": "object"}, "annotations": {}}]),
+            ) as mock_list_defs,
+        ):
+            response = await handle_internal_mcp_tools_list(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {"tools": [{"name": "echo", "inputSchema": {"type": "object"}, "annotations": {}}]}
+        assert mock_list_defs.await_args.args[1] == "srv-1"
+
+    async def test_handle_internal_mcp_tools_list_requires_server_scope(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        with pytest.raises(HTTPException) as excinfo:
+            await handle_internal_mcp_tools_list(request)
+
+        assert excinfo.value.status_code == 400
 
     async def test_handle_rpc_list_tools_with_cursor(self):
         payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
