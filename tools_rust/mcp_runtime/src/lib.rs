@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use futures_util::TryStreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -21,13 +22,6 @@ const JSONRPC_VERSION: &str = "2.0";
 const RUNTIME_HEADER: &str = "x-contextforge-mcp-runtime";
 const RUNTIME_NAME: &str = "rust";
 const MCP_PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
-
-#[derive(Debug)]
-struct BackendHttpResponse {
-    status: StatusCode,
-    headers: HeaderMap,
-    body: Bytes,
-}
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -393,7 +387,7 @@ async fn forward_notification_to_backend(
         Err(response) => return response,
     };
 
-    if backend_response.status.is_success() {
+    if backend_response.status().is_success() {
         return empty_response(StatusCode::ACCEPTED);
     }
 
@@ -404,7 +398,7 @@ async fn send_to_backend(
     state: &AppState,
     incoming_headers: HeaderMap,
     body: Bytes,
-) -> Result<BackendHttpResponse, Response> {
+) -> Result<reqwest::Response, Response> {
     let mut forwarded_headers = reqwest::header::HeaderMap::new();
 
     for (name, value) in incoming_headers.iter() {
@@ -418,7 +412,7 @@ async fn send_to_backend(
         HeaderValue::from_static(RUNTIME_NAME),
     );
 
-    let backend_response = state
+    state
         .client
         .post(state.backend_rpc_url())
         .headers(forwarded_headers)
@@ -439,40 +433,23 @@ async fn send_to_backend(
                     }
                 }),
             )
-        })?;
-
-    let status = backend_response.status();
-    let headers = backend_response.headers().clone();
-    let body = backend_response.bytes().await.map_err(|err| {
-        error!("backend MCP response body read failed: {err}");
-        json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": Value::Null,
-                "error": {
-                    "code": -32000,
-                    "message": "Backend MCP response read failed",
-                    "data": err.to_string(),
-                }
-            }),
-        )
-    })?;
-
-    Ok(BackendHttpResponse {
-        status,
-        headers,
-        body,
-    })
+        })
 }
 
-fn response_from_backend(backend_response: BackendHttpResponse) -> Response {
-    let mut builder = Response::builder().status(backend_response.status);
+fn response_from_backend(backend_response: reqwest::Response) -> Response {
+    let status = backend_response.status();
+    let headers = backend_response.headers().clone();
+    let body = Body::from_stream(backend_response.bytes_stream().map_err(|err| {
+        error!("backend MCP response body stream failed: {err}");
+        std::io::Error::other(err.to_string())
+    }));
+
+    let mut builder = Response::builder().status(status);
     builder = builder.header(RUNTIME_HEADER, RUNTIME_NAME);
 
-    if let Some(value) = backend_response.headers.get(CONTENT_TYPE) {
+    if let Some(value) = headers.get(CONTENT_TYPE) {
         builder = builder.header(CONTENT_TYPE, value.clone());
-    } else if !backend_response.body.is_empty() {
+    } else {
         builder = builder.header(CONTENT_TYPE, "application/json");
     }
 
@@ -483,13 +460,13 @@ fn response_from_backend(backend_response: BackendHttpResponse) -> Response {
         "x-request-id",
         "x-correlation-id",
     ] {
-        if let Some(value) = backend_response.headers.get(header_name) {
+        if let Some(value) = headers.get(header_name) {
             builder = builder.header(header_name, value.clone());
         }
     }
 
     builder
-        .body(Body::from(backend_response.body))
+        .body(body)
         .unwrap_or_else(|_| Response::new(Body::from("internal response construction error")))
 }
 
