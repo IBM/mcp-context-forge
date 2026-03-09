@@ -560,7 +560,7 @@ retry the Helm upgrade.
 | mcpContextForge.config.VALIDATION_ALLOWED_MIME_TYPES | string | `"[\"text/plain\", \"text/html\", \"text/css\", \"text/markdown\", \"text/javascript\", \"application/json\", \"application/xml\", \"application/pdf\", \"image/png\", \"image/jpeg\", \"image/gif\", \"image/svg+xml\", \"application/octet-stream\"]"` |  |
 | mcpContextForge.config.VALIDATION_DANGEROUS_HTML_PATTERN | string | `"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"` |  |
 | mcpContextForge.config.VALIDATION_DANGEROUS_JS_PATTERN | string | `"(?i)(?:^|\\s|[\\\"'`<>=])(javascript:|vbscript:|data:\\s*[^,]*[;\\s]*(javascript|vbscript)|\\bon[a-z]+\\s*=|<\\s*script\\b)"` |  |
-| mcpContextForge.config.VALIDATION_NAME_PATTERN | string | `"^[a-zA-Z0-9_.\\-\\s]+$"` |  |
+| mcpContextForge.config.VALIDATION_NAME_PATTERN | string | `"^[a-zA-Z0-9_.\\- ]+$"` |  |
 | mcpContextForge.config.VALIDATION_IDENTIFIER_PATTERN | string | `"^[a-zA-Z0-9_\\-\\.]+$"` |  |
 | mcpContextForge.config.VALIDATION_SAFE_URI_PATTERN | string | `"^[a-zA-Z0-9_\\-.:/?=&%{}]+$"` |  |
 | mcpContextForge.config.VALIDATION_UNSAFE_URI_PATTERN | string | `"[<>\"'\\\\]"` |  |

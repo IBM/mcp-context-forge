@@ -295,7 +295,7 @@ class SecurityValidator:
     ALLOWED_URL_SCHEMES = settings.validation_allowed_url_schemes  # Default: ["http://", "https://", "ws://", "wss://"]
 
     # Character type patterns
-    NAME_PATTERN = settings.validation_name_pattern  # Default: ^[a-zA-Z0-9_\-\s]+$
+    NAME_PATTERN = settings.validation_name_pattern  # Default: ^[a-zA-Z0-9_.\- ]+$ (literal space, not \s)
     IDENTIFIER_PATTERN = settings.validation_identifier_pattern  # Default: ^[a-zA-Z0-9_\-\.]+$
     VALIDATION_SAFE_URI_PATTERN = settings.validation_safe_uri_pattern  # Default: ^[a-zA-Z0-9_\-.:/?=&%]+$
     VALIDATION_UNSAFE_URI_PATTERN = settings.validation_unsafe_uri_pattern  # Default: [<>"\'\\]
