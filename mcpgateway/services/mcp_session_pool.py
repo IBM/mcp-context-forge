@@ -882,7 +882,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             return
 
         # Check if session should be returned to pool
-        if self._closed or pooled.age_seconds > self._session_ttl:
+        if discard or self._closed or pooled.age_seconds > self._session_ttl:
             await self._close_session(pooled)
             if pool_key in self._semaphores:
                 self._semaphores[pool_key].release()
