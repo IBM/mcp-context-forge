@@ -1181,7 +1181,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 },
             )
 
-            return GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked()
+            # return GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked()
+            return GatewayRead.model_validate(self.convert_gateway_to_read(db_gateway))
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
@@ -1727,7 +1728,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         result = []
         for g in gateways:
             logger.info(f"Gateway: {g.team_id}, Team: {g.team}")
-            result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
+            # result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
+            result.append(GatewayRead.model_validate(self.convert_gateway_to_read(g)))
         return result
 
     async def update_gateway(
@@ -2268,7 +2270,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     },
                 )
 
-                return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+                # return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+                return GatewayRead.model_validate(self.convert_gateway_to_read(gateway))
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
         except GatewayNameConflictError as ge:
@@ -2433,7 +2436,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 },
             )
 
-            return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+            # return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+            return GatewayRead.model_validate(self.convert_gateway_to_read(gateway)).masked()
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -2724,7 +2728,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     },
                 )
 
-            return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+            # return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+            return GatewayRead.model_validate(self.convert_gateway_to_read(gateway)).masked()
 
         except PermissionError as e:
             db.rollback()
@@ -3723,7 +3728,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # other service methods. Return None if no match found.
         if result is None:
             return None
-        return GatewayRead.model_validate(self._prepare_gateway_for_read(result)).masked()
+        # return GatewayRead.model_validate(self._prepare_gateway_for_read(result)).masked()
+        return GatewayRead.model_validate(self.convert_gateway_to_read(result))
 
     async def _run_leader_heartbeat(self) -> None:
         """Run leader heartbeat loop to keep leader key alive.

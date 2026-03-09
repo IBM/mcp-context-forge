@@ -804,8 +804,10 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         result = await gateway_service.get_gateway(test_db, 1)
         test_db.execute.assert_called_once()
-        assert result.name == "test_gateway"
-        assert result.capabilities == mock_gateway.capabilities
+        # assert result.name == "test_gateway"
+        # assert result.capabilities == mock_gateway.capabilities
+        assert result["name"] == "test_gateway"
+        assert result["capabilities"] == mock_gateway.capabilities
 
     @pytest.mark.asyncio
     async def test_get_gateway_not_found(self, gateway_service, test_db):
@@ -3858,16 +3860,18 @@ class TestPrepareGatewayForRead:
     def test_prepare_gateway_encodes_dict_auth(self, gateway_service, mock_gateway):
         mock_gateway.auth_value = {"Authorization": "Bearer token"}
         mock_gateway.tags = []
-        result = gateway_service._prepare_gateway_for_read(mock_gateway)
+        # result = gateway_service._prepare_gateway_for_read(mock_gateway)
+        result = gateway_service.convert_gateway_to_read(mock_gateway)
         # Auth value should be encoded as string now
-        assert isinstance(result.auth_value, str)
+        assert isinstance(result["auth_value"], str)
 
     def test_prepare_gateway_converts_string_tags(self, gateway_service, mock_gateway):
         mock_gateway.tags = ["tag1", "tag2"]
         mock_gateway.auth_value = None
-        result = gateway_service._prepare_gateway_for_read(mock_gateway)
+        # result = gateway_service._prepare_gateway_for_read(mock_gateway)
+        result = gateway_service.convert_gateway_to_read(mock_gateway)
         # Tags should be converted from List[str] to List[Dict]
-        assert isinstance(result.tags[0], dict)
+        assert isinstance(result["tags"][0], dict)
 
 
 # ---------------------------------------------------------------------------
@@ -5676,7 +5680,8 @@ class TestUpdateGatewayAdvanced:
 
         result = await gateway_service.update_gateway(db, mock_gateway.id, update_data)
         # auth_value gets encoded by _prepare_gateway_for_read; verify it's a non-empty encoded string
-        assert isinstance(mock_gateway.auth_value, str) and len(mock_gateway.auth_value) > 0
+        # assert isinstance(mock_gateway.auth_value, str) and len(mock_gateway.auth_value) > 0
+        assert isinstance(mock_gateway.auth_value, dict) and len(mock_gateway.auth_value) > 0
 
     @pytest.mark.asyncio
     async def test_update_stale_tools_cleaned_up(self, gateway_service, mock_gateway, monkeypatch):
