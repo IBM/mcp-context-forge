@@ -620,7 +620,7 @@
           </div>
           {% endif %}
 
-          {% if is_admin and ('metrics' not in hidden_sections or performance_enabled or observability_enabled) %}
+          {% if 'metrics' not in hidden_sections or performance_enabled or observability_enabled %}
           <!-- Monitoring Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Monitoring</span>
@@ -656,7 +656,7 @@
           </div>
           {% endif %}
 
-          {% if is_admin and 'plugins' not in hidden_sections %}
+          {% if 'plugins' not in hidden_sections %}
           <!-- Extensions Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Extensions</span>
@@ -675,7 +675,7 @@
           {% endif %}
 
           <!-- Organization Section -->
-          {% if email_auth_enabled and ('teams' not in hidden_sections or ('users' not in hidden_sections and is_admin) or 'tokens' not in hidden_sections) %}
+          {% if email_auth_enabled and ('teams' not in hidden_sections or 'users' not in hidden_sections or 'tokens' not in hidden_sections) %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Organization</span>
           </div>
@@ -689,7 +689,7 @@
               <span x-show="!sidebarCollapsed">Teams</span>
             </a>
             {% endif %}
-            {% if is_admin and 'users' not in hidden_sections %}
+            {% if 'users' not in hidden_sections %}
             <a href="#users" id="tab-users"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -710,7 +710,7 @@
           </div>
           {% endif %}
 
-          {% if is_admin and ('export-import' not in hidden_sections or 'logs' not in hidden_sections or 'version-info' not in hidden_sections or 'maintenance' not in hidden_sections) %}
+          {% if 'export-import' not in hidden_sections or 'logs' not in hidden_sections or 'version-info' not in hidden_sections or 'maintenance' not in hidden_sections %}
           <!-- Admin Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Admin</span>
