@@ -2152,6 +2152,69 @@ class ToolService(BaseService):
 
         return result
 
+    async def list_server_mcp_tool_definitions(
+        self,
+        db: Session,
+        server_id: str,
+        *,
+        include_inactive: bool = False,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return server-scoped MCP tool definitions without building full ToolRead models.
+
+        This is a hot-path helper for the internal Rust -> Python seam. It keeps
+        auth and visibility semantics aligned with ``list_server_tools`` while
+        avoiding the heavier ``ToolRead`` conversion that is only needed for the
+        admin/API surfaces.
+        """
+        name_column = DbTool.__table__.c.name
+        query = (
+            select(
+                name_column.label("name"),
+                DbTool.description.label("description"),
+                DbTool.input_schema.label("input_schema"),
+                DbTool.output_schema.label("output_schema"),
+                DbTool.annotations.label("annotations"),
+                DbTool.owner_email.label("owner_email"),
+                DbTool.team_id.label("team_id"),
+                DbTool.visibility.label("visibility"),
+            )
+            .join(server_tool_association, DbTool.id == server_tool_association.c.tool_id)
+            .where(server_tool_association.c.server_id == server_id)
+        )
+
+        if not include_inactive:
+            query = query.where(DbTool.enabled)
+
+        if user_email is not None or token_teams is not None:
+            team_ids = token_teams if token_teams is not None else []
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
+
+            access_conditions = [DbTool.visibility == "public"]
+            if not is_public_only_token and user_email:
+                access_conditions.append(DbTool.owner_email == user_email)
+            if team_ids:
+                access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+            query = query.where(or_(*access_conditions))
+
+        rows = db.execute(query).mappings().all()
+        db.commit()
+
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            payload: Dict[str, Any] = {
+                "name": row["name"],
+                "description": row["description"],
+                "inputSchema": row["input_schema"] or {"type": "object", "properties": {}},
+                "annotations": row["annotations"] or {},
+            }
+            if row["output_schema"] is not None:
+                payload["outputSchema"] = row["output_schema"]
+            result.append(payload)
+
+        return result
+
     async def list_tools_for_user(
         self,
         db: Session,

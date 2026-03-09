@@ -235,6 +235,90 @@ async fn tools_list_is_forwarded_with_auth_and_session_headers() {
 }
 
 #[tokio::test]
+async fn server_scoped_tools_list_uses_specialized_internal_endpoint() {
+    let observation = BackendObservation::default();
+    let backend = {
+        let observation = observation.clone();
+        Router::new()
+            .route(
+                "/rpc",
+                post(move |Json(body): Json<Value>| {
+                    let observation = observation.clone();
+                    async move {
+                        observation.calls.lock().expect("lock").push((
+                            body.get("method")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown")
+                                .to_string(),
+                            None,
+                            None,
+                        ));
+                        Json(json!({"jsonrpc":"2.0","id":body["id"],"result":{"unexpected":true}}))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/tools/list",
+                post(|headers: HeaderMap| async move {
+                    assert_eq!(
+                        headers
+                            .get("x-contextforge-server-id")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("server-1")
+                    );
+                    Json(json!({
+                        "tools": [{
+                            "name": "echo",
+                            "description": "Echo input",
+                            "inputSchema": {"type": "object"},
+                            "annotations": {}
+                        }]
+                    }))
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            log_filter: "error".to_string(),
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .header("x-contextforge-server-id", "server-1")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/list",
+            "params": {}
+        }))
+        .send()
+        .await
+        .expect("tools/list response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["result"]["tools"][0]["name"], "echo");
+
+    let calls = observation.calls.lock().expect("lock");
+    assert!(calls.is_empty(), "server-scoped tools/list should bypass generic /rpc forwarding");
+}
+
+#[tokio::test]
 async fn mcp_path_aliases_to_the_same_runtime_handler() {
     let backend = Router::new().route(
         "/rpc",

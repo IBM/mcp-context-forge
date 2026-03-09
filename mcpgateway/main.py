@@ -6186,6 +6186,47 @@ async def handle_internal_mcp_rpc(request: Request):
         db.close()
 
 
+@utility_router.post("/_internal/mcp/tools/list/")
+@utility_router.post("/_internal/mcp/tools/list")
+async def handle_internal_mcp_tools_list(request: Request):
+    """Handle trusted server-scoped tools/list requests forwarded from the Rust runtime."""
+    user = _build_internal_mcp_forwarded_user(request)
+    server_id = request.headers.get("x-contextforge-server-id")
+    if not server_id:
+        raise HTTPException(status_code=400, detail="Missing trusted MCP server scope")
+
+    db = SessionLocal()
+    try:
+        await _ensure_rpc_permission(user, db, "tools.read", "tools/list", request=request)
+        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        if is_admin and token_teams is None:
+            user_email = None
+            token_teams = None
+        elif token_teams is None:
+            token_teams = []
+
+        tools = await tool_service.list_server_mcp_tool_definitions(
+            db,
+            server_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+        return ORJSONResponse(content={"tools": tools})
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
+    finally:
+        db.close()
+
+
 async def _handle_rpc_authenticated(request: Request, db: Session, user):
     """Handle RPC requests.
 
