@@ -17,7 +17,8 @@ Ingress
 {{- range $key, $value := ($gatewayIngress.annotations | default dict) -}}
 {{- $_ := set $gatewayAnnotations $key (toString $value) -}}
 {{- end -}}
-{{- $gatewayTlsSecretName := $gatewayIngress.tls.secretName | default (printf "%s-ingress-tls" $fullName) -}}
+{{- $gatewayTlsSecretName := $gatewayIngress.tls.secretName | default (printf "%s-ingress-tls" $fullName) }}
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -47,9 +48,8 @@ spec:
                 name: {{ $fullName }}-mcpgateway
                 port:
                   number: {{ .Values.mcpContextForge.service.port }}
-{{- end }}
-
-{{- if and .Values.mcpFastTimeServer.enabled .Values.mcpFastTimeServer.ingress.enabled }}
+{{ end -}}
+{{ if and .Values.mcpFastTimeServer.enabled .Values.mcpFastTimeServer.ingress.enabled }}
 {{- $fastTimeIngress := .Values.mcpFastTimeServer.ingress -}}
 {{- $fastTimeClassName := lower ($fastTimeIngress.className | default "") -}}
 {{- $fastTimeAnnotations := dict -}}
@@ -63,7 +63,7 @@ spec:
 {{- range $key, $value := ($fastTimeIngress.annotations | default dict) -}}
 {{- $_ := set $fastTimeAnnotations $key (toString $value) -}}
 {{- end -}}
-{{- $fastTimeTlsSecretName := $fastTimeIngress.tls.secretName | default (printf "%s-fast-time-ingress-tls" $fullName) -}}
+{{- $fastTimeTlsSecretName := $fastTimeIngress.tls.secretName | default (printf "%s-fast-time-ingress-tls" $fullName) }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
