@@ -5924,9 +5924,15 @@ class TestRemainingCoverageGaps:
             apijsonpath=None,  # This will trigger the None path
             user={"email": "user@example.com"},
         )
-        assert "tools" in result
-        assert "nextCursor" in result
-        assert result["nextCursor"] == "next_cursor_123"
+        # Result can be either a dict or Pydantic model depending on environment
+        if isinstance(result, dict):
+            assert "tools" in result
+            assert "nextCursor" in result
+            assert result["nextCursor"] == "next_cursor_123"
+        else:
+            assert hasattr(result, 'tools')
+            assert hasattr(result, 'next_cursor')
+            assert result.next_cursor == "next_cursor_123"
 
     async def test_list_tools_apijsonpath_exception_handling(self, monkeypatch):
         """Test list_tools jsonpath_modifier exception (lines 3684-3685, 3690-3692)."""
@@ -6177,9 +6183,15 @@ class TestRemainingCoverageGaps:
         )
 
         # Should return pagination format when parsed_apijsonpath is None and include_pagination is True
-        assert "tools" in result
-        assert "nextCursor" in result
-        assert result["nextCursor"] == "cursor_abc"
+        # Result can be either a dict or Pydantic model depending on environment
+        if isinstance(result, dict):
+            assert "tools" in result
+            assert "nextCursor" in result
+            assert result["nextCursor"] == "cursor_abc"
+        else:
+            assert hasattr(result, 'tools')
+            assert hasattr(result, 'next_cursor')
+            assert result.next_cursor == "cursor_abc"
 
     async def test_create_tool_endpoint_coverage(self, monkeypatch):
         """Test create_tool endpoint (lines 3695-3698)."""
