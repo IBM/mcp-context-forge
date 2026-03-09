@@ -2072,10 +2072,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                 try:
                     timeout = 10.0  # seconds; tuneable
                     deadline = asyncio.get_event_loop().time() + timeout
-                    while True:
-                        remaining = max(0.0, deadline - asyncio.get_event_loop().time())
-                        if remaining == 0:
-                            break
+                    remaining = max(0.0, deadline - asyncio.get_event_loop().time())
+                    while remaining > 0:
                         try:
                             msg = await asyncio.wait_for(queue.get(), timeout=remaining)
                         except asyncio.TimeoutError:
@@ -2086,6 +2084,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                             parsed = orjson.loads(msg)
                         except (orjson.JSONDecodeError, ValueError):
                             # not JSON -> skip
+                            remaining = max(0.0, deadline - asyncio.get_event_loop().time())
                             continue
 
                         candidates = parsed if isinstance(parsed, list) else [parsed]
@@ -2093,6 +2092,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                             if isinstance(candidate, dict) and candidate.get("id") == obj.get("id"):
                                 # return the matched response as JSON
                                 return ORJSONResponse(candidate)
+
+                        remaining = max(0.0, deadline - asyncio.get_event_loop().time())
 
                     # timeout -> accept and return 202
                     return PlainTextResponse("accepted (no response yet)", status_code=status.HTTP_202_ACCEPTED)

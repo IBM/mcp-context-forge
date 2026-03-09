@@ -40,11 +40,12 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
-from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
+from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -109,9 +110,10 @@ def _get_registry_cache():
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-# Initialize structured logger and audit trail for prompt operations
+# Initialize structured logger, audit trail, and metrics buffer for prompt operations
 structured_logger = get_structured_logger("prompt_service")
 audit_trail = get_audit_trail_service()
+metrics_buffer = get_metrics_buffer_service()
 
 
 class PromptError(Exception):
@@ -1440,6 +1442,7 @@ class PromptService(BaseService):
         success = False
         error_message = None
         prompt = None
+        server_scoped = False
 
         # Create database span for observability dashboard
         trace_id = current_trace_id.get()
@@ -1555,6 +1558,7 @@ class PromptService(BaseService):
                     ).first()
                     if not server_match:
                         raise PromptNotFoundError(f"Prompt not found: {search_key}")
+                    server_scoped = True
 
                 if not arguments:
                     result = PromptResult(
@@ -1644,10 +1648,6 @@ class PromptService(BaseService):
                 # Record metrics only if we found a prompt
                 if prompt:
                     try:
-                        # First-Party
-                        from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
-
-                        metrics_buffer = get_metrics_buffer_service()
                         metrics_buffer.record_prompt_metric(
                             prompt_id=prompt.id,
                             start_time=start_time,
@@ -1656,6 +1656,21 @@ class PromptService(BaseService):
                         )
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record prompt metric: {metrics_error}")
+
+                    # Record server metrics ONLY when the server scoping check passed.
+                    # This prevents recording metrics with unvalidated server_id values
+                    # from admin API headers (X-Server-ID) or RPC params.
+                    if server_scoped:
+                        try:
+                            # Record server metric only for the specific virtual server being accessed
+                            metrics_buffer.record_server_metric(
+                                server_id=server_id,
+                                start_time=start_time,
+                                success=success,
+                                error_message=error_message,
+                            )
+                        except Exception as metrics_error:
+                            logger.warning(f"Failed to record server metric: {metrics_error}")
 
                 # End database span for observability dashboard
                 if db_span_id and observability_service and not db_span_ended:
@@ -2531,7 +2546,7 @@ class PromptService(BaseService):
         await self._event_service.publish_event(event)
 
     # --- Metrics ---
-    async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
+    async def aggregate_metrics(self, db: Session) -> PromptMetrics:
         """
         Aggregate metrics for all prompt invocations across all prompts.
 
@@ -2543,7 +2558,7 @@ class PromptService(BaseService):
             db: Database session
 
         Returns:
-            Dict[str, Any]: Aggregated prompt metrics from raw + hourly rollups.
+            PromptMetrics: Aggregated prompt metrics from raw + hourly rollups.
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
@@ -2559,18 +2574,28 @@ class PromptService(BaseService):
         if is_cache_enabled():
             cached = metrics_cache.get("prompts")
             if cached is not None:
-                return cached
+                return PromptMetrics(**cached)
 
         # Use combined raw + rollup query for full historical coverage
         # First-Party
         from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
         result = aggregate_metrics_combined(db, "prompt")
-        metrics = result.to_dict()
 
-        # Cache the result (if enabled)
+        metrics = PromptMetrics(
+            total_executions=result.total_executions,
+            successful_executions=result.successful_executions,
+            failed_executions=result.failed_executions,
+            failure_rate=result.failure_rate,
+            min_response_time=result.min_response_time,
+            max_response_time=result.max_response_time,
+            avg_response_time=result.avg_response_time,
+            last_execution_time=result.last_execution_time,
+        )
+
+        # Cache the result as dict for serialization compatibility (if enabled)
         if is_cache_enabled():
-            metrics_cache.set("prompts", metrics)
+            metrics_cache.set("prompts", metrics.model_dump())
 
         return metrics
 

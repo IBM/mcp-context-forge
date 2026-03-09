@@ -320,7 +320,7 @@ async def test_call_tool_requires_tools_execute_permission(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock())
 
-    with pytest.raises(PermissionError, match="tools.execute"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await call_tool("mytool", {"foo": "bar"})
 
     tool_service.invoke_tool.assert_not_called()
@@ -831,7 +831,7 @@ async def test_list_resources_exception_no_server_id(monkeypatch, caplog):
 async def test_list_resource_templates_public_only_token(monkeypatch):
     """Test list_resource_templates passes empty token_teams for public-only access."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, user_context_var
+    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
     mock_template = MagicMock()
@@ -846,23 +846,26 @@ async def test_list_resource_templates_public_only_token(monkeypatch):
     # Track what parameters were passed to the service
     captured_calls = []
 
-    async def mock_list_templates(db, user_email=None, token_teams=None):
-        captured_calls.append({"user_email": user_email, "token_teams": token_teams})
+    async def mock_list_templates(db, user_email=None, token_teams=None, server_id=None):
+        captured_calls.append({"user_email": user_email, "token_teams": token_teams, "server_id": server_id})
         return [mock_template]
 
     monkeypatch.setattr(resource_service, "list_resource_templates", mock_list_templates)
 
     # Set public-only user context (no auth, teams=None which becomes [])
-    token = user_context_var.set({"email": None, "teams": None, "is_admin": False})
+    user_token = user_context_var.set({"email": None, "teams": None, "is_admin": False})
+    server_token = server_id_var.set("test-server")
     try:
         result = await list_resource_templates()
     finally:
-        user_context_var.reset(token)
+        user_context_var.reset(user_token)
+        server_id_var.reset(server_token)
 
     # Verify the service was called with public-only access (empty teams)
     assert len(captured_calls) == 1
     assert captured_calls[0]["user_email"] is None
     assert captured_calls[0]["token_teams"] == []  # Public-only (secure default)
+    assert captured_calls[0]["server_id"] == "test-server"
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -872,7 +875,7 @@ async def test_list_resource_templates_public_only_token(monkeypatch):
 async def test_list_resource_templates_admin_unrestricted(monkeypatch):
     """Test list_resource_templates passes token_teams=None for admin users without team restrictions."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, user_context_var
+    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
     mock_template = MagicMock()
@@ -886,23 +889,26 @@ async def test_list_resource_templates_admin_unrestricted(monkeypatch):
 
     captured_calls = []
 
-    async def mock_list_templates(db, user_email=None, token_teams=None):
-        captured_calls.append({"user_email": user_email, "token_teams": token_teams})
+    async def mock_list_templates(db, user_email=None, token_teams=None, server_id=None):
+        captured_calls.append({"user_email": user_email, "token_teams": token_teams, "server_id": server_id})
         return [mock_template]
 
     monkeypatch.setattr(resource_service, "list_resource_templates", mock_list_templates)
 
     # Set admin user context with no team restrictions
-    token = user_context_var.set({"email": "admin@example.com", "teams": None, "is_admin": True})
+    user_token = user_context_var.set({"email": "admin@example.com", "teams": None, "is_admin": True})
+    server_token = server_id_var.set("test-server")
     try:
         result = await list_resource_templates()
     finally:
-        user_context_var.reset(token)
+        user_context_var.reset(user_token)
+        server_id_var.reset(server_token)
 
     # Verify the service was called with admin unrestricted access
     assert len(captured_calls) == 1
     assert captured_calls[0]["user_email"] is None  # Admin bypass clears email
     assert captured_calls[0]["token_teams"] is None  # Unrestricted
+    assert captured_calls[0]["server_id"] == "test-server"
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -912,7 +918,7 @@ async def test_list_resource_templates_admin_unrestricted(monkeypatch):
 async def test_list_resource_templates_team_scoped(monkeypatch):
     """Test list_resource_templates passes token_teams for team-scoped access."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, user_context_var
+    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
     mock_template = MagicMock()
@@ -926,23 +932,26 @@ async def test_list_resource_templates_team_scoped(monkeypatch):
 
     captured_calls = []
 
-    async def mock_list_templates(db, user_email=None, token_teams=None):
-        captured_calls.append({"user_email": user_email, "token_teams": token_teams})
+    async def mock_list_templates(db, user_email=None, token_teams=None, server_id=None):
+        captured_calls.append({"user_email": user_email, "token_teams": token_teams, "server_id": server_id})
         return [mock_template]
 
     monkeypatch.setattr(resource_service, "list_resource_templates", mock_list_templates)
 
     # Set user context with specific team membership
-    token = user_context_var.set({"email": "user@example.com", "teams": ["team-1", "team-2"], "is_admin": False})
+    user_token = user_context_var.set({"email": "user@example.com", "teams": ["team-1", "team-2"], "is_admin": False})
+    server_token = server_id_var.set("test-server")
     try:
         result = await list_resource_templates()
     finally:
-        user_context_var.reset(token)
+        user_context_var.reset(user_token)
+        server_id_var.reset(server_token)
 
     # Verify the service was called with team-scoped access
     assert len(captured_calls) == 1
     assert captured_calls[0]["user_email"] == "user@example.com"
     assert captured_calls[0]["token_teams"] == ["team-1", "team-2"]
+    assert captured_calls[0]["server_id"] == "test-server"
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -3419,7 +3428,7 @@ async def test_set_logging_level_requires_admin_system_config(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.logging_service", mock_logging_service)
 
     # Should raise PermissionError for non-admin user without admin.system_config
-    with pytest.raises(PermissionError, match="admin.system_config"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await set_logging_level("info")
     mock_logging_service.set_level.assert_not_called()
 
@@ -9113,7 +9122,7 @@ def test_normalize_jwt_payload_api_token(monkeypatch):
 
     raw = {"sub": "user@example.com", "token_use": "api", "teams": ["team-a"]}
     result = _normalize_jwt_payload(raw)
-    assert result == {"email": "user@example.com", "teams": ["team-a"], "is_admin": False, "is_authenticated": True}
+    assert result == {"email": "user@example.com", "teams": ["team-a"], "is_admin": False, "is_authenticated": True, "token_use": "api"}
 
 
 def test_normalize_jwt_payload_session_token_admin(monkeypatch):
@@ -9123,7 +9132,7 @@ def test_normalize_jwt_payload_session_token_admin(monkeypatch):
 
     raw = {"sub": "admin@example.com", "token_use": "session", "is_admin": True}
     result = _normalize_jwt_payload(raw)
-    assert result == {"email": "admin@example.com", "teams": None, "is_admin": True, "is_authenticated": True}
+    assert result == {"email": "admin@example.com", "teams": None, "is_admin": True, "is_authenticated": True, "token_use": "session"}
 
 
 def test_normalize_jwt_payload_session_token_non_admin(monkeypatch):
@@ -9135,7 +9144,7 @@ def test_normalize_jwt_payload_session_token_non_admin(monkeypatch):
 
     raw = {"sub": "dev@example.com", "token_use": "session"}
     result = _normalize_jwt_payload(raw)
-    assert result == {"email": "dev@example.com", "teams": ["team-x"], "is_admin": False, "is_authenticated": True}
+    assert result == {"email": "dev@example.com", "teams": ["team-x"], "is_admin": False, "is_authenticated": True, "token_use": "session"}
 
 
 def test_normalize_jwt_payload_nested_is_admin():
@@ -9166,7 +9175,7 @@ def test_normalize_jwt_payload_session_no_email():
 
     raw = {"token_use": "session"}
     result = _normalize_jwt_payload(raw)
-    assert result == {"email": None, "teams": [], "is_admin": False, "is_authenticated": True}
+    assert result == {"email": None, "teams": [], "is_admin": False, "is_authenticated": True, "token_use": "session"}
 
 
 # ---------------------------------------------------------------------------
@@ -10626,7 +10635,7 @@ async def test_call_tool_denied_by_token_scope(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock())
 
-    with pytest.raises(PermissionError, match="tools.execute"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await call_tool("mytool", {"foo": "bar"})
 
     tool_service.invoke_tool.assert_not_called()
@@ -11033,7 +11042,7 @@ async def test_list_tools_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
 
-    with pytest.raises(PermissionError, match="tools.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await list_tools()
 
 
@@ -11044,7 +11053,7 @@ async def test_list_resources_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
 
-    with pytest.raises(PermissionError, match="resources.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await list_resources()
 
 
@@ -11055,7 +11064,7 @@ async def test_read_resource_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
 
-    with pytest.raises(PermissionError, match="resources.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await read_resource("resource://test")
 
 
@@ -11066,7 +11075,7 @@ async def test_list_prompts_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
 
-    with pytest.raises(PermissionError, match="prompts.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await list_prompts()
 
 
@@ -11077,7 +11086,7 @@ async def test_get_prompt_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
 
-    with pytest.raises(PermissionError, match="prompts.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await get_prompt("test-prompt")
 
 
@@ -11088,7 +11097,7 @@ async def test_list_resource_templates_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
 
-    with pytest.raises(PermissionError, match="resources.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await list_resource_templates()
 
 
@@ -11143,7 +11152,7 @@ async def test_set_logging_level_denied_by_token_scope(monkeypatch):
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use", "tools.read"]))
 
-    with pytest.raises(PermissionError, match="admin.system_config"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await set_logging_level("error")
 
 
@@ -11195,7 +11204,7 @@ async def test_complete_denied_by_token_scope(monkeypatch):
         params=mcp_types.CompleteRequestParams(ref=ref, argument=mcp_types.CompletionArgument(name="arg", value="val")),
     )
 
-    with pytest.raises(PermissionError, match="tools.read"):
+    with pytest.raises(PermissionError, match="Access denied"):
         await complete(ref, argument)
 
 
@@ -11263,3 +11272,61 @@ async def test_call_tool_skips_rbac_for_unauthenticated_context(monkeypatch):
     # Should succeed without hitting the permission check
     result = await call_tool("mytool", {"foo": "bar"})
     assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_session_manager_wrapper_rbac_gate_denies_missing_servers_use(monkeypatch):
+    """SessionManagerWrapper RBAC gate returns 403 Access denied when servers.use permission is absent."""
+    import json
+    from contextlib import asynccontextmanager
+
+    class DummySessionManager:
+        def __init__(self):
+            self._server_instances = {}
+
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Session manager must not be reached after RBAC deny")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._check_streamable_permission",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled",
+        False,
+    )
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    scope = _make_scope("/servers/123/mcp")
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(msg):
+        sent.append(msg)
+
+    token = tr.user_context_var.set({"email": "user@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True})
+    try:
+        await wrapper.handle_streamable_http(scope, receive, send)
+    finally:
+        tr.user_context_var.reset(token)
+        await wrapper.shutdown()
+
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 403
+    body = json.loads(sent[1]["body"])
+    assert body["detail"] == "Access denied"

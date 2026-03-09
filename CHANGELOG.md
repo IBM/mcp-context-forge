@@ -2,16 +2,20 @@
 
 > All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
 
-## [1.0.0-RC2] - 2026-02-28 - Hardening: Strict Defaults, Transport Gating & OIDC Verification
+## [1.0.0-RC2] - 2026-03-09 - Hardening, Admin UI Polish, Plugin Framework & Quality
 
 ### Overview
 
-This release **tightens production defaults** and adds **defense-in-depth controls** across SSRF, transports, OIDC, OAuth secret handling, authentication timing, and authorization (S-01, S-02, S-03, A-02, A-05, A-06, O-01, O-02, O-03, O-04, O-05, O-06, O-10, O-11, O-14, O-16, O-17, U-05, C-03, C-09, C-10, C-15, EXTRA-01, C-04, C-07, C-11, C-14, C-28, C-29):
+Release Candidate 2 focuses on **security hardening**, **Admin UI polish**, **plugin framework decoupling**, and **quality improvements** with **148 issues resolved** across the board:
 
-- **🔐 Hardening Items** - SSRF strict defaults with endpoint-level validation, OAuth secret at-rest protection for gateway/server/A2A configs, server OAuth read masking parity, failed-login timing hardening, OIDC id_token verification, WebSocket/reverse-proxy gating, cancellation authorization, OAuth DCR access control, token scoping hardening, bearer scheme consistency, MCP/RPC token-scope enforcement, MCP transport revocation checks, session ownership enforcement, resource visibility scoping, roots authorization parity
-- **🧪 Testing** - Full regression coverage for hardened paths, token scope MCP/RPC coverage, and additional allow/deny regression tests for session/resource controls
+- **🔐 Hardening** - SSRF strict defaults, OIDC id_token verification, OAuth secret at-rest protection, WebSocket/reverse-proxy gating, token scoping default-deny, session ownership enforcement, resource visibility scoping, 40+ security controls tightened
+- **🖥️ Admin UI** - 30+ fixes for virtual server editing, team selectors, pagination, search/filter, iframe/proxy support, plugin management, and OAuth forms
+- **🔌 API & Auth** - Token lifecycle fixes, team-scoped permission enforcement, CSRF multi-pod support, metrics consistency, gateway visibility propagation
+- **🧩 Plugins** - Plugin framework decoupled from core, Cedar RBAC plugin, IP-based rate limiting
+- **🧪 Testing** - Comprehensive Playwright automation, MCP protocol e2e via mcp-cli, 100% Locust API coverage, 12 manual test plans completed
+- **🚀 Features** - RBAC role management API, ALLOW_PUBLIC_VISIBILITY flag, unified search/filter, mTLS support, multiarch builds, EntraID group limits
 
-> **Highlights**: SSRF protection now defaults to strict mode (block localhost, private networks, fail-closed DNS). WebSocket relay and reverse-proxy transports are disabled by default behind opt-in feature flags. OIDC SSO flows verify `id_token` signatures cryptographically. Cancellation, OAuth DCR, token scoping, session ownership, and resource visibility paths enforce proper authorization gates.
+> **Highlights**: SSRF protection now defaults to strict mode (block localhost, private networks, fail-closed DNS). WebSocket relay and reverse-proxy transports are disabled by default behind opt-in feature flags. OIDC SSO flows verify `id_token` signatures cryptographically. The Admin UI received extensive polish for virtual server workflows, team scoping, and embedded/iframe deployments. The plugin framework is now fully decoupled from gateway internals.
 
 ### ⚠️ Breaking Changes
 
@@ -167,6 +171,79 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * User deletion now reassigns audit trail FK references (invitations, roles, revocations) to a replacement admin before deleting the user record
 * Nullable references (team memberships, join requests) are nullified instead of cascading
 
+#### **🏛️ Team Governance Feature Flags** ([#3483](https://github.com/IBM/mcp-context-forge/pull/3483), [#3473](https://github.com/IBM/mcp-context-forge/issues/3473))
+* Three new feature flags to control self-service team operations (all default `true` for backward compatibility):
+  * `ALLOW_TEAM_CREATION` — disable non-admin team creation (admins always bypass)
+  * `ALLOW_TEAM_JOIN_REQUESTS` — disable join requests on public teams
+  * `ALLOW_TEAM_INVITATIONS` — disable team invitations
+* `MAX_TEAMS_PER_USER` now enforced across all membership paths: team creation, member addition, invitation acceptance, and join-request approval (admins bypass in team creation)
+* `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` now enforced at both invitation creation and acceptance time (previously defined but never checked)
+* `PERSONAL_TEAM_PREFIX` now used when generating personal team slugs (previously hardcoded to `personal`)
+* `ensure_personal_team()` now respects `AUTO_CREATE_PERSONAL_TEAMS` flag (previously unconditionally created)
+* Admin-created users automatically get `email_verified_at` set (admin vouches for them)
+* Admins can now set email verification status on users via API (`PUT /auth/email/admin/users/{email}`) and Admin UI checkbox
+* `@require_permission("teams.join")` added to `accept_team_invitation`, `request_to_join_team`, and `leave_team` endpoints
+
+#### **🏷️ Role Assignment Provenance Tracking** ([#3484](https://github.com/IBM/mcp-context-forge/issues/3484), [#3502](https://github.com/IBM/mcp-context-forge/pull/3502))
+* New `grant_source` column on `user_roles` table tracks the origin of role assignments (`'sso'`, `'manual'`, `'bootstrap'`, `'auto'`)
+* SSO role sync uses `grant_source='sso'` to distinguish SSO-granted roles from manually or auto-assigned roles, enabling correct revocation without affecting non-SSO roles
+* Alembic migration `e1f2a3b4c5d6` adds the column (nullable, backward-compatible with existing rows)
+
+#### **RBAC Role Management API** ([#3071](https://github.com/IBM/mcp-context-forge/issues/3071))
+* Full RBAC role management API — create, list, read, update, delete roles; assign/revoke roles per user; check permissions via `/rbac/*` endpoints
+
+#### **ALLOW_PUBLIC_VISIBILITY Flag** ([#3286](https://github.com/IBM/mcp-context-forge/issues/3286))
+* New `ALLOW_PUBLIC_VISIBILITY` feature flag prevents non-admin team users from setting entity visibility to `public`
+* Admin UI edit forms respect the flag by disabling the public radio option when `ALLOW_PUBLIC_VISIBILITY=false` ([#3318](https://github.com/IBM/mcp-context-forge/issues/3318))
+
+#### **View Public Checkbox for Virtual Servers** ([#3274](https://github.com/IBM/mcp-context-forge/issues/3274))
+* Virtual Servers listing now includes a "View Public" checkbox to toggle visibility of public resources alongside team-scoped ones
+
+#### **Display MCP Gateway ID in Admin UI** ([#3282](https://github.com/IBM/mcp-context-forge/issues/3282))
+* MCP Gateway ID is now visible in the admin interface for easier debugging and reference
+
+#### **Unsaved Changes Warning** ([#3357](https://github.com/IBM/mcp-context-forge/issues/3357))
+* Admin UI forms now warn users about unsaved changes when navigating away
+
+#### **Virtual Server Description Truncation** ([#3362](https://github.com/IBM/mcp-context-forge/issues/3362))
+* Virtual Servers listing screen now truncates long descriptions for better readability
+
+#### **Standardized RBAC/Permission Error Responses** ([#3485](https://github.com/IBM/mcp-context-forge/issues/3485))
+* Permission and RBAC error responses are now standardized across all API endpoints for consistent client handling
+
+#### **Server-Scoped Token Enforcement for /rpc** ([#2743](https://github.com/IBM/mcp-context-forge/issues/2743))
+* `/rpc` endpoint now enforces `server_id` scoping when using server-scoped tokens, preventing cross-server tool execution
+
+#### **RPC Token Scope Enforcement** ([#3422](https://github.com/IBM/mcp-context-forge/issues/3422))
+* Token scopes and permissions are now enforced per RPC/MCP method in `handle_rpc` and Streamable HTTP transports
+
+#### **IP-Based Rate Limiting Plugin** ([#3349](https://github.com/IBM/mcp-context-forge/issues/3349))
+* New IP-based rate limiting capability for anonymous/unauthenticated requests in the rate limiter plugin
+
+#### **EntraID Group Fetch Limit** ([#2201](https://github.com/IBM/mcp-context-forge/issues/2201))
+* Configurable limit for number of groups fetched from Microsoft Entra ID during SSO, preventing timeouts for users with many group memberships
+
+#### **Curated MCP Server Catalog** ([#2221](https://github.com/IBM/mcp-context-forge/issues/2221))
+* Curated secure MCP server catalog with trust tiers for pre-registered server discovery
+
+#### **Unified Search and Filter** ([#1365](https://github.com/IBM/mcp-context-forge/issues/1365))
+* Consistent cross-tab search and filter discovery experience across all admin UI tables
+
+#### **Server Creation UI Enhancements** ([#743](https://github.com/IBM/mcp-context-forge/issues/743))
+* Enhanced server creation/editing UI with prompt and resource association support
+
+#### **mTLS Support** ([#568](https://github.com/IBM/mcp-context-forge/issues/568))
+* Mutual TLS (mTLS) support for gateway-to-backend connections
+
+#### **MCP Server Registration Validation** ([#654](https://github.com/IBM/mcp-context-forge/issues/654))
+* Tool schema validation and capability discovery during gateway registration, rejecting invalid configurations before tools are exposed
+
+#### **Cedar RBAC Plugin** ([#1429](https://github.com/IBM/mcp-context-forge/issues/1429))
+* RBAC plugin using AWS Cedar policy engine for fine-grained authorization decisions
+
+#### **Multiarch Build Platforms Configuration** ([#3506](https://github.com/IBM/mcp-context-forge/issues/3506), [#2049](https://github.com/IBM/mcp-context-forge/issues/2049))
+* Multiarch container build platforms are now configurable via a `PLATFORMS` variable
+
 ### Fixed
 
 #### **🔐 Security** (S-01, S-02, S-03, A-02, A-05, A-06, O-01, O-05, O-10, O-17, U-05, C-03, C-04, C-07, C-09, C-10, C-11, C-14, C-15, C-28, C-29, EXTRA-01)
@@ -197,6 +274,8 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **GitHub SSO email-claim compatibility** - GitHub logins no longer fail when `/user` omits `email_verified`; explicit false verification claims are still denied (O-03 follow-up)
 * **SSO approval-state hardening** - expired pending approvals no longer fall through to user creation; approval statuses now fail closed (O-04)
 * **SSO scope policy enforcement** - requested scopes are normalized and constrained to provider policy; invalid scopes rejected with HTTP 400 (O-06)
+* **SSO role assignment FK constraint violation** - `_sync_user_roles()` used `granted_by='sso_system'` which violated the `user_roles.granted_by` foreign key to `email_users.email` on PostgreSQL; now uses `granted_by=<user_email>` with a new `grant_source` column to track provenance ([#3484](https://github.com/IBM/mcp-context-forge/issues/3484), [#3502](https://github.com/IBM/mcp-context-forge/pull/3502))
+* **Keycloak SSO issuer mismatch** - Keycloak OIDC discovery rewrote `authorization_url` to `public_base_url` but not `issuer`; tokens issued via browser flow contain the public-facing issuer, causing `id_token` verification to fail with "Invalid issuer" when `SSO_KEYCLOAK_PUBLIC_BASE_URL` differs from `SSO_KEYCLOAK_BASE_URL` ([#3502](https://github.com/IBM/mcp-context-forge/pull/3502))
 * **OAuth grant fallback removal** - `authorization_code` no longer falls back to `client_credentials` in non-interactive token retrieval (O-11)
 * **SSO callback session binding** - state is bound to browser session marker and callback requires matching session binding (O-14)
 * **OAuth authorize/status ownership checks** - gateway visibility/team/owner checks now enforced consistently on authorize/status endpoints (O-16)
@@ -214,6 +293,101 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **Utility transport permission consistency** - `/sse` and `/message` now enforce canonical `tools.execute`.
 * **Shared auth dependency consistency** - `require_auth` now applies the same token/account validity checks used across authenticated flows.
 * **Shared admin auth dependency consistency** - `require_admin_auth` now applies the same token/account validity checks before admin authorization.
+
+#### **👥 RBAC / Teams**
+* **`PERSONAL_TEAM_PREFIX` now respected** — the `before_insert` listener on `EmailTeam` unconditionally overwrote the slug with `slugify(name)`, discarding the prefix-based slug set by `create_personal_team()`. The listener now guards with `if not target.slug` so explicitly-set slugs survive insertion. Default prefix changed from `"personal"` to `""` (empty) for zero behavior change on existing deployments; setting `PERSONAL_TEAM_PREFIX=personal` (or any value) now produces email-derived slugs (e.g. `personal-alice-example-com`) as originally intended ([#3494](https://github.com/IBM/mcp-context-forge/issues/3494))
+
+#### **🖥️ Admin UI**
+* **Tools search filters entire dataset** — search on the tools tab now queries the server instead of filtering only the current page ([#2159](https://github.com/IBM/mcp-context-forge/issues/2159))
+* **Custom headers populated in edit forms** — edit Tools and edit MCP Servers forms now correctly display existing custom headers ([#3439](https://github.com/IBM/mcp-context-forge/issues/3439), [#3241](https://github.com/IBM/mcp-context-forge/issues/3241))
+* **Team selector dropdown loads and is clickable** — fixed innerHTML sanitizer stripping onclick handlers from dropdown items ([#3426](https://github.com/IBM/mcp-context-forge/issues/3426), [#3372](https://github.com/IBM/mcp-context-forge/issues/3372))
+* **Pagination controls visible with UI hide sections** — pagination no longer hidden when header/section hiding is enabled ([#3244](https://github.com/IBM/mcp-context-forge/issues/3244))
+* **Pagination survives search** — table pagination no longer breaks after performing a search ([#3394](https://github.com/IBM/mcp-context-forge/issues/3394))
+* **Alpine.js pagination double-quote fix** — pagination no longer breaks when query params contain double quotes ([#3261](https://github.com/IBM/mcp-context-forge/issues/3261))
+* **Virtual Server edit modal fixes** — selected tools now shown/checked during edit, cancel button works, search preserves selections, select-all respects off-screen items ([#3358](https://github.com/IBM/mcp-context-forge/issues/3358), [#3259](https://github.com/IBM/mcp-context-forge/issues/3259), [#3260](https://github.com/IBM/mcp-context-forge/issues/3260), [#3257](https://github.com/IBM/mcp-context-forge/issues/3257), [#3042](https://github.com/IBM/mcp-context-forge/issues/3042))
+* **Virtual Server edit state accuracy** — edit mode now shows correct enabled/disabled state and retains visibility selection ([#3359](https://github.com/IBM/mcp-context-forge/issues/3359), [#3391](https://github.com/IBM/mcp-context-forge/issues/3391))
+* **Virtual Server tool leakage** — adding a new server no longer shows tools from a previously edited server ([#3361](https://github.com/IBM/mcp-context-forge/issues/3361))
+* **Virtual Server deactivate endpoint** — deactivate action now calls the correct API endpoint ([#3360](https://github.com/IBM/mcp-context-forge/issues/3360))
+* **MCP Server enabled state on creation** — disabling "Enable gateway immediately" now correctly creates the server as disabled ([#3363](https://github.com/IBM/mcp-context-forge/issues/3363))
+* **Connection string copy** — Virtual Server preview copy button now works ([#3356](https://github.com/IBM/mcp-context-forge/issues/3356))
+* **Failed metrics in red** — tool execution metrics now display failed data in red ([#3355](https://github.com/IBM/mcp-context-forge/issues/3355))
+* **readOnlyHint annotation displayed** — tools table now correctly shows the readOnlyHint annotation ([#2986](https://github.com/IBM/mcp-context-forge/issues/2986))
+* **FOUC eliminated** — tab panels no longer flash on page load; `.hidden` CSS rule restored ([#2933](https://github.com/IBM/mcp-context-forge/issues/2933))
+* **Iframe/proxy navigation fixes** — add/edit/delete actions now refresh correctly and preserve team scope when admin UI is embedded in an iframe ([#3324](https://github.com/IBM/mcp-context-forge/issues/3324), [#3321](https://github.com/IBM/mcp-context-forge/issues/3321), [#3351](https://github.com/IBM/mcp-context-forge/issues/3351))
+* **Delete/toggle team scope preservation** — delete and toggle operations no longer lose team scope or redirect to unscoped page ([#3267](https://github.com/IBM/mcp-context-forge/issues/3267), [#3275](https://github.com/IBM/mcp-context-forge/issues/3275))
+* **Teams page scoping** — admin teams page now scopes to user membership instead of showing all teams ([#3376](https://github.com/IBM/mcp-context-forge/issues/3376))
+* **Edit Server tools selector team filter** — edit server modal now passes team_id to the tools API ([#3276](https://github.com/IBM/mcp-context-forge/issues/3276))
+* **Plugins page filters** — plugins page search and filters now work correctly ([#3271](https://github.com/IBM/mcp-context-forge/issues/3271))
+* **Empty search results** — virtual server selectors no longer show an empty styled box when search returns zero results ([#3314](https://github.com/IBM/mcp-context-forge/issues/3314))
+* **LLM Chat server selection** — innerHTML sanitizer no longer strips onclick handlers in LLM Chat ([#3303](https://github.com/IBM/mcp-context-forge/issues/3303))
+* **OAuth callback URL hint** — edit server form now shows the correct dynamic OAuth callback URL instead of hardcoded localhost ([#3285](https://github.com/IBM/mcp-context-forge/issues/3285))
+* **Server edit OAuth restoration** — server edit form now restores OAuth settings ([#3405](https://github.com/IBM/mcp-context-forge/issues/3405))
+* **User list lockout resilience** — user list no longer fails to load when another user is locked out ([#3401](https://github.com/IBM/mcp-context-forge/issues/3401))
+* **Virtual gateway team assignment** — fixed virtual gateways being created without a team ([#3224](https://github.com/IBM/mcp-context-forge/issues/3224))
+* **Race condition in team deletion** — `deleteTeamSafe` no longer causes stale team list ([#2864](https://github.com/IBM/mcp-context-forge/issues/2864))
+* **Prompts display current values** — prompts now show submitted values instead of current values ([#2727](https://github.com/IBM/mcp-context-forge/issues/2727))
+* **Plugin details loading** — opening/enabling plugins in admin panel no longer shows "Not Found" ([#2674](https://github.com/IBM/mcp-context-forge/issues/2674))
+
+#### **🔌 API**
+* **admin_test_gateway crash on masked auth_value** — `decode_auth` no longer crashes on already-masked `auth_value` fields ([#3539](https://github.com/IBM/mcp-context-forge/issues/3539))
+* **authheaders gateway null auth_value** — `authheaders` type gateways no longer store `auth_value` as JSON null, fixing health check failures and broken auto-refresh ([#3480](https://github.com/IBM/mcp-context-forge/issues/3480))
+* **Tool update visibility preservation** — tool update no longer resets visibility to `public` when the field is not provided ([#3468](https://github.com/IBM/mcp-context-forge/issues/3468))
+* **CSRF multi-pod fix** — CSRF origin validation no longer blocks server deletion in multi-pod deployments ([#3431](https://github.com/IBM/mcp-context-forge/issues/3431))
+* **Roots submission fix** — creating a new root no longer fails with a submission error ([#3428](https://github.com/IBM/mcp-context-forge/issues/3428))
+* **Stream consumed error** — `admin_add_server` no longer fails because the request logging middleware consumed the request body ([#3313](https://github.com/IBM/mcp-context-forge/issues/3313))
+* **Metrics key consistency** — `/metrics` endpoint now returns consistent snake_case keys ([#3311](https://github.com/IBM/mcp-context-forge/issues/3311))
+* **Multiple metrics and logging fixes** — service metrics, resource filtering, duplicate metrics, and LOG_LEVEL issues resolved ([#3237](https://github.com/IBM/mcp-context-forge/issues/3237))
+* **Auth type mismatch** — `headers` and `authheaders` auth_type values now align between documentation and acceptance ([#3240](https://github.com/IBM/mcp-context-forge/issues/3240))
+* **Admin token creation conflicts** — token creation now has consistent conflict semantics and no longer freezes ([#3229](https://github.com/IBM/mcp-context-forge/issues/3229))
+* **Gateway visibility propagation** — gateway visibility updates now propagate to linked tools, prompts, and resources when gateway is unreachable ([#3475](https://github.com/IBM/mcp-context-forge/issues/3475))
+* **ServerCapabilities flexibility** — `ServerCapabilities.tools` type relaxed to accept MCP servers with extra capability fields ([#3063](https://github.com/IBM/mcp-context-forge/issues/3063))
+* **Prompt original_name constraint** — NOT NULL constraint on `prompts.original_name` during gateway federation resolved ([#3087](https://github.com/IBM/mcp-context-forge/issues/3087))
+* **Selective export fix** — selective export no longer fails with `'Server' object has no attribute 'is_active'` ([#2606](https://github.com/IBM/mcp-context-forge/issues/2606))
+* **current_user_ctx NoneType fix** — endpoints using `current_user_ctx["db"]` no longer fail with NoneType error ([#2641](https://github.com/IBM/mcp-context-forge/issues/2641))
+* **Tools not exposed via API** — tools visible in Admin UI are now correctly exposed via `/tools` API for RPC calls ([#2790](https://github.com/IBM/mcp-context-forge/issues/2790))
+* **team_id parameter honored** — `team_id` query parameter is now respected for team-scoped JWT tokens on GET `/gateways`, `/servers`, and `/tools` ([#3002](https://github.com/IBM/mcp-context-forge/issues/3002))
+* **Root path fallback** — root path resolution now has a settings fallback outside admin.py ([#3296](https://github.com/IBM/mcp-context-forge/issues/3296))
+* **A2A request validation** — MCP Agent no longer rejects valid A2A requests as malformed ([#2672](https://github.com/IBM/mcp-context-forge/issues/2672))
+* **Boundary condition handling** — fixed edge cases for empty states, zero timeout, and special characters ([#3028](https://github.com/IBM/mcp-context-forge/issues/3028))
+
+#### **🔑 Auth**
+* **Session tokens with team-scoped roles** — session tokens with team-scoped roles are no longer denied `tools.execute` on `/rpc` and `/mcp` transports ([#3515](https://github.com/IBM/mcp-context-forge/issues/3515))
+* **Scoped API tokens on /rpc and /mcp** — scoped API tokens with explicit permissions no longer denied on POST `/rpc` and `/mcp` ([#3409](https://github.com/IBM/mcp-context-forge/issues/3409))
+* **Public virtual server access** — connecting to a public virtual server via MCP Inspector no longer requires `admin.system_config` ([#3408](https://github.com/IBM/mcp-context-forge/issues/3408))
+* **servers.use auto-injection for legacy tokens** — API tokens generated before `servers.use` auto-injection no longer get 403 on `/rpc`, `/mcp`, `/sse` ([#3451](https://github.com/IBM/mcp-context-forge/issues/3451))
+* **Team-scoped token servers.use** — team-scoped API tokens from non-admin team owners/members now include `servers.use` permission ([#3415](https://github.com/IBM/mcp-context-forge/issues/3415))
+* **AdminAuthMiddleware team-scoped permissions** — middleware now correctly handles team-scoped permissions for team-scoped requests ([#3380](https://github.com/IBM/mcp-context-forge/issues/3380))
+* **View Public scope filtering** — "View Public" checkbox no longer shows team-scoped and private MCP servers from other teams ([#3411](https://github.com/IBM/mcp-context-forge/issues/3411))
+* **Team-scoped tokens see public servers** — team-scoped tokens can now see public servers in `/servers` list ([#3332](https://github.com/IBM/mcp-context-forge/issues/3332))
+* **Cookie auth on OAuth callback** — fetching tools from OAuth MCP servers no longer fails due to cookie auth rejection on callback page ([#3242](https://github.com/IBM/mcp-context-forge/issues/3242))
+* **OAuth success page fetch-tools** — RBAC no longer rejects fetch-tools on the OAuth success page as non-browser request ([#3059](https://github.com/IBM/mcp-context-forge/issues/3059), [#3060](https://github.com/IBM/mcp-context-forge/issues/3060))
+* **OAuth-enabled server empty tools** — OAuth-enabled virtual servers no longer return empty tools when client omits Bearer token ([#3304](https://github.com/IBM/mcp-context-forge/issues/3304))
+* **API token lifecycle fixes** — chaining, inheritance, and usage tracking for API tokens corrected ([#3291](https://github.com/IBM/mcp-context-forge/issues/3291))
+* **Log injection prevention** — control characters in unauthenticated query parameters are now rejected to prevent log injection ([#3000](https://github.com/IBM/mcp-context-forge/issues/3000))
+* **Fallback auth token precedence** — fallback auth token precedence now matches middleware behavior in stateful sessions ([#3019](https://github.com/IBM/mcp-context-forge/issues/3019))
+* **CSRF token rotation on re-login** — CSRF token is now rotated on re-login to prevent session isolation failures ([#3395](https://github.com/IBM/mcp-context-forge/issues/3395))
+* **401 after cold restart** — privileged actions no longer return 401 after cold restart despite valid login ([#842](https://github.com/IBM/mcp-context-forge/issues/842))
+* **RFC 8414 well-known URL** — well-known URL construction now handles issuers with path components during DCR ([#3088](https://github.com/IBM/mcp-context-forge/issues/3088))
+
+#### **🚀 Transport**
+* **SSE resource reads** — `sse_client` 3-value unpack corrected to 2-value, fixing SSE resource reads ([#3378](https://github.com/IBM/mcp-context-forge/issues/3378))
+* **SSE loopback for internal RPC** — SSE `generate_response` now uses loopback address for self-referencing RPC calls, fixing failures behind proxy/mesh ([#3049](https://github.com/IBM/mcp-context-forge/issues/3049))
+* **Streamable HTTP server_id injection** — `server_id` is now correctly injected for internally-forwarded Streamable HTTP requests ([#3018](https://github.com/IBM/mcp-context-forge/issues/3018))
+
+#### **🗄️ Database**
+* **OAuth token column size** — OAuth token storage column enlarged to accommodate real-world token sizes ([#3417](https://github.com/IBM/mcp-context-forge/issues/3417))
+* **Alembic migration idempotency (SQLite)** — migration `d9e0f1a2b3c4` no longer fails on retry with `_alembic_tmp_email_api_tokens already exists` ([#3420](https://github.com/IBM/mcp-context-forge/issues/3420))
+* **MySQL 8 initial migration** — fixed errors on initial migration for MySQL 8 ([#3366](https://github.com/IBM/mcp-context-forge/issues/3366))
+* **bootstrap_resource_assignments UniqueViolation** — resource bootstrap no longer causes migration rollback on duplicate orphaned resources ([#3491](https://github.com/IBM/mcp-context-forge/issues/3491))
+* **Migration exception handling** — silent exception handling in migrations improved to avoid masking schema failures ([#2522](https://github.com/IBM/mcp-context-forge/issues/2522))
+
+#### **🔧 Plugins**
+* **PLUGIN_CONFIG_FILE env var** — legacy `PLUGIN_CONFIG_FILE` env var is no longer silently ignored after settings refactor ([#3384](https://github.com/IBM/mcp-context-forge/issues/3384))
+* **External plugin Containerfiles** — external plugin Containerfiles updated to use current `mcp-contextforge-gateway` install ([#3046](https://github.com/IBM/mcp-context-forge/issues/3046))
+* **Plugin framework decoupling** — plugin framework decoupled from mcpgateway core dependencies ([#2575](https://github.com/IBM/mcp-context-forge/issues/2575), [#2859](https://github.com/IBM/mcp-context-forge/issues/2859), [#2828](https://github.com/IBM/mcp-context-forge/issues/2828), [#2831](https://github.com/IBM/mcp-context-forge/issues/2831))
+
+#### **⚡ Performance**
+* **Admin UI latency** — `/admin/` endpoint latency reduced under load ([#1907](https://github.com/IBM/mcp-context-forge/issues/1907))
 
 ### Hardening
 
@@ -266,6 +440,10 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * **MCP transport auth default alignment**: `MCP_REQUIRE_AUTH` now defaults by inheriting `AUTH_REQUIRED` when unset, with an explicit warning when `AUTH_REQUIRED=true` is combined with `MCP_REQUIRE_AUTH=false`.
 * **MCP bearer fail-closed in permissive mode**: Streamable HTTP MCP auth now rejects malformed/invalid `Authorization: Bearer ...` tokens with `401` instead of silently downgrading to anonymous public-only access.
 
+### Removed
+
+* `PLUGIN_CONFIG_FILE` (legacy plugin config path key). Use `PLUGINS_CONFIG_FILE` instead.
+
 ### Chores
 
 * Updated `.env.example` with strict SSRF defaults, local dev overrides section, and transport feature flags
@@ -275,6 +453,23 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * Updated `docs/config.schema.json` with new settings, defaults, and `sso_generic_jwks_uri`
 * Added Alembic backfill migration to protect existing plaintext OAuth config secrets in gateway/server/A2A rows
 * Protocol version bumped to `2025-11-25` in configuration schema
+* Added Makefile targets for nginx cache management ([#3438](https://github.com/IBM/mcp-context-forge/issues/3438))
+* Docker image now includes OpenTelemetry OTLP exporter dependencies ([#3419](https://github.com/IBM/mcp-context-forge/issues/3419))
+* Helm chart PostgreSQL probes now correctly expand `$(POSTGRES_USER)` ([#3364](https://github.com/IBM/mcp-context-forge/issues/3364))
+* Dead code cleanup — identical if/else branches removed in admin.py ([#2369](https://github.com/IBM/mcp-context-forge/issues/2369))
+* Consistent "ContextForge" naming and branding across project ([#2714](https://github.com/IBM/mcp-context-forge/issues/2714), [#2715](https://github.com/IBM/mcp-context-forge/issues/2715))
+* Subresource Integrity (SRI) for external CDN resources ([#2558](https://github.com/IBM/mcp-context-forge/issues/2558))
+
+### Testing
+
+* Comprehensive Playwright test automation for entire admin UI with Makefile targets and GitHub Actions integration ([#255](https://github.com/IBM/mcp-context-forge/issues/255))
+* Playwright test suite performance optimization — reduced 35-65 min runtime ([#3336](https://github.com/IBM/mcp-context-forge/issues/3336))
+* Fixed Playwright UI test flakiness from shared login state and HTMX sync races ([#3105](https://github.com/IBM/mcp-context-forge/issues/3105))
+* Fixed Playwright admin URL context tests failing due to SSE blocking and invalid team_id param ([#3340](https://github.com/IBM/mcp-context-forge/issues/3340))
+* MCP protocol end-to-end testing via mcp-cli ([#3315](https://github.com/IBM/mcp-context-forge/issues/3315))
+* 100% REST API coverage in Locust load tests ([#2609](https://github.com/IBM/mcp-context-forge/issues/2609))
+* QA plans for shortlisted plugins ([#1419](https://github.com/IBM/mcp-context-forge/issues/1419))
+* Manual test plans completed: token lifecycle ([#2392](https://github.com/IBM/mcp-context-forge/issues/2392)), input validation ([#2398](https://github.com/IBM/mcp-context-forge/issues/2398)), CSRF protection ([#2409](https://github.com/IBM/mcp-context-forge/issues/2409)), gateway registration ([#2422](https://github.com/IBM/mcp-context-forge/issues/2422)), admin API ([#2429](https://github.com/IBM/mcp-context-forge/issues/2429)), A2A agents ([#2431](https://github.com/IBM/mcp-context-forge/issues/2431)), token catalog ([#2442](https://github.com/IBM/mcp-context-forge/issues/2442)), A2A agent types ([#2491](https://github.com/IBM/mcp-context-forge/issues/2491)), Top 100 MCP servers ([#2493](https://github.com/IBM/mcp-context-forge/issues/2493)), registry items ([#2495](https://github.com/IBM/mcp-context-forge/issues/2495)), APP_ROOT_PATH ([#2497](https://github.com/IBM/mcp-context-forge/issues/2497)), feature flags ([#2498](https://github.com/IBM/mcp-context-forge/issues/2498))
 
 ### Documentation
 
@@ -284,14 +479,9 @@ This release **tightens production defaults** and adds **defense-in-depth contro
 * `docs/docs/manage/proxy.md` - Feature flag requirement noted for `/ws` relay
 * `docs/docs/using/reverse-proxy.md` - `MCPGATEWAY_REVERSE_PROXY_ENABLED=true` requirement documented and WebSocket auth clarified as `Authorization`-header only
 * `docs/docs/manage/rbac.md` - Method-level RBAC examples updated for `/rpc` logging and utility SSE/message permissions
+* Langflow MCP server integration guide ([#890](https://github.com/IBM/mcp-context-forge/issues/890))
 
 ---
-
-## [Unreleased]
-
-### Removed
-
-* `PLUGIN_CONFIG_FILE` (legacy plugin config path key). Use `PLUGINS_CONFIG_FILE` instead.
 
 ## [1.0.0-RC1] - 2026-02-17 - Security Hardening, Enterprise Controls & Quality
 

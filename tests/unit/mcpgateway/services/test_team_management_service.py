@@ -84,7 +84,10 @@ class TestTeamManagementService:
     @pytest.fixture
     def service(self, mock_db):
         """Create team management service instance."""
-        return TeamManagementService(mock_db)
+        svc = TeamManagementService(mock_db)
+        # Default: user is below max teams limit (0 teams)
+        svc._get_user_team_count = MagicMock(return_value=0)
+        return svc
 
     @pytest.fixture
     def mock_team(self):
@@ -219,6 +222,7 @@ class TestTeamManagementService:
             patch("mcpgateway.utils.create_slug.slugify") as mock_slugify,
         ):
             mock_settings.max_members_per_team = 50
+            mock_settings.max_teams_per_user = 50
             MockTeam.return_value = mock_team
             mock_slugify.return_value = "test-team"
 
@@ -466,6 +470,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_add_member_invalid_role(self, service):
         """Test adding member with invalid role."""
+        # First-Party
         from mcpgateway.services.team_management_service import InvalidRoleError
 
         with pytest.raises(InvalidRoleError) as exc_info:
@@ -475,6 +480,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_add_member_personal_team_rejected(self, service, mock_team):
         """Test adding member to personal team is rejected."""
+        # First-Party
         from mcpgateway.services.team_management_service import TeamManagementError
 
         mock_team.is_personal = True
@@ -487,6 +493,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_add_member_team_not_found(self, service):
         """Test adding member to non-existent team."""
+        # First-Party
         from mcpgateway.services.team_management_service import TeamNotFoundError
 
         with patch.object(service, "get_team_by_id", return_value=None):
@@ -497,6 +504,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_add_member_user_not_found(self, service, mock_team, mock_db):
         """Test adding non-existent user to team."""
+        # First-Party
         from mcpgateway.services.team_management_service import UserNotFoundError
 
         mock_query = MagicMock()
@@ -511,6 +519,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_add_member_already_member(self, service, mock_team, mock_user, mock_membership, mock_db):
         """Test adding user who is already a member."""
+        # First-Party
         from mcpgateway.services.team_management_service import MemberAlreadyExistsError
 
         mock_membership.is_active = True
@@ -534,6 +543,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_add_member_max_members_exceeded(self, service, mock_team, mock_user, mock_db):
         """Test adding member when max members limit is reached."""
+        # First-Party
         from mcpgateway.services.team_management_service import TeamMemberLimitExceededError
 
         mock_team.max_members = 10
@@ -926,7 +936,7 @@ class TestTeamManagementService:
             await service.list_teams()
             # method called with kwargs
             kwargs = mock_paginate.call_args.kwargs
-            query = kwargs.get("query")
+            kwargs.get("query")
             # unified_paginate(db, query, ...)
             # Let's inspect the query string compilation or check filtering
             # Since we can't easily compile SqlAlchemy query mocks, we trust the implementation change
@@ -934,6 +944,34 @@ class TestTeamManagementService:
 
             await service.list_teams(include_personal=True)
             mock_paginate.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_list_teams_personal_owner_email(self):
+        """personal_owner_email includes admin's own personal team but excludes other users'."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session as OrmSession
+
+        from mcpgateway.db import Base
+
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(engine)
+        with OrmSession(engine) as db:
+            db.add_all(
+                [
+                    EmailTeam(id="id-admin-personal", name="admin-personal", slug="admin-personal", created_by="admin@example.com", is_personal=True),
+                    EmailTeam(id="id-other-personal", name="other-personal", slug="other-personal", created_by="other@example.com", is_personal=True),
+                    EmailTeam(id="id-shared", name="shared-team", slug="shared-team", created_by="admin@example.com", is_personal=False),
+                ]
+            )
+            db.commit()
+
+            svc = TeamManagementService(db)
+            teams, _ = await svc.list_teams(include_personal=False, personal_owner_email="admin@example.com")
+            names = {t.name for t in teams}
+
+        assert "admin-personal" in names
+        assert "shared-team" in names
+        assert "other-personal" not in names
 
     @pytest.mark.asyncio
     async def test_list_teams_with_search_query_page(self, service, mock_db):
@@ -970,6 +1008,33 @@ class TestTeamManagementService:
 
         assert result == ["team-1", "team-2"]
         mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_all_team_ids_personal_owner_email(self):
+        """personal_owner_email includes admin's own personal team ID but excludes other users'."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session as OrmSession
+
+        from mcpgateway.db import Base
+
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(engine)
+        with OrmSession(engine) as db:
+            db.add_all(
+                [
+                    EmailTeam(id="id-admin-personal", name="admin-personal", slug="admin-personal", created_by="admin@example.com", is_personal=True),
+                    EmailTeam(id="id-other-personal", name="other-personal", slug="other-personal", created_by="other@example.com", is_personal=True),
+                    EmailTeam(id="id-shared", name="shared-team", slug="shared-team", created_by="admin@example.com", is_personal=False),
+                ]
+            )
+            db.commit()
+
+            svc = TeamManagementService(db)
+            team_ids = await svc.get_all_team_ids(include_personal=False, personal_owner_email="admin@example.com")
+
+        assert "id-admin-personal" in team_ids
+        assert "id-shared" in team_ids
+        assert "id-other-personal" not in team_ids
 
     @pytest.mark.asyncio
     async def test_get_teams_count_with_filters(self, service, mock_db):
@@ -1234,6 +1299,7 @@ class TestTeamManagementService:
         # Mock settings to use "viewer" (test expects this value)
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
             mock_settings.default_team_member_role = "viewer"
+            mock_settings.max_teams_per_user = 50
 
             with (
                 patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
@@ -1280,6 +1346,7 @@ class TestTeamManagementService:
 
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
             mock_settings.default_team_member_role = "viewer"
+            mock_settings.max_teams_per_user = 50
 
             with (
                 patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
@@ -1882,6 +1949,7 @@ class TestTeamManagementService:
 
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
             mock_settings.default_team_member_role = "viewer"
+            mock_settings.max_teams_per_user = 50
 
             with patch.object(service, "get_team_by_id", return_value=mock_team):
                 # Execute
@@ -2033,6 +2101,7 @@ class TestTeamManagementService:
 
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
             mock_settings.default_team_member_role = "viewer"
+            mock_settings.max_teams_per_user = 50
 
             with patch.object(service, "get_team_by_id", return_value=mock_team):
                 # Execute
@@ -2137,6 +2206,7 @@ class TestTeamManagementService:
 
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
             mock_settings.default_team_member_role = "viewer"
+            mock_settings.max_teams_per_user = 50
 
             with patch.object(service, "get_team_by_id", return_value=mock_team):
                 # Execute

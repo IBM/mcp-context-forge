@@ -27,7 +27,7 @@ CDN_RESOURCES = {
     "marked": "https://cdn.jsdelivr.net/npm/marked@11.2.0/marked.min.js",
 
     # DOMPurify (XSS sanitizer)
-    "dompurify": "https://cdn.jsdelivr.net/npm/dompurify@3.3.1/dist/purify.min.js",
+    "dompurify": "https://cdn.jsdelivr.net/npm/dompurify@3.3.2/dist/purify.min.js",
 
     # CodeMirror (code editor)
     "codemirror_js": "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.js",

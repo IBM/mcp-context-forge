@@ -676,6 +676,60 @@ function decodeHtml(html) {
 }
 
 /**
+ * Create a copy-to-clipboard button for an ID value.
+ * Returns a <button> element that copies the given id string to the clipboard.
+ * @param {string|number} id - The ID value to copy
+ * @returns {HTMLButtonElement}
+ */
+function makeCopyIdButton(id) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.title = "Copy ID to clipboard";
+    btn.className =
+        "ml-2 inline-flex items-center px-1.5 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors";
+    btn.textContent = "📋 Copy";
+    btn.addEventListener("click", () => {
+        const idStr = String(id);
+        const onSuccess = () => {
+            btn.textContent = "✅ Copied!";
+            setTimeout(() => {
+                btn.textContent = "📋 Copy";
+            }, 2000);
+        };
+        const onFailure = () => {
+            btn.textContent = "❌ Failed";
+            setTimeout(() => {
+                btn.textContent = "📋 Copy";
+            }, 2000);
+        };
+        if (
+            navigator.clipboard &&
+            typeof navigator.clipboard.writeText === "function"
+        ) {
+            navigator.clipboard
+                .writeText(idStr)
+                .then(onSuccess)
+                .catch(onFailure);
+        } else {
+            try {
+                const ta = document.createElement("textarea");
+                ta.value = idStr;
+                ta.style.position = "fixed";
+                ta.style.opacity = "0";
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand("copy");
+                document.body.removeChild(ta);
+                onSuccess();
+            } catch (_e) {
+                onFailure();
+            }
+        }
+    });
+    return btn;
+}
+
+/**
  * Extract a human-readable error message from an API error response.
  * Handles both string errors and Pydantic validation error arrays.
  * @param {Object} error - The parsed JSON error response
@@ -3836,11 +3890,31 @@ async function editTool(toolId) {
             case "authheaders":
                 if (authHeadersSection) {
                     authHeadersSection.style.display = "block";
+                    if (
+                        Array.isArray(tool.auth.authHeaders) &&
+                        tool.auth.authHeaders.length > 0
+                    ) {
+                        loadAuthHeaders(
+                            "edit-auth-headers-container",
+                            tool.auth.authHeaders,
+                            { maskValues: true },
+                        );
+                    } else {
+                        updateAuthHeadersJSON("edit-auth-headers-container");
+                    }
                     if (authHeaderKeyField) {
                         authHeaderKeyField.value =
                             tool.auth.authHeaderKey || "";
                     }
                     if (authHeaderValueField) {
+                        if (
+                            Array.isArray(tool.auth.authHeaders) &&
+                            tool.auth.authHeaders.length === 1
+                        ) {
+                            authHeaderValueField.dataset.isMasked = "true";
+                            authHeaderValueField.dataset.realValue =
+                                tool.auth.authHeaders[0].value ?? "";
+                        }
                         authHeaderValueField.value = "*****"; // masked
                     }
                 }
@@ -3899,6 +3973,18 @@ async function viewAgent(agentId) {
             const container = document.createElement("div");
             container.className =
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
+
+            // ID field with copy button
+            const agentIdP = document.createElement("p");
+            const agentIdStrong = document.createElement("strong");
+            agentIdStrong.textContent = "Agent ID: ";
+            agentIdP.appendChild(agentIdStrong);
+            const agentIdSpan = document.createElement("span");
+            agentIdSpan.className = "font-mono text-sm";
+            agentIdSpan.textContent = agent.id;
+            agentIdP.appendChild(agentIdSpan);
+            agentIdP.appendChild(makeCopyIdButton(agent.id));
+            container.appendChild(agentIdP);
 
             const fields = [
                 { label: "Name", value: agent.name },
@@ -4813,6 +4899,18 @@ async function viewResource(resourceId) {
             container.className =
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
 
+            // ID field with copy button
+            const resourceIdP = document.createElement("p");
+            const resourceIdStrong = document.createElement("strong");
+            resourceIdStrong.textContent = "Resource ID: ";
+            resourceIdP.appendChild(resourceIdStrong);
+            const resourceIdSpan = document.createElement("span");
+            resourceIdSpan.className = "font-mono text-sm";
+            resourceIdSpan.textContent = resource.id;
+            resourceIdP.appendChild(resourceIdSpan);
+            resourceIdP.appendChild(makeCopyIdButton(resource.id));
+            container.appendChild(resourceIdP);
+
             // Add each piece of information safely
             const fields = [
                 { label: "URI", value: resource.uri },
@@ -5426,6 +5524,11 @@ async function viewPrompt(promptName) {
             };
 
             setText(".prompt-id", prompt.id || "N/A");
+            // Inject copy button next to prompt ID
+            const promptIdEl = promptDetailsDiv.querySelector(".prompt-id");
+            if (promptIdEl && prompt.id) {
+                promptIdEl.appendChild(makeCopyIdButton(prompt.id));
+            }
             setText(".prompt-display-name", promptLabel);
             setText(".prompt-name", prompt.name || "N/A");
             setText(".prompt-original-name", prompt.originalName || "N/A");
@@ -5785,6 +5888,18 @@ async function viewGateway(gatewayId) {
             const container = document.createElement("div");
             container.className =
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
+
+            // ID field with copy-to-clipboard button
+            const idP = document.createElement("p");
+            const idStrong = document.createElement("strong");
+            idStrong.textContent = "Gateway ID: ";
+            idP.appendChild(idStrong);
+            const idSpan = document.createElement("span");
+            idSpan.className = "font-mono text-sm";
+            idSpan.textContent = gateway.id;
+            idP.appendChild(idSpan);
+            idP.appendChild(makeCopyIdButton(gateway.id));
+            container.appendChild(idP);
 
             const fields = [
                 { label: "Name", value: gateway.name },
@@ -6204,18 +6319,13 @@ async function editGateway(gatewayId) {
             case "authheaders":
                 if (authHeadersSection) {
                     authHeadersSection.style.display = "block";
-                    const unmaskedHeaders =
-                        Array.isArray(gateway.authHeadersUnmasked) &&
-                        gateway.authHeadersUnmasked.length > 0
-                            ? gateway.authHeadersUnmasked
-                            : gateway.authHeaders;
                     if (
-                        Array.isArray(unmaskedHeaders) &&
-                        unmaskedHeaders.length > 0
+                        Array.isArray(gateway.authHeaders) &&
+                        gateway.authHeaders.length > 0
                     ) {
                         loadAuthHeaders(
                             "auth-headers-container-gw-edit",
-                            unmaskedHeaders,
+                            gateway.authHeaders,
                             { maskValues: true },
                         );
                     } else {
@@ -6226,12 +6336,12 @@ async function editGateway(gatewayId) {
                     }
                     if (authHeaderValueField) {
                         if (
-                            Array.isArray(unmaskedHeaders) &&
-                            unmaskedHeaders.length === 1
+                            Array.isArray(gateway.authHeaders) &&
+                            gateway.authHeaders.length === 1
                         ) {
                             authHeaderValueField.dataset.isMasked = "true";
                             authHeaderValueField.dataset.realValue =
-                                unmaskedHeaders[0].value ?? "";
+                                gateway.authHeaders[0].value ?? "";
                         }
                         authHeaderValueField.value = MASKED_AUTH_VALUE;
                     }
@@ -6409,8 +6519,19 @@ async function viewServer(serverId) {
                 "block text-gray-900 dark:text-gray-100 mb-3";
             basicInfoDiv.appendChild(basicInfoTitle);
 
+            // Server ID field with copy button
+            const serverIdP = document.createElement("p");
+            const serverIdStrong = document.createElement("strong");
+            serverIdStrong.textContent = "Server ID: ";
+            serverIdP.appendChild(serverIdStrong);
+            const serverIdSpan = document.createElement("span");
+            serverIdSpan.className = "font-mono text-sm";
+            serverIdSpan.textContent = server.id;
+            serverIdP.appendChild(serverIdSpan);
+            serverIdP.appendChild(makeCopyIdButton(server.id));
+            basicInfoDiv.appendChild(serverIdP);
+
             const fields = [
-                { label: "Server ID", value: server.id },
                 { label: "URL", value: getCatalogUrl(server) || "N/A" },
                 { label: "Type", value: "Virtual Server" },
                 { label: "Visibility", value: server.visibility || "private" },
@@ -8718,6 +8839,7 @@ function showTab(tabName) {
                             {
                                 method: "GET",
                                 credentials: "same-origin",
+                                cache: "no-store",
                                 headers: {
                                     Accept: "text/html",
                                 },
@@ -14926,7 +15048,27 @@ async function viewTool(toolId) {
           <div class="mt-1">Token: <span class="font-medium">********</span></div>
         </div>
       `;
+        } else if (
+            tool.auth?.authHeaders &&
+            Array.isArray(tool.auth.authHeaders) &&
+            tool.auth.authHeaders.length > 0
+        ) {
+            // Multi-header format
+            const headerRows = tool.auth.authHeaders
+                .map(
+                    (header) =>
+                        `<div class="mt-1"><span class="font-medium">${escapeHtml(header.key)}:</span> ********</div>`,
+                )
+                .join("");
+            authHTML = `
+        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
+        <div class="mt-1 text-sm">
+          <div class="text-gray-600 dark:text-gray-400">Custom Headers</div>
+          ${headerRows}
+        </div>
+      `;
         } else if (tool.auth?.authHeaderKey && tool.auth?.authHeaderValue) {
+            // Legacy single-header format (backward compatibility)
             authHTML = `
         <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
         <div class="mt-1 text-sm">
@@ -15019,6 +15161,10 @@ async function viewTool(toolId) {
           <div class="grid grid-cols-2 gap-6 mb-6">
             <!-- Left Column -->
             <div class="space-y-3">
+              <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Tool ID:</span>
+                <div class="mt-1 tool-id text-sm font-mono"></div>
+              </div>
               <div>
                 <span class="font-medium text-gray-700 dark:text-gray-300">Display Name:</span>
                 <div class="mt-1 tool-display-name font-medium"></div>
@@ -15183,6 +15329,12 @@ async function viewTool(toolId) {
                 }
             };
 
+            setTextSafely(".tool-id", tool.id);
+            // Inject copy button next to tool ID
+            const toolIdEl = toolDetailsDiv.querySelector(".tool-id");
+            if (toolIdEl && tool.id) {
+                toolIdEl.appendChild(makeCopyIdButton(tool.id));
+            }
             setTextSafely(
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
@@ -15475,7 +15627,7 @@ async function handleGatewayFormSubmit(e) {
             formData.set("oauth_grant_type", "");
         }
 
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
 
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
@@ -15562,7 +15714,7 @@ async function handleResourceFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("resources");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -15632,7 +15784,7 @@ async function handlePromptFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("prompts");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -15702,6 +15854,7 @@ async function handleEditPromptFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("prompts");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
 
         // Submit via fetch
         const response = await fetch(form.action, {
@@ -15764,7 +15917,7 @@ async function handleServerFormSubmit(e) {
         const isInactiveCheckedBool = isInactiveChecked("servers");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -15941,7 +16094,7 @@ async function handleA2AFormSubmit(e) {
 
         // ✅ Ensure visibility is captured from checked radio button
         // formData.set("visibility", visibility);
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -16043,7 +16196,7 @@ async function handleToolFormSubmit(event) {
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -16113,6 +16266,7 @@ async function handleEditToolFormSubmit(event) {
 
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
 
         // Submit via fetch
         const response = await fetch(form.action, {
@@ -16208,6 +16362,7 @@ async function handleEditGatewayFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("gateways");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
@@ -16307,6 +16462,7 @@ async function handleEditA2AAgentFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("a2a-agents");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
@@ -16361,6 +16517,7 @@ async function handleEditServerFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("servers");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
 
         // Merge persistent selection store into FormData so off-screen selections are included
         [
@@ -16470,6 +16627,7 @@ async function handleEditResFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("resources");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
@@ -17774,10 +17932,10 @@ function filterToolsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude Actions and S.No. columns)
-            // Tools columns: Actions(0), S.No.(1), Source(2), Name(3), RequestType(4), Description(5), Annotations(6), Tags(7), Owner(8), Team(9), Status(10)
+            // Get text from searchable cells (exclude Actions, S.No., and Tool ID columns)
+            // Tools columns: Actions(0), S.No.(1), ToolID(2), Source(3), Name(4), RequestType(5), Description(6), Annotations(7), Tags(8), Owner(9), Team(10), Status(11)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10]; // Exclude Actions(0) and S.No.(1)
+            const searchableColumns = [3, 4, 5, 6, 7, 8, 9, 10, 11]; // Exclude Actions(0), S.No.(1), ToolID(2)
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -17904,10 +18062,10 @@ function filterA2AAgentsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude Actions and ID columns)
-            // A2A Agents columns: Actions(0), ID(1), Name(2), Description(3), Endpoint(4), Tags(5), Type(6), Status(7), Reachability(8), Owner(9), Team(10), Visibility(11)
+            // Get text from searchable cells (exclude Actions, S.No., and Agent ID columns)
+            // A2A Agents columns: Actions(0), S.No.(1), AgentID(2), Name(3), Description(4), Endpoint(5), Tags(6), Type(7), Status(8), Reachability(9), Owner(10), Team(11), Visibility(12)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; // Exclude Actions(0) and ID(1)
+            const searchableColumns = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; // Exclude Actions(0), S.No.(1), AgentID(2)
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -25236,9 +25394,9 @@ function initializePluginFunctions() {
     function updateBadgeHighlighting(type, value) {
         // Define selectors for each type
         const selectors = {
-            hook: "[onclick^='filterByHook']",
-            tag: "[onclick^='filterByTag']",
-            author: "[onclick^='filterByAuthor']",
+            hook: "[data-filter-hook]",
+            tag: "[data-filter-tag]",
+            author: "[data-filter-author]",
         };
 
         const selector = selectors[type];
@@ -25251,12 +25409,16 @@ function initializePluginFunctions() {
 
         badges.forEach((badge) => {
             // Check if this is the "All" badge (empty value)
-            const isAllBadge = badge.getAttribute("onclick").includes("('')");
+            const isAllBadge =
+                badge.dataset.filterHook === "" ||
+                badge.dataset.filterTag === "" ||
+                badge.dataset.filterAuthor === "";
 
             // Check if this badge matches the selected value
-            const badgeValue = badge
-                .getAttribute("onclick")
-                .match(/'([^']*)'/)?.[1];
+            const badgeValue =
+                badge.dataset.filterHook ??
+                badge.dataset.filterTag ??
+                badge.dataset.filterAuthor;
             const isSelected =
                 value === ""
                     ? isAllBadge
@@ -25444,6 +25606,44 @@ function initializePluginFunctions() {
             modal.classList.add("hidden");
         }
     };
+
+    // Single listener on the filter section — catches input/change from all child controls
+    const filtersSection = document.getElementById("plugin-filters");
+    if (filtersSection) {
+        filtersSection.addEventListener("input", () => window.filterPlugins());
+        filtersSection.addEventListener("change", () => window.filterPlugins());
+    }
+
+    // Single delegated click/keydown listener for badges, View Details, and modal close.
+    // Returns true if an action was dispatched, false otherwise.
+    function dispatchPluginAction(target) {
+        const hookEl = target.closest("[data-filter-hook]");
+        const tagEl = target.closest("[data-filter-tag]");
+        const authorEl = target.closest("[data-filter-author]");
+        const detailEl = target.closest("[data-show-plugin]");
+        const closeEl = target.closest("[data-close-plugin-modal]");
+
+        if (hookEl) window.filterByHook(hookEl.dataset.filterHook);
+        else if (tagEl) window.filterByTag(tagEl.dataset.filterTag);
+        else if (authorEl) window.filterByAuthor(authorEl.dataset.filterAuthor);
+        else if (detailEl) {
+            window.showPluginDetails(detailEl.dataset.showPlugin);
+        } else if (closeEl) window.closePluginDetails();
+        else return false;
+        return true;
+    }
+
+    const pluginsPanel = document.getElementById("plugins-panel");
+    if (pluginsPanel) {
+        pluginsPanel.addEventListener("click", (e) =>
+            dispatchPluginAction(e.target),
+        );
+        pluginsPanel.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            if (!dispatchPluginAction(e.target)) return;
+            e.preventDefault();
+        });
+    }
 }
 
 // Initialize plugin functions if plugins panel exists
