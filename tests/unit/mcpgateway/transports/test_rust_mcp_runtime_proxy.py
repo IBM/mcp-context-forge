@@ -30,21 +30,45 @@ async def test_post_requests_proxy_to_rust_runtime_and_inject_server_id(monkeypa
     """POST MCP traffic should be proxied to Rust with server-scoped params preserved."""
     captured = {}
 
-    class FakeClient:
-        async def post(self, url, *, content, headers, timeout):  # noqa: ANN001
-            captured["url"] = url
-            captured["content"] = content
-            captured["headers"] = headers
-            captured["timeout"] = timeout
-            return httpx.Response(
-                200,
-                headers={
+    class FakeResponse:
+        def __init__(self):
+            self.status_code = 200
+            self.headers = httpx.Headers(
+                {
                     "content-type": "application/json",
                     "mcp-session-id": "session-1",
                     "x-contextforge-mcp-runtime": "rust",
-                },
-                json={"jsonrpc": "2.0", "id": 1, "result": {"ok": True}},
+                }
             )
+
+        async def aiter_bytes(self):
+            yield b'{"jsonrpc":"2.0","id":1,'
+            yield b'"result":{"ok":true}}'
+
+    class FakeStreamContext:
+        def __init__(self, *, content):
+            self._content = content
+
+        async def __aenter__(self):
+            if isinstance(self._content, (bytes, bytearray)):
+                captured["content"] = bytes(self._content)
+            else:
+                parts = []
+                async for chunk in self._content:
+                    parts.append(chunk)
+                captured["content"] = b"".join(parts)
+            return FakeResponse()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeClient:
+        def stream(self, method, url, *, content, headers, timeout):  # noqa: ANN001
+            captured["method"] = method
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["timeout"] = timeout
+            return FakeStreamContext(content=content)
 
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_timeout_seconds", 17)
@@ -80,6 +104,7 @@ async def test_post_requests_proxy_to_rust_runtime_and_inject_server_id(monkeypa
     )
 
     fallback.assert_not_awaited()
+    assert captured["method"] == "POST"
     assert captured["url"] == "http://127.0.0.1:8787/mcp/?session_id=abc123"
     assert captured["timeout"].connect == 17
 
@@ -98,7 +123,88 @@ async def test_post_requests_proxy_to_rust_runtime_and_inject_server_id(monkeypa
     assert (b"mcp-session-id", b"session-1") in events[0]["headers"]
     assert (b"x-contextforge-mcp-runtime", b"rust") in events[0]["headers"]
     assert events[1]["type"] == "http.response.body"
-    assert json.loads(events[1]["body"].decode()) == {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
+    assert events[1]["more_body"] is True
+    assert events[2]["type"] == "http.response.body"
+    assert events[2]["more_body"] is True
+    assert events[3] == {"type": "http.response.body", "body": b"", "more_body": False}
+    streamed_body = b"".join(event["body"] for event in events[1:3])
+    assert json.loads(streamed_body.decode()) == {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
+
+
+@pytest.mark.asyncio
+async def test_post_requests_without_server_scope_stream_body_to_rust(monkeypatch):
+    """Plain /mcp POSTs should stream the request body through without JSON mutation."""
+    captured = {}
+
+    class FakeResponse:
+        def __init__(self):
+            self.status_code = 200
+            self.headers = httpx.Headers({"content-type": "application/json"})
+
+        async def aiter_bytes(self):
+            yield b'{"jsonrpc":"2.0","id":1,"result":{}}'
+
+    class FakeStreamContext:
+        def __init__(self, *, content):
+            self._content = content
+
+        async def __aenter__(self):
+            parts = []
+            async for chunk in self._content:
+                parts.append(chunk)
+            captured["content"] = b"".join(parts)
+            return FakeResponse()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeClient:
+        def stream(self, method, url, *, content, headers, timeout):  # noqa: ANN001
+            captured["method"] = method
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["timeout"] = timeout
+            return FakeStreamContext(content=content)
+
+    async def receive():
+        if not hasattr(receive, "calls"):
+            receive.calls = 0
+        receive.calls += 1
+        if receive.calls == 1:
+            return {"type": "http.request", "body": b'{"jsonrpc":"2.0","id":1,', "more_body": True}
+        if receive.calls == 2:
+            return {"type": "http.request", "body": b'"method":"ping","params":{}}', "more_body": False}
+        return {"type": "http.disconnect"}
+
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_timeout_seconds", 17)
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_http_client", AsyncMock(return_value=FakeClient()))
+
+    fallback = AsyncMock()
+    proxy = RustMCPRuntimeProxy(fallback)
+    events = []
+
+    async def send(message):
+        events.append(message)
+
+    await proxy.handle_streamable_http(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "modified_path": "/mcp/",
+            "query_string": b"",
+            "headers": [(b"content-type", b"application/json")],
+        },
+        receive,
+        send,
+    )
+
+    fallback.assert_not_awaited()
+    assert captured["method"] == "POST"
+    assert captured["url"] == "http://127.0.0.1:8787/mcp/"
+    assert captured["content"] == b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}'
+    assert events[-1] == {"type": "http.response.body", "body": b"", "more_body": False}
 
 
 @pytest.mark.asyncio
@@ -134,7 +240,7 @@ async def test_runtime_failure_returns_jsonrpc_bad_gateway(monkeypatch):
     """Connection failures to the Rust sidecar should return a JSON-RPC 502 error."""
 
     class FailingClient:
-        async def post(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        def stream(self, *args, **kwargs):  # noqa: ANN002, ANN003
             raise httpx.ConnectError("connect failed")
 
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_http_client", AsyncMock(return_value=FailingClient()))
