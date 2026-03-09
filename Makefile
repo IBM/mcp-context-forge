@@ -618,7 +618,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test-mcp-cli test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test-mcp-cli test-mcp-rbac test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -636,6 +636,16 @@ test-mcp-cli:  ## MCP protocol tests via mcp-cli + wrapper stdio (no LLM needed)
 			|| { echo "❌ mcp-cli protocol tests failed!"; exit 1; }; \
 		echo "✅ mcp-cli protocol tests passed!"'
 
+test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
+	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: docker-compose stack with SSE gateway registered"
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		uv pip show pytest-playwright >/dev/null 2>&1 || \
+			{ echo "📦 Installing playwright dependencies..."; uv pip install -q ".[playwright]" && playwright install --with-deps chromium; } && \
+		uv run --active pytest tests/e2e/test_mcp_rbac_transport.py -v -s --tb=short \
+			|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }; \
+		echo "✅ MCP RBAC transport tests passed!"'
+
 test:
 	@echo "🧪 Running tests..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
@@ -646,7 +656,8 @@ test:
 		export ARGON2ID_MEMORY_COST=1024 && \
 		uv run --active pytest -n auto --maxfail=0 -v --durations=5 \
 			--ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py \
-			--ignore=tests/e2e/test_mcp_cli_protocol.py"
+			--ignore=tests/e2e/test_mcp_cli_protocol.py \
+			--ignore=tests/e2e/test_mcp_rbac_transport.py"
 
 test-verbose:
 	@echo "🧪 Running tests (verbose, sequential)..."
@@ -1538,6 +1549,71 @@ benchmark-status:                          ## Show status of benchmark services
 .PHONY: benchmark-logs
 benchmark-logs:                            ## Show benchmark stack logs
 	$(COMPOSE_CMD_MONITOR) --profile benchmark logs -f --tail=100
+
+# =============================================================================
+# 🖼️  EMBEDDED / EMBEDDED / IFRAME STACK - iframe mode with benchmark servers
+# =============================================================================
+# help: 🖼️  EMBEDDED / EMBEDDED / IFRAME STACK
+# help: embedded-up              - Start embedded stack (iframe mode + benchmark servers)
+# help: embedded-down            - Stop embedded stack
+# help: embedded-clean           - Stop and remove all embedded data (volumes)
+# help: embedded-status          - Show status of embedded services
+# help: embedded-logs            - Show embedded stack logs
+# help:
+# help: Environment variables:
+# help:   BENCHMARK_SERVER_COUNT  - Number of MCP servers to spawn (default: 10)
+
+EMBEDDED_COMPOSE := $(COMPOSE_CMD) -f docker-compose.yml -f docker-compose-embedded.yml --profile benchmark
+
+.PHONY: embedded-up
+embedded-up:                               ## Start embedded stack (iframe mode + benchmark servers)
+	@if [ ! -f "docker-compose-embedded.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose-embedded.yml"; \
+		exit 1; \
+	fi
+	@echo "🖼️  Starting embedded stack (iframe mode + $(BENCHMARK_SERVER_COUNT) benchmark servers)..."
+	BENCHMARK_SERVER_COUNT=$(BENCHMARK_SERVER_COUNT) BENCHMARK_START_PORT=$(BENCHMARK_START_PORT) \
+		$(EMBEDDED_COMPOSE) up -d
+	@echo ""
+	@echo "✅ Embedded stack started!"
+	@echo ""
+	@echo "Service              URL                           Purpose"
+	@echo "──────────────────────────────────────────────────────────────────────────"
+	@echo "iframe Harness       http://localhost:8889         UI inside iframe"
+	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
+	@echo "Gateway Admin UI     http://localhost:8080/admin/  Direct admin access"
+	@echo "Benchmark Servers    http://localhost:9000-9099    MCP benchmark targets"
+	@echo ""
+	@echo "   📝 $(BENCHMARK_SERVER_COUNT) benchmark servers auto-registered (50 tools each = $$(($(BENCHMARK_SERVER_COUNT) * 50)) tools)"
+	@echo ""
+	@echo "   🔧 Embedded settings:"
+	@echo "      • UI mode:       embedded (iframe-safe)"
+	@echo "      • Default role:  developer"
+	@echo "      • Public visibility: disabled"
+	@echo ""
+	@echo "   💡 Configure: BENCHMARK_SERVER_COUNT=50 make embedded-up"
+
+.PHONY: embedded-down
+embedded-down:                             ## Stop embedded stack
+	@echo "🖼️  Stopping embedded stack..."
+	$(EMBEDDED_COMPOSE) down --remove-orphans
+	@echo "✅ Embedded stack stopped."
+
+.PHONY: embedded-clean
+embedded-clean:                            ## Stop and remove all embedded data (volumes)
+	@echo "🖼️  Stopping and cleaning embedded stack..."
+	$(EMBEDDED_COMPOSE) down -v --remove-orphans
+	@echo "✅ Embedded stack stopped and volumes removed."
+
+.PHONY: embedded-status
+embedded-status:                           ## Show status of embedded services
+	@echo "🖼️  Embedded stack status:"
+	@$(EMBEDDED_COMPOSE) ps || \
+		echo "   No embedded services running. Start with 'make embedded-up'"
+
+.PHONY: embedded-logs
+embedded-logs:                             ## Show embedded stack logs
+	$(EMBEDDED_COMPOSE) logs -f --tail=100
 
 # =============================================================================
 # 🚀 PERFORMANCE TESTING STACK - High-capacity configuration
@@ -5131,7 +5207,8 @@ endef
 	compose-logs compose-ps compose-shell compose-stop compose-down \
 	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
-	monitoring-lite-up monitoring-lite-down
+	monitoring-lite-up monitoring-lite-down \
+	embedded-up embedded-down embedded-clean embedded-status embedded-logs
 
 # Validate compose file
 .PHONY: compose-validate

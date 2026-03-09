@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailApiToken, EmailUser, TokenRevocation, TokenUsageLog, utc_now
+from mcpgateway.db import EmailApiToken, EmailUser, Permissions, TokenRevocation, TokenUsageLog, utc_now
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
 
@@ -288,6 +288,14 @@ class TokenCatalogService:
                 "ip_restrictions": [],
                 "time_restrictions": {},
             }
+
+        # Auto-inject servers.use for tokens with explicit MCP-related permissions.
+        # Without servers.use, the token scoping middleware blocks /rpc and /mcp
+        # transport access, making MCP-method permissions useless.
+        permissions = scopes_dict["permissions"]
+        if permissions and "*" not in permissions and "servers.use" not in permissions:
+            if any(p.startswith(Permissions.MCP_METHOD_PREFIXES) for p in permissions):
+                scopes_dict["permissions"] = [*permissions, "servers.use"]
 
         # Generate JWT token using the centralized token creation utility
         # Pass structured data to the enhanced create_jwt_token function
@@ -844,14 +852,14 @@ class TokenCatalogService:
         self.db.add(revocation)
         self.db.commit()
 
-        # Invalidate auth cache for revoked token
+        # Invalidate auth cache synchronously so revoked tokens are rejected immediately
+        # (fire-and-forget via create_task risks a race where the next request arrives
+        # before the invalidation task runs, allowing the revoked token through).
         try:
             # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-            task = asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
+            await auth_cache.invalidate_revocation(token.jti)
         except Exception as cache_error:
             logger.debug(f"Failed to invalidate auth cache for revoked token: {cache_error}")
 
@@ -891,9 +899,7 @@ class TokenCatalogService:
             # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-            task = asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
+            await auth_cache.invalidate_revocation(token.jti)
         except Exception as cache_error:
             logger.debug(f"Failed to invalidate auth cache: {cache_error}")
 

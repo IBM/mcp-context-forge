@@ -42,7 +42,6 @@ import warnings
 # Third-Party
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
-from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -80,7 +79,7 @@ from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, PermissionChecker, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
@@ -104,6 +103,7 @@ from mcpgateway.schemas import (
     GatewayRefreshResponse,
     GatewayUpdate,
     JsonPathModifier,
+    MetricsResponse,
     PromptCreate,
     PromptExecuteArgs,
     PromptRead,
@@ -151,7 +151,7 @@ from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
-from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_docs_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_admin_auth, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
@@ -527,21 +527,63 @@ def _build_rpc_permission_user(user, db: Session) -> dict[str, Any]:
     return permission_user
 
 
-async def _ensure_rpc_permission(user, db: Session, permission: str, method: str) -> None:
+def _extract_scoped_permissions(request: Request) -> set[str] | None:
+    """Extract token scopes.permissions from cached JWT payload.
+
+    Args:
+        request: Incoming request context.
+
+    Returns:
+        None: no explicit scope cap (empty permissions or no JWT — defer to RBAC)
+        set: explicit permission set (may contain '*' for wildcard)
+    """
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    if not cached or not isinstance(cached, tuple) or len(cached) != 2:
+        return None
+    _, payload = cached
+    if not payload or not isinstance(payload, dict):
+        return None
+    scopes = payload.get("scopes")
+    if not scopes or not isinstance(scopes, dict):
+        return None
+    permissions = scopes.get("permissions")
+    if not permissions:  # Empty list or None = defer to RBAC
+        return None
+    return set(permissions)
+
+
+async def _ensure_rpc_permission(user, db: Session, permission: str, method: str, request: Request | None = None) -> None:
     """Require a specific RPC permission for a method branch.
+
+    Enforces both layers:
+    1. Token scopes.permissions cap (if explicit permissions present)
+    2. RBAC role-based permission check
 
     Args:
         user: Authenticated user context.
         db: Active database session.
         permission: Permission required for the method.
         method: JSON-RPC method name being authorized.
+        request: Optional FastAPI request for extracting token scopes.
 
     Raises:
         JSONRPCError: If the requester lacks the required permission.
     """
+    # Layer 1: Token scope cap
+    if request is not None:
+        scoped = _extract_scoped_permissions(request)
+        if scoped is not None and "*" not in scoped and permission not in scoped:
+            logger.warning("RPC permission denied (token scope): method=%s, required=%s", method, permission)
+            raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
+
+    # Layer 2: RBAC check
+    # Session tokens have no explicit team_id, so check across all team-scoped roles.
+    # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
+    check_any_team = isinstance(user, dict) and user.get("token_use") == "session"
     checker = PermissionChecker(_build_rpc_permission_user(user, db))
-    if not await checker.has_permission(permission):
-        raise JSONRPCError(-32003, f"Insufficient permissions. Required: {permission}", {"method": method})
+    if not await checker.has_permission(permission, check_any_team=check_any_team):
+        logger.warning("RPC permission denied (RBAC): method=%s, required=%s", method, permission)
+        raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
 
 def _enforce_scoped_resource_access(request: Request, db: Session, user, resource_path: str) -> None:
@@ -571,7 +613,8 @@ def _enforce_scoped_resource_access(request: Request, db: Session, user, resourc
         db=db,
         _user_email=scoped_user_email,
     ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied for requested resource")
+        logger.warning("Scoped resource access denied: user=%s, resource=%s", scoped_user_email, resource_path)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
 
 async def _assert_session_owner_or_admin(request: Request, user, session_id: str) -> None:
@@ -1821,9 +1864,21 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                         return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
 
                     # Check if user has admin permissions (either is_admin flag OR admin.* RBAC permissions)
-                    # This allows granular admin access for users with specific admin permissions
+                    # This allows granular admin access for users with specific admin permissions.
+                    # When the request is team-scoped (?team_id=...), include team-scoped roles
+                    # so that developer/viewer roles with admin.dashboard can access the UI.
                     permission_service = PermissionService(db)
-                    has_admin_access = await permission_service.has_admin_permission(username)
+                    request_team_id = request.query_params.get("team_id")
+                    # Normalize to hex so hyphenated UUIDs match DB-stored hex IDs.
+                    # Fall back to raw value for non-UUID team IDs (e.g. from legacy tokens).
+                    if request_team_id:
+                        try:
+                            request_team_id = uuid.UUID(request_team_id).hex
+                        except (ValueError, AttributeError):
+                            pass  # keep raw value for non-UUID token_teams
+                    # Only trust team_id if it is in the user's DB-resolved teams
+                    validated_team_id = request_team_id if (token_teams and request_team_id and request_team_id in token_teams) else None
+                    has_admin_access = await permission_service.has_admin_permission(username, team_id=validated_team_id)
                     if not has_admin_access:
                         logger.warning(f"Admin access denied for user without admin permissions: {username}")
                         return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
@@ -2190,10 +2245,7 @@ def tojson_attr(value: object) -> str:
     Returns:
         Plain string with JSON content (autoescape will HTML-encode it).
     """
-    # Standard
-    import json as _json
-
-    s = _json.dumps(value)
+    s = orjson.dumps(value, default=str).decode()
     # Same HTML-safety replacements as Jinja2's htmlsafe_json_dumps,
     # but we return a plain str so autoescape encodes the remaining `"`.
     s = s.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("'", "\\u0027")
@@ -2760,10 +2812,7 @@ async def list_servers(
     )
 
     if include_pagination:
-        payload = {"servers": [server.model_dump(by_alias=True) for server in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedServersResponse.model_construct(servers=data, next_cursor=next_cursor)
     return data
 
 
@@ -3121,7 +3170,7 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
 
         # CRITICAL: Create and register respond task BEFORE create_sse_response (Finding 1 fix)
         # This ensures the task exists when disconnect callback runs, preventing orphaned tasks
-        respond_task = asyncio.create_task(session_registry.respond(server_id, user_with_token, session_id=transport.session_id, base_url=base_url))
+        respond_task = asyncio.create_task(session_registry.respond(server_id, user_with_token, session_id=transport.session_id))
         session_registry.register_respond_task(transport.session_id, respond_task)
 
         try:
@@ -3443,10 +3492,7 @@ async def list_a2a_agents(
     )
 
     if include_pagination:
-        payload = {"agents": [agent.model_dump(by_alias=True) for agent in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedA2AAgentsResponse.model_construct(agents=data, next_cursor=next_cursor)
     return data
 
 
@@ -3905,10 +3951,7 @@ async def list_tools(
 
     if apijsonpath is None:
         if include_pagination:
-            payload = {"tools": [tool.model_dump(by_alias=True) for tool in data]}
-            if next_cursor:
-                payload["nextCursor"] = next_cursor
-            return payload
+            return CursorPaginatedToolsResponse.model_construct(tools=data, next_cursor=next_cursor)
         return data
 
     tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
@@ -4431,10 +4474,7 @@ async def list_resources(
     db.close()
 
     if include_pagination:
-        payload = {"resources": [resource.model_dump(by_alias=True) if hasattr(resource, "model_dump") else resource for resource in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedResourcesResponse.model_construct(resources=data, next_cursor=next_cursor)
     return data
 
 
@@ -4920,10 +4960,7 @@ async def list_prompts(
     db.close()
 
     if include_pagination:
-        payload = {"prompts": [prompt.model_dump(by_alias=True) if hasattr(prompt, "model_dump") else prompt for prompt in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedPromptsResponse.model_construct(prompts=data, next_cursor=next_cursor)
     return data
 
 
@@ -5411,10 +5448,7 @@ async def list_gateways(
     db.close()
 
     if include_pagination:
-        payload = {"gateways": [gateway.model_dump(by_alias=True) for gateway in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedGatewaysResponse.model_construct(gateways=data, next_cursor=next_cursor)
     return data
 
 
@@ -5985,7 +6019,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         # 1. MCP-Session-Id (mcp-session-id) - MCP protocol header from Streamable HTTP clients
         # 2. x-mcp-session-id - our internal header from SSE session_registry calls
         mcp_session_id = headers.get("mcp-session-id") or headers.get("x-mcp-session-id")
-        is_internally_forwarded = headers.get("x-forwarded-internally") == "true"
+        # Only trust x-forwarded-internally from loopback to prevent external spoofing
+        _rpc_client_host = request.client.host if request.client else None
+        _rpc_from_loopback = _rpc_client_host in ("127.0.0.1", "::1") if _rpc_client_host else False
+        is_internally_forwarded = _rpc_from_loopback and headers.get("x-forwarded-internally") == "true"
 
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
             # First-Party
@@ -6033,10 +6070,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             if init_session_id:
                 effective_owner = await session_registry.claim_session_owner(init_session_id, requester_email)
                 if effective_owner is None:
-                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership unavailable.", {"method": method, "session_id": init_session_id})
+                    raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
                 if effective_owner and not requester_is_admin and requester_email != effective_owner:
-                    raise JSONRPCError(-32003, "Insufficient permissions. Session ownership mismatch.", {"method": method, "session_id": init_session_id})
+                    raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
             # Pass server_id to advertise OAuth capability if configured per RFC 9728
             result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id, server_id=server_id)
@@ -6057,6 +6094,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 except Exception as e:
                     logger.warning(f"[AFFINITY_INIT] Failed to register session ownership: {e}")
         elif method == "tools/list":
+            await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
@@ -6099,6 +6137,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "list_tools":  # Legacy endpoint
+            await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
@@ -6140,6 +6179,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "list_gateways":
+            await _ensure_rpc_permission(user, db, "gateways.read", method, request=request)
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
@@ -6154,10 +6194,11 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             if next_cursor:
                 result["nextCursor"] = next_cursor
         elif method == "list_roots":
-            await _ensure_rpc_permission(user, db, "admin.system_config", method)
+            await _ensure_rpc_permission(user, db, "admin.system_config", method, request=request)
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method == "resources/list":
+            await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
@@ -6178,6 +6219,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "resources/read":
+            await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
             uri = params.get("uri")
             request_id = params.get("requestId", None)
             meta_data = params.get("_meta", None)
@@ -6221,6 +6263,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             db.commit()
             db.close()
         elif method == "resources/subscribe":
+            await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
             # MCP spec-compliant resource subscription endpoint
             uri = params.get("uri")
             if not uri:
@@ -6232,11 +6275,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             try:
                 await resource_service.subscribe_resource(db, subscription, user_email=access_user_email, token_teams=access_token_teams)
             except PermissionError:
-                raise JSONRPCError(-32003, "Insufficient permissions for resource subscription", {"uri": uri})
+                raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
             db.commit()
             db.close()
             result = {}
         elif method == "resources/unsubscribe":
+            await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
             # MCP spec-compliant resource unsubscription endpoint
             uri = params.get("uri")
             if not uri:
@@ -6249,6 +6293,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             db.close()
             result = {}
         elif method == "prompts/list":
+            await _ensure_rpc_permission(user, db, "prompts.read", method, request=request)
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
@@ -6269,6 +6314,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "prompts/get":
+            await _ensure_rpc_permission(user, db, "prompts.read", method, request=request)
             name = params.get("name")
             arguments = params.get("arguments", {})
             meta_data = params.get("_meta", None)
@@ -6306,6 +6352,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Per the MCP spec, a ping returns an empty result.
             result = {}
         elif method == "tools/call":  # pylint: disable=too-many-nested-blocks
+            await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
             # Note: Multi-worker session affinity forwarding is handled earlier
             # (before method routing) to apply to ALL methods, not just tools/call
             name = params.get("name")
@@ -6313,7 +6360,6 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             meta_data = params.get("_meta", None)
             if not name:
                 raise JSONRPCError(-32602, "Missing tool name in parameters", params)
-            await _ensure_rpc_permission(user, db, "tools.execute", method)
 
             # Get authorization context (same as tools/list)
             auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
@@ -6417,6 +6463,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 db.close()
         # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
+            await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
             # MCP spec-compliant resource templates list endpoint
             # Use _get_rpc_filter_context - same pattern as tools/list
             user_email_rpc, token_teams_rpc, is_admin_rpc = _get_rpc_filter_context(request, user)
@@ -6431,13 +6478,14 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 db,
                 user_email=user_email_rpc,
                 token_teams=token_teams_rpc,
+                server_id=server_id,
             )
             db.commit()
             db.close()
             result = {"resourceTemplates": [rt.model_dump(by_alias=True, exclude_none=True) for rt in resource_templates]}
         elif method == "roots/list":
             # MCP spec-compliant method name
-            await _ensure_rpc_permission(user, db, "admin.system_config", method)
+            await _ensure_rpc_permission(user, db, "admin.system_config", method, request=request)
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method.startswith("roots/"):
@@ -6563,6 +6611,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Catch-all for other elicitation/* methods
             result = {}
         elif method == "completion/complete":
+            await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
             # MCP spec-compliant completion endpoint
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
             if is_admin and token_teams is None:
@@ -6575,7 +6624,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {}
         elif method == "logging/setLevel":
             # MCP spec-compliant logging endpoint
-            await _ensure_rpc_permission(user, db, "admin.system_config", method)
+            await _ensure_rpc_permission(user, db, "admin.system_config", method, request=request)
             level = LogLevel(params.get("level"))
             await logging_service.set_level(level)
             result = {}
@@ -6585,7 +6634,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         else:
             # Backward compatibility: Try to invoke as a tool directly
             # This allows both old format (method=tool_name) and new format (method=tools/call)
-            await _ensure_rpc_permission(user, db, "tools.execute", method)
+            await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
             # Standard
             headers = {k.lower(): v for k, v in request.headers.items()}
 
@@ -6730,7 +6779,8 @@ async def _authenticate_websocket_user(websocket: WebSocket) -> tuple[Optional[s
     if user_context:
         checker = PermissionChecker(user_context)
         if not await checker.has_any_permission(_WS_RELAY_REQUIRED_PERMISSIONS):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            logger.warning("WebSocket relay permission denied: user=%s", user_context.get("email"))
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
     return auth_token, proxy_user
 
@@ -6804,7 +6854,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @utility_router.get("/sse")
-@require_permission("tools.execute")
+@require_permission("servers.use")
 async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_with_permissions)):
     """
     Establish a Server-Sent Events (SSE) connection for real-time updates.
@@ -6871,7 +6921,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
         # Create respond task and register for cancellation on disconnect
-        respond_task = asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id, base_url=base_url))
+        respond_task = asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id))
         session_registry.register_respond_task(transport.session_id, respond_task)
 
         try:
@@ -6968,9 +7018,9 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
 ####################
 # Metrics          #
 ####################
-@metrics_router.get("", response_model=dict)
+@metrics_router.get("", response_model=MetricsResponse)
 @require_permission("admin.metrics")
-async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> dict:
+async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> MetricsResponse:
     """
     Retrieve aggregated metrics for all entity types (Tools, Resources, Servers, Prompts, A2A Agents).
 
@@ -6979,7 +7029,7 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
         user: Authenticated user
 
     Returns:
-        A dictionary with keys for each entity type and their aggregated metrics.
+        A MetricsResponse with keys for each entity type and their aggregated metrics.
     """
     logger.debug(f"User {user} requested aggregated metrics")
     tool_metrics = await tool_service.aggregate_metrics(db)
@@ -6987,19 +7037,17 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
     server_metrics = await server_service.aggregate_metrics(db)
     prompt_metrics = await prompt_service.aggregate_metrics(db)
 
-    metrics_result = {
+    kwargs = {
         "tools": tool_metrics,
         "resources": resource_metrics,
         "servers": server_metrics,
         "prompts": prompt_metrics,
     }
 
-    # Include A2A metrics only if A2A features are enabled
     if a2a_service and settings.mcpgateway_a2a_metrics_enabled:
-        a2a_metrics = await a2a_service.aggregate_metrics(db)
-        metrics_result["a2a_agents"] = a2a_metrics
+        kwargs["a2a_agents"] = await a2a_service.aggregate_metrics(db)
 
-    return jsonable_encoder(metrics_result)
+    return MetricsResponse(**kwargs)
 
 
 @metrics_router.post("/reset", response_model=dict)
@@ -7134,30 +7182,18 @@ async def readiness_check():
 
 
 @app.get("/health/security", tags=["health"])
-async def security_health(request: Request):
+async def security_health(request: Request, _user=Depends(require_admin_auth)):  # pylint: disable=unused-argument
     """
-    Get the security configuration health status.
+    Get the security configuration health status (admin only).
 
     Args:
-        request (Request): The incoming HTTP request containing headers for authentication.
+        request (Request): The incoming HTTP request.
+        _user: Authenticated admin user (injected by require_admin_auth).
 
     Returns:
         dict: A dictionary containing the overall security health status, score,
-            individual checks, warning count, and timestamp. Warnings are included
-            only if authentication passes or when running in development mode.
-
-    Raises:
-        HTTPException: If authentication is required and the request does not
-            include a valid bearer token in the Authorization header.
+            individual checks, warning count, and timestamp.
     """
-    # Check authentication
-    if settings.auth_required:
-        auth_header = request.headers.get("authorization", "")
-        scheme, _, credentials = auth_header.partition(" ")
-        if scheme.lower() != "bearer" or not credentials:
-            raise HTTPException(401, "Authentication required for security health")
-        await verify_jwt_token(credentials.strip())
-
     security_status = settings.get_security_status()
 
     # Determine overall health
@@ -7180,8 +7216,8 @@ async def security_health(request: Request):
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Include warnings only if authenticated or in dev mode
-    if settings.dev_mode:
+    # Include warnings for admin users
+    if security_status["warnings"]:
         response["warnings"] = security_status["warnings"]
 
     return response
@@ -7366,6 +7402,9 @@ async def export_configuration(
         # Get root path for URL construction - prefer configured APP_ROOT_PATH
         root_path = settings.app_root_path
 
+        # Derive team-scoped visibility from the requesting user's token
+        scoped_user_email, scoped_token_teams = _get_scoped_resource_access_context(request, user)
+
         # Perform export
         export_data = await export_service.export_configuration(
             db=db,
@@ -7376,6 +7415,8 @@ async def export_configuration(
             include_dependencies=include_dependencies,
             exported_by=username or "unknown",
             root_path=root_path,
+            user_email=scoped_user_email,
+            token_teams=scoped_token_teams,
         )
 
         return export_data
@@ -7391,12 +7432,13 @@ async def export_configuration(
 @export_import_router.post("/export/selective", response_model=Dict[str, Any])
 @require_permission("admin.export")
 async def export_selective_configuration(
-    entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)
+    request: Request, entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)
 ) -> Dict[str, Any]:
     """
     Export specific entities by their IDs/names.
 
     Args:
+        request: FastAPI request object for token scope context
         entity_selections: Dict mapping entity types to lists of IDs/names to export
         include_dependencies: Whether to include dependent entities
         db: Database session
@@ -7428,8 +7470,17 @@ async def export_selective_configuration(
         # Get root path for URL construction - prefer configured APP_ROOT_PATH
         root_path = settings.app_root_path
 
+        # Derive team-scoped visibility from the requesting user's token
+        scoped_user_email, scoped_token_teams = _get_scoped_resource_access_context(request, user)
+
         export_data = await export_service.export_selective(
-            db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username or "unknown", root_path=root_path
+            db=db,
+            entity_selections=entity_selections,
+            include_dependencies=include_dependencies,
+            exported_by=username or "unknown",
+            root_path=root_path,
+            user_email=scoped_user_email,
+            token_teams=scoped_token_teams,
         )
 
         return export_data
@@ -7853,7 +7904,7 @@ else:
             dict: API info with app name, version, and UI/admin API status.
         """
         logger.info("UI disabled, serving API info at root path")
-        return {"name": settings.app_name, "version": __version__, "description": f"{settings.app_name} API - UI is disabled", "ui_enabled": False, "admin_api_enabled": ADMIN_API_ENABLED}
+        return {"name": settings.app_name, "description": f"{settings.app_name} API"}
 
 
 # Expose some endpoints at the root level as well

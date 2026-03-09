@@ -5,7 +5,7 @@
 import asyncio
 import base64
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 # Third-Party
 import orjson
@@ -20,12 +20,14 @@ from mcpgateway.services.team_management_service import TeamManagementService
 @pytest.fixture(autouse=True)
 def _clear_caches():
     try:
+        # First-Party
         from mcpgateway.cache.auth_cache import get_auth_cache
 
         get_auth_cache().invalidate_all()
     except (ImportError, Exception):
         pass
     try:
+        # First-Party
         from mcpgateway.cache.admin_stats_cache import get_admin_stats_cache
 
         get_admin_stats_cache().invalidate_all()
@@ -48,7 +50,10 @@ def db():
 
 @pytest.fixture
 def svc(db):
-    return TeamManagementService(db)
+    s = TeamManagementService(db)
+    # Default: user is below max teams limit (0 teams)
+    s._get_user_team_count = MagicMock(return_value=0)
+    return s
 
 
 def _mock_team(**overrides):
@@ -118,9 +123,11 @@ class TestAddMemberToTeamExceptionPath:
     @pytest.mark.asyncio
     async def test_add_member_generic_exception_raises_team_member_add_error(self, db):
         """Test that a generic exception during add_member_to_team raises TeamMemberAddError."""
+        # First-Party
         from mcpgateway.services.team_management_service import TeamMemberAddError
 
         svc = TeamManagementService(db)
+        svc._get_user_team_count = MagicMock(return_value=0)
 
         # Mock the team to exist
         mock_team = _mock_team(id="t1", max_members=100)
@@ -137,7 +144,7 @@ class TestAddMemberToTeamExceptionPath:
         mock_query_chain_first.filter.return_value.first.side_effect = [
             mock_team,  # First call for team lookup
             mock_user,  # Second call for user lookup
-            None,       # Third call for existing member check (no existing member)
+            None,  # Third call for existing member check (no existing member)
         ]
 
         # Setup count() call for member count check (return integer, not MagicMock)
@@ -149,7 +156,7 @@ class TestAddMemberToTeamExceptionPath:
                 # First EmailTeamMember query is for existing member check (uses first())
                 # Second EmailTeamMember query is for count check (uses count())
                 # We need to track which call this is
-                if not hasattr(query_side_effect, 'emailteammember_call_count'):
+                if not hasattr(query_side_effect, "emailteammember_call_count"):
                     query_side_effect.emailteammember_call_count = 0
                 query_side_effect.emailteammember_call_count += 1
 
@@ -198,8 +205,7 @@ class TestCreateTeamReactivation:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, \
-             patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin:
+        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin:
             mock_cache.invalidate_user_teams = AsyncMock()
             mock_cache.invalidate_team_membership = AsyncMock()
             mock_cache.invalidate_user_role = AsyncMock()
@@ -231,8 +237,7 @@ class TestCreateTeamReactivation:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, \
-             patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin:
+        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin:
             mock_cache.invalidate_user_teams = AsyncMock()
             mock_cache.invalidate_team_membership = AsyncMock()
             mock_cache.invalidate_user_role = AsyncMock()
@@ -252,8 +257,7 @@ class TestCreateTeamReactivation:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, \
-             patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin:
+        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin:
             mock_cache.invalidate_user_teams = AsyncMock(side_effect=Exception("redis down"))
             mock_cache.invalidate_team_membership = AsyncMock()
             mock_cache.invalidate_user_role = AsyncMock()
@@ -298,10 +302,12 @@ class TestDeleteTeamEdge:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)), \
-             patch.object(svc, "_log_team_member_action") as mock_log, \
-             patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, \
-             patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin:
+        with (
+            patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)),
+            patch.object(svc, "_log_team_member_action") as mock_log,
+            patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache,
+            patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin,
+        ):
             mock_cache.invalidate_team_roles = AsyncMock()
             mock_cache.invalidate_team = AsyncMock()
             mock_cache.invalidate_user_teams = AsyncMock()
@@ -323,8 +329,7 @@ class TestDeleteTeamEdge:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)), \
-             patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio:
+        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)), patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio:
             mock_asyncio.create_task = MagicMock(side_effect=RuntimeError("no loop"))
 
             result = await svc.delete_team("t1", "admin@t.com")
@@ -340,7 +345,9 @@ class TestDeleteTeamEdge:
 class TestAddMemberEdge:
     @pytest.mark.asyncio
     async def test_max_members_reached(self, svc, db):
+        # First-Party
         from mcpgateway.services.team_management_service import TeamMemberLimitExceededError
+
         team = _mock_team(max_members=2)
         user = MagicMock(spec=EmailUser)
 
@@ -366,9 +373,11 @@ class TestAddMemberEdge:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)), \
-             patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio, \
-             patch.object(svc, "invalidate_team_member_count_cache", AsyncMock()):
+        with (
+            patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)),
+            patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio,
+            patch.object(svc, "invalidate_team_member_count_cache", AsyncMock()),
+        ):
             mock_asyncio.create_task = MagicMock(side_effect=RuntimeError("no loop"))
 
             await svc.add_member_to_team("t1", "new@t.com")
@@ -391,10 +400,12 @@ class TestRemoveMemberEdge:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)), \
-             patch.object(svc, "_log_team_member_action"), \
-             patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio, \
-             patch.object(svc, "invalidate_team_member_count_cache", AsyncMock()):
+        with (
+            patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)),
+            patch.object(svc, "_log_team_member_action"),
+            patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio,
+            patch.object(svc, "invalidate_team_member_count_cache", AsyncMock()),
+        ):
             mock_asyncio.create_task = MagicMock(side_effect=RuntimeError("no loop"))
 
             result = await svc.remove_member_from_team("t1", "u@t.com")
@@ -419,9 +430,11 @@ class TestUpdateMemberRoleEdge:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)), \
-             patch.object(svc, "_log_team_member_action"), \
-             patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio:
+        with (
+            patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)),
+            patch.object(svc, "_log_team_member_action"),
+            patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio,
+        ):
             mock_asyncio.create_task = MagicMock(side_effect=RuntimeError("no loop"))
 
             result = await svc.update_member_role("t1", "u@t.com", "owner")
@@ -765,9 +778,11 @@ class TestApproveJoinRequestEdge:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch.object(svc, "_log_team_member_action"), \
-             patch.object(svc, "invalidate_team_member_count_cache", AsyncMock()), \
-             patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio:
+        with (
+            patch.object(svc, "_log_team_member_action"),
+            patch.object(svc, "invalidate_team_member_count_cache", AsyncMock()),
+            patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio,
+        ):
             mock_asyncio.create_task = MagicMock(side_effect=RuntimeError("no loop"))
 
             result = await svc.approve_join_request("jr1", "owner@t.com")
@@ -834,8 +849,7 @@ class TestMemberCountsCachedEdge:
         mock_redis = AsyncMock()
         mock_redis.mget = AsyncMock(return_value=[b"5"])
 
-        with patch("mcpgateway.services.team_management_service.settings") as mock_settings, \
-             patch("mcpgateway.services.team_management_service.get_redis_client", AsyncMock(return_value=mock_redis)):
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings, patch("mcpgateway.services.team_management_service.get_redis_client", AsyncMock(return_value=mock_redis)):
             mock_settings.team_member_count_cache_enabled = True
             mock_settings.team_member_count_cache_ttl = 300
             mock_settings.cache_prefix = "test:"
@@ -860,8 +874,7 @@ class TestMemberCountsCachedEdge:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch("mcpgateway.services.team_management_service.settings") as mock_settings, \
-             patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=mock_redis)):
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings, patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=mock_redis)):
             mock_settings.team_member_count_cache_enabled = True
             mock_settings.team_member_count_cache_ttl = 300
             mock_settings.cache_prefix = "test:"
@@ -883,8 +896,7 @@ class TestMemberCountsCachedEdge:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch("mcpgateway.services.team_management_service.settings") as mock_settings, \
-             patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=mock_redis)):
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings, patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=mock_redis)):
             mock_settings.team_member_count_cache_enabled = True
             mock_settings.team_member_count_cache_ttl = 300
             mock_settings.cache_prefix = "test:"
@@ -904,8 +916,7 @@ class TestInvalidateCacheEdge:
         mock_redis = AsyncMock()
         mock_redis.delete = AsyncMock(side_effect=Exception("delete fail"))
 
-        with patch("mcpgateway.services.team_management_service.settings") as mock_settings, \
-             patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=mock_redis)):
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings, patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=mock_redis)):
             mock_settings.team_member_count_cache_enabled = True
             mock_settings.cache_prefix = "test:"
 
@@ -941,8 +952,7 @@ class TestCreateTeamMaxMembers:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, \
-             patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin:
+        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin:
             mock_cache.invalidate_user_teams = AsyncMock()
             mock_cache.invalidate_team_membership = AsyncMock()
             mock_cache.invalidate_user_role = AsyncMock()
@@ -974,11 +984,13 @@ class TestRemoveMemberLastOwnerPasses:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)), \
-             patch.object(svc, "_log_team_member_action"), \
-             patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, \
-             patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin, \
-             patch.object(svc, "invalidate_team_member_count_cache", AsyncMock()):
+        with (
+            patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)),
+            patch.object(svc, "_log_team_member_action"),
+            patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache,
+            patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin,
+            patch.object(svc, "invalidate_team_member_count_cache", AsyncMock()),
+        ):
             mock_cache.invalidate_team_roles = AsyncMock()
             mock_cache.invalidate_team = AsyncMock()
             mock_cache.invalidate_user_teams = AsyncMock()
@@ -1010,10 +1022,12 @@ class TestUpdateMemberRoleLastOwnerPasses:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)), \
-             patch.object(svc, "_log_team_member_action"), \
-             patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, \
-             patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin:
+        with (
+            patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)),
+            patch.object(svc, "_log_team_member_action"),
+            patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache,
+            patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin,
+        ):
             mock_cache.invalidate_team_roles = AsyncMock()
             mock_cache.invalidate_team = AsyncMock()
             mock_cache.invalidate_user_role = AsyncMock()
@@ -1228,8 +1242,7 @@ class TestMemberCountsCachedMoreEdges:
             mock_settings.team_member_count_cache_ttl = 300
             mock_settings.cache_prefix = "test:"
 
-            with patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=None)), \
-                 pytest.raises(RuntimeError, match="db fail"):
+            with patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=None)), pytest.raises(RuntimeError, match="db fail"):
                 await svc.get_member_counts_batch_cached(["t1"])
 
         db.rollback.assert_called()

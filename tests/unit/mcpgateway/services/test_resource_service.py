@@ -3144,7 +3144,7 @@ class TestInvokeResourceCoverage:
                 metrics_buffer = MagicMock()
                 mock_metrics_buffer.return_value = metrics_buffer
 
-                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
                 mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
                 cs_session = AsyncMock()
@@ -3192,7 +3192,7 @@ class TestInvokeResourceCoverage:
                 metrics_buffer = MagicMock()
                 mock_metrics_buffer.return_value = metrics_buffer
 
-                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
                 mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
                 cs_session = AsyncMock()
@@ -3243,7 +3243,7 @@ class TestInvokeResourceCoverage:
                 metrics_buffer = MagicMock()
                 mock_metrics_buffer.return_value = metrics_buffer
 
-                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
                 mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
                 cs_session = AsyncMock()
@@ -3312,7 +3312,7 @@ class TestInvokeResourceCoverage:
         ):
             mock_trace.get = MagicMock(return_value=None)
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
             def _capture_url(*_a, **kw):
@@ -3374,7 +3374,7 @@ class TestInvokeResourceCoverage:
             mock_tss.return_value.get_user_token = AsyncMock(return_value=None)
             mock_metrics_buffer.return_value = MagicMock()
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
@@ -3429,7 +3429,7 @@ class TestInvokeResourceCoverage:
             mock_trace.get = MagicMock(return_value=None)
             mock_metrics_buffer.return_value = MagicMock()
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
@@ -3488,7 +3488,7 @@ class TestInvokeResourceCoverage:
                 return mock_sse.return_value
 
             mock_sse.side_effect = _sse_side_effect
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
@@ -5049,7 +5049,7 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
         ):
             mock_trace.get = MagicMock(return_value=None)
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5114,7 +5114,7 @@ class TestInvokeResourceCoverageEdges:
             mock_trace.get = MagicMock(return_value=None)
 
             mock_sse.side_effect = _capture_url
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5185,7 +5185,7 @@ class TestInvokeResourceCoverageEdges:
             mock_tss.return_value.get_user_token = AsyncMock(return_value="tok")
 
             mock_sse.side_effect = _capture_headers
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5201,6 +5201,98 @@ class TestInvokeResourceCoverageEdges:
         assert out == "ok"
         assert captured_headers.get("Authorization") == "Bearer tok"
         mock_tss.return_value.get_user_token.assert_awaited_once_with("gw-1", "caller@example.com")
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_sse_connect_to_sse_session_unpacks_two_values(self):
+        """
+        Regression test: connect_to_sse_session must unpack only 2 values from sse_client.
+        sse_client yields (read_stream, write_stream) only — unlike streamablehttp_client
+        which yields a 3rd session ID getter. Unpacking 3 values raises ValueError which
+        is silently caught, causing all SSE resource reads to return None/Incorrect result.
+        """
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        resource = MagicMock(id="res-1", name="R", gateway_id="gw-1")
+        gateway = MagicMock()
+        gateway.id = "gw-1"
+        gateway.name = "GW"
+        gateway.url = "http://gw.test"
+        gateway.transport = "sse"
+        gateway.ca_certificate = None
+        gateway.ca_certificate_sig = None
+        gateway.auth_type = None
+        gateway.auth_value = {}
+        gateway.oauth_config = None
+        gateway.auth_query_params = None
+
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(
+            contents=[MagicMock(text="sse_resource_content", blob=None)]
+        )
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch(
+                "mcpgateway.services.resource_service.create_span",
+                MagicMock(
+                    return_value=MagicMock(
+                        __enter__=MagicMock(return_value=MagicMock()),
+                        __exit__=MagicMock(return_value=False),
+                    )
+                ),
+            ),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+
+            # Simulate real sse_client: yields exactly 2 values (no session ID getter)
+            # Previously the code unpacked 3 values here, causing silent ValueError -> None
+            mock_sse.return_value.__aenter__ = AsyncMock(
+                return_value=(AsyncMock(), AsyncMock())  # 2 values only — correct sse_client contract
+            )
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            out = await svc.invoke_resource(
+                db,
+                "res-1",
+                "test://resource/1",
+                resource_obj=resource,
+                gateway_obj=gateway,
+            )
+
+        # Core assertion: SSE resource must return content, not None
+        # Before fix: ValueError from 3-value unpack was silently caught -> returned None
+        # After fix: 2-value unpack succeeds -> returns actual resource content
+        assert out == "sse_resource_content", (
+            "SSE resource read returned None — likely caused by incorrect 3-value unpack of sse_client. "
+            "sse_client yields (read_stream, write_stream) only, not (read_stream, write_stream, get_session_id)."
+        )
+
+        # Verify sse_client was actually called (not streamablehttp_client)
+        mock_sse.assert_called_once()
+        cs_session.read_resource.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_invoke_resource_oauth_authorization_code_without_user_identity_skips_token_lookup(self):
@@ -5252,7 +5344,7 @@ class TestInvokeResourceCoverageEdges:
             mock_tss.return_value.get_user_token = AsyncMock(return_value="tok")
 
             mock_sse.side_effect = _capture_headers
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5307,7 +5399,7 @@ class TestInvokeResourceCoverageEdges:
             mock_fresh.return_value.__exit__.return_value = False
             mock_tss.return_value.get_user_token = AsyncMock(side_effect=RuntimeError("boom"))
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5359,7 +5451,7 @@ class TestInvokeResourceCoverageEdges:
             mock_fresh.return_value.__exit__.return_value = False
             mock_tss.return_value.get_user_token = AsyncMock(return_value=None)
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5413,7 +5505,8 @@ class TestInvokeResourceCoverageEdges:
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_sse.side_effect = _capture_headers
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5461,7 +5554,7 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
         ):
             mock_trace.get = MagicMock(return_value=None)
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5507,7 +5600,7 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
         ):
             mock_trace.get = MagicMock(return_value=None)
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5647,7 +5740,7 @@ class TestInvokeResourceCoverageEdges:
             mock_fresh.return_value.__exit__.return_value = False
             mock_tss.return_value.get_user_token = AsyncMock(side_effect=RuntimeError("boom"))
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)

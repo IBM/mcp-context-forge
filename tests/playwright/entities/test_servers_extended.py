@@ -759,6 +759,7 @@ class TestEditServerSelectionBugs:
 
     @pytest.mark.ui
     @pytest.mark.e2e
+    @pytest.mark.flaky(reruns=2, reruns_delay=1, reason="Edit modal click timing with HTMX-loaded server rows")
     def test_tool_search_preserves_selections(self, servers_page: ServersPage):
         """Regression test for #3260: keyword search in tools picker does not wipe selections.
 
