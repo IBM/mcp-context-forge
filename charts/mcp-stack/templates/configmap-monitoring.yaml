@@ -50,6 +50,9 @@ data:
 
       - job_name: mcpgateway
         metrics_path: /metrics/prometheus
+        {{- with .Values.mcpContextForge.metrics.metricsToken }}
+        bearer_token_file: /etc/prometheus/secrets/{{ .secretName }}/{{ .key }}
+        {{- end }}
         static_configs:
           - targets: ["{{ $gatewayName }}:{{ $gatewayPort }}"]
 ---

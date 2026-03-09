@@ -151,7 +151,7 @@ from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
-from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_docs_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_admin_auth, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
@@ -2812,10 +2812,7 @@ async def list_servers(
     )
 
     if include_pagination:
-        payload = {"servers": [server.model_dump(by_alias=True) for server in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedServersResponse.model_construct(servers=data, next_cursor=next_cursor)
     return data
 
 
@@ -3173,7 +3170,7 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
 
         # CRITICAL: Create and register respond task BEFORE create_sse_response (Finding 1 fix)
         # This ensures the task exists when disconnect callback runs, preventing orphaned tasks
-        respond_task = asyncio.create_task(session_registry.respond(server_id, user_with_token, session_id=transport.session_id, base_url=base_url))
+        respond_task = asyncio.create_task(session_registry.respond(server_id, user_with_token, session_id=transport.session_id))
         session_registry.register_respond_task(transport.session_id, respond_task)
 
         try:
@@ -3495,10 +3492,7 @@ async def list_a2a_agents(
     )
 
     if include_pagination:
-        payload = {"agents": [agent.model_dump(by_alias=True) for agent in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedA2AAgentsResponse.model_construct(agents=data, next_cursor=next_cursor)
     return data
 
 
@@ -3957,10 +3951,7 @@ async def list_tools(
 
     if apijsonpath is None:
         if include_pagination:
-            payload = {"tools": [tool.model_dump(by_alias=True) for tool in data]}
-            if next_cursor:
-                payload["nextCursor"] = next_cursor
-            return payload
+            return CursorPaginatedToolsResponse.model_construct(tools=data, next_cursor=next_cursor)
         return data
 
     tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
@@ -4483,10 +4474,7 @@ async def list_resources(
     db.close()
 
     if include_pagination:
-        payload = {"resources": [resource.model_dump(by_alias=True) if hasattr(resource, "model_dump") else resource for resource in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedResourcesResponse.model_construct(resources=data, next_cursor=next_cursor)
     return data
 
 
@@ -4972,10 +4960,7 @@ async def list_prompts(
     db.close()
 
     if include_pagination:
-        payload = {"prompts": [prompt.model_dump(by_alias=True) if hasattr(prompt, "model_dump") else prompt for prompt in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedPromptsResponse.model_construct(prompts=data, next_cursor=next_cursor)
     return data
 
 
@@ -5463,10 +5448,7 @@ async def list_gateways(
     db.close()
 
     if include_pagination:
-        payload = {"gateways": [gateway.model_dump(by_alias=True) for gateway in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
+        return CursorPaginatedGatewaysResponse.model_construct(gateways=data, next_cursor=next_cursor)
     return data
 
 
@@ -6939,7 +6921,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
         # Create respond task and register for cancellation on disconnect
-        respond_task = asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id, base_url=base_url))
+        respond_task = asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id))
         session_registry.register_respond_task(transport.session_id, respond_task)
 
         try:
@@ -7200,30 +7182,18 @@ async def readiness_check():
 
 
 @app.get("/health/security", tags=["health"])
-async def security_health(request: Request):
+async def security_health(request: Request, _user=Depends(require_admin_auth)):  # pylint: disable=unused-argument
     """
-    Get the security configuration health status.
+    Get the security configuration health status (admin only).
 
     Args:
-        request (Request): The incoming HTTP request containing headers for authentication.
+        request (Request): The incoming HTTP request.
+        _user: Authenticated admin user (injected by require_admin_auth).
 
     Returns:
         dict: A dictionary containing the overall security health status, score,
-            individual checks, warning count, and timestamp. Warnings are included
-            only if authentication passes or when running in development mode.
-
-    Raises:
-        HTTPException: If authentication is required and the request does not
-            include a valid bearer token in the Authorization header.
+            individual checks, warning count, and timestamp.
     """
-    # Check authentication
-    if settings.auth_required:
-        auth_header = request.headers.get("authorization", "")
-        scheme, _, credentials = auth_header.partition(" ")
-        if scheme.lower() != "bearer" or not credentials:
-            raise HTTPException(401, "Authentication required for security health")
-        await verify_jwt_token(credentials.strip())
-
     security_status = settings.get_security_status()
 
     # Determine overall health
@@ -7246,8 +7216,8 @@ async def security_health(request: Request):
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Include warnings only if authenticated or in dev mode
-    if settings.dev_mode:
+    # Include warnings for admin users
+    if security_status["warnings"]:
         response["warnings"] = security_status["warnings"]
 
     return response
@@ -7934,7 +7904,7 @@ else:
             dict: API info with app name, version, and UI/admin API status.
         """
         logger.info("UI disabled, serving API info at root path")
-        return {"name": settings.app_name, "version": __version__, "description": f"{settings.app_name} API - UI is disabled", "ui_enabled": False, "admin_api_enabled": ADMIN_API_ENABLED}
+        return {"name": settings.app_name, "description": f"{settings.app_name} API"}
 
 
 # Expose some endpoints at the root level as well

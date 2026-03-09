@@ -815,7 +815,7 @@ ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed 
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | bool                                       |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
-| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-1`               | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-2`               | string                                     |
 | `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |
@@ -859,7 +859,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 
 | Setting                      | Description                                              | Default   | Options          |
 | ---------------------------- | -------------------------------------------------------- | --------- | ---------------- |
-| `ENABLE_METRICS`             | Enable Prometheus metrics instrumentation                | `true`    | bool             |
+| `ENABLE_METRICS`             | Enable Prometheus metrics endpoint (requires JWT auth)   | `false`   | bool             |
 | `METRICS_EXCLUDED_HANDLERS`  | Regex patterns for paths to exclude from metrics         | (empty)   | comma-separated  |
 | `METRICS_NAMESPACE`          | Prometheus metrics namespace (prefix)                    | `default` | string           |
 | `METRICS_SUBSYSTEM`          | Prometheus metrics subsystem (secondary prefix)          | (empty)   | string           |
