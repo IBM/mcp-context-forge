@@ -1,8 +1,8 @@
 [package]
 name = "pii_filter"
-version = "1.0.0-RC-1"
+version = "1.0.0-RC-2"
 edition = "2024"
-authors = ["MCP Gateway Contributors"]
+authors = ["ContextForge Contributors"]
 license = "Apache-2.0"
 repository = "https://github.com/IBM/mcp-context-forge"
 description = "High-performance PII detection and masking library"

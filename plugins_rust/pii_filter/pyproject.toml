@@ -6,7 +6,7 @@ build-backend = "maturin"
 name = "mcpgateway-pii-filter"
 version = "1.0.0-RC-2"
 description = "High-performance PII detection and masking library for MCP Gateway"
-authors = [{ name = "MCP Gateway Contributors" }]
+authors = [{ name = "ContextForge Contributors" }]
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 classifiers = [
