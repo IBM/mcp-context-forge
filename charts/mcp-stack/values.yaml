@@ -467,7 +467,7 @@ mcpContextForge:
     YIELD_BATCH_SIZE: "1000" # rows per batch when streaming rollup queries (100-10000)
 
     # ─ Transports ─
-    TRANSPORT_TYPE: http,sse          # comma-separated list: http, ws, sse, stdio, all
+    TRANSPORT_TYPE: all              # valid: http, sse, streamablehttp, all (WS/stdio gated by their own flags)
     MCPGATEWAY_WS_RELAY_ENABLED: "false" # /ws JSON-RPC relay (disabled)
     MCPGATEWAY_REVERSE_PROXY_ENABLED: "false" # /reverse-proxy/* endpoints (disabled)
     SSE_SEND_TIMEOUT: "30.0"         # ASGI send timeout (seconds), 0=disabled

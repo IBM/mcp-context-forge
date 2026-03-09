@@ -99,3 +99,26 @@ redisCommander:
   enabled: false
 minio:
   enabled: false
+
+# Enable testing profile (fast-test-server + auto-registration)
+testing:
+  enabled: true
+  registration:
+    image:
+      repository: ghcr.io/ibm/mcp-context-forge
+      tag: "1.0.0-RC-2"
+      pullPolicy: Never
+    jwt:
+      secret: my-test-key
+  fastTime:
+    register:
+      enabled: true
+  fastTestServer:
+    enabled: true
+    image:
+      pullPolicy: Never
+  fastTest:
+    register:
+      enabled: true
+  a2aEchoAgent:
+    enabled: false
