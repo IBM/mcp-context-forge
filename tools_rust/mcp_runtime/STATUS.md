@@ -1,8 +1,13 @@
 # Rust MCP Runtime Status
 
 Last updated: March 9, 2026
-Current branch head: `562311419`
-Current upstream base: `origin/main@8cc5cc96b`
+
+Status focus in this update:
+
+- Unix domain socket handoff between Python and the managed Rust sidecar
+- a narrower trusted internal dispatcher route at `/_internal/mcp/rpc`
+- forwarded MCP auth context instead of recomputing auth on the internal hop
+- updated live load-test baseline before moving any DB reads into Rust
 
 ## Executive Summary
 
@@ -12,13 +17,15 @@ Today it successfully owns the MCP HTTP transport edge for `POST /mcp` when
 `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`, while Python still owns:
 
 - auth and RBAC
-- path rewriting and some request shaping
-- business execution behind `/rpc`
+- business execution behind the internal MCP dispatcher
 - MCP session management for non-`POST` transport flows
 
 In practice, this means:
 
 - Rust is already on the hot path for `ping`, `initialize`, `tools/list`, `tools/call`, `resources/list`, `prompts/list`, and similar JSON-RPC `POST /mcp` traffic
+- Python no longer reparses and rewrites server-scoped MCP JSON bodies just to inject `server_id`
+- the managed Python -> Rust hop can now run over a Unix domain socket instead of loopback TCP
+- Python forwards a trusted auth context to the internal dispatcher, so auth and RBAC stay Python-owned without being recomputed on the internal hop
 - Rust is not yet the full MCP implementation for resumable Streamable HTTP or SSE/session orchestration
 - the current cut is viable, testable, containerized, and live behind an experimental flag
 
@@ -45,7 +52,7 @@ Implemented in this crate:
 - `initialize` parameter validation
 - local handling for `ping`
 - notification handling with HTTP `202 Accepted`
-- forwarding of non-local methods to Python `/rpc`
+- forwarding of non-local methods to Python over the configured backend RPC URL
 - response stamping with `x-contextforge-mcp-runtime: rust`
 - stripping of internal-only forwarded headers
 - info-level request logging when `MCP_RUST_LOG=info`
@@ -58,6 +65,11 @@ Integrated in the main application:
 - `POST /mcp` is proxied to the Rust runtime when enabled
 - non-`POST` MCP traffic still falls back to the Python transport
 - `/servers/<id>/mcp` requests preserve semantics by carrying `server_id` across the Python -> Rust -> Python seam via `x-contextforge-server-id`
+- Python can connect to the managed Rust runtime over `EXPERIMENTAL_RUST_MCP_RUNTIME_UDS`
+- the managed Rust runtime can listen on `MCP_RUST_LISTEN_UDS`
+- Rust now forwards backend calls to `/_internal/mcp/rpc` instead of the public `/rpc` route
+- Python forwards a trusted internal MCP auth blob via `x-contextforge-auth-context`
+- the proxy strips forwarded-chain headers like `x-forwarded-for` before the internal Rust -> Python hop so loopback trust stays real
 - the managed sidecar can be launched from `docker-entrypoint.sh`
 - `Containerfile.lite` includes the Rust runtime binary when built with `ENABLE_RUST=true`
 - `docker-compose.yml` exposes the Rust runtime env vars, including `MCP_RUST_LOG`
@@ -80,30 +92,51 @@ This is the cleanest proof that live requests are actually traversing Rust.
 ### Rust-owned today
 
 - outer HTTP MCP runtime shell for `POST /mcp`
+- optional UDS listener for the managed sidecar
 - protocol-version compatibility checks
 - JSON-RPC envelope validation
 - notification response semantics
 - local `ping`
-- backend proxying to Python `/rpc`
+- backend proxying to Python `/_internal/mcp/rpc`
 - runtime-level response header stamping
 
 ### Python-owned today
 
-- authentication
-- token scoping
-- RBAC
-- server/path semantics before Rust proxy handoff
-- `/rpc` business logic and MCP operation execution
+- authentication and token verification on the public MCP transport
+- token scoping normalization
+- RBAC decision-making
+- creation of the forwarded internal auth context
+- business execution behind the internal MCP dispatcher
 - session registry
+- session pool ownership
+- Redis-backed caches and eventing
 - SSE/resumable stream management
 - non-`POST` Streamable HTTP transport behavior
 - upstream MCP federation/client logic
+
+### Redis / cache boundary
+
+Redis is still entirely Python-owned today. That is intentional for this phase.
+
+Relevant MCP-path components that still live in Python:
+
+- auth cache in [`mcpgateway/cache/auth_cache.py`](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/cache/auth_cache.py)
+- registry cache for tools/resources/prompts in [`mcpgateway/cache/registry_cache.py`](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/cache/registry_cache.py)
+- session registry in [`mcpgateway/cache/session_registry.py`](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/cache/session_registry.py)
+- MCP session pool setup in [`mcpgateway/main.py`](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/main.py)
+- Redis event store for resumable Streamable HTTP in [`mcpgateway/transports/redis_event_store.py`](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/transports/redis_event_store.py)
+- cancellation pub/sub in [`mcpgateway/services/cancellation_service.py`](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/services/cancellation_service.py)
+
+Implication:
+
+- the UDS and internal-dispatch optimization preserves existing Redis-assisted behavior
+- moving read-only MCP list methods into Rust later will require a deliberate cache strategy instead of accidentally bypassing Python’s Redis caches
 
 ### Important consequence
 
 This is not yet a full Rust rewrite of MCP in ContextForge.
 
-It is a transport-edge replacement for the `POST /mcp` JSON-RPC path, with Python still acting as the execution core behind `/rpc`.
+It is a transport-edge replacement for the `POST /mcp` JSON-RPC path, with Python still acting as the execution core behind a trusted internal MCP dispatcher.
 
 That is intentional. It gives a low-risk seam that already works while keeping the next migration steps clear.
 
@@ -209,13 +242,13 @@ If a flow depends on MCP `GET`/`DELETE` session-management behavior, it is still
 
 ### 2. `/rpc` is still the real backend contract
 
-Rust currently forwards most work to Python `/rpc`.
+Rust no longer needs the public `/rpc` route, but it still forwards most work to Python in a JSON-RPC-shaped backend contract.
 
 That means:
 
 - Rust does not yet reduce Python business-logic coupling much
 - the current performance gains are mostly transport-edge gains
-- the real modularity win still requires extracting a cleaner dispatcher/core contract
+- the real modularity win still requires extracting a cleaner dispatcher/core contract than a generic JSON-RPC passthrough
 
 ### 3. Performance is still dominated by the seam
 
@@ -226,15 +259,34 @@ It has been reducing avoidable Python work around the Rust edge:
 - Rust backend responses now stream back to the client instead of buffering in Python first
 - Python no longer reparses and rewrites JSON request bodies just to attach `server_id` for `/servers/<id>/mcp`
 - server scope now crosses the seam in an internal header instead of a body mutation
+- the managed sidecar can now use UDS instead of loopback HTTP
+- public transport auth is now forwarded as a trusted internal context instead of being recomputed on the internal backend hop
 
 This matters because the load-test target in `tests/loadtest/locustfile_mcp_protocol.py` is the server-scoped MCP path, so every unnecessary parse/serialize on that path shows up directly in throughput and latency.
 
-### 4. Wider regression coverage is still in progress
+### 4. Benchmark noise still exists in seeded data
+
+The current compose seed data on the fast-time server includes duplicate resource URIs.
+
+That means `resources/read` is currently a noisy benchmark signal, independent of the Rust seam:
+
+- `resources/list` succeeds through Rust
+- manual `resources/read` on the same server returns:
+  - `Multiple rows were found when one or none was required`
+- Locust records that as JSON-RPC `-32000 Internal error`
+
+This is a correctness issue in the seeded benchmark fixture, not evidence that the UDS/internal-dispatch seam broke `resources/read`.
+
+### 5. Wider regression coverage is still in progress
 
 As of March 9, 2026:
 
 - `mcp-cli` E2E is green
-- direct live Rust-path checks are green
+- direct live Rust-path checks are green for:
+  - `/mcp`
+  - `/servers/<id>/mcp initialize`
+  - `/servers/<id>/mcp tools/list`
+  - `/servers/<id>/mcp tools/call`
 - `make test-ui-headless` is still being exercised externally
 - `make test-mcp-rbac` was started against the Rust-enabled stack and early discovery/listing coverage passed, but failures appeared later in the call-path portion and that investigation was interrupted before completion
 
@@ -293,17 +345,30 @@ That bug was fixed by making `/rpc` honor `x-contextforge-server-id` whenever th
 
 ### Current measured impact of the latest seam optimization
 
-These numbers are the valid before/after comparison on the same server-scoped fast-time SSE target, using 20-second Locust runs.
+The latest optimization stack was:
 
-Before removing Python JSON body rewriting:
+- narrower internal Python dispatcher at `/_internal/mcp/rpc`
+- trusted forwarded MCP auth context
+- no Python JSON body rewriting for `/servers/<id>/mcp`
+- UDS between Python and the managed Rust sidecar
+
+These numbers are the current live baseline on the server-scoped fast-time target, using 30-second Locust runs following `todo/performance/reproduce-testing.md`.
+
+Current measured baseline:
 
 ```text
 Users | RPS    | Avg(ms) | p95 | p99 | Failures
-50    | 379.15 | 30.86   | 65  | 120 | 0%
-100   | 588.08 | 61.48   | 110 | 200 | 0%
+50    | 424.82 | 20.81   | 29  |  88 | 1.67%
+100   | 738.44 | 38.40   | 65  | 150 | 1.91%
 ```
 
-After switching `/servers/<id>/mcp` to the internal-header seam:
+Failure caveat:
+
+- the failures are all `resources/read`
+- they trace to duplicate seeded resource URIs on the benchmark server
+- they are not specific to the new Rust seam
+
+For context, the previous pre-UDS/header-forward baseline on the same broad server-scoped path was:
 
 ```text
 Users | RPS    | Avg(ms) | p95 | p99 | Failures
@@ -313,36 +378,39 @@ Users | RPS    | Avg(ms) | p95 | p99 | Failures
 
 Interpretation:
 
-- the 50-user point is roughly flat and likely within normal run-to-run noise
-- the 100-user point improved materially:
-  - about `+14.3%` RPS
-  - about `-21.0%` average latency
-  - about `-21.8%` p95 latency
+- at 50 users, the current stack is about `+16.8%` RPS with materially lower average latency
+- at 100 users, the current stack is about `+9.9%` RPS with materially lower average latency
+- the comparison is directionally useful, but not perfectly apples-to-apples because the seeded `resources/read` issue polluted the latest run
 
 Conclusion:
 
 - the seam optimization is worth keeping
-- the current bottleneck is still the Python/Rust handoff and Python `/rpc` backend, not the Rust transport shell itself
+- the current bottleneck is still the Python/Rust handoff and Python backend dispatcher, not the Rust transport shell itself
 - there is still substantial headroom before Rust can show its full value because most MCP execution work remains in Python
 
 ### Next performance steps in priority order
 
-1. Move the Python -> Rust hop from loopback TCP to Unix domain sockets.
-2. Let Rust own the server-scoped MCP path directly instead of depending on Python to translate mounted paths.
-3. Extract a real internal dispatcher contract so Rust stops proxying generic JSON-RPC to Python `/rpc`.
-4. Move read-heavy MCP methods first:
+1. Keep the new UDS and internal-dispatch seam as the baseline; do not add Rust DB access until this path is fully characterized.
+2. Make the internal dispatcher narrower than generic JSON-RPC.
+   - pass method-specific internal payloads instead of a full `/rpc` envelope where practical
+   - avoid more Python envelope shaping than strictly necessary
+3. Let Rust own the mounted server-scoped MCP path directly.
+   - today Python still mounts `/servers/<id>/mcp` and translates path context into internal headers
+4. Fix or replace the seeded benchmark server so `resources/read` stops polluting load-test comparisons.
+5. Move read-heavy MCP methods first:
    - `tools/list`
    - `resources/list`
    - `prompts/list`
-5. After that, revisit deeper Rust-side JSON parsing micro-optimizations only if profiling still points there.
+   - optionally `resources/templates/list`
+6. After that, revisit deeper Rust-side JSON parsing micro-optimizations only if profiling still points there.
 
 ### Phase 2: remove Python `/rpc` coupling
 
 Next architectural step:
 
-- extract a shared internal MCP dispatcher contract from Python `/rpc`
+- extract a shared internal MCP dispatcher contract from the current Python RPC handler
 - point both Python transport and Rust runtime at the same execution contract
-- stop treating `/rpc` as the long-term internal interface
+- stop treating a generic JSON-RPC passthrough as the long-term internal interface
 
 This is the step that turns the current transport-edge replacement into real modularization.
 
@@ -356,12 +424,13 @@ Then:
 
 ### Phase 4: move execution primitives
 
-After the dispatcher seam is real:
+After the dispatcher seam is real and the benchmark fixture is clean:
 
 - move `tools/list`
-- move `tools/call`
 - move `resources/list`
 - move `prompts/list`
+- move `resources/templates/list`
+- then evaluate `tools/call`
 - move more direct MCP response shaping into Rust
 
 ## How To Run
@@ -371,7 +440,7 @@ After the dispatcher seam is real:
 ```bash
 cd tools_rust/mcp_runtime
 cargo run --release -- \
-  --backend-rpc-url http://127.0.0.1:4444/rpc \
+  --backend-rpc-url http://127.0.0.1:4444/_internal/mcp/rpc \
   --listen-http 127.0.0.1:8787
 ```
 
@@ -387,6 +456,8 @@ docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
 ENABLE_RUST_BUILD=true \
 EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true \
 EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true \
+EXPERIMENTAL_RUST_MCP_RUNTIME_UDS=/tmp/contextforge-mcp-rust.sock \
+MCP_RUST_LISTEN_UDS=/tmp/contextforge-mcp-rust.sock \
 docker compose --profile testing up -d --force-recreate gateway nginx
 ```
 
@@ -395,7 +466,9 @@ Optional runtime tuning:
 ```bash
 MCP_RUST_LOG=info
 MCP_RUST_LISTEN_HTTP=127.0.0.1:8787
-MCP_RUST_BACKEND_RPC_URL=http://127.0.0.1:4444/rpc
+MCP_RUST_LISTEN_UDS=/tmp/contextforge-mcp-rust.sock
+EXPERIMENTAL_RUST_MCP_RUNTIME_UDS=/tmp/contextforge-mcp-rust.sock
+MCP_RUST_BACKEND_RPC_URL=http://127.0.0.1:4444/_internal/mcp/rpc
 ```
 
 ## How To Verify It Is Going Through Rust
@@ -445,6 +518,7 @@ docker compose logs -f gateway | rg "rust_mcp_runtime method="
 Expected examples:
 
 ```text
+Starting experimental Rust MCP runtime on unix:///tmp/contextforge-mcp-rust.sock
 rust_mcp_runtime method=ping mode=local
 rust_mcp_runtime method=initialize mode=backend-forward
 rust_mcp_runtime method=tools/list mode=backend-forward
@@ -474,6 +548,11 @@ cargo test --release
 uv run pytest -q tests/unit/mcpgateway/transports/test_rust_mcp_runtime_proxy.py
 ```
 
+```bash
+uv run pytest -q \
+  tests/unit/mcpgateway/test_main_extended.py -k 'internal_mcp_rpc or rust_server_header or tools_list_server'
+```
+
 ### End-to-end MCP CLI
 
 ```bash
@@ -488,13 +567,16 @@ uv run pytest tests/e2e/test_mcp_cli_protocol.py -v -s --tb=short
 
 ```bash
 source .venv/bin/activate
+MCP_SERVER_ID=<server-id> \
 locust -f tests/loadtest/locustfile_mcp_protocol.py \
   --host=http://localhost:8080 \
   --users=100 \
   --spawn-rate=100 \
-  --run-time=20s \
+  --run-time=30s \
   --headless
 ```
+
+If the current seeded fast-time server is used, expect `resources/read` failures until the duplicate-resource fixture issue is cleaned up.
 
 ### Broader regression suites
 

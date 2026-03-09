@@ -28,6 +28,7 @@ Structure:
 
 # Standard
 import asyncio
+import base64
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -300,6 +301,62 @@ def get_user_email(user):
     return str(user) if user else "unknown"
 
 
+_INTERNAL_MCP_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
+
+
+def _get_internal_mcp_auth_context(request: Request) -> Optional[Dict[str, Any]]:
+    """Return trusted auth context forwarded from the StreamableHTTP MCP auth layer."""
+    internal_auth_context = getattr(request.state, "_mcp_internal_auth_context", None)
+    if isinstance(internal_auth_context, dict):
+        return internal_auth_context
+    return None
+
+
+def _decode_internal_mcp_auth_context(header_value: str) -> Dict[str, Any]:
+    """Decode the trusted internal MCP auth header payload."""
+    padding = "=" * (-len(header_value) % 4)
+    decoded = base64.urlsafe_b64decode(f"{header_value}{padding}".encode("ascii"))
+    payload = orjson.loads(decoded)
+    if not isinstance(payload, dict):
+        raise ValueError("Decoded internal MCP auth context must be an object")
+    return payload
+
+
+def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
+    """Return whether the request came from the local Rust runtime sidecar."""
+    runtime_marker = request.headers.get("x-contextforge-mcp-runtime")
+    client_host = getattr(getattr(request, "client", None), "host", None)
+    return runtime_marker == "rust" and client_host in ("127.0.0.1", "::1")
+
+
+def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
+    """Build the authenticated user payload for internal Rust -> Python MCP dispatch."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        raise HTTPException(status_code=403, detail="Internal MCP dispatch is only available to the local Rust runtime")
+
+    header_value = request.headers.get(_INTERNAL_MCP_AUTH_CONTEXT_HEADER)
+    if not header_value:
+        raise HTTPException(status_code=400, detail="Missing trusted MCP auth context")
+
+    try:
+        auth_context = _decode_internal_mcp_auth_context(header_value)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid trusted MCP auth context: {exc}") from exc
+
+    request.state._mcp_internal_auth_context = auth_context
+
+    if "teams" in auth_context and (auth_context["teams"] is None or isinstance(auth_context["teams"], list)):
+        request.state.token_teams = auth_context["teams"]
+
+    return {
+        "email": auth_context.get("email"),
+        "full_name": auth_context.get("email") or "MCP Internal Forward",
+        "is_admin": bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
+        "auth_method": "mcp_internal_forward",
+        "token_use": auth_context.get("token_use"),
+    }
+
+
 def _normalize_token_teams(teams: Optional[List]) -> List[str]:
     """
     Normalize token teams to list of team IDs.
@@ -372,6 +429,12 @@ def _get_token_teams_from_request(request: Request) -> Optional[List[str]]:
         >>> main._get_token_teams_from_request(req)
         []
     """
+    internal_auth_context = _get_internal_mcp_auth_context(request)
+    if isinstance(internal_auth_context, dict) and "teams" in internal_auth_context:
+        internal_teams = internal_auth_context.get("teams")
+        if internal_teams is None or isinstance(internal_teams, list):
+            return internal_teams
+
     # SECURITY: First check request.state.token_teams (already normalized by auth.py)
     # This is the preferred path as auth.py has already applied normalize_token_teams
     # Use getattr with a sentinel to distinguish "not set" from "set to None"
@@ -432,6 +495,15 @@ def _get_rpc_filter_context(request: Request, user) -> tuple:
     # Check if user is admin - MUST come from token, not DB user
     # This ensures that tokens with restricted scope (empty teams) don't inherit admin bypass
     is_admin = False
+    internal_auth_context = _get_internal_mcp_auth_context(request)
+    if isinstance(internal_auth_context, dict):
+        if user_email is None:
+            user_email = internal_auth_context.get("email")
+        is_admin = bool(internal_auth_context.get("is_admin", False))
+        if token_teams is not None and len(token_teams) == 0:
+            is_admin = False
+        return user_email, token_teams, is_admin
+
     cached = getattr(request.state, "_jwt_verified_payload", None)
     if cached and isinstance(cached, tuple) and len(cached) == 2:
         _, payload = cached
@@ -456,6 +528,9 @@ def _has_verified_jwt_payload(request: Request) -> bool:
     Returns:
         ``True`` when a verified payload tuple is present, otherwise ``False``.
     """
+    internal_auth_context = _get_internal_mcp_auth_context(request)
+    if isinstance(internal_auth_context, dict):
+        return True
     cached = getattr(request.state, "_jwt_verified_payload", None)
     return bool(cached and isinstance(cached, tuple) and len(cached) == 2 and cached[1])
 
@@ -541,6 +616,13 @@ def _extract_scoped_permissions(request: Request) -> set[str] | None:
         None: no explicit scope cap (empty permissions or no JWT — defer to RBAC)
         set: explicit permission set (may contain '*' for wildcard)
     """
+    internal_auth_context = _get_internal_mcp_auth_context(request)
+    if isinstance(internal_auth_context, dict):
+        permissions = internal_auth_context.get("scoped_permissions")
+        if not permissions:
+            return None
+        return set(permissions)
+
     cached = getattr(request.state, "_jwt_verified_payload", None)
     if not cached or not isinstance(cached, tuple) or len(cached) != 2:
         return None
@@ -6060,6 +6142,19 @@ async def remove_root(
 @utility_router.post("/rpc/")
 @utility_router.post("/rpc")
 async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+    """Handle authenticated public RPC requests."""
+    return await _handle_rpc_authenticated(request, db=db, user=user)
+
+
+@utility_router.post("/_internal/mcp/rpc/")
+@utility_router.post("/_internal/mcp/rpc")
+async def handle_internal_mcp_rpc(request: Request, db: Session = Depends(get_db)):
+    """Handle trusted MCP dispatch forwarded from the local Rust runtime."""
+    user = _build_internal_mcp_forwarded_user(request)
+    return await _handle_rpc_authenticated(request, db=db, user=user)
+
+
+async def _handle_rpc_authenticated(request: Request, db: Session, user):
     """Handle RPC requests.
 
     Args:
@@ -6122,6 +6217,11 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         _cached = getattr(request.state, "_jwt_verified_payload", None)
         _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
         _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
+        _internal_auth_context = _get_internal_mcp_auth_context(request)
+        if (not _token_scopes) and isinstance(_internal_auth_context, dict):
+            _scoped_server_id = _internal_auth_context.get("scoped_server_id")
+            if isinstance(_scoped_server_id, str) and _scoped_server_id:
+                _token_scopes = {"server_id": _scoped_server_id}
         _token_server_id = _token_scopes.get("server_id") if _token_scopes else None
 
         if server_id:

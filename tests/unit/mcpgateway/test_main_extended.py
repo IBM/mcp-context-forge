@@ -13,6 +13,7 @@ error handlers, and startup logic.
 # Standard
 import builtins
 import asyncio
+import base64
 import importlib.util
 import json
 from pathlib import Path
@@ -45,6 +46,7 @@ from mcpgateway.main import (
     export_configuration,
     export_selective_configuration,
     get_a2a_agent,
+    handle_internal_mcp_rpc,
     handle_rpc,
     import_configuration,
     jsonpath_modifier,
@@ -4173,6 +4175,53 @@ class TestRpcHandling:
         assert len(result["result"]["tools"]) == 1
         mock_list_tools.assert_awaited_once()
         mock_list_server_tools.assert_not_awaited()
+
+    async def test_handle_internal_mcp_rpc_uses_forwarded_auth_context(self):
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": True,
+                        "token_use": "session",
+                        "scoped_permissions": ["tools.read"],
+                        "scoped_server_id": "srv-scoped",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        with patch("mcpgateway.main._handle_rpc_authenticated", new=AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": "1"})) as mock_dispatch:
+            result = await handle_internal_mcp_rpc(request, db=MagicMock())
+
+        assert result["jsonrpc"] == "2.0"
+        forwarded_user = mock_dispatch.await_args.kwargs["user"]
+        assert forwarded_user["email"] == "user@example.com"
+        assert forwarded_user["is_admin"] is True
+        assert request.state.token_teams == ["team-a"]
+
+    async def test_handle_internal_mcp_rpc_rejects_non_loopback_requests(self):
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="10.0.0.2")
+
+        with pytest.raises(HTTPException) as excinfo:
+            await handle_internal_mcp_rpc(request, db=MagicMock())
+
+        assert excinfo.value.status_code == 403
 
     async def test_handle_rpc_list_tools_with_cursor(self):
         payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}

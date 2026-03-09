@@ -243,6 +243,10 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:8787",
         description="Base URL for the experimental Rust MCP runtime sidecar.",
     )
+    experimental_rust_mcp_runtime_uds: Optional[str] = Field(
+        default=None,
+        description="Optional Unix domain socket path for the experimental Rust MCP runtime sidecar.",
+    )
     experimental_rust_mcp_runtime_timeout_seconds: int = Field(
         default=30,
         ge=1,
@@ -1843,6 +1847,20 @@ Disallow: /
         if info.data and "well_known_security_txt" in info.data:
             return bool(info.data["well_known_security_txt"].strip())
         return bool(v)
+
+    @field_validator("experimental_rust_mcp_runtime_uds", mode="after")
+    @classmethod
+    def _validate_experimental_rust_mcp_runtime_uds(cls, value: Optional[str]) -> Optional[str]:
+        """Validate the optional UDS path used for the Rust MCP runtime sidecar."""
+        if value in (None, ""):
+            return None
+
+        uds_path = Path(value).expanduser()
+        if not uds_path.is_absolute():
+            raise ValueError("experimental_rust_mcp_runtime_uds must be an absolute path")
+        if not uds_path.parent.exists():
+            raise ValueError(f"experimental_rust_mcp_runtime_uds parent directory does not exist: {uds_path.parent}")
+        return str(uds_path)
 
     # -------------------------------
     # Flexible list parsing for envs
