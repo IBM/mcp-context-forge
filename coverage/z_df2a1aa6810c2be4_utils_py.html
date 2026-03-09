@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/plugins/framework/utils.py: 87%</title>
+    <title>Coverage for mcpgateway/plugins/framework/utils.py: 99%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;plugins&#8201;/&#8201;framework&#8201;/&#8201;utils.py</b>:
-            <span class="pc_cov">87%</span>
+            <span class="pc_cov">99%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">91 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">79<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">12<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">90<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">1<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_df2a1aa6810c2be4_validators_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-03 18:07 +0000
+            created at 2026-03-09 03:05 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -145,7 +145,7 @@
     <p class="pln"><span class="n"><a id="t63" href="#t63">63</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t64" href="#t64">64</a></span><span class="t">    <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">v</span><span class="op">,</span> <span class="nam">list</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t65" href="#t65">65</a></span><span class="t">        <span class="key">return</span> <span class="op">[</span><span class="nam">coerce_nested</span><span class="op">(</span><span class="nam">item</span><span class="op">)</span> <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">item</span><span class="op">,</span> <span class="nam">dict</span><span class="op">)</span> <span class="key">else</span> <span class="nam">item</span> <span class="key">for</span> <span class="nam">item</span> <span class="key">in</span> <span class="nam">v</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t66" href="#t66">66</a></span><span class="t">    <span class="key">return</span> <span class="nam">v</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t66" href="#t66">66</a></span><span class="t">    <span class="key">return</span> <span class="nam">v</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t68" href="#t68">68</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t69" href="#t69">69</a></span><span class="t"><span class="nam">_COERCE_MAX_DEPTH</span> <span class="op">=</span> <span class="num">20</span>&nbsp;</span><span class="r"></span></p>
@@ -179,18 +179,18 @@
     <p class="pln"><span class="n"><a id="t97" href="#t97">97</a></span><span class="t"><span class="str">        True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t98" href="#t98">98</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t99" href="#t99">99</a></span><span class="t">    <span class="key">if</span> <span class="nam">_depth</span> <span class="op">>=</span> <span class="nam">_COERCE_MAX_DEPTH</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t100" href="#t100">100</a></span><span class="t">        <span class="key">return</span> <span class="nam">v</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t100" href="#t100">100</a></span><span class="t">        <span class="key">return</span> <span class="nam">v</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t101" href="#t101">101</a></span><span class="t">    <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">v</span><span class="op">,</span> <span class="nam">BaseModel</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t102" href="#t102">102</a></span><span class="t">        <span class="key">return</span> <span class="nam">v</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t103" href="#t103">103</a></span><span class="t">    <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">v</span><span class="op">,</span> <span class="nam">dict</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t">        <span class="key">if</span> <span class="nam">len</span><span class="op">(</span><span class="nam">v</span><span class="op">)</span> <span class="op">></span> <span class="nam">_COERCE_MAX_BREADTH</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"coerce_nested: dict has %d keys (limit %d); returning as plain dict"</span><span class="op">,</span> <span class="nam">len</span><span class="op">(</span><span class="nam">v</span><span class="op">)</span><span class="op">,</span> <span class="nam">_COERCE_MAX_BREADTH</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t">            <span class="key">return</span> <span class="nam">v</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"coerce_nested: dict has %d keys (limit %d); returning as plain dict"</span><span class="op">,</span> <span class="nam">len</span><span class="op">(</span><span class="nam">v</span><span class="op">)</span><span class="op">,</span> <span class="nam">_COERCE_MAX_BREADTH</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t">            <span class="key">return</span> <span class="nam">v</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">        <span class="key">return</span> <span class="nam">StructuredData</span><span class="op">(</span><span class="op">**</span><span class="op">{</span><span class="nam">k</span><span class="op">:</span> <span class="nam">coerce_nested</span><span class="op">(</span><span class="nam">val</span><span class="op">,</span> <span class="nam">_depth</span><span class="op">=</span><span class="nam">_depth</span> <span class="op">+</span> <span class="num">1</span><span class="op">)</span> <span class="key">for</span> <span class="nam">k</span><span class="op">,</span> <span class="nam">val</span> <span class="key">in</span> <span class="nam">v</span><span class="op">.</span><span class="nam">items</span><span class="op">(</span><span class="op">)</span><span class="op">}</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">    <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">v</span><span class="op">,</span> <span class="nam">list</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t">        <span class="key">if</span> <span class="nam">len</span><span class="op">(</span><span class="nam">v</span><span class="op">)</span> <span class="op">></span> <span class="nam">_COERCE_MAX_BREADTH</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"coerce_nested: list has %d items (limit %d); skipping coercion"</span><span class="op">,</span> <span class="nam">len</span><span class="op">(</span><span class="nam">v</span><span class="op">)</span><span class="op">,</span> <span class="nam">_COERCE_MAX_BREADTH</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t">            <span class="key">return</span> <span class="nam">v</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"coerce_nested: list has %d items (limit %d); skipping coercion"</span><span class="op">,</span> <span class="nam">len</span><span class="op">(</span><span class="nam">v</span><span class="op">)</span><span class="op">,</span> <span class="nam">_COERCE_MAX_BREADTH</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t">            <span class="key">return</span> <span class="nam">v</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t112" href="#t112">112</a></span><span class="t">        <span class="key">return</span> <span class="op">[</span><span class="nam">coerce_nested</span><span class="op">(</span><span class="nam">item</span><span class="op">,</span> <span class="nam">_depth</span><span class="op">=</span><span class="nam">_depth</span> <span class="op">+</span> <span class="num">1</span><span class="op">)</span> <span class="key">for</span> <span class="nam">item</span> <span class="key">in</span> <span class="nam">v</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t113" href="#t113">113</a></span><span class="t">    <span class="key">return</span> <span class="nam">v</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t114" href="#t114">114</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -235,11 +235,11 @@
     <p class="pln"><span class="n"><a id="t153" href="#t153">153</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t154" href="#t154">154</a></span><span class="t">    <span class="com"># Block path-traversal-style names and names with dangerous characters</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t155" href="#t155">155</a></span><span class="t">    <span class="key">if</span> <span class="str">".."</span> <span class="key">in</span> <span class="nam">mod_name</span> <span class="key">or</span> <span class="str">"/"</span> <span class="key">in</span> <span class="nam">mod_name</span> <span class="key">or</span> <span class="str">"\\"</span> <span class="key">in</span> <span class="nam">mod_name</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t156" href="#t156">156</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ImportError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Plugin module name '</span><span class="op">{</span><span class="nam">mod_name</span><span class="op">}</span><span class="fst">' contains invalid characters.</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t156" href="#t156">156</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ImportError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Plugin module name '</span><span class="op">{</span><span class="nam">mod_name</span><span class="op">}</span><span class="fst">' contains invalid characters.</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t157" href="#t157">157</a></span><span class="t">    <span class="com"># Block dangerous stdlib modules</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t158" href="#t158">158</a></span><span class="t">    <span class="key">for</span> <span class="nam">blocked</span> <span class="key">in</span> <span class="nam">_BLOCKED_MODULE_PREFIXES</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t159" href="#t159">159</a></span><span class="t">        <span class="key">if</span> <span class="nam">mod_name</span> <span class="op">==</span> <span class="nam">blocked</span> <span class="key">or</span> <span class="nam">mod_name</span><span class="op">.</span><span class="nam">startswith</span><span class="op">(</span><span class="nam">blocked</span> <span class="op">+</span> <span class="str">"."</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t">            <span class="key">raise</span> <span class="nam">ImportError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Plugin module '</span><span class="op">{</span><span class="nam">mod_name</span><span class="op">}</span><span class="fst">' is blocked for security reasons.</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t">            <span class="key">raise</span> <span class="nam">ImportError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Plugin module '</span><span class="op">{</span><span class="nam">mod_name</span><span class="op">}</span><span class="fst">' is blocked for security reasons.</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t">    <span class="key">return</span> <span class="nam">importlib</span><span class="op">.</span><span class="nam">import_module</span><span class="op">(</span><span class="nam">mod_name</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -296,12 +296,12 @@
     <p class="pln"><span class="n"><a id="t214" href="#t214">214</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t215" href="#t215">215</a></span><span class="t">    <span class="com"># Check tenant ID</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t216" href="#t216">216</a></span><span class="t">    <span class="key">if</span> <span class="nam">condition</span><span class="op">.</span><span class="nam">tenant_ids</span> <span class="key">and</span> <span class="nam">context</span><span class="op">.</span><span class="nam">tenant_id</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">condition</span><span class="op">.</span><span class="nam">tenant_ids</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t217" href="#t217">217</a></span><span class="t">        <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t217" href="#t217">217</a></span><span class="t">        <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">    <span class="com"># Check user patterns (simple contains check, could be regex)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t220" href="#t220">220</a></span><span class="t">    <span class="key">if</span> <span class="nam">condition</span><span class="op">.</span><span class="nam">user_patterns</span> <span class="key">and</span> <span class="nam">context</span><span class="op">.</span><span class="nam">user</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t221" href="#t221">221</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">any</span><span class="op">(</span><span class="nam">pattern</span> <span class="key">in</span> <span class="nam">context</span><span class="op">.</span><span class="nam">user</span> <span class="key">for</span> <span class="nam">pattern</span> <span class="key">in</span> <span class="nam">condition</span><span class="op">.</span><span class="nam">user_patterns</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t222" href="#t222">222</a></span><span class="t">            <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t222" href="#t222">222</a></span><span class="t">            <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t223" href="#t223">223</a></span><span class="t">    <span class="key">return</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t224" href="#t224">224</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t225" href="#t225">225</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -434,7 +434,7 @@
     <p class="run"><span class="n"><a id="t352" href="#t352">352</a></span><span class="t">    <span class="key">for</span> <span class="nam">condition</span> <span class="key">in</span> <span class="nam">conditions</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t353" href="#t353">353</a></span><span class="t">        <span class="com"># First check GlobalContext conditions</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t354" href="#t354">354</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">matches</span><span class="op">(</span><span class="nam">condition</span><span class="op">,</span> <span class="nam">context</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t355" href="#t355">355</a></span><span class="t">            <span class="key">continue</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t355" href="#t355">355</a></span><span class="t">            <span class="key">continue</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t356" href="#t356">356</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t357" href="#t357">357</a></span><span class="t">        <span class="com"># Then check payload-specific conditions</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t358" href="#t358">358</a></span><span class="t">        <span class="nam">condition_attr</span> <span class="op">=</span> <span class="nam">condition_attr_map</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">hook_type</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -490,7 +490,7 @@
             <a class="nav" href="z_df2a1aa6810c2be4_validators_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-03 18:07 +0000
+            created at 2026-03-09 03:05 +0000
         </p>
     </div>
 </footer>

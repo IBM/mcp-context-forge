@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/utils/error_formatter.py: 91%</title>
+    <title>Coverage for mcpgateway/utils/error_formatter.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;utils&#8201;/&#8201;error_formatter.py</b>:
-            <span class="pc_cov">91%</span>
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">56 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">51<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">5<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">56<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_095c6c0b4411cdd5_gateway_access_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-03 18:07 +0000
+            created at 2026-03-09 03:05 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -387,10 +387,10 @@
     <p class="run run2"><span class="n"><a id="t305" href="#t305">305</a></span><span class="t">                <span class="key">or</span> <span class="str">"uq_email_api_tokens_user_email_name"</span> <span class="key">in</span> <span class="nam">error_str</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t306" href="#t306">306</a></span><span class="t">                <span class="key">or</span> <span class="op">(</span><span class="str">"email_api_tokens.user_email"</span> <span class="key">in</span> <span class="nam">error_str</span> <span class="key">and</span> <span class="str">"email_api_tokens.name"</span> <span class="key">in</span> <span class="nam">error_str</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t307" href="#t307">307</a></span><span class="t">            <span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t308" href="#t308">308</a></span><span class="t">                <span class="key">return</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t309" href="#t309">309</a></span><span class="t">                    <span class="str">"message"</span><span class="op">:</span> <span class="str">"A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t310" href="#t310">310</a></span><span class="t">                    <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t311" href="#t311">311</a></span><span class="t">                <span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t308" href="#t308">308</a></span><span class="t">                <span class="key">return</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t309" href="#t309">309</a></span><span class="t">                    <span class="str">"message"</span><span class="op">:</span> <span class="str">"A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t310" href="#t310">310</a></span><span class="t">                    <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t311" href="#t311">311</a></span><span class="t">                <span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t312" href="#t312">312</a></span><span class="t">            <span class="key">if</span> <span class="str">"UNIQUE constraint failed"</span> <span class="key">in</span> <span class="nam">error_str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t313" href="#t313">313</a></span><span class="t">                <span class="key">if</span> <span class="str">"gateways.url"</span> <span class="key">in</span> <span class="nam">error_str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t314" href="#t314">314</a></span><span class="t">                    <span class="key">return</span> <span class="op">{</span><span class="str">"message"</span><span class="op">:</span> <span class="str">"A gateway with this URL already exists"</span><span class="op">,</span> <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
@@ -404,10 +404,10 @@
     <p class="run"><span class="n"><a id="t322" href="#t322">322</a></span><span class="t">                    <span class="key">return</span> <span class="op">{</span><span class="str">"message"</span><span class="op">:</span> <span class="str">"A server with this name already exists"</span><span class="op">,</span> <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t323" href="#t323">323</a></span><span class="t">                <span class="key">elif</span> <span class="str">"prompts.name"</span> <span class="key">in</span> <span class="nam">error_str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t324" href="#t324">324</a></span><span class="t">                    <span class="key">return</span> <span class="op">{</span><span class="str">"message"</span><span class="op">:</span> <span class="str">"A prompt with this name already exists"</span><span class="op">,</span> <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t325" href="#t325">325</a></span><span class="t">                <span class="key">elif</span> <span class="str">"servers.id"</span> <span class="key">in</span> <span class="nam">error_str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t326" href="#t326">326</a></span><span class="t">                    <span class="key">return</span> <span class="op">{</span><span class="str">"message"</span><span class="op">:</span> <span class="str">"A server with this ID already exists"</span><span class="op">,</span> <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t327" href="#t327">327</a></span><span class="t">                <span class="key">elif</span> <span class="str">"a2a_agents.slug"</span> <span class="key">in</span> <span class="nam">error_str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t328" href="#t328">328</a></span><span class="t">                    <span class="key">return</span> <span class="op">{</span><span class="str">"message"</span><span class="op">:</span> <span class="str">"An A2A agent with this name already exists"</span><span class="op">,</span> <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t325" href="#t325">325</a></span><span class="t">                <span class="key">elif</span> <span class="str">"servers.id"</span> <span class="key">in</span> <span class="nam">error_str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t326" href="#t326">326</a></span><span class="t">                    <span class="key">return</span> <span class="op">{</span><span class="str">"message"</span><span class="op">:</span> <span class="str">"A server with this ID already exists"</span><span class="op">,</span> <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t327" href="#t327">327</a></span><span class="t">                <span class="key">elif</span> <span class="str">"a2a_agents.slug"</span> <span class="key">in</span> <span class="nam">error_str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t328" href="#t328">328</a></span><span class="t">                    <span class="key">return</span> <span class="op">{</span><span class="str">"message"</span><span class="op">:</span> <span class="str">"An A2A agent with this name already exists"</span><span class="op">,</span> <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t329" href="#t329">329</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t330" href="#t330">330</a></span><span class="t">            <span class="key">elif</span> <span class="str">"FOREIGN KEY constraint failed"</span> <span class="key">in</span> <span class="nam">error_str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t331" href="#t331">331</a></span><span class="t">                <span class="key">return</span> <span class="op">{</span><span class="str">"message"</span><span class="op">:</span> <span class="str">"Referenced item not found"</span><span class="op">,</span> <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
@@ -427,7 +427,7 @@
             <a class="nav" href="z_095c6c0b4411cdd5_gateway_access_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-03 18:07 +0000
+            created at 2026-03-09 03:05 +0000
         </p>
     </div>
 </footer>
