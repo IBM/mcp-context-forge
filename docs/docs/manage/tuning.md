@@ -851,10 +851,213 @@ environment:
 
 ---
 
-## 9 - Security tips while tuning
+## 9 - MCP Streamable HTTP Transport Tuning
+
+The MCP Streamable HTTP endpoint (`/servers/{id}/mcp`) has its own performance characteristics distinct from the REST API (`/rpc`). This section covers settings that specifically affect MCP protocol performance.
+
+### Critical Settings
+
+These settings have the largest measured impact on MCP throughput:
+
+| Setting | Recommended | Impact | Notes |
+|---------|-------------|--------|-------|
+| `MCP_SESSION_POOL_ENABLED` | `true` | ~10% RPS improvement | Reuses upstream MCP server connections |
+| `JSON_RESPONSE_ENABLED` | `true` | **Required** — disabling breaks JSON clients | Returns JSON instead of SSE framing |
+| `USE_STATEFUL_SESSIONS` | `false` | **Required** for multi-replica | Stateful sessions are per-process |
+| `DB_POOL_CLASS` | `queue` | **Required** — `null` causes ~55% RPS loss | QueuePool with PgBouncer |
+| `AUTH_CACHE_ENABLED` | `true` | Significant — reduces per-request DB queries | Caches user/team/role lookups |
+| `CACHE_TYPE` | `redis` | Significant — shared cache across workers | Enables cross-worker caching |
+
+### Settings with Negligible Impact
+
+These settings were tested and found to have less than ~3% effect on MCP throughput. Tune them for correctness, not performance:
+
+| Setting | Why Negligible |
+|---------|---------------|
+| `VALIDATION_MIDDLEWARE_ENABLED` | MCP requests bypass most validation |
+| `DB_METRICS_RECORDING_ENABLED` | Writes are buffered, minimal per-request overhead |
+| `REGISTRY_CACHE_ENABLED` | MCP handlers use their own DB queries, not the registry cache |
+| `PERFORMANCE_TRACKING_ENABLED` | Lightweight in-memory tracking |
+| `TOKEN_USAGE_LOGGING_ENABLED` | Rate-limited to one DB write per 5 minutes per token |
+| `CORRELATION_ID_ENABLED` | Adds/reads one header per request |
+
+### MCP SDK / FastMCP Tunables
+
+When running MCP servers behind the gateway:
+
+| Setting | Recommendation | Why |
+|---------|---------------|-----|
+| `MCP_SESSION_POOL_HEALTH_CHECK_METHODS` | `["skip"]` for max throughput | Skips health checks on pooled sessions |
+| `MCP_SESSION_POOL_CLEANUP_TIMEOUT` | `0.5` | Fast cleanup of stale sessions |
+| Upstream `stateless_http` | `true` for multi-replica servers | Avoids session affinity requirements |
+| Upstream `json_response` | `true` for unary tool calls | Removes SSE framing overhead |
+| `terminate_on_close` | `false` for pooled sessions | Prevents session teardown on reuse |
+| Streamable HTTP over SSE | Prefer Streamable HTTP | Recommended production transport |
+
+### MCP Worker Tuning
+
+The gateway worker count (`GUNICORN_WORKERS`) directly affects MCP throughput:
+
+- Too few workers: CPU underutilized, low RPS
+- Too many workers: Excessive context switching, DB connection pressure
+- **Rule of thumb:** Match `GUNICORN_WORKERS` to the available CPU cores per container. 24 workers per 8-CPU container is well-tuned for MCP workloads.
+
+### Auth Cache TTL Guidance
+
+The auth cache prevents repeated database lookups for the same JWT token. Higher TTLs reduce DB pressure but delay permission changes:
+
+| Setting | Max Allowed | Recommendation |
+|---------|-------------|---------------|
+| `AUTH_CACHE_USER_TTL` | 300s | 300s (max) for performance |
+| `AUTH_CACHE_TEAM_TTL` | 300s | 300s (max) for performance |
+| `AUTH_CACHE_ROLE_TTL` | 300s | 300s (max) for performance |
+| `AUTH_CACHE_REVOCATION_TTL` | 120s | 120s (max) — security-sensitive |
+| `AUTH_CACHE_BATCH_QUERIES` | — | `true` — batches three queries into one |
+
+---
+
+## 10 - Disable unused features
+
+ContextForge has many optional features that are enabled by default for completeness but consume CPU, memory, or database I/O even when not used. Disabling features you do not need is a free performance win that does not require additional resources.
+
+### High-impact features to disable
+
+These features have measurable per-request or background overhead. Disable any you are not actively using:
+
+| Feature | Setting | Default | Overhead When Enabled |
+|---------|---------|---------|----------------------|
+| **Admin UI** | `MCPGATEWAY_UI_ENABLED` | `false` | Template rendering CPU, admin middleware checks on every request |
+| **Admin API** | `MCPGATEWAY_ADMIN_API_ENABLED` | `false` | Exposes additional endpoints, admin auth middleware |
+| **A2A protocol** | `MCPGATEWAY_A2A_ENABLED` | `true` | A2A router registration, agent discovery, metrics tracking |
+| **A2A metrics** | `MCPGATEWAY_A2A_METRICS_ENABLED` | `true` | DB writes per A2A invocation |
+| **LLM chat** | `LLMCHAT_ENABLED` | `true` | Session management, Redis locks, chat routing middleware |
+| **Catalog** | `MCPGATEWAY_CATALOG_ENABLED` | `true` | Catalog server sync, background health checks |
+| **Plugins** | `PLUGINS_ENABLED` | `false` | Plugin discovery, hook dispatch on every request |
+| **DB metrics recording** | `DB_METRICS_RECORDING_ENABLED` | `true` | One buffered DB write per tool/resource/prompt execution |
+| **Token usage logging** | `TOKEN_USAGE_LOGGING_ENABLED` | `true` | DB write per unique token per 5-minute window |
+| **Structured logging (DB)** | `STRUCTURED_LOGGING_DATABASE_ENABLED` | `false` | DB writes per log entry (high overhead) |
+| **Audit trail** | `AUDIT_TRAIL_ENABLED` | `false` | DB write per mutating request (high overhead) |
+| **Security logging** | `SECURITY_LOGGING_ENABLED` | `false` | DB writes for auth events |
+| **Observability** | `OBSERVABILITY_ENABLED` | `false` | Span creation, trace storage, request instrumentation |
+| **Prometheus** | `ENABLE_METRICS` | `false` | Per-request histogram updates, `/metrics` endpoint |
+| **Net connections count** | `MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_ENABLED` | `true` | `psutil.net_connections()` call in performance stats |
+
+### Medium-impact features
+
+These add some overhead but are useful in most deployments. Disable only if you are certain you do not need them:
+
+| Feature | Setting | Default | When to Disable |
+|---------|---------|---------|-----------------|
+| **Correlation ID** | `CORRELATION_ID_ENABLED` | `true` | If your external proxy already handles trace IDs |
+| **Performance tracking** | `PERFORMANCE_TRACKING_ENABLED` | `true` | If using external APM (Datadog, New Relic, etc.) |
+| **Metrics aggregation** | `METRICS_AGGREGATION_ENABLED` | `true` | If using external metrics (Prometheus, Grafana) |
+| **Metrics rollup** | `METRICS_ROLLUP_ENABLED` | `true` | If raw metrics are exported externally |
+| **Metrics cleanup** | `METRICS_CLEANUP_ENABLED` | `true` | Only disable if you manage retention externally |
+| **Elicitation** | `MCPGATEWAY_ELICITATION_ENABLED` | `true` | If no MCP clients use elicitation |
+| **Tool cancellation** | `MCPGATEWAY_TOOL_CANCELLATION_ENABLED` | `true` | If clients do not cancel in-flight tool calls |
+| **SSE keepalive** | `SSE_KEEPALIVE_ENABLED` | `true` | If not using SSE transport |
+| **Dynamic client registration** | `DCR_ENABLED` | `true` | If not using OAuth DCR flow |
+| **OAuth discovery** | `OAUTH_DISCOVERY_ENABLED` | `true` | If not using OAuth |
+
+### Low-impact features (safe to leave enabled)
+
+These have negligible runtime cost and are generally worth keeping:
+
+| Feature | Setting | Default | Notes |
+|---------|---------|---------|-------|
+| Security headers | `SECURITY_HEADERS_ENABLED` | `true` | Adds static headers, near-zero CPU |
+| CORS | `CORS_ENABLED` | `true` | Standard cross-origin handling |
+| SSRF protection | `SSRF_PROTECTION_ENABLED` | `true` | URL validation on registration only |
+| Password policy | `PASSWORD_POLICY_ENABLED` | `true` | Checked only during password set/change |
+| Well-known endpoints | `WELL_KNOWN_ENABLED` | `true` | Rarely hit, cached responses |
+| Auth cache | `AUTH_CACHE_ENABLED` | `true` | **Improves** performance; do not disable |
+| Registry cache | `REGISTRY_CACHE_ENABLED` | `true` | **Improves** performance; do not disable |
+| Tool lookup cache | `TOOL_LOOKUP_CACHE_ENABLED` | `true` | **Improves** performance; do not disable |
+
+### Deployment profiles
+
+**MCP-only deployment** (maximum MCP protocol throughput):
+
+```bash
+# Disable everything not needed for MCP tool serving
+MCPGATEWAY_UI_ENABLED=false
+MCPGATEWAY_ADMIN_API_ENABLED=false
+MCPGATEWAY_A2A_ENABLED=false
+MCPGATEWAY_CATALOG_ENABLED=false
+LLMCHAT_ENABLED=false
+PLUGINS_ENABLED=false
+OBSERVABILITY_ENABLED=false
+ENABLE_METRICS=false
+AUDIT_TRAIL_ENABLED=false
+SECURITY_LOGGING_ENABLED=false
+STRUCTURED_LOGGING_DATABASE_ENABLED=false
+CORRELATION_ID_ENABLED=false
+DB_METRICS_RECORDING_ENABLED=false
+MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_ENABLED=false
+COMPRESSION_ENABLED=false          # Let nginx handle compression
+DISABLE_ACCESS_LOG=true
+
+# Keep these enabled
+AUTH_CACHE_ENABLED=true
+REGISTRY_CACHE_ENABLED=true
+MCP_SESSION_POOL_ENABLED=true
+CACHE_TYPE=redis
+```
+
+**Full-featured production** (all features, tuned for performance):
+
+```bash
+# Features enabled
+MCPGATEWAY_UI_ENABLED=true
+MCPGATEWAY_ADMIN_API_ENABLED=true
+MCPGATEWAY_A2A_ENABLED=true
+PLUGINS_ENABLED=true
+
+# Expensive features disabled unless needed
+OBSERVABILITY_ENABLED=false         # Enable only when tracing needed
+ENABLE_METRICS=false                # Enable with Prometheus
+AUDIT_TRAIL_ENABLED=false           # Enable for compliance
+STRUCTURED_LOGGING_DATABASE_ENABLED=false
+SECURITY_LOGGING_ENABLED=false
+DB_METRICS_RECORDING_ENABLED=true   # Keep for built-in analytics
+
+# Caching maximized
+AUTH_CACHE_ENABLED=true
+AUTH_CACHE_BATCH_QUERIES=true
+REGISTRY_CACHE_ENABLED=true
+MCP_SESSION_POOL_ENABLED=true
+CACHE_TYPE=redis
+```
+
+**Development / debugging** (full observability, relaxed performance):
+
+```bash
+# Everything on for debugging
+MCPGATEWAY_UI_ENABLED=true
+MCPGATEWAY_ADMIN_API_ENABLED=true
+OBSERVABILITY_ENABLED=true
+ENABLE_METRICS=true
+DB_METRICS_RECORDING_ENABLED=true
+DB_QUERY_LOG_ENABLED=true           # N+1 detection
+STRUCTURED_LOGGING_DATABASE_ENABLED=true
+LOG_LEVEL=INFO
+CORRELATION_ID_ENABLED=true
+PERFORMANCE_TRACKING_ENABLED=true
+```
+
+---
+
+## 11 - Security tips while tuning
 
 * Never commit real `JWT_SECRET_KEY`, DB passwords, or tokens-use `.env.example` as a template.
 * Prefer platform secrets (K8s Secrets, Code Engine secrets) over baking creds into the image.
 * If you enable `gevent`/`eventlet`, pin their versions and run **bandit** or **trivy** scans.
 
 ---
+
+## See Also
+
+- [Performance Profiling Guide](../development/profiling.md) - py-spy, memray, PostgreSQL profiling, MCP bottleneck triage
+- [Database Performance Guide](../development/db-performance.md) - N+1 detection, query logging, query counting
+- [Performance Architecture](../architecture/performance-architecture.md) - MCP request path, caching layers, scaling capacity
+- [Scaling Guide](scale.md) - Production scaling configuration

@@ -93,7 +93,7 @@ This diagram showcases the performance-optimized architecture of ContextForge, h
 │  │  │                              MULTI-LEVEL CACHING (80-95% DB reduction)                       │   ││
 │  │  │  ┌────────────────┐ ┌────────────────┐ ┌────────────────┐ ┌────────────────┐ ┌─────────────┐ │   ││
 │  │  │  │   JWT Cache    │ │  Auth Cache    │ │ Registry Cache │ │  Admin Stats   │ │ GlobalConfig│ │   ││
-│  │  │  │  TTL: 30s      │ │  TTL: 60s      │ │  TTL: 15-20s   │ │   TTL: 30-60s  │ │   TTL: 60s  │ │   ││
+│  │  │  │  TTL: 30s      │ │  TTL: 120-300s │ │  TTL: 20-300s  │ │   TTL: 30-120s │ │   TTL: 60s  │ │   ││
 │  │  │  │  <1ms auth     │ │  0-1 queries   │ │  95%+ hit rate │ │  Dashboard opt │ │  42K→0 qry  │ │   ││
 │  │  │  └────────────────┘ └────────────────┘ └────────────────┘ └────────────────┘ └─────────────┘ │   ││
 │  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘   ││
@@ -169,6 +169,95 @@ This diagram showcases the performance-optimized architecture of ContextForge, h
 └─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+## MCP Streamable HTTP Request Path
+
+Every MCP request to `/servers/{server_id}/mcp` passes through these layers:
+
+```
+Client Request (JSON-RPC over HTTP POST)
+    │
+    ▼
+┌─────────────────────────────────────────────┐
+│  NGINX (Edge/Proxy)                         │
+│  • least_conn load balancing                │
+│  • keepalive 512 per worker                 │
+│  • No caching for /mcp (POST requests)      │
+└─────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────┐
+│  GATEWAY MIDDLEWARE STACK                    │
+│  1. SecurityHeaders, CORS                   │
+│  2. MCPPathRewrite + Auth                   │
+│     • JWT verification (HMAC)               │
+│     • Token revocation check (DB/cache)     │
+│     • User lookup (DB/cache)                │
+│     • Team resolution (DB/cache)            │
+│  3. Token scoping (Layer 1 auth)            │
+│  4. Request logging                         │
+└─────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────┐
+│  MCP SDK SessionManager                     │
+│  • JSON-RPC envelope parsing                │
+│  • Session tracking (stateless by default)  │
+│  • Context variable propagation             │
+│  • Handler method routing                   │
+└─────────────────────────────────────────────┘
+    │
+    ├── tools/list ─────┐
+    ├── tools/call ─────┤
+    ├── resources/list ─┤
+    ├── prompts/list ───┤
+    └── ping ───────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────┐
+│  MCP HANDLER                                │
+│  • RBAC permission check (Layer 2 auth)     │
+│  • Server/tool lookup (DB query)            │
+│  • For tools/call: upstream proxy           │
+│    via MCP Session Pool (if enabled)        │
+└─────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────┐
+│  UPSTREAM MCP SERVER                        │
+│  (fast_test_server, fast_time, plugins)     │
+│  • Executes tool logic                      │
+│  • Returns JSON-RPC result                  │
+└─────────────────────────────────────────────┘
+```
+
+### Performance Characteristics by Layer
+
+| Layer | Typical Latency | Scaling Bottleneck | Key Tunable |
+|-------|----------------|-------------------|-------------|
+| nginx | <1ms | Not a bottleneck | `keepalive`, `worker_connections` |
+| Middleware + Auth | 5-15ms | Auth DB queries | `AUTH_CACHE_*_TTL`, `AUTH_CACHE_BATCH_QUERIES` |
+| MCP SDK SessionManager | 2-5ms | JSON-RPC parsing, context vars | `JSON_RESPONSE_ENABLED` |
+| RBAC check | 1-5ms | Permission DB queries | Role cache TTL (5 min internal) |
+| tools/list (DB) | 5-10ms | Sequential table scans | `REGISTRY_CACHE_TOOLS_TTL` |
+| tools/call (upstream) | 10-200ms | Upstream server + network | `MCP_SESSION_POOL_ENABLED` |
+
+### Feature Flags and Middleware Overhead
+
+Every enabled feature registers middleware, routers, or background tasks that consume resources even when not actively used. ContextForge has ~90 feature flags; each disabled feature removes its middleware and background tasks from the request path.
+
+The most impactful features to disable when not needed are: admin UI, A2A protocol, LLM chat, catalog, observability, audit trail, and database-backed structured logging. See the [disable unused features](../manage/tuning.md#10---disable-unused-features) section in the tuning guide for deployment profiles.
+
+### Key Architectural Insight
+
+The `/rpc` endpoint and the `/servers/{id}/mcp` endpoint serve the same logical operations (tools/list, tools/call) but follow different code paths:
+
+- **`/rpc`**: Uses Redis-backed caching (registry cache, tool lookup cache) for most lookups. Under load, Redis handles the read pressure, keeping PgBouncer/PostgreSQL near idle.
+- **`/mcp`**: Routes through the MCP SDK session manager, which executes its own handler functions. These handlers query the database via SQLAlchemy for server resolution, tool lookup, and RBAC checks. The auth cache (Redis-backed, TTL up to 300s) mitigates some of this, but RBAC and server/tool lookups still hit the database.
+
+This means that scaling MCP throughput depends heavily on reducing per-request database queries in the MCP transport handlers.
+
+---
+
 ## Component Performance Impact Summary
 
 ### Rust-Powered Components (GIL Bypass)
@@ -192,12 +281,13 @@ This diagram showcases the performance-optimized architecture of ContextForge, h
 
 ### Caching Performance
 
-| Cache Layer | Hit Rate | Latency Reduction | DB Query Reduction |
+| Cache Layer | Hit Rate | TTL (Configurable) | DB Query Reduction |
 |-------------|----------|-------------------|---------------------|
-| **JWT Cache** | >80% | 5-12ms → <1ms | Per-request auth overhead |
-| **Auth Cache** | >90% | 8-15ms → 1-3ms | 3-4 → 0-1 queries/request |
-| **Registry Cache** | 95%+ | Variable | 50-200 → 0-1 queries |
-| **GlobalConfig Cache** | 99%+ | 1ms → 0.00001ms | 42K+ queries eliminated |
+| **JWT Cache** | >80% | 30s | Per-request HMAC verification cached |
+| **Auth Cache** | >90% | 120-300s (max) | 3-4 → 0-1 queries/request (user, team, role, revocation) |
+| **Registry Cache** | 95%+ | 20-300s | 50-200 → 0-1 queries (tools, servers, prompts, resources) |
+| **GlobalConfig Cache** | 99%+ | 60s | 42K+ queries eliminated (passthrough header config) |
+| **MCP Session Pool** | Varies | 300s pool TTL | 10-20x latency improvement for repeated upstream calls |
 
 ### Compression & Bandwidth
 
@@ -209,12 +299,15 @@ This diagram showcases the performance-optimized architecture of ContextForge, h
 
 ### Scaling Capacity
 
-| Configuration | Capacity |
-|---------------|----------|
-| Single pod (16 workers) | ~1,600 RPS |
-| 3 pods (default) | ~4,800 RPS |
-| 10 pods (HPA scaled) | ~16,000 RPS |
-| 50 pods (max) | ~80,000 RPS |
+Capacity varies by workload type. MCP Streamable HTTP requests are more resource-intensive per request than REST API calls due to additional middleware, auth, and upstream proxy overhead.
+
+| Configuration | REST API (`/rpc`) | MCP Streamable HTTP (`/mcp`) |
+|---------------|-------------------|------------------------------|
+| Single pod (16-24 workers) | ~1,600 RPS | ~250-400 RPS |
+| 3 pods (default) | ~4,800 RPS | ~750-800 RPS |
+| 10 pods (HPA scaled) | ~16,000 RPS | ~2,500-3,000 RPS |
+
+MCP throughput is lower because each request includes auth/RBAC database queries that the `/rpc` endpoint caches in Redis. With session pool enabled (`MCP_SESSION_POOL_ENABLED=true`), upstream MCP server latency is amortized across pooled connections, providing ~10% throughput improvement.
 
 ## Key Performance Features by Issue
 
@@ -323,6 +416,12 @@ Future Architecture (Python 3.14+):
 │  Performance: Near-linear scaling with CPU cores            │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+## See Also
+
+- [Gateway Tuning Guide](../manage/tuning.md) - Environment variables, MCP transport settings, session pool, connection pool tuning
+- [Performance Profiling Guide](../development/profiling.md) - py-spy, memray, PostgreSQL profiling, MCP bottleneck triage
+- [Database Performance Guide](../development/db-performance.md) - N+1 detection, query logging, DB vs transport bottleneck triage
 
 ## Quick Reference Commands
 

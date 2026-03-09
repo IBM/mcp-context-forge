@@ -539,6 +539,71 @@ ORDER BY seq_tup_read DESC LIMIT 10;
 
 ---
 
+## MCP Protocol Profiling
+
+The MCP Streamable HTTP transport (`/servers/{id}/mcp`) has a different performance profile from the REST API (`/rpc`). Use the dedicated MCP load test to isolate protocol overhead.
+
+### MCP vs REST: Quick Comparison
+
+```bash
+# Run MCP-only load test
+make load-test-mcp-protocol
+
+# Compare with general load test (includes REST + admin)
+make load-test-cli
+```
+
+The MCP path processes requests through the MCP SDK session manager, which adds JSON-RPC parsing, context variable management, and per-request auth/RBAC database queries. The `/rpc` endpoint uses Redis-backed caching for tool lookups and auth, which the MCP transport path does not fully leverage. Under load, this manifests as significantly higher PgBouncer and PostgreSQL CPU on MCP workloads vs REST workloads for the same RPS.
+
+### Bottleneck Triage Table
+
+Use this table to identify which layer is the bottleneck:
+
+| Symptom | Bottleneck Layer | Investigation |
+|---------|-----------------|---------------|
+| Gateway CPU >300% per replica | Gateway compute (middleware, MCP SDK) | py-spy flamegraph on a gateway worker |
+| PgBouncer CPU >80% | Database connection pressure | Check `pg_stat_activity`, reduce DB queries per request |
+| PostgreSQL CPU >100% | Query overhead (seq scans, RBAC lookups) | `pg_stat_user_tables` for seq scan counts |
+| Redis CPU <1% during MCP load | MCP path not using Redis cache | Compare with `/rpc` which does use Redis |
+| Upstream MCP server CPU high | Tool execution overhead | Profile the upstream MCP server separately |
+| nginx CPU >30% | Proxy overhead (unlikely) | Check keepalive, connection reuse |
+| High p99 but low p50 | Tail latency from GC or lock contention | py-spy dump to check for blocked threads |
+
+### MCP Profiling Session
+
+```bash
+# 1. Reset DB stats
+docker exec mcp-context-forge-postgres-1 psql -U postgres -d mcp -c "SELECT pg_stat_reset();"
+
+# 2. Start MCP-specific load test in background
+make load-test-mcp-protocol &
+
+# 3. Capture container stats during load
+docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" \
+  | grep -E "gateway|postgres|redis|pgbouncer|nginx"
+
+# 4. py-spy flamegraph on a gateway worker
+WORKER_PID=$(docker top mcp-context-forge-gateway-1 | grep worker | head -1 | awk '{print $2}')
+sudo py-spy record -o mcp_flamegraph.svg --pid $WORKER_PID -d 15 --subprocesses
+
+# 5. Check which DB tables are hammered
+docker exec mcp-context-forge-postgres-1 psql -U postgres -d mcp -c "
+SELECT relname, seq_scan, seq_tup_read, idx_scan
+FROM pg_stat_user_tables WHERE seq_tup_read > 0
+ORDER BY seq_tup_read DESC LIMIT 10;"
+
+# 6. Check Redis cache utilization
+docker exec mcp-context-forge-redis-1 redis-cli info stats | grep -E "hits|misses"
+```
+
+**What to look for:**
+
+- If PgBouncer/PostgreSQL CPU is high but Redis is idle, the MCP path is bypassing the cache layer.
+- If gateway CPU is the constraint, look at middleware overhead (auth, RBAC, validation) in the flamegraph.
+- If upstream MCP server CPU is the constraint, the bottleneck is in tool execution, not the gateway.
+
+---
+
 ## Common Performance Issues
 
 ### Issue: High Sequential Scan Count
@@ -690,21 +755,26 @@ except Exception as e:
 
 **Causes:**
 
-- Template rendering overhead
+- Template rendering overhead (admin UI)
 - JSON serialization of large responses
 - Pydantic validation overhead
+- Middleware overhead from enabled-but-unused features
+- Too many gunicorn workers causing context switching
 
 **Solutions:**
 
 - Enable response caching
 - Paginate large result sets
 - Use orjson for serialization (enabled by default)
+- Disable unused features (A2A, catalog, LLM chat, admin UI) — see [disable unused features](../manage/tuning.md#10---disable-unused-features) in the tuning guide
+- Tune `GUNICORN_WORKERS` to match CPU cores (not exceed them)
 
 ---
 
 ## See Also
 
+- [Gateway Tuning Guide](../manage/tuning.md) - Environment variables, session pool, connection pool tuning
 - [Database Performance Guide](db-performance.md) - N+1 detection and query logging
+- [Performance Architecture](../architecture/performance-architecture.md) - MCP request path, caching layers, scaling capacity
 - [Performance Testing](../testing/performance.md) - Load testing with hey
 - [Scaling Guide](../manage/scale.md) - Production scaling configuration
-- [Issue #1906](https://github.com/IBM/mcp-context-forge/issues/1906) - Metrics cache optimization

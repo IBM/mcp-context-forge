@@ -628,8 +628,49 @@ Priority files based on typical N+1 patterns:
 
 ---
 
+## Database vs Transport vs Runtime Bottlenecks
+
+Database tuning is one layer in end-to-end MCP performance. Before investing heavily in query optimization, determine whether the database is actually the bottleneck.
+
+### When to Stay in DB Profiling
+
+- `pg_stat_user_tables` shows high `seq_tup_read` counts growing under load
+- PgBouncer CPU is above 50%
+- PostgreSQL CPU is above 50%
+- `idle in transaction` connections are growing
+- N+1 patterns detected in query logs
+
+### When to Investigate Transport/Session Issues Instead
+
+- Gateway CPU is the highest resource consumer (>300% per replica)
+- Redis is idle during load (MCP transport may be bypassing cache)
+- Tool response times are dominated by upstream MCP server latency
+- Per-request latency is high but database query time is low
+- Session pool metrics show high miss rate or circuit breaker trips
+
+### When to Investigate Runtime Issues
+
+- py-spy flamegraph shows CPU time in middleware, JSON parsing, or Pydantic validation
+- Memory is growing during load (possible leak in template rendering or response buffering)
+- Thread pool workers are all blocked (check `py-spy dump` for thread stacks)
+
+### Triage Decision Table
+
+| Symptom | Check First | Then Check |
+|---------|------------|------------|
+| High latency, low RPS | DB queries per request (`pg_stat_user_tables`) | Gateway CPU (py-spy) |
+| High RPS, high latency | Upstream MCP server response time | Session pool hit rate |
+| PgBouncer at capacity | Auth cache TTLs, batch queries | Connection pool sizing |
+| Redis idle during MCP load | MCP transport cache path | Compare `/rpc` vs `/mcp` resource usage |
+| Errors under load (401, 500) | Connection pool limits, timeouts | Auth cache, token revocation |
+
+---
+
 ## Related Documentation
 
+- [Performance Profiling Guide](profiling.md) - py-spy, memray, container monitoring, MCP bottleneck triage
+- [Gateway Tuning Guide](../manage/tuning.md) - Environment variables, MCP transport settings, session pool tuning
+- [Performance Architecture](../architecture/performance-architecture.md) - MCP request path, caching layers
 - [SQLAlchemy Eager Loading](https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html#relationship-loading-techniques)
 - Existing instrumentation: `mcpgateway/instrumentation/sqlalchemy.py`
 - Performance strategy: `tests/performance/PERFORMANCE_STRATEGY.md`
