@@ -95,14 +95,20 @@ test-all: test test-python
 # =============================================================================
 # help: 🛠 BUILD
 # help: stub-gen              - Generate Python type stubs (.pyi files)
+# help: build                 - Build release extension (no install)
 # help: build-target        - Build for specific target (use TARGET=...)
 # help: install               - Build and install wheel
-.PHONY: stub-gen build-target install
+.PHONY: stub-gen build build-target install
 
 stub-gen:
 	@echo "$(GREEN)Generating Python type stubs...$(NC)"
 	@cargo run --bin stub_gen
 	@echo "$(GREEN)Type stubs generated$(NC)"
+
+build: stub-gen
+	@echo "$(GREEN)Building $(PACKAGE_NAME)...$(NC)"
+	@cd ../.. && uv run maturin build --release --manifest-path plugins_rust/pii_filter/Cargo.toml
+	@echo "$(GREEN)Build complete$(NC)"
 
 build-target: stub-gen
 	@echo "$(GREEN)Building for target: $(TARGET)...$(NC)"

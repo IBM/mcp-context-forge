@@ -3,9 +3,9 @@
 
 import builtins
 import typing
-
 __all__ = [
     "py_scan_container",
 ]
 
 def py_scan_container(container: typing.Any, config: typing.Any) -> tuple[builtins.int, typing.Any, list]: ...
+

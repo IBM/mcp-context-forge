@@ -42,6 +42,10 @@ stub-gen: ## Generate Python type stubs (.pyi files)
 	@cargo run --bin stub_gen
 	@echo "$(GREEN)Type stubs generated $(NC)"
 
+build: stub-gen ## Build release extension (no install)
+	@echo "$(GREEN)Building...$(NC)"
+	@cd ../.. && uv run maturin build --release --manifest-path plugins_rust/encoded_exfil_detection/Cargo.toml
+	@echo "$(GREEN)Build complete$(NC)"
 
 build-target: stub-gen ## Build for specific target (use TARGET=...)
 	@echo "$(GREEN)Building for target: $(TARGET)...$(NC)"

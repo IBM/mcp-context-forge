@@ -61,9 +61,7 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
             if [ -f "$plugin_dir/Cargo.toml" ]; then \
                 plugin_name=$(basename "$plugin_dir"); \
                 echo "🦀 Building Rust plugin: $plugin_name"; \
-                cd "$plugin_dir" && \
-                /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 --out /build/rust-wheels && \
-                cd /build; \
+                (cd "$plugin_dir" && /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 --out /build/rust-wheels) || exit 1; \
             fi; \
         done && \
         echo "✅ Rust plugins built successfully"; \
