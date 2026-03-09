@@ -12940,9 +12940,15 @@ async def admin_test_gateway(
     LOGGER.debug(f"User {get_user_email(user)} testing server at {validated_base_url}.")
     headers = request.headers or {}
 
-    # Attempt to find a registered gateway matching this URL and team
+    # Attempt to find a registered gateway matching this URL and team.
+    # Query the raw DB object directly so we get the unmasked auth_value
+    # (get_first_gateway_by_url returns a masked GatewayRead where
+    # auth_value="*****", which cannot be decoded).
     try:
-        gateway = gateway_service.get_first_gateway_by_url(db, validated_base_url, team_id=team_id)
+        query = select(DbGateway).where(DbGateway.url == validated_base_url, DbGateway.enabled)
+        if team_id:
+            query = query.where(DbGateway.team_id == team_id)
+        gateway = db.execute(query).scalars().first()
     except Exception:
         gateway = None
 
@@ -12988,8 +12994,11 @@ async def admin_test_gateway(
                 except Exception as e:
                     LOGGER.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
                     response_body = {"error": f"OAuth token retrieval failed for gateway: {str(e)}"}
-        else:
-            headers: dict = decode_auth(gateway.auth_value if gateway else None)
+        elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
+            if isinstance(gateway.auth_value, dict):
+                headers.update(gateway.auth_value)
+            elif isinstance(gateway.auth_value, str):
+                headers.update(decode_auth(gateway.auth_value))
 
         # Prepare request based on content type
         content_type = getattr(request, "content_type", "application/json")
