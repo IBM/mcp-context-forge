@@ -58,6 +58,12 @@ mcpContextForge:
     PASSWORD_REQUIRE_SPECIAL: "false"
     REQUIRE_STRONG_SECRETS: "false"
 
+# Disable TLS on fast-time-server ingress for minikube
+mcpFastTimeServer:
+  ingress:
+    tls:
+      enabled: false
+
 # Infrastructure — minikube-sized
 postgres:
   enabled: true
