@@ -24,7 +24,7 @@ from sqlalchemy.pool import StaticPool
 
 MIGRATION_MODULE = "mcpgateway.alembic.versions.abf8ac3b6008_add_admin_overview_and_servers_use_to_"
 EXPECTED_REVISION = "abf8ac3b6008"
-EXPECTED_DOWN_REVISION = "d9e0f1a2b3c4"
+EXPECTED_DOWN_REVISION = "e1f2a3b4c5d6"
 
 ROLE_PERMISSION_ADDITIONS = {
     "viewer": ["admin.overview", "servers.use"],
