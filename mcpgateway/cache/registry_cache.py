@@ -531,16 +531,15 @@ def get_registry_cache() -> RegistryCache:
 registry_cache = get_registry_cache()
 
 
+# Upper bound on the in-memory revoked-JTI set.
+#
+# Prevents unbounded memory growth if a compromised Redis channel floods
+# ``revoke:`` messages.  When the cap is reached new JTIs are still
+# processed (cache eviction) but are not added to the local set;
+# subsequent ``is_token_revoked()`` / ``get_auth_context()`` calls will
+# fall through to the Redis check on L1 cache miss, so revocation is
+# still enforced.
 _MAX_REVOKED_JTIS = 100_000
-"""Upper bound on the in-memory revoked-JTI set.
-
-Prevents unbounded memory growth if a compromised Redis channel floods
-``revoke:`` messages.  When the cap is reached new JTIs are still
-processed (cache eviction) but are not added to the local set;
-subsequent ``is_token_revoked()`` / ``get_auth_context()`` calls will
-fall through to the Redis check on L1 cache miss, so revocation is
-still enforced.
-"""
 
 
 class CacheInvalidationSubscriber:
