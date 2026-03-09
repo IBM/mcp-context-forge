@@ -4262,10 +4262,21 @@ async def _admin_logout(request: Request) -> Response:
     LOGGER.info(f"Admin user logging out (method: {request.method})")
     root_path = _resolve_root_path(request)
 
-    # For GET requests (OIDC front-channel logout), return 200 OK per OIDC spec.
+    # For GET requests, distinguish between browser navigation and OIDC front-channel logout
     if request.method == "GET":
-        response = Response(content="Logged out", status_code=200)
+        # Check if request is from a browser (has Accept: text/html header)
+        # Browser navigation should redirect to login, OIDC callbacks should return 200 OK
+        accept_header = request.headers.get("accept", "")
+        is_browser_request = "text/html" in accept_header
+
+        if is_browser_request:
+            # Browser navigation - redirect to login (cookies cleared below)
+            response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        else:
+            # OIDC front-channel logout from IdP - return 200 OK per OIDC spec
+            response = Response(content="Logged out", status_code=200)
     else:
+        # POST requests (user-initiated) - redirect to login (cookies cleared below)
         response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
 
         auth_provider = await _extract_auth_provider_from_jwt_cookie()

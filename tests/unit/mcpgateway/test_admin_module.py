@@ -471,16 +471,30 @@ async def test_admin_login_handler_default_password(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_admin_logout_paths():
+    # POST request should always redirect to login
     post_request = _make_request(root_path="/root")
     post_request.method = "POST"
     response = await admin._admin_logout(post_request)
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
+    assert response.headers["location"] == "/root/admin/login"
 
-    get_request = _make_request(root_path="/root")
-    get_request.method = "GET"
-    response = await admin._admin_logout(get_request)
+    # GET request with Accept: text/html (browser) should redirect to login
+    get_browser_request = _make_request(root_path="/root")
+    get_browser_request.method = "GET"
+    get_browser_request.headers = {"accept": "text/html,application/xhtml+xml"}
+    response = await admin._admin_logout(get_browser_request)
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/root/admin/login"
+
+    # GET request without Accept: text/html (OIDC front-channel) should return 200 OK
+    get_oidc_request = _make_request(root_path="/root")
+    get_oidc_request.method = "GET"
+    get_oidc_request.headers = {"accept": "application/json"}
+    response = await admin._admin_logout(get_oidc_request)
     assert response.status_code == 200
+    assert response.body == b"Logged out"
 
 
 @pytest.mark.asyncio
