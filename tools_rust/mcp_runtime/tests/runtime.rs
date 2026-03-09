@@ -86,6 +86,13 @@ async fn ping_is_handled_locally() {
         .expect("ping response");
 
     assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-contextforge-mcp-runtime")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
     let body: Value = response.json().await.expect("json body");
     assert_eq!(body["result"], json!({}));
     assert!(observation.calls.lock().expect("lock").is_empty());
@@ -209,6 +216,13 @@ async fn tools_list_is_forwarded_with_auth_and_session_headers() {
             .get("mcp-session-id")
             .and_then(|value| value.to_str().ok()),
         Some("abc123")
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("x-contextforge-mcp-runtime")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
     );
     let body: Value = response.json().await.expect("json body");
     assert_eq!(body["result"]["tools"][0]["name"], "echo");
@@ -378,6 +392,13 @@ async fn notifications_are_forwarded_but_return_accepted() {
         .expect("notification response");
 
     assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-contextforge-mcp-runtime")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
     assert!(response.bytes().await.expect("body bytes").is_empty());
 
     let calls = observation.calls.lock().expect("lock");
