@@ -556,9 +556,11 @@ class OAuthManager:
                 legacy_gateway_id = legacy_state_payload.get("gateway_id")
                 if legacy_gateway_id and legacy_gateway_id != gateway_id:
                     raise OAuthError("State parameter gateway mismatch")
-            logger.error("User context (app_user_email) missing from OAuth state; refusing to bind tokens from ambient request context (CWE-287).")
             if self.token_storage:
+                logger.error("User context (app_user_email) missing from OAuth state; refusing to bind tokens (CWE-287). gateway_id=%s", gateway_id)
                 raise OAuthError("User context required for OAuth token storage")
+            else:
+                logger.warning("User context (app_user_email) missing from OAuth state; no token_storage configured — proceeding without binding. gateway_id=%s", gateway_id)
 
         # Exchange code for tokens with PKCE code_verifier
         token_response = await self._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier)
