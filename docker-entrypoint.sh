@@ -57,6 +57,18 @@ start_managed_rust_mcp_runtime() {
     local rust_listen_uds="${MCP_RUST_LISTEN_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-}}"
     local app_root_path="${APP_ROOT_PATH:-}"
     local backend_rpc_url="${MCP_RUST_BACKEND_RPC_URL:-http://127.0.0.1:${PORT:-4444}${app_root_path}/_internal/mcp/rpc}"
+    local rust_database_url="${MCP_RUST_DATABASE_URL:-}"
+
+    if [[ -z "${rust_database_url}" && -n "${DATABASE_URL:-}" ]]; then
+        case "${DATABASE_URL}" in
+            postgresql+psycopg://*)
+                rust_database_url="${DATABASE_URL/postgresql+psycopg:\/\//postgresql://}"
+                ;;
+            postgresql://*|postgres://*)
+                rust_database_url="${DATABASE_URL}"
+                ;;
+        esac
+    fi
 
     if [[ "${CONTEXTFORGE_ENABLE_RUST_BUILD}" != "true" ]]; then
         echo "ERROR: EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true but this image was built without Rust artifacts."
@@ -77,6 +89,9 @@ start_managed_rust_mcp_runtime() {
         unset EXPERIMENTAL_RUST_MCP_RUNTIME_UDS || true
     fi
     export MCP_RUST_BACKEND_RPC_URL="${backend_rpc_url}"
+    if [[ -n "${rust_database_url}" ]]; then
+        export MCP_RUST_DATABASE_URL="${rust_database_url}"
+    fi
 
     if [[ -n "${rust_listen_uds}" ]]; then
         echo "Starting experimental Rust MCP runtime on unix://${MCP_RUST_LISTEN_UDS} (backend: ${MCP_RUST_BACKEND_RPC_URL})..."

@@ -6,8 +6,11 @@ Status focus in this update:
 
 - Unix domain socket handoff between Python and the managed Rust sidecar
 - a narrower trusted internal dispatcher route at `/_internal/mcp/rpc`
+- a specialized trusted internal `tools/call` route at `/_internal/mcp/tools/call`
 - forwarded MCP auth context instead of recomputing auth on the internal hop
-- the final no-DB optimization pass before moving read-only DB paths into Rust
+- the first Rust-owned read-only DB path for server-scoped `tools/list`
+- parity hardening for scoped-token `initialize` and nonexistent-tool `tools/call`
+- clean server-scoped `MCPToolCallerUser` benchmark results for the real hot path
 
 ## Executive Summary
 
@@ -26,8 +29,12 @@ In practice, this means:
 - Python no longer reparses and rewrites server-scoped MCP JSON bodies just to inject `server_id`
 - the managed Python -> Rust hop can now run over a Unix domain socket instead of loopback TCP
 - Python forwards a trusted auth context to the internal dispatcher, so auth and RBAC stay Python-owned without being recomputed on the internal hop
+- Rust now owns the server-scoped `tools/list` read path end-to-end after a Python auth/RBAC subrequest, using direct read-only Postgres queries instead of the generic Python JSON-RPC dispatcher
+- Rust now routes `tools/call` to a dedicated Python internal endpoint instead of the generic `/_internal/mcp/rpc` switch
 - the trusted internal MCP dispatcher now owns its SQLAlchemy session directly instead of paying FastAPI `Depends(get_db)` overhead on every Rust-backed call
 - trusted Rust -> Python MCP dispatch no longer re-runs Pydantic `RPCRequest` validation that Rust already performed
+- trusted internal Rust -> Python MCP requests now bypass token-scoping middleware path checks only when they come from loopback with the Rust runtime marker and forwarded auth context
+- server-scoped `tools/call` now narrows tool selection by virtual server earlier in Python before upstream execution
 - Rust is not yet the full MCP implementation for resumable Streamable HTTP or SSE/session orchestration
 - the current cut is viable, testable, containerized, and live behind an experimental flag
 
@@ -55,6 +62,9 @@ Implemented in this crate:
 - local handling for `ping`
 - notification handling with HTTP `202 Accepted`
 - forwarding of non-local methods to Python over the configured backend RPC URL
+- optional read-only Postgres pool for Rust-owned MCP discovery paths
+- direct Rust execution for server-scoped `tools/list` after Python auth/RBAC authorization
+- specialized Rust dispatch for `tools/call` to a dedicated internal backend route
 - response stamping with `x-contextforge-mcp-runtime: rust`
 - stripping of internal-only forwarded headers
 - info-level request logging when `MCP_RUST_LOG=info`
@@ -70,11 +80,15 @@ Integrated in the main application:
 - Python can connect to the managed Rust runtime over `EXPERIMENTAL_RUST_MCP_RUNTIME_UDS`
 - the managed Rust runtime can listen on `MCP_RUST_LISTEN_UDS`
 - Rust now forwards backend calls to `/_internal/mcp/rpc` instead of the public `/rpc` route
+- Rust can call `/_internal/mcp/tools/list/authz` to preserve Python auth/RBAC while keeping the server-scoped `tools/list` query in Rust
+- Rust can call `/_internal/mcp/tools/call` to preserve Python execution while bypassing the generic JSON-RPC backend switch for the hottest MCP method
 - Python forwards a trusted internal MCP auth blob via `x-contextforge-auth-context`
 - the proxy strips forwarded-chain headers like `x-forwarded-for` before the internal Rust -> Python hop so loopback trust stays real
 - the internal Rust-backed MCP route now creates its own `SessionLocal()` session instead of using FastAPI `Depends(get_db)`
 - trusted internal dispatch now lazily materializes lowered request headers only for branches that actually need them
+- token-scoping middleware now explicitly bypasses trusted loopback `/_internal/mcp/*` Rust sidecar hops so scoped tokens do not get re-denied on the private internal path
 - the managed sidecar can be launched from `docker-entrypoint.sh`
+- the managed sidecar can derive `MCP_RUST_DATABASE_URL` from `DATABASE_URL` for Postgres-backed direct read paths
 - `Containerfile.lite` includes the Rust runtime binary when built with `ENABLE_RUST=true`
 - `docker-compose.yml` exposes the Rust runtime env vars, including `MCP_RUST_LOG`
 
@@ -87,7 +101,8 @@ Current observability features:
 - the runtime logs handled methods at `info`, for example:
   - `rust_mcp_runtime method=ping mode=local`
   - `rust_mcp_runtime method=tools/list mode=backend-forward`
-  - `rust_mcp_runtime method=tools/call mode=backend-forward`
+  - `rust_mcp_runtime method=tools/list mode=db-tools-list-direct`
+  - `rust_mcp_runtime method=tools/call mode=backend-tools-call-direct`
 
 This is the cleanest proof that live requests are actually traversing Rust.
 
@@ -101,6 +116,8 @@ This is the cleanest proof that live requests are actually traversing Rust.
 - JSON-RPC envelope validation
 - notification response semantics
 - local `ping`
+- server-scoped `tools/list` authz handoff + direct read-only Postgres query path
+- specialized backend dispatch for `tools/call`
 - backend proxying to Python `/_internal/mcp/rpc`
 - runtime-level response header stamping
 
@@ -135,6 +152,16 @@ Implication:
 
 - the UDS and internal-dispatch optimization preserves existing Redis-assisted behavior
 - moving read-only MCP list methods into Rust later will require a deliberate cache strategy instead of accidentally bypassing Python’s Redis caches
+
+Important current nuance for the hot path:
+
+- on the current server-scoped `MCPToolCallerUser` benchmark, Redis is not the main steady-state limiter
+- `tools/call` uses Redis only on specific side paths:
+  - auth cache / registry cache lookups when L1 is cold
+  - cancellation pub/sub when an actual cancellation is published
+  - session-affinity ownership and forwarding only if `mcpgateway_session_affinity_enabled=true`
+- the MCP session pool itself is local in the current compose benchmark and does not require Redis on the success path
+- live `docker stats` during the 100-user tools-only run showed gateway containers busy while Postgres and Redis stayed comparatively quiet
 
 ### Important consequence
 
@@ -182,6 +209,11 @@ This exercised the live path:
 - Rust runtime
 - Python `/rpc`
 
+Validated again after the specialized `tools/call` route and parity fix:
+
+- nonexistent-tool `tools/call` once again returns a JSON-RPC error instead of a `500`
+- full result remains `22 passed`
+
 ### Live compose validation
 
 Validated on March 9, 2026:
@@ -199,6 +231,16 @@ Validated on March 9, 2026:
   - `tools/call`
   - `resources/list`
   - `prompts/list`
+- confirmed server-scoped hot-path logs during load:
+  - `rust_mcp_runtime method=tools/call mode=backend-tools-call-direct`
+  - `rust_mcp_runtime method=tools/list mode=db-tools-list-direct`
+
+### RBAC regression coverage
+
+Validated on March 9, 2026:
+
+- `make test-mcp-rbac`
+- result: `40 passed`
 
 ## Still Missing
 
@@ -218,7 +260,6 @@ Not yet in Rust:
 
 Not yet moved into Rust:
 
-- direct Rust ownership of `tools/list`
 - direct Rust ownership of `tools/call`
 - direct Rust ownership of `resources/*`
 - direct Rust ownership of `prompts/*`
@@ -251,7 +292,7 @@ Rust no longer needs the public `/rpc` route, but it still forwards most work to
 That means:
 
 - Rust does not yet reduce Python business-logic coupling much
-- the current performance gains are mostly transport-edge gains
+- the current performance gains are mostly transport-edge and dispatcher-seam gains
 - the real modularity win still requires extracting a cleaner dispatcher/core contract than a generic JSON-RPC passthrough
 
 ### 3. Performance is still dominated by the seam
@@ -270,7 +311,37 @@ It has been reducing avoidable Python work around the Rust edge:
 
 This matters because the load-test target in `tests/loadtest/locustfile_mcp_protocol.py` is the server-scoped MCP path, so every unnecessary parse/serialize on that path shows up directly in throughput and latency.
 
-### 4. Benchmark noise still exists in seeded data
+### 4. `tools/call` is now the real performance wall
+
+The cleanest current benchmark is the server-scoped tools-only run:
+
+```text
+uv run locust -f tests/loadtest/locustfile_mcp_protocol.py \
+  --host=http://localhost:8080 \
+  --users=100 \
+  --spawn-rate=100 \
+  --run-time=30s \
+  --headless --only-summary \
+  MCPToolCallerUser
+```
+
+Observed results on March 9, 2026:
+
+- overall: about `715` to `746 RPS`
+- `MCP tools/call [rapid]`: about `677` to `707 RPS`
+- failures: `0%`
+
+This matters more than the mixed protocol benchmark now:
+
+- it removes most discovery noise
+- it proves the remaining ceiling is in the Python `tools/call` executor path
+- it makes the next architectural step clear: more Python seam trimming will have diminishing returns compared with moving actual tool execution out of Python
+
+Practical note:
+
+- `--tags toolcall` is **not** a clean measurement for this locustfile because Locust still instantiates the other user classes and they end up with no runnable tasks after tag filtering
+- use explicit `MCPToolCallerUser` class selection instead
+### 5. Benchmark noise still exists in seeded data
 
 The current compose seed data on the fast-time server includes duplicate resource URIs.
 
@@ -283,22 +354,24 @@ That means `resources/read` is currently a noisy benchmark signal, independent o
 
 This is a correctness issue in the seeded benchmark fixture, not evidence that the UDS/internal-dispatch seam broke `resources/read`.
 
-### 5. Wider regression coverage is still in progress
+### 6. Wider regression coverage is mostly back to green
 
 As of March 9, 2026:
 
 - `mcp-cli` E2E is green
+- `make test-mcp-rbac` is green again after fixing scoped-token initialize on the internal Rust -> Python hop
 - direct live Rust-path checks are green for:
   - `/mcp`
   - `/servers/<id>/mcp initialize`
   - `/servers/<id>/mcp tools/list`
   - `/servers/<id>/mcp tools/call`
-- `make test-ui-headless` is still being exercised externally
-- `make test-mcp-rbac` was started against the Rust-enabled stack and early discovery/listing coverage passed, but failures appeared later in the call-path portion and that investigation was interrupted before completion
+- explicit log proof now shows:
+  - `rust_mcp_runtime method=tools/list mode=db-tools-list-direct`
+- `make test-ui-headless` is still the main broader parity check left to keep exercising externally
 
-So the Rust transport edge is proven on the main MCP CLI path, but wider regression parity is not yet fully signed off.
+So the Rust transport edge plus the first Rust-owned read path are proven on the main MCP CLI and RBAC paths, but broader UI parity is still worth keeping under test.
 
-### 5. Startup noise in compose
+### 7. Startup noise in compose
 
 The current compose stack still emits pre-existing bootstrap duplicate-key warnings during startup in some seeded environments.
 
@@ -316,7 +389,6 @@ But they do make debugging noisier than it should be.
 
 Immediate priorities:
 
-- finish `make test-mcp-rbac` investigation and fix any Rust-path regressions
 - finish `make test-ui-headless` validation against the Rust-enabled stack
 - add more explicit integration tests proving Rust is used for:
   - `initialize`
@@ -324,6 +396,22 @@ Immediate priorities:
   - server-scoped `/servers/<id>/mcp`
 - add regression coverage for non-`POST` fallback behavior so the hybrid boundary stays intentional
 - keep validating load runs with an explicit server-scope sanity check before each run, so benchmark results are not polluted by accidental global discovery
+
+### Phase 2: prioritize Rust-native `tools/call`
+
+This is now the highest-impact performance step.
+
+Recommended direction:
+
+1. Keep the current `backend-tools-call-direct` seam as the baseline.
+2. Add a narrower Python authz/metadata route for `tools/call`, returning:
+   - allow/deny
+   - resolved tool metadata
+   - resolved gateway / server target
+   - normalized auth/header context
+3. Let Rust perform the actual upstream MCP `call_tool` execution and stream the result back directly.
+4. Keep cancellation, metrics, and broader session ownership Python-owned at first if needed, but avoid making them the blocking path for the happy-case tool call.
+5. Only after the hot `tools/call` path is reduced should the next Rust DB work move on to `resources/*` and `prompts/*`.
 
 ## Performance Investigation Update
 
@@ -454,27 +542,104 @@ Interpretation:
 - that is expected because `tools/call` remains the dominant request class in the load test
 - this is the clearest point where further Python-owned no-DB seam work has diminishing returns
 
+### Phase result: Rust-owned server-scoped `tools/list`
+
+This phase moved the first real read-only MCP query into Rust:
+
+- Rust now handles server-scoped `tools/list` as `db-tools-list-direct`
+- Python still owns auth/RBAC through `/_internal/mcp/tools/list/authz`
+- Rust now queries Postgres directly for the tool list after Python authorizes the request
+- if the Rust DB path fails, the runtime falls back to the Python `/_internal/mcp/tools/list` endpoint instead of breaking the request path
+
+One parity bug appeared immediately after this cut:
+
+- scoped tokens with explicit permissions could no longer `initialize` through `mcpgateway.wrapper`
+- root cause: token-scoping middleware was re-checking the private `/_internal/mcp/*` Rust -> Python hop and denying the unmatched internal path
+- fix: trusted loopback Rust-sidecar requests marked with `x-contextforge-mcp-runtime: rust` and `x-contextforge-auth-context` now bypass token-scoping path checks on the internal hop
+
+Validated after that fix on the rebuilt Rust-enabled compose stack:
+
+- `cargo test --release` in `tools_rust/mcp_runtime`: `12 passed`
+- targeted middleware + internal-MCP unit coverage: passed
+- `tests/e2e/test_mcp_cli_protocol.py`: `22 passed`
+- `make test-mcp-rbac`: `40 passed`
+- live server-scoped `tools/list` proof with response header `x-contextforge-mcp-runtime: rust`
+- live gateway log proof:
+
+```text
+rust_mcp_runtime method=tools/list mode=db-tools-list-direct
+```
+
+Pinned `Fast Time Server` load-test samples on the rebuilt stack:
+
+```text
+Users | RPS    | Avg(ms) | Failures
+50    | 441.76 | 19.04   | 0.00%
+100   | 741.01 | 40.37   | 0.00%
+```
+
+Compared with the earlier UDS/header-forward baseline recorded in this memo:
+
+- `50 users`: `424.82 -> 441.76` RPS, a small but real improvement
+- `100 users`: `738.44 -> 741.01` RPS, effectively flat at peak load
+
+Interpretation:
+
+- this is the expected shape for moving only `tools/list`
+- the change is correct, live, and worth keeping
+- it does **not** dramatically change the overall protocol ceiling because `tools/call` still dominates the workload mix
+- the next meaningful throughput gains now depend on moving more read-heavy discovery methods and, eventually, reducing Python-owned `tools/call`
+
+### Follow-up result: specialized `tools/call` seam
+
+The next tools-focused phase specialized the hottest method without changing its underlying execution model:
+
+- Rust now routes `tools/call` to `/_internal/mcp/tools/call`
+- Python still owns actual tool execution
+- Python now uses a dedicated helper for the `tools/call` branch instead of going through the full generic `/rpc` method switch
+- server-scoped tool lookup now narrows candidates by `server_id` earlier before upstream execution
+- the specialized route preserves JSON-RPC parity for nonexistent tools
+
+Validated on the rebuilt compose stack:
+
+- `tests/e2e/test_mcp_cli_protocol.py`: `22 passed`
+- `make test-mcp-rbac`: `40 passed`
+- live gateway logs during load:
+
+```text
+rust_mcp_runtime method=tools/call mode=backend-tools-call-direct
+rust_mcp_runtime method=tools/list mode=db-tools-list-direct
+```
+
+Clean server-scoped `MCPToolCallerUser` measurements:
+
+```text
+Users | Overall RPS | tools/call RPS | Avg(ms) | p95 | p99 | Failures
+50    | 600.54      | 570.65         | 26.16   | 38  | 80  | 0.00%
+100   | 715.14      | 676.72         | 85.62   | 140 | 240 | 0.00%
+100   | 746.25      | 706.95         | 80.02   | 130 | 210 | 0.00%
+```
+
+Interpretation:
+
+- this phase is correct and worth keeping
+- it proves the live hot path is flowing through Rust exactly where intended
+- it does **not** get the stack near `1000 RPS`
+- the remaining ceiling is now dominated by Python-owned `tools/call` execution and the Python MCP client/session machinery, not by the outer Rust seam
+
 ### Next performance steps in priority order
 
-1. Keep this no-DB seam as the new baseline.
-2. Fix or replace the seeded benchmark server so `resources/read` stops polluting load-test comparisons.
-3. Start the first Rust-owned read-only DB path with server-scoped `tools/list`.
-   - preserve Python auth/RBAC ownership first
-   - keep Redis/session/cancellation out of scope for this cut
-4. Then move the remaining read-heavy server-scoped MCP discovery methods into Rust with direct read-only Postgres access:
+1. Keep the current tools baseline:
+   - `tools/list` in Rust as `db-tools-list-direct`
+   - `tools/call` specialized as `backend-tools-call-direct`
+2. Move actual `tools/call` execution out of Python with a narrow Python authz/metadata seam.
+3. Keep Python authoritative for auth/RBAC during that phase.
+4. Keep Redis/session/cancellation ownership in Python during that phase unless measurements prove they are the next limiter.
+5. After the hot `tools/call` path is reduced, move the remaining read-heavy methods:
    - `resources/list`
    - `prompts/list`
    - `resources/templates/list`
-5. Keep Redis/session/cancellation ownership in Python during that phase.
-   - those are not the first methods to move
-6. After the list/read path is Rust-owned, decide whether `initialize` stays Python-owned for session ownership semantics or gets a narrower Rust-aware session contract.
-7. Only after that start carving `tools/call` out of Python.
-
-The practical lesson from the latest run is simple:
-
-- removing generic dispatcher overhead from Python helped
-- removing a single read method from the generic dispatcher helped less than the earlier seam cuts
-- the next meaningful gains now require Rust to own the actual read queries, not just the transport and routing shell
+6. Only then evaluate whether `initialize` or broader session orchestration should move deeper into Rust.
 
 ### Phase 2: remove Python `/rpc` coupling
 
@@ -498,11 +663,11 @@ Then:
 
 After the dispatcher seam is real and the benchmark fixture is clean:
 
-- move `tools/list`
-- move `resources/list`
+- keep `tools/list`
+- move `tools/call`
+- then move `resources/list`
 - move `prompts/list`
 - move `resources/templates/list`
-- then evaluate `tools/call`
 - move more direct MCP response shaping into Rust
 
 ## How To Run
@@ -541,6 +706,8 @@ MCP_RUST_LISTEN_HTTP=127.0.0.1:8787
 MCP_RUST_LISTEN_UDS=/tmp/contextforge-mcp-rust.sock
 EXPERIMENTAL_RUST_MCP_RUNTIME_UDS=/tmp/contextforge-mcp-rust.sock
 MCP_RUST_BACKEND_RPC_URL=http://127.0.0.1:4444/_internal/mcp/rpc
+MCP_RUST_DATABASE_URL=postgresql://contextforge:contextforge@pgbouncer:6432/contextforge
+MCP_RUST_DB_POOL_MAX_SIZE=20
 ```
 
 ## How To Verify It Is Going Through Rust
@@ -593,8 +760,8 @@ Expected examples:
 Starting experimental Rust MCP runtime on unix:///tmp/contextforge-mcp-rust.sock
 rust_mcp_runtime method=ping mode=local
 rust_mcp_runtime method=initialize mode=backend-forward
-rust_mcp_runtime method=tools/list mode=backend-forward
-rust_mcp_runtime method=tools/call mode=backend-forward
+rust_mcp_runtime method=tools/list mode=db-tools-list-direct
+rust_mcp_runtime method=tools/call mode=backend-tools-call-direct
 ```
 
 ### 3. Remember the current boundary
@@ -648,15 +815,35 @@ locust -f tests/loadtest/locustfile_mcp_protocol.py \
   --headless
 ```
 
-If the current seeded fast-time server is used, expect `resources/read` failures until the duplicate-resource fixture issue is cleaned up.
+For apples-to-apples comparisons, pin `MCP_SERVER_ID` to the same virtual server across runs instead of relying on auto-detection.
+
+### Reproduce the tools-only hot-path benchmark
+
+```bash
+source .venv/bin/activate
+locust -f tests/loadtest/locustfile_mcp_protocol.py \
+  --host=http://localhost:8080 \
+  --users=100 \
+  --spawn-rate=100 \
+  --run-time=30s \
+  --headless \
+  --only-summary \
+  MCPToolCallerUser
+```
+
+Use the explicit `MCPToolCallerUser` class selection for this benchmark.
+
+Do **not** use `--tags toolcall` as a substitute; with this locustfile, Locust will still instantiate the other user classes and they will report noisy "no tasks defined" errors after tag filtering.
 
 ### Broader regression suites
 
-These are the next parity checks to keep running against the Rust-enabled stack:
+Validated on the rebuilt Rust-enabled stack:
 
 ```bash
 make test-mcp-rbac
 ```
+
+Still worth keeping in the parity loop:
 
 ```bash
 make test-ui-headless
@@ -685,15 +872,15 @@ Python integration:
 
 The Rust MCP runtime is already real enough to use as the live `POST /mcp` transport edge.
 
-It now also owns a specialized server-scoped `tools/list` routing path that bypasses the generic Python JSON-RPC dispatcher.
+It now also owns the first real read-only MCP query in production shape: server-scoped `tools/list` with direct Postgres reads behind Python-owned auth/RBAC.
 
 It is not yet the complete MCP implementation for ContextForge.
 
 The remaining work is mostly:
 
-- parity hardening across broader test suites
-- moving the read-only discovery queries (`tools/list`, `resources/list`, `prompts/list`, `resources/templates/list`) into Rust with direct Postgres reads
+- parity hardening across broader test suites, mainly UI coverage
+- moving the remaining read-only discovery queries (`resources/list`, `prompts/list`, `resources/templates/list`) into Rust with direct Postgres reads
 - keeping Redis/session/cancellation Python-owned until the read path is solid
 - only then moving session orchestration and heavier execution logic like `tools/call`
 
-That is a credible migration path. The current implementation is strong stage-1 infrastructure, not yet the final Rust end state.
+That is a credible migration path. The current implementation has moved from transport-edge infrastructure into the first real Rust-owned MCP core slice, but it is not yet the final Rust end state.

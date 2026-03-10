@@ -59,6 +59,9 @@ _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"/gateways/?([a-f0-9\-]+)"), "gateway"),
 ]
 _AUTH_COOKIE_NAMES = ("jwt_token", "access_token")
+_INTERNAL_MCP_PATH_PREFIX = "/_internal/mcp"
+_INTERNAL_MCP_RUNTIME_HEADER = "x-contextforge-mcp-runtime"
+_INTERNAL_MCP_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
 
 # Permission map with precompiled patterns
 # Maps (HTTP method, path pattern) to required permission
@@ -1210,6 +1213,13 @@ class TokenScopingMiddleware:
             if normalized_path == "/":
                 return await call_next(request)
 
+            # Trusted internal Rust -> Python MCP dispatch already carries a
+            # normalized auth context and is re-authorized by the internal MCP
+            # handlers. Re-applying token-scoping path checks here would reject
+            # the private /_internal/mcp/* hop for scoped tokens.
+            if self._is_trusted_internal_mcp_runtime_request(request, normalized_path):
+                return await call_next(request)
+
             if any(normalized_path.startswith(path) for path in skip_paths):
                 return await call_next(request)
 
@@ -1327,6 +1337,20 @@ class TokenScopingMiddleware:
                 status_code=exc.status_code,
                 content={"detail": exc.detail},
             )
+
+    def _is_trusted_internal_mcp_runtime_request(self, request: Request, normalized_path: str) -> bool:
+        """Return whether the request is a trusted loopback Rust MCP sidecar hop."""
+        if normalized_path != _INTERNAL_MCP_PATH_PREFIX and not normalized_path.startswith(f"{_INTERNAL_MCP_PATH_PREFIX}/"):
+            return False
+
+        if request.headers.get(_INTERNAL_MCP_RUNTIME_HEADER) != "rust":
+            return False
+
+        if not request.headers.get(_INTERNAL_MCP_AUTH_CONTEXT_HEADER):
+            return False
+
+        client_host = getattr(getattr(request, "client", None), "host", None)
+        return client_host in ("127.0.0.1", "::1")
 
 
 # Create middleware instance

@@ -357,6 +357,38 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     }
 
 
+def _enforce_internal_mcp_server_scope(request: Request, server_id: str) -> None:
+    """Validate trusted internal server scope against any forwarded token server scope."""
+    auth_context = _get_internal_mcp_auth_context(request)
+    if not isinstance(auth_context, dict):
+        return
+
+    scoped_server_id = auth_context.get("scoped_server_id")
+    if isinstance(scoped_server_id, str) and scoped_server_id and not validate_server_access({"server_id": scoped_server_id}, server_id):
+        raise HTTPException(status_code=403, detail=f"Token not authorized for server: {server_id}")
+
+
+async def _authorize_internal_mcp_request(request: Request, db: Session, *, permission: str, method: str, server_id: Optional[str] = None):
+    """Authorize trusted Rust-side MCP dispatch while preserving permissive MCP semantics.
+
+    For authenticated callers, this enforces the same token-scope and RBAC rules as
+    the regular RPC dispatcher. For unauthenticated MCP callers in permissive mode,
+    StreamableHTTP middleware already downgraded them to public-only scope and
+    enforced per-server OAuth, so the internal Rust -> Python hop should not re-deny
+    public-only requests merely because there is no authenticated RBAC identity.
+    """
+    user = _build_internal_mcp_forwarded_user(request)
+    auth_context = _get_internal_mcp_auth_context(request) or {}
+
+    if server_id:
+        _enforce_internal_mcp_server_scope(request, server_id)
+
+    if auth_context.get("is_authenticated", True) is True:
+        await _ensure_rpc_permission(user, db, permission, method, request=request)
+
+    return user
+
+
 def _normalize_token_teams(teams: Optional[List]) -> List[str]:
     """
     Normalize token teams to list of team IDs.
@@ -6190,14 +6222,19 @@ async def handle_internal_mcp_rpc(request: Request):
 @utility_router.post("/_internal/mcp/tools/list")
 async def handle_internal_mcp_tools_list(request: Request):
     """Handle trusted server-scoped tools/list requests forwarded from the Rust runtime."""
-    user = _build_internal_mcp_forwarded_user(request)
     server_id = request.headers.get("x-contextforge-server-id")
     if not server_id:
         raise HTTPException(status_code=400, detail="Missing trusted MCP server scope")
 
     db = SessionLocal()
     try:
-        await _ensure_rpc_permission(user, db, "tools.read", "tools/list", request=request)
+        user = await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission="tools.read",
+            method="tools/list",
+            server_id=server_id,
+        )
         user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
         if is_admin and token_teams is None:
             user_email = None
@@ -6225,6 +6262,369 @@ async def handle_internal_mcp_tools_list(request: Request):
         raise
     finally:
         db.close()
+
+
+@utility_router.post("/_internal/mcp/tools/list/authz/")
+@utility_router.post("/_internal/mcp/tools/list/authz")
+async def handle_internal_mcp_tools_list_authz(request: Request):
+    """Authorize trusted server-scoped tools/list requests for the Rust direct-DB path."""
+    server_id = request.headers.get("x-contextforge-server-id")
+    if not server_id:
+        raise HTTPException(status_code=400, detail="Missing trusted MCP server scope")
+
+    db = SessionLocal()
+    try:
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission="tools.read",
+            method="tools/list",
+            server_id=server_id,
+        )
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
+    finally:
+        db.close()
+
+
+async def _maybe_forward_affinitized_rpc_request(
+    request: Request,
+    *,
+    method: str,
+    params: Dict[str, Any],
+    req_id: Any,
+    lowered_request_headers: Dict[str, str],
+) -> Optional[Dict[str, Any]]:
+    """Forward an MCP request to the owning worker when session affinity requires it."""
+    request_headers = request.headers
+    rpc_client_host = getattr(getattr(request, "client", None), "host", None)
+    rpc_from_loopback = rpc_client_host in ("127.0.0.1", "::1") if rpc_client_host else False
+    mcp_session_id = request_headers.get("mcp-session-id") or request_headers.get("x-mcp-session-id")
+    is_internally_forwarded = rpc_from_loopback and request_headers.get("x-forwarded-internally") == "true"
+
+    if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
+        # First-Party
+        from mcpgateway.services.mcp_session_pool import MCPSessionPool, WORKER_ID  # pylint: disable=import-outside-toplevel
+
+        if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
+            logger.debug("Invalid MCP session id for affinity forwarding, executing locally")
+            return None
+
+        session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
+        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", WORKER_ID, session_short, method)
+        try:
+            # First-Party
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+            pool = get_mcp_session_pool()
+            forwarded_response = await pool.forward_request_to_owner(
+                mcp_session_id,
+                {"method": method, "params": params, "headers": lowered_request_headers, "req_id": req_id},
+            )
+            if forwarded_response is not None:
+                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", WORKER_ID, session_short, method)
+                if "error" in forwarded_response:
+                    return {"jsonrpc": "2.0", "error": forwarded_response["error"], "id": req_id}
+                return {"jsonrpc": "2.0", "result": forwarded_response.get("result", {}), "id": req_id}
+        except RuntimeError:
+            logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Pool not initialized, executing locally", WORKER_ID, session_short, method)
+        return None
+
+    if is_internally_forwarded and mcp_session_id:
+        # First-Party
+        from mcpgateway.services.mcp_session_pool import WORKER_ID  # pylint: disable=import-outside-toplevel
+
+        session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
+        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", WORKER_ID, session_short, method)
+
+    return None
+
+
+async def _execute_rpc_tools_call(
+    request: Request,
+    db: Session,
+    user,
+    *,
+    req_id: Any,
+    params: Dict[str, Any],
+    lowered_request_headers: Dict[str, str],
+    server_id: Optional[str],
+):
+    """Execute the hot-path ``tools/call`` branch without the generic RPC method switch."""
+    name = params.get("name")
+    arguments = params.get("arguments", {})
+    meta_data = params.get("_meta", None)
+    if not name:
+        raise JSONRPCError(-32602, "Missing tool name in parameters", params)
+
+    auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+    run_owner_email = auth_user_email
+    run_owner_team_ids = [] if auth_token_teams is None else list(auth_token_teams)
+    if auth_is_admin and auth_token_teams is None:
+        auth_user_email = None
+    elif auth_token_teams is None:
+        auth_token_teams = []
+
+    oauth_user_email = get_user_email(user)
+    plugin_context_table = getattr(request.state, "plugin_context_table", None)
+    plugin_global_context = getattr(request.state, "plugin_global_context", None)
+
+    run_id = str(req_id) if req_id is not None else None
+    tool_task: Optional[asyncio.Task] = None
+
+    async def cancel_tool_task(reason: Optional[str] = None):
+        """Cancel the active tool execution task when cancellation is requested."""
+        if tool_task and not tool_task.done():
+            logger.info("Cancelling tool task for run_id=%s, reason=%s", run_id, reason)
+            tool_task.cancel()
+
+    if settings.mcpgateway_tool_cancellation_enabled and run_id:
+        await cancellation_service.register_run(
+            run_id,
+            name=f"tool:{name}",
+            cancel_callback=cancel_tool_task,
+            owner_email=run_owner_email,
+            owner_team_ids=run_owner_team_ids,
+        )
+
+    try:
+        if settings.mcpgateway_tool_cancellation_enabled and run_id:
+            run_status = await cancellation_service.get_status(run_id)
+            if run_status and run_status.get("cancelled"):
+                raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id})
+
+        async def execute_tool():
+            """Execute the tool invocation using the existing Python service layer."""
+            try:
+                return await tool_service.invoke_tool(
+                    db=db,
+                    name=name,
+                    arguments=arguments,
+                    request_headers=lowered_request_headers,
+                    app_user_email=oauth_user_email,
+                    user_email=auth_user_email,
+                    token_teams=auth_token_teams,
+                    server_id=server_id,
+                    plugin_context_table=plugin_context_table,
+                    plugin_global_context=plugin_global_context,
+                    meta_data=meta_data,
+                )
+            except (ToolNotFoundError, ValueError):
+                logger.error("Tool not found: %s", name)
+                raise JSONRPCError(-32601, f"Tool not found: {name}", None)
+
+        tool_task = asyncio.create_task(execute_tool())
+
+        if settings.mcpgateway_tool_cancellation_enabled and run_id:
+            run_status = await cancellation_service.get_status(run_id)
+            if run_status and run_status.get("cancelled"):
+                tool_task.cancel()
+
+        try:
+            result = await tool_task
+            if hasattr(result, "model_dump"):
+                result = result.model_dump(by_alias=True, exclude_none=True)
+            return result
+        except asyncio.CancelledError as exc:
+            logger.info("Tool execution cancelled for run_id=%s, tool=%s", run_id, name)
+            raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id, "partial": False}) from exc
+    finally:
+        if settings.mcpgateway_tool_cancellation_enabled and run_id:
+            await cancellation_service.unregister_run(run_id)
+
+
+@utility_router.post("/_internal/mcp/tools/call/")
+@utility_router.post("/_internal/mcp/tools/call")
+async def handle_internal_mcp_tools_call(request: Request):
+    """Handle trusted tools/call requests forwarded from the local Rust runtime."""
+    req_id = None
+    db = SessionLocal()
+    try:
+        user = _build_internal_mcp_forwarded_user(request)
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        if not isinstance(body, dict) or body.get("method") != "tools/call":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": body.get("id") if isinstance(body, dict) else None,
+                },
+            )
+
+        req_id = body.get("id")
+        if req_id is None:
+            req_id = str(uuid.uuid4())
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        server_id = request.headers.get("x-contextforge-server-id") or params.get("server_id")
+        if server_id:
+            _enforce_internal_mcp_server_scope(request, server_id)
+
+        lowered_request_headers = {k.lower(): v for k, v in request.headers.items()}
+        forwarded_response = await _maybe_forward_affinitized_rpc_request(
+            request,
+            method="tools/call",
+            params=params,
+            req_id=req_id,
+            lowered_request_headers=lowered_request_headers,
+        )
+        if forwarded_response is not None:
+            return forwarded_response
+
+        if (_get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
+            await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
+
+        try:
+            result = await _execute_rpc_tools_call(
+                request,
+                db,
+                user,
+                req_id=req_id,
+                params=params,
+                lowered_request_headers=lowered_request_headers,
+                server_id=server_id,
+            )
+        finally:
+            if db.is_active and db.in_transaction() is not None:
+                db.commit()
+            db.close()
+
+        return {"jsonrpc": "2.0", "result": result, "id": req_id}
+    except (PluginError, PluginViolationError):
+        raise
+    except JSONRPCError as e:
+        error = e.to_dict()
+        return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass  # nosec B110 - Best effort cleanup on connection failure
+
+
+@utility_router.post("/_internal/mcp/tools/call/resolve/")
+@utility_router.post("/_internal/mcp/tools/call/resolve")
+async def handle_internal_mcp_tools_call_resolve(request: Request):
+    """Resolve a Rust-direct MCP tools/call execution plan without executing the tool."""
+    db = SessionLocal()
+    try:
+        user = _build_internal_mcp_forwarded_user(request)
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        if not isinstance(body, dict) or body.get("method") != "tools/call":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": body.get("id") if isinstance(body, dict) else None,
+                },
+            )
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        name = params.get("name")
+        if not name:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32602, "message": "Missing tool name in parameters"},
+                    "id": body.get("id"),
+                },
+            )
+
+        server_id = request.headers.get("x-contextforge-server-id") or params.get("server_id")
+        if server_id:
+            _enforce_internal_mcp_server_scope(request, server_id)
+
+        if (_get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
+            await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
+
+        auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+        if auth_is_admin and auth_token_teams is None:
+            auth_user_email = None
+        elif auth_token_teams is None:
+            auth_token_teams = []
+
+        plan = await tool_service.prepare_rust_mcp_tool_execution(
+            db=db,
+            name=name,
+            request_headers={k.lower(): v for k, v in request.headers.items()},
+            app_user_email=get_user_email(user),
+            user_email=auth_user_email,
+            token_teams=auth_token_teams,
+            server_id=server_id,
+        )
+
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return ORJSONResponse(content=plan)
+    except (PluginError, PluginViolationError):
+        raise
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass  # nosec B110 - Best effort cleanup on connection failure
 
 
 async def _handle_rpc_authenticated(request: Request, db: Session, user):
@@ -6273,8 +6673,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 lowered_headers = {k.lower(): v for k, v in request_headers.items()}
             return lowered_headers
 
-        _rpc_client_host = getattr(getattr(request, "client", None), "host", None)
-        _rpc_from_loopback = _rpc_client_host in ("127.0.0.1", "::1") if _rpc_client_host else False
         _trusted_internal_mcp_dispatch = _get_internal_mcp_auth_context(request) is not None
         _internal_runtime_server_id = request_headers.get("x-contextforge-server-id") if request_headers.get("x-contextforge-mcp-runtime") == "rust" else None
 
@@ -6289,6 +6687,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             params["server_id"] = _internal_runtime_server_id
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
+        mcp_session_id = request_headers.get("mcp-session-id") or request_headers.get("x-mcp-session-id")
 
         # RBAC: Enforce server_id scoping for server-scoped tokens.
         # Extract token scopes once, then:
@@ -6322,54 +6721,15 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         if not _trusted_internal_mcp_dispatch:
             RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
-        # Multi-worker session affinity: check if we should forward to another worker
-        # This applies to ALL methods (except initialize which creates new sessions)
-        # The x-forwarded-internally header marks requests that have already been forwarded
-        # to prevent infinite forwarding loops
-        # Session ID can come from two sources:
-        # 1. MCP-Session-Id (mcp-session-id) - MCP protocol header from Streamable HTTP clients
-        # 2. x-mcp-session-id - our internal header from SSE session_registry calls
-        mcp_session_id = request_headers.get("mcp-session-id") or request_headers.get("x-mcp-session-id")
-        # Only trust x-forwarded-internally from loopback to prevent external spoofing
-        is_internally_forwarded = _rpc_from_loopback and request_headers.get("x-forwarded-internally") == "true"
-
-        if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
-            # First-Party
-            from mcpgateway.services.mcp_session_pool import MCPSessionPool, WORKER_ID  # pylint: disable=import-outside-toplevel
-
-            if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
-                logger.debug("Invalid MCP session id for affinity forwarding, executing locally")
-            else:
-                session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-                logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", WORKER_ID, session_short, method)
-                try:
-                    # First-Party
-                    from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
-
-                    pool = get_mcp_session_pool()
-                    forwarded_response = await pool.forward_request_to_owner(
-                        mcp_session_id,
-                        {"method": method, "params": params, "headers": _lowered_request_headers(), "req_id": req_id},
-                    )
-                    if forwarded_response is not None:
-                        # Request was handled by another worker
-                        logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", WORKER_ID, session_short, method)
-                        if "error" in forwarded_response:
-                            raise JSONRPCError(
-                                forwarded_response["error"].get("code", -32603),
-                                forwarded_response["error"].get("message", "Forwarded request failed"),
-                            )
-                        result = forwarded_response.get("result", {})
-                        return {"jsonrpc": "2.0", "result": result, "id": req_id}
-                except RuntimeError:
-                    # Pool not initialized - execute locally
-                    logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Pool not initialized, executing locally", WORKER_ID, session_short, method)
-        elif is_internally_forwarded and mcp_session_id:
-            # First-Party
-            from mcpgateway.services.mcp_session_pool import WORKER_ID  # pylint: disable=import-outside-toplevel
-
-            session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-            logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", WORKER_ID, session_short, method)
+        forwarded_response = await _maybe_forward_affinitized_rpc_request(
+            request,
+            method=method,
+            params=params,
+            req_id=req_id,
+            lowered_request_headers=_lowered_request_headers(),
+        )
+        if forwarded_response is not None:
+            return forwarded_response
 
         if method == "initialize":
             # Extract session_id from params or query string (for capability tracking)
@@ -6664,109 +7024,17 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
             # Note: Multi-worker session affinity forwarding is handled earlier
             # (before method routing) to apply to ALL methods, not just tools/call
-            name = params.get("name")
-            arguments = params.get("arguments", {})
-            meta_data = params.get("_meta", None)
-            if not name:
-                raise JSONRPCError(-32602, "Missing tool name in parameters", params)
-
-            # Get authorization context (same as tools/list)
-            auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
-            run_owner_email = auth_user_email
-            run_owner_team_ids = [] if auth_token_teams is None else list(auth_token_teams)
-            if auth_is_admin and auth_token_teams is None:
-                auth_user_email = None
-                # auth_token_teams stays None (unrestricted)
-            elif auth_token_teams is None:
-                auth_token_teams = []  # Non-admin without teams = public-only
-
-            # Get user email for OAuth token selection
-            oauth_user_email = get_user_email(user)
-            # Get plugin contexts from request.state for cross-hook sharing
-            plugin_context_table = getattr(request.state, "plugin_context_table", None)
-            plugin_global_context = getattr(request.state, "plugin_global_context", None)
-
-            # Register the tool execution for cancellation tracking with task reference (if enabled)
-            # Note: req_id can be 0 which is falsy but valid per JSON-RPC spec, so use 'is not None'
-            run_id = str(req_id) if req_id is not None else None
-            tool_task: Optional[asyncio.Task] = None
-
-            async def cancel_tool_task(reason: Optional[str] = None):
-                """Cancel callback that actually cancels the asyncio task.
-
-                Args:
-                    reason: Optional reason for cancellation.
-                """
-                if tool_task and not tool_task.done():
-                    logger.info("Cancelling tool task for run_id=%s, reason=%s", run_id, reason)
-                    tool_task.cancel()
-
-            if settings.mcpgateway_tool_cancellation_enabled and run_id:
-                await cancellation_service.register_run(
-                    run_id,
-                    name=f"tool:{name}",
-                    cancel_callback=cancel_tool_task,
-                    owner_email=run_owner_email,
-                    owner_team_ids=run_owner_team_ids,
-                )
-
             try:
-                # Check if cancelled before execution (only if feature enabled)
-                if settings.mcpgateway_tool_cancellation_enabled and run_id:
-                    run_status = await cancellation_service.get_status(run_id)
-                    if run_status and run_status.get("cancelled"):
-                        raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id})
-
-                # Create task for tool execution to enable real cancellation
-                async def execute_tool():
-                    """Execute tool invocation with fallback to gateway forwarding.
-
-                    Returns:
-                        The tool invocation result or gateway forwarding result.
-
-                    Raises:
-                        JSONRPCError: If the tool is not found.
-                    """
-                    try:
-                        return await tool_service.invoke_tool(
-                            db=db,
-                            name=name,
-                            arguments=arguments,
-                            request_headers=_lowered_request_headers(),
-                            app_user_email=oauth_user_email,
-                            user_email=auth_user_email,
-                            token_teams=auth_token_teams,
-                            server_id=server_id,
-                            plugin_context_table=plugin_context_table,
-                            plugin_global_context=plugin_global_context,
-                            meta_data=meta_data,
-                        )
-                    except ValueError:
-                        # Tool not found log error and raise JSONRPCError
-                        logger.error("Tool not found: %s", name)
-                        raise JSONRPCError(-32601, f"Tool not found: {name}", None)
-
-                tool_task = asyncio.create_task(execute_tool())
-
-                # Re-check cancellation after task creation to handle race condition
-                # where cancel arrived between pre-check and task creation (callback saw tool_task=None)
-                if settings.mcpgateway_tool_cancellation_enabled and run_id:
-                    run_status = await cancellation_service.get_status(run_id)
-                    if run_status and run_status.get("cancelled"):
-                        tool_task.cancel()
-
-                try:
-                    result = await tool_task
-                    if hasattr(result, "model_dump"):
-                        result = result.model_dump(by_alias=True, exclude_none=True)
-                except asyncio.CancelledError:
-                    # Task was cancelled - return partial result or error
-                    logger.info("Tool execution cancelled for run_id=%s, tool=%s", run_id, name)
-                    raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id, "partial": False})
+                result = await _execute_rpc_tools_call(
+                    request,
+                    db,
+                    user,
+                    req_id=req_id,
+                    params=params,
+                    lowered_request_headers=_lowered_request_headers(),
+                    server_id=server_id,
+                )
             finally:
-                # Unregister the run when done (only if feature enabled)
-                if settings.mcpgateway_tool_cancellation_enabled and run_id:
-                    await cancellation_service.unregister_run(run_id)
                 # Release transaction after tools/call completes
                 db.commit()
                 db.close()

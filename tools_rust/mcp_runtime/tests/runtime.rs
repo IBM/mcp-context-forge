@@ -1,9 +1,12 @@
 use axum::{
     Json, Router,
     http::{HeaderMap, StatusCode},
+    response::IntoResponse,
     routing::post,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use contextforge_mcp_runtime::{AppState, build_router, config::RuntimeConfig};
+use reqwest::header::HeaderValue;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -67,6 +70,8 @@ async fn ping_is_handled_locally() {
             server_version: "0.1.0".to_string(),
             instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
             request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
             log_filter: "error".to_string(),
         };
         build_router(AppState::new(&config).expect("state"))
@@ -110,6 +115,8 @@ async fn health_alias_is_available_for_gateway_style_probes() {
         server_version: "0.1.0".to_string(),
         instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
         request_timeout_ms: 30_000,
+        database_url: None,
+        db_pool_max_size: 20,
         log_filter: "error".to_string(),
     };
     let runtime_url = spawn_router(build_router(AppState::new(&config).expect("state"))).await;
@@ -189,6 +196,8 @@ async fn tools_list_is_forwarded_with_auth_and_session_headers() {
             server_version: "0.1.0".to_string(),
             instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
             request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
             log_filter: "error".to_string(),
         };
         build_router(AppState::new(&config).expect("state"))
@@ -290,6 +299,8 @@ async fn server_scoped_tools_list_uses_specialized_internal_endpoint() {
             server_version: "0.1.0".to_string(),
             instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
             request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
             log_filter: "error".to_string(),
         };
         build_router(AppState::new(&config).expect("state"))
@@ -315,7 +326,565 @@ async fn server_scoped_tools_list_uses_specialized_internal_endpoint() {
     assert_eq!(body["result"]["tools"][0]["name"], "echo");
 
     let calls = observation.calls.lock().expect("lock");
-    assert!(calls.is_empty(), "server-scoped tools/list should bypass generic /rpc forwarding");
+    assert!(
+        calls.is_empty(),
+        "server-scoped tools/list should bypass generic /rpc forwarding"
+    );
+}
+
+#[tokio::test]
+async fn server_scoped_tools_list_db_mode_falls_back_to_python_data_endpoint_on_db_failure() {
+    let authz_calls = Arc::new(Mutex::new(0usize));
+    let list_calls = Arc::new(Mutex::new(0usize));
+    let rpc_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let authz_calls = authz_calls.clone();
+        let list_calls = list_calls.clone();
+        let rpc_calls = rpc_calls.clone();
+        Router::new()
+            .route(
+                "/rpc",
+                post(move || {
+                    let rpc_calls = rpc_calls.clone();
+                    async move {
+                        *rpc_calls.lock().expect("lock") += 1;
+                        Json(json!({"jsonrpc":"2.0","id":1,"result":{"unexpected":true}}))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/tools/list/authz",
+                post(move |headers: HeaderMap| {
+                    let authz_calls = authz_calls.clone();
+                    async move {
+                        *authz_calls.lock().expect("lock") += 1;
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-server-id")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("server-1")
+                        );
+                        StatusCode::NO_CONTENT
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/tools/list",
+                post(move || {
+                    let list_calls = list_calls.clone();
+                    async move {
+                        *list_calls.lock().expect("lock") += 1;
+                        Json(json!({
+                            "tools": [{
+                                "name": "echo",
+                                "description": "Echo input",
+                                "inputSchema": {"type": "object"},
+                                "annotations": {}
+                            }]
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: Some("postgresql://postgres:postgres@127.0.0.1:1/mcp".to_string()),
+            db_pool_max_size: 2,
+            log_filter: "error".to_string(),
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .header("x-contextforge-server-id", "server-1")
+        .header(
+            "x-contextforge-auth-context",
+            URL_SAFE_NO_PAD.encode(r#"{"email":"user@example.com","teams":["team-1"],"is_authenticated":true,"is_admin":false,"permission_is_admin":false}"#),
+        )
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/list",
+            "params": {}
+        }))
+        .send()
+        .await
+        .expect("tools/list response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["result"]["tools"][0]["name"], "echo");
+    assert_eq!(*authz_calls.lock().expect("lock"), 1);
+    assert_eq!(*list_calls.lock().expect("lock"), 1);
+    assert_eq!(*rpc_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
+async fn tools_call_uses_specialized_internal_endpoint() {
+    let rpc_calls = Arc::new(Mutex::new(0usize));
+    let tools_call_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let rpc_calls = rpc_calls.clone();
+        let tools_call_calls = tools_call_calls.clone();
+        Router::new()
+            .route(
+                "/rpc",
+                post(move || {
+                    let rpc_calls = rpc_calls.clone();
+                    async move {
+                        *rpc_calls.lock().expect("lock") += 1;
+                        Json(json!({"jsonrpc":"2.0","id":1,"result":{"unexpected":true}}))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/tools/call",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let tools_call_calls = tools_call_calls.clone();
+                    async move {
+                        *tools_call_calls.lock().expect("lock") += 1;
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-mcp-runtime")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("rust")
+                        );
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-server-id")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("server-1")
+                        );
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": body["id"],
+                            "result": {
+                                "content": [{"type": "text", "text": "ok"}],
+                                "isError": false
+                            }
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .header("x-contextforge-server-id", "server-1")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "tools/call",
+            "params": {
+                "name": "echo",
+                "arguments": {"text": "hello"}
+            }
+        }))
+        .send()
+        .await
+        .expect("tools/call response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-contextforge-mcp-runtime")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["result"]["content"][0]["text"], "ok");
+    assert_eq!(*tools_call_calls.lock().expect("lock"), 1);
+    assert_eq!(*rpc_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
+async fn tools_call_uses_rust_direct_execution_and_reuses_upstream_session() {
+    let upstream_initialize_calls = Arc::new(Mutex::new(0usize));
+    let upstream_tool_calls = Arc::new(Mutex::new(0usize));
+    let backend_fallback_calls = Arc::new(Mutex::new(0usize));
+    let backend_resolve_calls = Arc::new(Mutex::new(0usize));
+
+    let upstream = {
+        let upstream_initialize_calls = upstream_initialize_calls.clone();
+        let upstream_tool_calls = upstream_tool_calls.clone();
+        Router::new().route(
+            "/mcp",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let upstream_initialize_calls = upstream_initialize_calls.clone();
+                let upstream_tool_calls = upstream_tool_calls.clone();
+                async move {
+                    match body.get("method").and_then(Value::as_str) {
+                        Some("initialize") => {
+                            *upstream_initialize_calls.lock().expect("lock") += 1;
+                            assert_eq!(
+                                headers
+                                    .get("x-upstream-auth")
+                                    .and_then(|value| value.to_str().ok()),
+                                Some("rust-plan")
+                            );
+                            let mut response_headers = HeaderMap::new();
+                            response_headers.insert(
+                                "mcp-session-id",
+                                HeaderValue::from_static("upstream-session-1"),
+                            );
+                            (
+                                StatusCode::OK,
+                                response_headers,
+                                Json(json!({
+                                    "jsonrpc":"2.0",
+                                    "id": body["id"],
+                                    "result": {
+                                        "protocolVersion": "2025-11-25",
+                                        "serverInfo": {"name": "upstream", "version": "1.0.0"},
+                                        "capabilities": {}
+                                    }
+                                })),
+                            )
+                                .into_response()
+                        }
+                        Some("notifications/initialized") => StatusCode::ACCEPTED.into_response(),
+                        Some("tools/call") => {
+                            *upstream_tool_calls.lock().expect("lock") += 1;
+                            assert_eq!(
+                                headers
+                                    .get("mcp-session-id")
+                                    .and_then(|value| value.to_str().ok()),
+                                Some("upstream-session-1")
+                            );
+                            assert_eq!(body["params"]["name"], "echo_remote");
+                            Json(json!({
+                                "jsonrpc":"2.0",
+                                "id": body["id"],
+                                "result": {
+                                    "content": [{"type": "text", "text": "ok-direct"}],
+                                    "isError": false
+                                }
+                            }))
+                            .into_response()
+                        }
+                        other => (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({"unexpected_method": other})),
+                        )
+                            .into_response(),
+                    }
+                }
+            }),
+        )
+    };
+    let upstream_url = spawn_router(upstream).await;
+
+    let backend = {
+        let backend_fallback_calls = backend_fallback_calls.clone();
+        let backend_resolve_calls = backend_resolve_calls.clone();
+        let upstream_url = upstream_url.clone();
+        Router::new()
+            .route(
+                "/_internal/mcp/tools/call/resolve",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let backend_resolve_calls = backend_resolve_calls.clone();
+                    let upstream_url = upstream_url.clone();
+                    async move {
+                        *backend_resolve_calls.lock().expect("lock") += 1;
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-server-id")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("server-1")
+                        );
+                        assert_eq!(body["params"]["name"], "echo");
+                        Json(json!({
+                            "eligible": true,
+                            "transport": "streamablehttp",
+                            "serverUrl": format!("{upstream_url}/mcp"),
+                            "remoteToolName": "echo_remote",
+                            "headers": {"x-upstream-auth": "rust-plan"},
+                            "timeoutMs": 30000
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/tools/call",
+                post(move || {
+                    let backend_fallback_calls = backend_fallback_calls.clone();
+                    async move {
+                        *backend_fallback_calls.lock().expect("lock") += 1;
+                        Json(json!({
+                            "jsonrpc":"2.0",
+                            "id": 1,
+                            "result": {"unexpected": true}
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+    let client = reqwest::Client::new();
+
+    for request_id in [31, 32] {
+        let response = client
+            .post(format!("{runtime_url}/mcp"))
+            .header("authorization", "Bearer test-token")
+            .header("x-contextforge-server-id", "server-1")
+            .header("mcp-session-id", "client-session-1")
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/call",
+                "params": {
+                    "name": "echo",
+                    "arguments": {"text": "hello"}
+                }
+            }))
+            .send()
+            .await
+            .expect("tools/call response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("mcp-session-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("client-session-1")
+        );
+        let body: Value = response.json().await.expect("json body");
+        assert_eq!(body["result"]["content"][0]["text"], "ok-direct");
+    }
+
+    assert_eq!(*backend_resolve_calls.lock().expect("lock"), 1);
+    assert_eq!(*backend_fallback_calls.lock().expect("lock"), 0);
+    assert_eq!(*upstream_initialize_calls.lock().expect("lock"), 1);
+    assert_eq!(*upstream_tool_calls.lock().expect("lock"), 2);
+}
+
+#[tokio::test]
+async fn tools_call_reuses_shared_upstream_session_without_client_session_id() {
+    let upstream_initialize_calls = Arc::new(Mutex::new(0usize));
+    let upstream_tool_calls = Arc::new(Mutex::new(0usize));
+    let backend_fallback_calls = Arc::new(Mutex::new(0usize));
+    let backend_resolve_calls = Arc::new(Mutex::new(0usize));
+
+    let upstream = {
+        let upstream_initialize_calls = upstream_initialize_calls.clone();
+        let upstream_tool_calls = upstream_tool_calls.clone();
+        Router::new().route(
+            "/mcp",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let upstream_initialize_calls = upstream_initialize_calls.clone();
+                let upstream_tool_calls = upstream_tool_calls.clone();
+                async move {
+                    match body.get("method").and_then(Value::as_str) {
+                        Some("initialize") => {
+                            *upstream_initialize_calls.lock().expect("lock") += 1;
+                            assert_eq!(
+                                headers
+                                    .get("x-upstream-auth")
+                                    .and_then(|value| value.to_str().ok()),
+                                Some("rust-plan")
+                            );
+                            let mut response_headers = HeaderMap::new();
+                            response_headers.insert(
+                                "mcp-session-id",
+                                HeaderValue::from_static("shared-upstream-session"),
+                            );
+                            (
+                                StatusCode::OK,
+                                response_headers,
+                                Json(json!({
+                                    "jsonrpc":"2.0",
+                                    "id": body["id"],
+                                    "result": {
+                                        "protocolVersion": "2025-11-25",
+                                        "serverInfo": {"name": "upstream", "version": "1.0.0"},
+                                        "capabilities": {}
+                                    }
+                                })),
+                            )
+                                .into_response()
+                        }
+                        Some("notifications/initialized") => StatusCode::ACCEPTED.into_response(),
+                        Some("tools/call") => {
+                            *upstream_tool_calls.lock().expect("lock") += 1;
+                            assert_eq!(
+                                headers
+                                    .get("mcp-session-id")
+                                    .and_then(|value| value.to_str().ok()),
+                                Some("shared-upstream-session")
+                            );
+                            Json(json!({
+                                "jsonrpc":"2.0",
+                                "id": body["id"],
+                                "result": {
+                                    "content": [{"type": "text", "text": "ok-shared"}],
+                                    "isError": false
+                                }
+                            }))
+                            .into_response()
+                        }
+                        other => (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({"unexpected_method": other})),
+                        )
+                            .into_response(),
+                    }
+                }
+            }),
+        )
+    };
+    let upstream_url = spawn_router(upstream).await;
+
+    let backend = {
+        let backend_fallback_calls = backend_fallback_calls.clone();
+        let backend_resolve_calls = backend_resolve_calls.clone();
+        let upstream_url = upstream_url.clone();
+        Router::new()
+            .route(
+                "/_internal/mcp/tools/call/resolve",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let backend_resolve_calls = backend_resolve_calls.clone();
+                    let upstream_url = upstream_url.clone();
+                    async move {
+                        *backend_resolve_calls.lock().expect("lock") += 1;
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-server-id")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("server-1")
+                        );
+                        assert_eq!(body["params"]["name"], "echo");
+                        Json(json!({
+                            "eligible": true,
+                            "transport": "streamablehttp",
+                            "serverUrl": format!("{upstream_url}/mcp"),
+                            "remoteToolName": "echo_remote",
+                            "headers": {"x-upstream-auth": "rust-plan"},
+                            "timeoutMs": 30000
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/tools/call",
+                post(move || {
+                    let backend_fallback_calls = backend_fallback_calls.clone();
+                    async move {
+                        *backend_fallback_calls.lock().expect("lock") += 1;
+                        Json(json!({
+                            "jsonrpc":"2.0",
+                            "id": 1,
+                            "result": {"unexpected": true}
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+    let client = reqwest::Client::new();
+
+    for request_id in [41, 42] {
+        let response = client
+            .post(format!("{runtime_url}/mcp"))
+            .header("authorization", "Bearer test-token")
+            .header("x-contextforge-server-id", "server-1")
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/call",
+                "params": {
+                    "name": "echo",
+                    "arguments": {"text": "hello"}
+                }
+            }))
+            .send()
+            .await
+            .expect("tools/call response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("mcp-session-id").is_none());
+        let body: Value = response.json().await.expect("json body");
+        assert_eq!(body["result"]["content"][0]["text"], "ok-shared");
+    }
+
+    assert_eq!(*backend_resolve_calls.lock().expect("lock"), 1);
+    assert_eq!(*backend_fallback_calls.lock().expect("lock"), 0);
+    assert_eq!(*upstream_initialize_calls.lock().expect("lock"), 1);
+    assert_eq!(*upstream_tool_calls.lock().expect("lock"), 2);
 }
 
 #[tokio::test]
@@ -343,6 +912,8 @@ async fn mcp_path_aliases_to_the_same_runtime_handler() {
             server_version: "0.1.0".to_string(),
             instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
             request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
             log_filter: "error".to_string(),
         };
         build_router(AppState::new(&config).expect("state"))
@@ -391,6 +962,8 @@ async fn unsupported_protocol_header_is_rejected() {
             server_version: "0.1.0".to_string(),
             instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
             request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
             log_filter: "error".to_string(),
         };
         build_router(AppState::new(&config).expect("state"))
@@ -457,6 +1030,8 @@ async fn notifications_are_forwarded_but_return_accepted() {
             server_version: "0.1.0".to_string(),
             instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
             request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
             log_filter: "error".to_string(),
         };
         build_router(AppState::new(&config).expect("state"))
@@ -519,6 +1094,8 @@ async fn internal_only_headers_are_not_forwarded_to_backend() {
             server_version: "0.1.0".to_string(),
             instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
             request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
             log_filter: "error".to_string(),
         };
         build_router(AppState::new(&config).expect("state"))
@@ -572,6 +1149,8 @@ async fn initialize_missing_protocol_version_returns_invalid_params() {
             server_version: "0.1.0".to_string(),
             instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
             request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
             log_filter: "error".to_string(),
         };
         build_router(AppState::new(&config).expect("state"))
@@ -626,6 +1205,8 @@ async fn jsonrpc_batch_payload_is_rejected() {
             server_version: "0.1.0".to_string(),
             instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
             request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
             log_filter: "error".to_string(),
         };
         build_router(AppState::new(&config).expect("state"))
@@ -673,6 +1254,8 @@ async fn top_level_scalar_payload_is_invalid_request() {
             server_version: "0.1.0".to_string(),
             instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
             request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
             log_filter: "error".to_string(),
         };
         build_router(AppState::new(&config).expect("state"))
