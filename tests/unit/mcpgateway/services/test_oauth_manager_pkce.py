@@ -2229,77 +2229,12 @@ class TestCWE287DenyPathRegressions:
     # -- deny-path tests --------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_ambient_user_object_with_email_attribute_not_used(self):
-        """Missing email in state must hard-error; request parameter is not accepted (CWE-287)."""
-        manager = OAuthManager(token_storage=AsyncMock())
-        manager.token_storage.store_tokens = AsyncMock(return_value=SimpleNamespace(expires_at=None))
+    async def test_missing_email_in_state_hard_errors(self):
+        """Missing email in state must hard-error and never store tokens (CWE-287).
 
-        with self._patches(manager)[0], self._patches(manager)[1], self._patches(manager)[2]:
-            with pytest.raises(OAuthError, match="User context required"):
-                await manager.complete_authorization_code_flow(
-                    "gw1", "code", "state-tok", {"client_id": "cid"},
-                )
-        manager.token_storage.store_tokens.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_ambient_user_dict_with_email_key_not_used(self):
-        """Missing email in state must hard-error; request parameter is not accepted (CWE-287)."""
-        manager = OAuthManager(token_storage=AsyncMock())
-        manager.token_storage.store_tokens = AsyncMock(return_value=SimpleNamespace(expires_at=None))
-
-        with self._patches(manager)[0], self._patches(manager)[1], self._patches(manager)[2]:
-            with pytest.raises(OAuthError, match="User context required"):
-                await manager.complete_authorization_code_flow(
-                    "gw1", "code", "state-tok", {"client_id": "cid"},
-                )
-        manager.token_storage.store_tokens.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_ambient_jwt_verified_payload_not_used(self):
-        """Missing email in state must hard-error; request parameter is not accepted (CWE-287)."""
-        manager = OAuthManager(token_storage=AsyncMock())
-        manager.token_storage.store_tokens = AsyncMock(return_value=SimpleNamespace(expires_at=None))
-
-        with self._patches(manager)[0], self._patches(manager)[1], self._patches(manager)[2]:
-            with pytest.raises(OAuthError, match="User context required"):
-                await manager.complete_authorization_code_flow(
-                    "gw1", "code", "state-tok", {"client_id": "cid"},
-                )
-        manager.token_storage.store_tokens.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_request_none_still_hard_errors(self):
-        """Missing email in state must raise OAuthError even without request parameter."""
-        manager = OAuthManager(token_storage=AsyncMock())
-        manager.token_storage.store_tokens = AsyncMock(return_value=SimpleNamespace(expires_at=None))
-
-        with self._patches(manager)[0], self._patches(manager)[1], self._patches(manager)[2]:
-            with pytest.raises(OAuthError, match="User context required"):
-                await manager.complete_authorization_code_flow(
-                    "gw1", "code", "state-tok", {"client_id": "cid"},
-                )
-        manager.token_storage.store_tokens.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_request_with_no_state_attr_hard_errors(self):
-        """Missing email in state must hard-error regardless of request context."""
-        manager = OAuthManager(token_storage=AsyncMock())
-        manager.token_storage.store_tokens = AsyncMock(return_value=SimpleNamespace(expires_at=None))
-
-        with self._patches(manager)[0], self._patches(manager)[1], self._patches(manager)[2]:
-            with pytest.raises(OAuthError, match="User context required"):
-                await manager.complete_authorization_code_flow(
-                    "gw1", "code", "state-tok", {"client_id": "cid"},
-                )
-        manager.token_storage.store_tokens.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_different_user_cookie_not_cross_bound(self):
-        """Tokens must not be stored without email from server-side state (CWE-287).
-
-        Scenario: User A initiates OAuth, but User B's cookie is on the browser
-        when the callback redirect arrives.  The flow must refuse since email is
-        missing from state and request context is not used.
+        Covers all ambient-context scenarios (user object, dict, JWT payload,
+        cross-user cookie) since the request-context fallback was removed and
+        the only email source is server-side state.
         """
         manager = OAuthManager(token_storage=AsyncMock())
         manager.token_storage.store_tokens = AsyncMock(return_value=SimpleNamespace(expires_at=None))
