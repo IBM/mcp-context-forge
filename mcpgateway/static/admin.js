@@ -6342,13 +6342,18 @@ async function editGateway(gatewayId) {
             case "authheaders":
                 if (authHeadersSection) {
                     authHeadersSection.style.display = "block";
+                    const unmaskedHeaders =
+                        Array.isArray(gateway.authHeadersUnmasked) &&
+                        gateway.authHeadersUnmasked.length > 0
+                            ? gateway.authHeadersUnmasked
+                            : gateway.authHeaders;
                     if (
-                        Array.isArray(gateway.authHeaders) &&
-                        gateway.authHeaders.length > 0
+                        Array.isArray(unmaskedHeaders) &&
+                        unmaskedHeaders.length > 0
                     ) {
                         loadAuthHeaders(
                             "auth-headers-container-gw-edit",
-                            gateway.authHeaders,
+                            unmaskedHeaders,
                             { maskValues: true },
                         );
                     } else {
@@ -6361,8 +6366,8 @@ async function editGateway(gatewayId) {
                         authHeaderValueField.dataset.isMasked = "true";
                         authHeaderValueField.dataset.gatewayId = gatewayId;
                         if (
-                            Array.isArray(gateway.authHeaders) &&
-                            gateway.authHeaders.length === 1
+                            Array.isArray(unmaskedHeaders) &&
+                            unmaskedHeaders.length === 1
                         ) {
                             authHeaderValueField.dataset.realValue =
                                 unmaskedHeaders[0].value ?? "";
