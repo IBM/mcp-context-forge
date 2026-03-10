@@ -2,7 +2,7 @@
 
 - *Status:* Proposed
 - *Date:* 2026-02-26
-- *Section:* Build & Distribution
+- *Deciders:* Core Engineering Team
 
 ## Context
 
