@@ -825,6 +825,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             raw_oauth_config = getattr(gateway, "oauth_config", None)
             if raw_oauth_config and raw_oauth_config.get("issuer") and not raw_oauth_config.get("token_url") and not raw_oauth_config.get("authorization_url"):
                 try:
+                    # First-Party
                     from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
                     _dcr = DcrService()
                     _metadata = await _dcr.discover_as_metadata(raw_oauth_config["issuer"])
@@ -1927,6 +1928,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     raw_oauth_update = dict(gateway_update.oauth_config)
                     if raw_oauth_update.get("issuer") and not raw_oauth_update.get("token_url") and not raw_oauth_update.get("authorization_url"):
                         try:
+                            # First-Party
                             from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
                             _dcr = DcrService()
                             _metadata = await _dcr.discover_as_metadata(raw_oauth_update["issuer"])
