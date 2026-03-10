@@ -47,13 +47,13 @@ docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | rg 'conc-postgr
 ### 2) Terminal A: start gateway (Postgres + Redis + local SSRF overrides)
 
 ```bash
-cd /Users/pratik/Desktop/work/new_mcf/mcp-context-forge
+# from repo root
 pkill -f "mcpgateway.main|uvicorn" || true
 
 DATABASE_URL='postgresql+psycopg://postgres:postgres@127.0.0.1:5432/concurrent_test' \
 REDIS_URL='redis://127.0.0.1:6379/0' \
 CACHE_TYPE='redis' \
-JWT_SECRET_KEY='my-test-key' \
+JWT_SECRET_KEY='<your-jwt-secret>' \
 SSRF_ALLOW_LOCALHOST=true \
 SSRF_ALLOW_PRIVATE_NETWORKS=true \
 make dev
@@ -62,15 +62,15 @@ make dev
 ### 3) Terminal B: start translator
 
 ```bash
-cd /Users/pratik/Desktop/work/new_mcf/mcp-context-forge
+# from repo root
 python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 ```
 
 ### 4) Terminal C: generate token and run matrix
 
 ```bash
-cd /Users/pratik/Desktop/work/new_mcf/mcp-context-forge
-export CONC_TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 120 --secret my-test-key)"
+# from repo root
+export CONC_TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 120 --secret <your-jwt-secret>)"
 make conc-01-gateways
 ```
 
@@ -127,23 +127,6 @@ Observed pattern:
 
 - `team_id` appears `NULL` (blank in `psql` output)
 - Same `owner_email + slug` groups can appear with high counts (for example `cnt=20`)
-
-## Code references
-
-- Gateway schema/constraint:
-  - `mcpgateway/db.py:4426` (`team_id` nullable)
-  - `mcpgateway/db.py:4466` (`UniqueConstraint(team_id, owner_email, slug)`)
-- Slug derivation:
-  - `mcpgateway/db.py:6179`
-  - `mcpgateway/db.py:6189`
-- Gateway create path:
-  - `mcpgateway/services/gateway_service.py:728`
-  - `mcpgateway/services/gateway_service.py:731`
-  - `mcpgateway/services/gateway_service.py:1065`
-  - `mcpgateway/services/gateway_service.py:1100`
-- HTTP conflict mapping:
-  - `mcpgateway/main.py:5469`
-  - `mcpgateway/main.py:5477`
 
 ## Interpretation (non-fix)
 
