@@ -534,6 +534,97 @@ async fn tools_call_uses_specialized_internal_endpoint() {
 }
 
 #[tokio::test]
+async fn tools_call_surfaces_backend_jsonrpc_errors_from_resolve() {
+    let backend_fallback_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let backend_fallback_calls = backend_fallback_calls.clone();
+        Router::new()
+            .route(
+                "/_internal/mcp/tools/call/resolve",
+                post(move |Json(body): Json<Value>| async move {
+                    (
+                        StatusCode::NOT_FOUND,
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": body["id"],
+                            "error": {
+                                "code": -32601,
+                                "message": "Tool not found: nonexistent-tool-xyz"
+                            }
+                        })),
+                    )
+                }),
+            )
+            .route(
+                "/_internal/mcp/tools/call",
+                post(move || {
+                    let backend_fallback_calls = backend_fallback_calls.clone();
+                    async move {
+                        *backend_fallback_calls.lock().expect("lock") += 1;
+                        Json(json!({
+                            "jsonrpc":"2.0",
+                            "id": 99,
+                            "result": {"unexpected": true}
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "tools/call",
+            "params": {
+                "name": "nonexistent-tool-xyz",
+                "arguments": {}
+            }
+        }))
+        .send()
+        .await
+        .expect("tools/call response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-contextforge-mcp-runtime")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["error"]["code"], -32601);
+    assert_eq!(
+        body["error"]["message"],
+        "Tool not found: nonexistent-tool-xyz"
+    );
+    assert_eq!(*backend_fallback_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
 async fn tools_call_uses_rust_direct_execution_and_reuses_upstream_session() {
     let upstream_initialize_calls = Arc::new(Mutex::new(0usize));
     let upstream_tool_calls = Arc::new(Mutex::new(0usize));
@@ -885,6 +976,185 @@ async fn tools_call_reuses_shared_upstream_session_without_client_session_id() {
     assert_eq!(*backend_fallback_calls.lock().expect("lock"), 0);
     assert_eq!(*upstream_initialize_calls.lock().expect("lock"), 1);
     assert_eq!(*upstream_tool_calls.lock().expect("lock"), 2);
+}
+
+#[tokio::test]
+async fn tools_call_direct_execution_supports_sse_upstream_responses() {
+    let upstream_initialize_calls = Arc::new(Mutex::new(0usize));
+    let upstream_tool_calls = Arc::new(Mutex::new(0usize));
+    let backend_fallback_calls = Arc::new(Mutex::new(0usize));
+    let backend_resolve_calls = Arc::new(Mutex::new(0usize));
+
+    let upstream = {
+        let upstream_initialize_calls = upstream_initialize_calls.clone();
+        let upstream_tool_calls = upstream_tool_calls.clone();
+        Router::new().route(
+            "/mcp",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let upstream_initialize_calls = upstream_initialize_calls.clone();
+                let upstream_tool_calls = upstream_tool_calls.clone();
+                async move {
+                    match body.get("method").and_then(Value::as_str) {
+                        Some("initialize") => {
+                            *upstream_initialize_calls.lock().expect("lock") += 1;
+                            assert_eq!(
+                                headers
+                                    .get("x-upstream-auth")
+                                    .and_then(|value| value.to_str().ok()),
+                                Some("rust-plan")
+                            );
+                            let mut response_headers = HeaderMap::new();
+                            response_headers.insert(
+                                "mcp-session-id",
+                                HeaderValue::from_static("sse-upstream-session"),
+                            );
+                            response_headers.insert(
+                                "content-type",
+                                HeaderValue::from_static("text/event-stream"),
+                            );
+                            (
+                                StatusCode::OK,
+                                response_headers,
+                                format!(
+                                    "data: {}\n\n",
+                                    json!({
+                                        "jsonrpc":"2.0",
+                                        "id": body["id"],
+                                        "result": {
+                                            "protocolVersion": "2025-11-25",
+                                            "serverInfo": {"name": "upstream", "version": "1.0.0"},
+                                            "capabilities": {}
+                                        }
+                                    })
+                                ),
+                            )
+                                .into_response()
+                        }
+                        Some("notifications/initialized") => StatusCode::ACCEPTED.into_response(),
+                        Some("tools/call") => {
+                            *upstream_tool_calls.lock().expect("lock") += 1;
+                            assert_eq!(
+                                headers
+                                    .get("mcp-session-id")
+                                    .and_then(|value| value.to_str().ok()),
+                                Some("sse-upstream-session")
+                            );
+                            (
+                                StatusCode::OK,
+                                [(
+                                    "content-type",
+                                    HeaderValue::from_static("text/event-stream"),
+                                )],
+                                format!(
+                                    "data: {}\nid: 0/0\n\n",
+                                    json!({
+                                        "jsonrpc":"2.0",
+                                        "id": body["id"],
+                                        "result": {
+                                            "content": [{"type": "text", "text": "ok-sse-direct"}],
+                                            "isError": false
+                                        }
+                                    })
+                                ),
+                            )
+                                .into_response()
+                        }
+                        other => (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({"unexpected_method": other})),
+                        )
+                            .into_response(),
+                    }
+                }
+            }),
+        )
+    };
+    let upstream_url = spawn_router(upstream).await;
+
+    let backend = {
+        let backend_fallback_calls = backend_fallback_calls.clone();
+        let backend_resolve_calls = backend_resolve_calls.clone();
+        let upstream_url = upstream_url.clone();
+        Router::new()
+            .route(
+                "/_internal/mcp/tools/call/resolve",
+                post(move |Json(body): Json<Value>| {
+                    let backend_resolve_calls = backend_resolve_calls.clone();
+                    let upstream_url = upstream_url.clone();
+                    async move {
+                        *backend_resolve_calls.lock().expect("lock") += 1;
+                        assert_eq!(body["params"]["name"], "echo");
+                        Json(json!({
+                            "eligible": true,
+                            "transport": "streamablehttp",
+                            "serverUrl": format!("{upstream_url}/mcp"),
+                            "remoteToolName": "echo_remote",
+                            "headers": {"x-upstream-auth": "rust-plan"},
+                            "timeoutMs": 30000
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/tools/call",
+                post(move || {
+                    let backend_fallback_calls = backend_fallback_calls.clone();
+                    async move {
+                        *backend_fallback_calls.lock().expect("lock") += 1;
+                        Json(json!({
+                            "jsonrpc":"2.0",
+                            "id": 1,
+                            "result": {"unexpected": true}
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .header("x-contextforge-server-id", "server-1")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 51,
+            "method": "tools/call",
+            "params": {
+                "name": "echo",
+                "arguments": {"text": "hello"}
+            }
+        }))
+        .send()
+        .await
+        .expect("tools/call response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["result"]["content"][0]["text"], "ok-sse-direct");
+    assert_eq!(*backend_resolve_calls.lock().expect("lock"), 1);
+    assert_eq!(*backend_fallback_calls.lock().expect("lock"), 0);
+    assert_eq!(*upstream_initialize_calls.lock().expect("lock"), 1);
+    assert_eq!(*upstream_tool_calls.lock().expect("lock"), 1);
 }
 
 #[tokio::test]

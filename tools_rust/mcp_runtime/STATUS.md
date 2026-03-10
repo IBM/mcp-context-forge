@@ -1,9 +1,13 @@
 # Rust MCP Runtime Status
 
-Last updated: March 9, 2026
+Last updated: March 10, 2026
 
 Status focus in this update:
 
+- backend JSON-RPC error propagation for direct `tools/call` resolve failures
+- fresh compose rebuild validation on the latest Rust-enabled gateway image
+- verified `make test-mcp-cli` and `make test-mcp-rbac` on the rebuilt stack
+- a full mixed MCP benchmark curve on the comparable `Fast Time Server` target
 - Unix domain socket handoff between Python and the managed Rust sidecar
 - a narrower trusted internal dispatcher route at `/_internal/mcp/rpc`
 - a specialized trusted internal `tools/call` route at `/_internal/mcp/tools/call`
@@ -11,6 +15,124 @@ Status focus in this update:
 - the first Rust-owned read-only DB path for server-scoped `tools/list`
 - parity hardening for scoped-token `initialize` and nonexistent-tool `tools/call`
 - clean server-scoped `MCPToolCallerUser` benchmark results for the real hot path
+- direct Rust handling of upstream MCP SSE-framed responses for `initialize` and `tools/call`
+- verified `>1000 RPS` on the pinned tools-only benchmark after the SSE fix
+
+## Latest Performance Update
+
+The most important March 10, 2026 finding is that the direct Rust `tools/call`
+path was previously underperforming because it was silently falling back to
+Python on many requests.
+
+Root cause:
+
+- the fast test MCP server returns `initialize` and `tools/call` responses as
+  `text/event-stream` with JSON-RPC payloads inside `data:` frames
+- the Rust runtime was decoding those responses as plain JSON
+- that caused repeated `upstream initialize decode failed` fallbacks during live
+  load
+
+What changed:
+
+- the Rust runtime now decodes upstream MCP responses from either:
+  - plain JSON bodies
+  - SSE-framed `data:` payloads
+- the runtime test suite now includes an SSE upstream regression case
+
+Measured impact on the pinned tools-only benchmark
+`MCPToolCallerUser` against `/servers/a5209e5adad04216a54fc92c568ba6e1/mcp`:
+
+| Phase | Users | Overall RPS | `tools/call` RPS | Avg (ms) | Failures |
+|------|------:|------------:|-----------------:|---------:|---------:|
+| Before SSE fix | 100 | ~698 | ~662 | ~93 | 0% |
+| After SSE fix, first clean run | 100 | 828.44 | 783.11 | 70.65 | 0% |
+| Warm-cache rerun | 100 | 972.24 | 922.93 | 52.51 | 0% |
+| Confirmed `>1000` run | 125 | 1144.95 | 1086.60 | 59.98 | 0% |
+| Confirmed rerun | 125 | 1131.96 | 1075.66 | 61.19 | 0% |
+
+What this means:
+
+- the Rust hot path is now genuinely executing direct upstream `tools/call`
+  requests instead of bouncing back to Python because of response-shape
+  mismatches
+- the current implementation can exceed `1000 RPS` on the pinned tools-only
+  benchmark without moving DB access for `tools/call` into Rust
+- the remaining main bottleneck is still the Python public ingress and auth/RBAC
+  seam in front of Rust, not the direct Rust upstream execution itself
+
+### Fresh compose rebuild validation
+
+On March 10, 2026 I rebuilt the gateway image, recreated the Rust-enabled
+compose stack, and reran the live protocol suites against `http://localhost:8080`.
+
+Validated:
+
+- `make test-mcp-cli`: `22 passed`
+- `make test-mcp-rbac`: `40 passed`
+- targeted nonexistent-tool wrapper regression:
+  `tests/e2e/test_mcp_cli_protocol.py::TestMcpStdioProtocol::test_tools_call_nonexistent_tool`
+  passed after the resolve-path fix
+
+Root cause of that regression:
+
+- the dedicated Python `/_internal/mcp/tools/call/resolve` route let
+  `ToolNotFoundError` escape as a `500`
+- Rust treated that as a backend transport failure and did not surface the
+  JSON-RPC error cleanly to the stdio wrapper path
+
+What changed:
+
+- Python now maps resolve-time `ToolNotFoundError` to a JSON-RPC `-32601`
+  response on the internal route
+- Rust now detects backend JSON-RPC error payloads coming back from the resolve
+  endpoint and returns them directly to the client instead of treating them as a
+  fallback transport error
+
+### Fresh mixed-workload benchmark
+
+I reran the full mixed MCP scalability curve from
+`todo/performance/reproduce-testing.md` on the rebuilt Rust-enabled stack.
+
+Important comparison detail:
+
+- the comparable mixed benchmark target is the auto-detected rich server,
+  currently `Fast Time Server`
+  (`9779b6698cbd4b4995ee04a4fab38737`)
+- the pinned `rust-perf-fast-test-2` server remains useful for controlled
+  `tools/call` experiments, but it is not comparable for the mixed Locust curve
+  because it does not expose the same discovery surface
+
+Latest mixed Rust results:
+
+| Users | Rust RPS | Avg (ms) | p50 | p95 | p99 | Fails |
+|------:|---------:|---------:|----:|----:|----:|------:|
+| 10 | 94.71 | 10.67 | 9 | 15 | 22 | 0.00% |
+| 25 | 244.30 | 11.80 | 10 | 16 | 31 | 0.00% |
+| 50 | 482.85 | 14.81 | 12 | 23 | 51 | 0.00% |
+| 75 | 700.77 | 17.31 | 15 | 28 | 47 | 0.00% |
+| 100 | 888.46 | 23.10 | 20 | 39 | 72 | 0.00% |
+| 125 | 953.63 | 41.76 | 37 | 76 | 140 | 0.00% |
+| 150 | 944.77 | 71.39 | 62 | 120 | 210 | 0.00% |
+| 200 | 916.38 | 135.83 | 110 | 250 | 390 | 0.00% |
+| 300 | 868.28 | 278.44 | 220 | 560 | 770 | 0.00% |
+
+Compared to the earlier Python mixed baseline from the same benchmark recipe:
+
+- Rust is higher at every measured user count in this rerun
+- the most important comparison point is `100` users:
+  - Python: `759 RPS`, `38 ms` avg, `62 ms` p95
+  - Rust: `888.46 RPS`, `23.10 ms` avg, `39 ms` p95
+- current mixed-workload peak is `953.63 RPS` at `125` users with `0%` failures
+
+Current interpretation:
+
+- the Rust transport/runtime work is now delivering a real mixed-workload gain,
+  not just better saturation behavior
+- the hottest direct `tools/call` path is still the best candidate to push the
+  mixed curve past `1000 RPS`
+- the current mixed benchmark is close enough to that threshold that the next
+  gains should come from more of the `tools/call` ingress/policy seam moving out
+  of Python, not from minor transport tweaks
 
 ## Executive Summary
 

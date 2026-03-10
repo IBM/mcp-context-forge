@@ -47,6 +47,7 @@ from mcpgateway.main import (
     export_selective_configuration,
     get_a2a_agent,
     handle_internal_mcp_tools_call,
+    handle_internal_mcp_tools_call_resolve,
     handle_internal_mcp_tools_list_authz,
     handle_internal_mcp_tools_list,
     handle_internal_mcp_rpc,
@@ -4550,6 +4551,45 @@ class TestRpcHandling:
         assert result["error"]["code"] == -32601
         assert "Tool not found: missing-tool" in result["error"]["message"]
         mock_db.commit.assert_called_once()
+        mock_db.close.assert_called()
+
+    async def test_handle_internal_mcp_tools_call_resolve_returns_jsonrpc_not_found(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "resolve-1", "method": "tools/call", "params": {"name": "missing-tool", "arguments": {}}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "scoped_permissions": ["tools.execute"],
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
+            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=ToolNotFoundError("Tool not found: missing-tool"))),
+        ):
+            response = await handle_internal_mcp_tools_call_resolve(request)
+
+        assert response.status_code == 404
+        payload = json.loads(response.body)
+        assert payload["jsonrpc"] == "2.0"
+        assert payload["id"] == "resolve-1"
+        assert payload["error"]["code"] == -32601
+        assert "Tool not found: missing-tool" in payload["error"]["message"]
         mock_db.close.assert_called()
 
     async def test_handle_rpc_list_tools_with_cursor(self):
