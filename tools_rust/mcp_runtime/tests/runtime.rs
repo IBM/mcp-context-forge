@@ -28,6 +28,29 @@ async fn spawn_router(router: Router) -> String {
     format!("http://{addr}")
 }
 
+fn test_runtime_config() -> RuntimeConfig {
+    RuntimeConfig {
+        backend_rpc_url: "http://127.0.0.1:4444/rpc".to_string(),
+        listen_http: "127.0.0.1:8787".to_string(),
+        listen_uds: None,
+        protocol_version: "2025-11-25".to_string(),
+        supported_protocol_versions: vec![],
+        server_name: "ContextForge".to_string(),
+        server_version: "0.1.0".to_string(),
+        instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+        request_timeout_ms: 30_000,
+        client_connect_timeout_ms: 5_000,
+        client_pool_idle_timeout_seconds: 90,
+        client_pool_max_idle_per_host: 1024,
+        client_tcp_keepalive_seconds: 30,
+        tools_call_plan_ttl_seconds: 30,
+        upstream_session_ttl_seconds: 300,
+        database_url: None,
+        db_pool_max_size: 20,
+        log_filter: "error".to_string(),
+    }
+}
+
 #[tokio::test]
 async fn ping_is_handled_locally() {
     let observation = BackendObservation::default();
@@ -73,6 +96,7 @@ async fn ping_is_handled_locally() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -118,6 +142,7 @@ async fn health_alias_is_available_for_gateway_style_probes() {
         database_url: None,
         db_pool_max_size: 20,
         log_filter: "error".to_string(),
+        ..test_runtime_config()
     };
     let runtime_url = spawn_router(build_router(AppState::new(&config).expect("state"))).await;
 
@@ -199,6 +224,7 @@ async fn tools_list_is_forwarded_with_auth_and_session_headers() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -302,6 +328,7 @@ async fn server_scoped_tools_list_uses_specialized_internal_endpoint() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -402,6 +429,7 @@ async fn server_scoped_tools_list_db_mode_falls_back_to_python_data_endpoint_on_
             database_url: Some("postgresql://postgres:postgres@127.0.0.1:1/mcp".to_string()),
             db_pool_max_size: 2,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -497,6 +525,7 @@ async fn tools_call_uses_specialized_internal_endpoint() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -586,6 +615,7 @@ async fn tools_call_surfaces_backend_jsonrpc_errors_from_resolve() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -762,6 +792,7 @@ async fn tools_call_uses_rust_direct_execution_and_reuses_upstream_session() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -942,6 +973,7 @@ async fn tools_call_reuses_shared_upstream_session_without_client_session_id() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -1126,6 +1158,7 @@ async fn tools_call_direct_execution_supports_sse_upstream_responses() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -1185,6 +1218,7 @@ async fn mcp_path_aliases_to_the_same_runtime_handler() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -1235,6 +1269,7 @@ async fn unsupported_protocol_header_is_rejected() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -1303,6 +1338,7 @@ async fn notifications_are_forwarded_but_return_accepted() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -1367,6 +1403,7 @@ async fn internal_only_headers_are_not_forwarded_to_backend() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -1422,6 +1459,7 @@ async fn initialize_missing_protocol_version_returns_invalid_params() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -1478,6 +1516,7 @@ async fn jsonrpc_batch_payload_is_rejected() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
@@ -1527,6 +1566,7 @@ async fn top_level_scalar_payload_is_invalid_request() {
             database_url: None,
             db_pool_max_size: 20,
             log_filter: "error".to_string(),
+            ..test_runtime_config()
         };
         build_router(AppState::new(&config).expect("state"))
     };
