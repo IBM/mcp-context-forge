@@ -131,6 +131,7 @@ Manual concurrency tests validate data consistency under concurrent access. Thes
 
 | Test ID | Makefile Target | What it validates |
 |---------|-----------------|-------------------|
+| CONC-01 | `make conc-01-gateways` | Exactly 1 success and N-1 conflicts when N workers concurrently create a gateway with the same name (`POST /gateways`) |
 | CONC-02 | `make conc-02-gateways` | No 5xx errors, no malformed payloads, and valid final read when concurrent readers and writers hit `GET/PUT /gateways/{id}` |
 
 **Quick start:**
@@ -141,7 +142,20 @@ Manual concurrency tests validate data consistency under concurrent access. Thes
 
 # Generate token and run
 export CONC_TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 120 --secret my-test-key)"
+  --username admin@example.com --exp 120 --secret <your-jwt-secret>)"
+make conc-01-gateways
+
+# Custom parameters
+CONC_CASES=api_smoke_20 make conc-01-gateways
+```
+
+Full runbook, environment variable reference, and results template: [`tests/manual/concurrency/conc_01_gateways_results.md`](https://github.com/IBM/mcp-context-forge/blob/main/tests/manual/concurrency/conc_01_gateways_results.md).
+
+**Quick start (CONC-02):**
+
+```bash
+export CONC_TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 120 --secret <your-jwt-secret>)"
 make conc-02-gateways
 
 # Custom parameters

@@ -193,6 +193,7 @@ Manual concurrency tests validate data consistency under concurrent access. Thes
 
 | Test ID | Script | Makefile Target | Description |
 |---------|--------|-----------------|-------------|
+| CONC-01 | `concurrency/conc_01_gateways_parallel_create_pg_redis.py` | `make conc-01-gateways` | Gateway parallel same-name create uniqueness |
 | CONC-02 | `concurrency/conc_02_gateways_read_during_write.py` | `make conc-02-gateways` | Gateway read-during-write consistency |
 
 ### Running Concurrency Tests
@@ -206,6 +207,31 @@ Concurrency tests are **not** part of automated CI. They require manual setup of
 3. A translator endpoint (e.g., `python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000`)
 4. A valid JWT token exported as `CONC_TOKEN`
 
+**Quick start (CONC-01):**
+
+```bash
+# Start infrastructure
+docker run -d --name conc-postgres -p 5432:5432 \
+  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=concurrent_test postgres:16
+docker run -d --name conc-redis -p 6379:6379 redis:7
+
+# Start gateway (Terminal A)
+DATABASE_URL='postgresql+psycopg://postgres:postgres@127.0.0.1:5432/concurrent_test' \
+REDIS_URL='redis://127.0.0.1:6379/0' CACHE_TYPE='redis' \
+JWT_SECRET_KEY='<your-jwt-secret>' \
+SSRF_ALLOW_LOCALHOST=true SSRF_ALLOW_PRIVATE_NETWORKS=true \
+make dev
+
+# Start translator (Terminal B)
+python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
+
+# Generate token and run (Terminal C)
+export CONC_TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 120 --secret <your-jwt-secret>)"
+make conc-01-gateways
+```
+
 **Quick start (CONC-02):**
 
 ```bash
@@ -218,7 +244,7 @@ docker run -d --name conc-redis -p 6379:6379 redis:7
 # Start gateway (Terminal A)
 DATABASE_URL='postgresql+psycopg://postgres:postgres@127.0.0.1:5432/concurrent_test' \
 REDIS_URL='redis://127.0.0.1:6379/0' CACHE_TYPE='redis' \
-JWT_SECRET_KEY='my-test-key' \
+JWT_SECRET_KEY='<your-jwt-secret>' \
 SSRF_ALLOW_LOCALHOST=true SSRF_ALLOW_PRIVATE_NETWORKS=true \
 make dev
 
@@ -227,11 +253,23 @@ python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 
 # Generate token and run (Terminal C)
 export CONC_TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 120 --secret my-test-key)"
+  --username admin@example.com --exp 120 --secret <your-jwt-secret>)"
 make conc-02-gateways
 ```
 
-**Tuning parameters (via environment variables):**
+**Tuning parameters — CONC-01 (via environment variables):**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CONC_BASE_URL` | `http://localhost:8000` | Gateway base URL |
+| `CONC_GATEWAY_URL` | `http://127.0.0.1:9000/sse` | Translator endpoint URL |
+| `CONC_NAME_PREFIX` | `conc-gw` | Gateway name prefix used in test |
+| `CONC_DB_CHECK` | `1` | Set `0` to skip DB-level uniqueness checks |
+| `CONC_DB_PATH` | `mcp.db` | SQLite DB path (fallback when no `DATABASE_URL`) |
+| `CONC_CASES` | _(all)_ | Comma-separated case names, e.g. `api_smoke_20,api_100` |
+| `CONC_TIMEOUT_OVERRIDE` | _(none)_ | Override timeout in seconds for selected cases |
+
+**Tuning parameters — CONC-02 (via environment variables):**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
