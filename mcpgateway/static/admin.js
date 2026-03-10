@@ -16779,9 +16779,20 @@ function setupFormValidation() {
 
     forms.forEach((form) => {
         // Add validation to name fields
-        const nameFields = form.querySelectorAll(
-            'input[name*="name"], input[name*="Name"]',
-        );
+        // Target only the actual technical name inputs (avoid matching displayName)
+        const nameFields = Array.from(
+            form.querySelectorAll(
+                'input[name="name"], input[name="customName"], input[name="custom_name"]',
+            ),
+        ).filter((f) => {
+            // Exclude hidden inputs and any display-name-like fields so
+            // display names remain optional and aren't validated here.
+            if (!f) return false;
+            if (f.type && f.type.toLowerCase() === "hidden") return false;
+            if (/display/i.test(f.name || "")) return false;
+            return true;
+        });
+
         nameFields.forEach((field) => {
             field.addEventListener("blur", function () {
                 const parentNode = this.parentNode;
