@@ -4123,7 +4123,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     except Exception:
                         gateway_tool_auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
                         auth_value_changed = existing_tool.auth_value != gateway_tool_auth_value
-                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or auth_value_changed or existing_tool.visibility != gateway.visibility
+                    
+                    should_update_visibility = created_via == "update"
+                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or auth_value_changed or (should_update_visibility and existing_tool.visibility != gateway.visibility)
 
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed:
                         fields_to_update = True
@@ -4142,7 +4144,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
                         existing_tool.auth_type = gateway.auth_type
                         existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
-                        existing_tool.visibility = gateway.visibility
+                        if should_update_visibility:
+                            existing_tool.visibility = gateway.visibility
                         logger.debug(f"Updated existing tool: {tool.name}")
                 else:
                     # Create new tool if it doesn't exist
@@ -4200,13 +4203,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if existing_resource:
                     # Update existing resource if there are changes
                     fields_to_update = False
+                    should_update_visibility = created_via == "update"
 
                     if (
                         existing_resource.name != resource.name
                         or existing_resource.description != resource.description
                         or existing_resource.mime_type != resource.mime_type
                         or existing_resource.uri_template != resource.uri_template
-                        or existing_resource.visibility != gateway.visibility
+                        or (should_update_visibility and existing_resource.visibility != gateway.visibility)
                     ):
                         fields_to_update = True
 
@@ -4215,7 +4219,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_resource.description = resource.description
                         existing_resource.mime_type = resource.mime_type
                         existing_resource.uri_template = resource.uri_template
-                        existing_resource.visibility = gateway.visibility
+                        if should_update_visibility:
+                            existing_resource.visibility = gateway.visibility
                         logger.debug(f"Updated existing resource: {resource.uri}")
                 else:
                     # Create new resource if it doesn't exist
@@ -4276,18 +4281,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if existing_prompt:
                     # Update existing prompt if there are changes
                     fields_to_update = False
+                    should_update_visibility = created_via == "update"
 
                     if (
                         existing_prompt.description != prompt.description
                         or existing_prompt.template != (prompt.template if hasattr(prompt, "template") else "")
-                        or existing_prompt.visibility != gateway.visibility
+                        or (should_update_visibility and existing_prompt.visibility != gateway.visibility)
                     ):
                         fields_to_update = True
 
                     if fields_to_update:
                         existing_prompt.description = prompt.description
                         existing_prompt.template = prompt.template if hasattr(prompt, "template") else ""
-                        existing_prompt.visibility = gateway.visibility
+                        if should_update_visibility:
+                            existing_prompt.visibility = gateway.visibility
                         logger.debug(f"Updated existing prompt: {prompt.name}")
                 else:
                     # Create new prompt if it doesn't exist
