@@ -112,15 +112,25 @@
     if (this.tableName) {
       const searchInputId = this.tableName + '-search-input';
       const searchInput = document.getElementById(searchInputId);
-      if (searchInput && searchInput.value.trim()) {
-        url.searchParams.set('q', searchInput.value.trim());
+      if (searchInput) {
+        const trimmedQuery = searchInput.value.trim();
+        if (trimmedQuery) {
+          url.searchParams.set('q', trimmedQuery);
+        } else {
+          url.searchParams.delete('q');
+        }
       }
-      
+
       // Also preserve tag filter if present
       const tagInputId = this.tableName + '-tag-filter';
       const tagInput = document.getElementById(tagInputId);
-      if (tagInput && tagInput.value.trim()) {
-        url.searchParams.set('tags', tagInput.value.trim());
+      if (tagInput) {
+        const trimmedTags = tagInput.value.trim();
+        if (trimmedTags) {
+          url.searchParams.set('tags', trimmedTags);
+        } else {
+          url.searchParams.delete('tags');
+        }
       }
     }
 
