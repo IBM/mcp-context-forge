@@ -496,6 +496,32 @@ async def test_admin_logout_paths():
     assert response.status_code == 200
     assert response.body == b"Logged out"
 
+    # GET request with HX-Request header (HTMX) should redirect to login
+    get_htmx_request = _make_request(root_path="/root")
+    get_htmx_request.method = "GET"
+    get_htmx_request.headers = {"accept": "application/json", "hx-request": "true"}
+    response = await admin._admin_logout(get_htmx_request)
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/root/admin/login"
+
+    # GET request with admin referer should redirect to login
+    get_referer_request = _make_request(root_path="/root")
+    get_referer_request.method = "GET"
+    get_referer_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/admin/users"}
+    response = await admin._admin_logout(get_referer_request)
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/root/admin/login"
+
+    # GET request with */* Accept header (no text/html) should return 200 OK (OIDC)
+    get_wildcard_request = _make_request(root_path="/root")
+    get_wildcard_request.method = "GET"
+    get_wildcard_request.headers = {"accept": "*/*"}
+    response = await admin._admin_logout(get_wildcard_request)
+    assert response.status_code == 200
+    assert response.body == b"Logged out"
+
 
 @pytest.mark.asyncio
 async def test_admin_logout_keycloak_redirect(monkeypatch):

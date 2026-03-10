@@ -4114,13 +4114,15 @@ async def _admin_logout(request: Request) -> Response:
     """
     Handle admin logout by clearing authentication cookies.
 
-    Supports both GET and POST methods:
-    - POST: User-initiated logout from the UI (redirects to login page)
-    - GET: OIDC front-channel logout from identity provider (returns 200 OK)
+    Supports three logout scenarios:
+    - POST: User-initiated logout from the UI (redirects to login page or Keycloak logout)
+    - GET with browser headers: Browser navigation to /admin/logout (redirects to login page)
+    - GET without browser headers: OIDC front-channel logout callback from IdP (returns 200 OK)
 
-    For OIDC front-channel logout, Microsoft Entra ID sends GET requests to notify
-    the application that the user has logged out from the IdP. The application
-    should clear the session and return HTTP 200.
+    For OIDC front-channel logout (per OpenID Connect Front-Channel Logout 1.0 spec),
+    identity providers like Microsoft Entra ID send GET requests to notify the application
+    that the user has logged out from the IdP. The application should clear the session
+    and return HTTP 200.
 
     Args:
         request (Request): FastAPI request object.
@@ -4264,16 +4266,22 @@ async def _admin_logout(request: Request) -> Response:
 
     # For GET requests, distinguish between browser navigation and OIDC front-channel logout
     if request.method == "GET":
-        # Check if request is from a browser (has Accept: text/html header)
+        # Check if request is from a browser (Accept: text/html, HX-Request header, or admin referer)
+        # Detection must match auth_middleware.py and rbac.py patterns to ensure consistent behavior
         # Browser navigation should redirect to login, OIDC callbacks should return 200 OK
         accept_header = request.headers.get("accept", "")
-        is_browser_request = "text/html" in accept_header
+        is_htmx = request.headers.get("hx-request") == "true"
+        referer = request.headers.get("referer", "")
+        is_browser_request = "text/html" in accept_header or is_htmx or "/admin" in referer
 
         if is_browser_request:
             # Browser navigation - redirect to login (cookies cleared below)
             response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
         else:
             # OIDC front-channel logout from IdP - return 200 OK per OIDC spec
+            # Reference: OpenID Connect Front-Channel Logout 1.0
+            # https://openid.net/specs/openid-connect-frontchannel-1_0.html
+            # The RP must clear the session and return HTTP 200 to acknowledge logout
             response = Response(content="Logged out", status_code=200)
     else:
         # POST requests (user-initiated) - redirect to login (cookies cleared below)
