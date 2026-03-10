@@ -822,7 +822,24 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             else:
                 authentication_headers = None
 
-            oauth_config = await protect_oauth_config_for_storage(getattr(gateway, "oauth_config", None))
+            raw_oauth_config = getattr(gateway, "oauth_config", None)
+            if raw_oauth_config and raw_oauth_config.get("issuer") and not raw_oauth_config.get("token_url") and not raw_oauth_config.get("authorization_url"):
+                try:
+                    from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
+                    _dcr = DcrService()
+                    _metadata = await _dcr.discover_as_metadata(raw_oauth_config["issuer"])
+                    if _metadata.get("token_endpoint") and not raw_oauth_config.get("token_url"):
+                        raw_oauth_config["token_url"] = _metadata["token_endpoint"]
+                    if _metadata.get("authorization_endpoint") and not raw_oauth_config.get("authorization_url"):
+                        raw_oauth_config["authorization_url"] = _metadata["authorization_endpoint"]
+                    if _metadata.get("jwks_uri") and not raw_oauth_config.get("jwks_uri"):
+                        raw_oauth_config["jwks_uri"] = _metadata["jwks_uri"]
+                    raw_oauth_config["dcr_available"] = bool(_metadata.get("registration_endpoint"))
+                    raw_oauth_config["endpoints_discovered"] = True
+                    logger.info(f"Auto-discovered OAuth endpoints for issuer {raw_oauth_config['issuer']}")
+                except Exception as _e:
+                    logger.warning(f"OAuth endpoint discovery failed for issuer {raw_oauth_config.get('issuer')}: {_e}")
+            oauth_config = await protect_oauth_config_for_storage(raw_oauth_config)
             ca_certificate = getattr(gateway, "ca_certificate", None)
 
             # Check if gateway is in direct_proxy mode
@@ -1907,7 +1924,24 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # if auth_type is not None and only then check auth_value
                 # Handle OAuth configuration updates
                 if gateway_update.oauth_config is not None:
-                    gateway.oauth_config = await protect_oauth_config_for_storage(gateway_update.oauth_config, existing_oauth_config=gateway.oauth_config)
+                    raw_oauth_update = dict(gateway_update.oauth_config)
+                    if raw_oauth_update.get("issuer") and not raw_oauth_update.get("token_url") and not raw_oauth_update.get("authorization_url"):
+                        try:
+                            from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
+                            _dcr = DcrService()
+                            _metadata = await _dcr.discover_as_metadata(raw_oauth_update["issuer"])
+                            if _metadata.get("token_endpoint") and not raw_oauth_update.get("token_url"):
+                                raw_oauth_update["token_url"] = _metadata["token_endpoint"]
+                            if _metadata.get("authorization_endpoint") and not raw_oauth_update.get("authorization_url"):
+                                raw_oauth_update["authorization_url"] = _metadata["authorization_endpoint"]
+                            if _metadata.get("jwks_uri") and not raw_oauth_update.get("jwks_uri"):
+                                raw_oauth_update["jwks_uri"] = _metadata["jwks_uri"]
+                            raw_oauth_update["dcr_available"] = bool(_metadata.get("registration_endpoint"))
+                            raw_oauth_update["endpoints_discovered"] = True
+                            logger.info(f"Auto-discovered OAuth endpoints for issuer {raw_oauth_update['issuer']}")
+                        except Exception as _e:
+                            logger.warning(f"OAuth endpoint discovery failed for issuer {raw_oauth_update.get('issuer')}: {_e}")
+                    gateway.oauth_config = await protect_oauth_config_for_storage(raw_oauth_update, existing_oauth_config=gateway.oauth_config)
 
                 # Handle auth_value updates (both existing and new auth values)
                 token = gateway_update.auth_token
