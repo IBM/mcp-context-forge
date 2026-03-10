@@ -17,7 +17,7 @@ from mcpgateway.plugins.framework import (
     PromptPrehookPayload,
     ToolHookType
 )
-from plugins.rate_limiter.rate_limiter import RateLimiterPlugin, _make_headers, _select_most_restrictive, _store
+from plugins.rate_limiter.rate_limiter import RateLimiterPlugin, _make_headers, _parse_rate, _select_most_restrictive, _store
 
 
 @pytest.fixture(autouse=True)
@@ -509,3 +509,93 @@ class TestSelectMostRestrictive:
         assert allowed is True
         assert limit == 50  # Tool is most restrictive
         assert remaining == 30
+
+
+# ============================================================================
+# _parse_rate Tests
+# ============================================================================
+
+
+class TestParseRate:
+    """Tests for _parse_rate helper covering all time units."""
+
+    def test_seconds_short(self):
+        assert _parse_rate("10/s") == (10, 1)
+
+    def test_seconds_medium(self):
+        assert _parse_rate("10/sec") == (10, 1)
+
+    def test_seconds_long(self):
+        assert _parse_rate("10/second") == (10, 1)
+
+    def test_minutes_short(self):
+        assert _parse_rate("60/m") == (60, 60)
+
+    def test_minutes_medium(self):
+        assert _parse_rate("60/min") == (60, 60)
+
+    def test_minutes_long(self):
+        assert _parse_rate("60/minute") == (60, 60)
+
+    def test_hours_short(self):
+        assert _parse_rate("100/h") == (100, 3600)
+
+    def test_hours_medium(self):
+        assert _parse_rate("100/hr") == (100, 3600)
+
+    def test_hours_long(self):
+        assert _parse_rate("100/hour") == (100, 3600)
+
+    def test_unsupported_unit_raises(self):
+        with pytest.raises(ValueError, match="Unsupported rate unit"):
+            _parse_rate("10/d")
+
+    def test_whitespace_stripped(self):
+        assert _parse_rate("5/ M ") == (5, 60)
+
+
+# ============================================================================
+# Unlimited (no-limit) path tests
+# ============================================================================
+
+
+def _mk_unlimited() -> RateLimiterPlugin:
+    """Create a plugin with no rate limits configured."""
+    return RateLimiterPlugin(
+        PluginConfig(
+            name="rl",
+            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_PRE_INVOKE],
+            config={},  # No limits
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_prompt_pre_fetch_unlimited_returns_no_headers():
+    """When no limits are configured, prompt_pre_fetch returns metadata without http_headers."""
+    plugin = _mk_unlimited()
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="u1"))
+    payload = PromptPrehookPayload(prompt_id="p", args={})
+
+    result = await plugin.prompt_pre_fetch(payload, ctx)
+    assert result.violation is None
+    assert result.http_headers is None
+    assert result.metadata is not None
+    assert result.metadata.get("limited") is False
+
+
+@pytest.mark.asyncio
+async def test_tool_pre_invoke_unlimited_returns_no_headers():
+    """When no limits are configured, tool_pre_invoke returns metadata without http_headers."""
+    from mcpgateway.plugins.framework import ToolPreInvokePayload
+
+    plugin = _mk_unlimited()
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="u1"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    result = await plugin.tool_pre_invoke(payload, ctx)
+    assert result.violation is None
+    assert result.http_headers is None
+    assert result.metadata is not None
+    assert result.metadata.get("limited") is False

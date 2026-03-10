@@ -1452,6 +1452,14 @@ async def database_exception_handler(_request: Request, exc: IntegrityError):
     return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
 
 
+# RFC 9110 §5.6.2 'token' pattern for header field names:
+#   token = 1*tchar
+#   tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*"
+#           / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~"
+#           / DIGIT / ALPHA
+_RFC9110_TOKEN_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+
+
 def _validate_http_headers(headers: dict[str, str]) -> Optional[dict[str, str]]:
     """Validate headers according to RFC 9110.
 
@@ -1464,27 +1472,16 @@ def _validate_http_headers(headers: dict[str, str]) -> Optional[dict[str, str]]:
     Rules enforced:
       - Header name must match RFC 9110 'token'.
       - No whitespace before colon (enforced by dictionary usage).
-      - Header value must not contain CTL characters (0x00–0x1F, 0x7F).
+      - Header value must not contain CTL characters (0x00–0x1F, 0x7F),
+        except SP (0x20) and HTAB (0x09) which are allowed.
     """
-
-    # RFC 9110 'token' definition:
-    # token = 1*tchar
-    # tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*"
-    #         / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~"
-    #         / DIGIT / ALPHA
-    header_key = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
     validated: dict[str, str] = {}
     for key, value in headers.items():
-        # Validate header name (RFC 9110)
-        if not re.match(header_key, key):
+        # Validate header name (RFC 9110 token)
+        if not _RFC9110_TOKEN_RE.match(key):
             logger.warning(f"Invalid header name: {key}")
             continue
-        # Validate header value (no CRLF)
-        if "\r" in value or "\n" in value:
-            logger.warning(f"Header value contains CRLF: {key}")
-            continue
         # RFC 9110: Reject CTLs (0x00–0x1F, 0x7F). Allow SP (0x20) and HTAB (0x09).
-        # Further structure (quoted-string, lists, parameters) is left to higher-level parsers.
         valid = True
         for ch in value:
             code = ord(ch)
@@ -1492,6 +1489,7 @@ def _validate_http_headers(headers: dict[str, str]) -> Optional[dict[str, str]]:
                 valid = False
                 break
         if not valid:
+            logger.warning(f"Header value contains invalid characters: {key}")
             continue
         validated[key] = value
     return validated if validated else None
@@ -1576,9 +1574,9 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
 
     response = ORJSONResponse(status_code=http_status, content={"error": json_rpc_error.model_dump()})
     if headers:
-        validatated_headers = _validate_http_headers(headers)
-        if validatated_headers:
-            response.headers.update(validatated_headers)
+        validated_headers = _validate_http_headers(headers)
+        if validated_headers:
+            response.headers.update(validated_headers)
     return response
 
 
