@@ -223,12 +223,13 @@ check-env-dev:
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
 # help: dev                  - Run fast-reload dev server (uvicorn)
 # help: dev-echo             - Run dev server with SQL query logging (N+1 debugging)
+# help: dev-remote           - Run dev server with remote debugging (debugpy on port 5678)
 # help: stop                 - Stop all mcpgateway server processes
 # help: stop-dev             - Stop uvicorn dev server (port 8000)
 # help: stop-serve           - Stop gunicorn production server (port 4444)
 # help: run                  - Execute helper script ./run.sh
 
-.PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev stop stop-dev stop-serve run \
+.PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev dev-remote stop stop-dev stop-serve run \
         certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check
 
 ## --- Primary servers ---------------------------------------------------------
@@ -255,6 +256,15 @@ dev-echo:                        ## Run dev server with SQL query logging enable
 	@echo "🔍 Starting dev server with SQL query logging (N+1 detection)"
 	@echo "   Docs: docs/docs/development/db-performance.md"
 	@SQLALCHEMY_ECHO=true TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+
+dev-remote: DEBUG_IP = 127.0.0.1
+dev-remote: DEBUG_WAIT = --wait-for-client
+dev-remote:                      ## Run dev server with remote debugging (debugpy on port 5678, remote: make dev-remote DEBUG_IP=0.0.0.0 DEBUG_WAIT=)
+	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/python -m debugpy \
+		--listen $(DEBUG_IP):5678 \
+		$(DEBUG_WAIT) \
+		$(VENV_DIR)/bin/uvicorn mcpgateway.main:app \
+		--host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 stop:                            ## Stop all mcpgateway server processes
 	@echo "Stopping all mcpgateway processes..."
@@ -1501,6 +1511,7 @@ resilience-jmeter: jmeter-check            ## Run JMeter baseline test against s
 # help: benchmark-clean        - Stop and remove all benchmark data (volumes)
 # help: benchmark-status       - Show status of benchmark services
 # help: benchmark-logs         - Show benchmark stack logs
+# help: bench-compare          - Run performance comparisons for Rust plugins
 # help:
 # help: Environment variables:
 # help:   BENCHMARK_SERVER_COUNT  - Number of MCP servers to spawn (default: 10)
@@ -1549,6 +1560,9 @@ benchmark-status:                          ## Show status of benchmark services
 .PHONY: benchmark-logs
 benchmark-logs:                            ## Show benchmark stack logs
 	$(COMPOSE_CMD_MONITOR) --profile benchmark logs -f --tail=100
+
+bench-compare:                             ## Run performance comparisons for Rust plugins
+	@$(MAKE) -C plugins_rust bench-compare
 
 # =============================================================================
 # 🖼️  EMBEDDED / EMBEDDED / IFRAME STACK - iframe mode with benchmark servers
@@ -2172,6 +2186,67 @@ load-test-agentgateway-mcp-server-time:    ## Load test external MCP server (loc
 			--spawn-rate=10 \
 			--run-time=60s \
 			--class-picker'
+
+# --- MCP Streamable HTTP Protocol Load Test ---
+# help: load-test-mcp-protocol       - MCP-only protocol test (150 users, 2min) — measures pure MCP RPS
+# help: load-test-mcp-protocol-ui    - MCP-only protocol test with Locust Web UI (class picker)
+# help: load-test-mcp-protocol-heavy - MCP-only protocol heavy test (500 users, 5min)
+
+MCP_PROTOCOL_LOCUSTFILE ?= tests/loadtest/locustfile_mcp_protocol.py
+MCP_PROTOCOL_HOST ?= http://localhost:4444
+
+load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
+	@echo "🔬 Running MCP STREAMABLE HTTP protocol load test..."
+	@echo "   Host: $(MCP_PROTOCOL_HOST)"
+	@echo "   Users: 150, Spawn: 30/s, Duration: 2 minutes"
+	@echo "   📝 Tests ONLY MCP protocol path: /servers/{id}/mcp"
+	@echo "   💡 Requires: gateway + at least one MCP server connected"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_PROTOCOL_HOST) \
+			--users=150 \
+			--spawn-rate=30 \
+			--run-time=120s \
+			--headless \
+			--html=reports/loadtest_mcp_protocol.html \
+			--csv=reports/loadtest_mcp_protocol \
+			--processes=-1'
+
+load-test-mcp-protocol-ui:                 ## MCP Streamable HTTP protocol test with Web UI
+	@echo "🔬 Starting MCP STREAMABLE HTTP protocol load test Web UI..."
+	@echo "   🌐 Open http://localhost:8089 in your browser"
+	@echo "   🎯 Host: $(MCP_PROTOCOL_HOST)"
+	@echo "   👥 Defaults: 150 users, 30 spawn/s, 2 min"
+	@echo "   🎛️  Class picker enabled - select which MCP user types to run"
+	@echo "   📝 Tests ONLY MCP protocol path: /servers/{id}/mcp"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_PROTOCOL_HOST) \
+			--users=150 \
+			--spawn-rate=30 \
+			--run-time=120s \
+			--class-picker'
+
+load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy test (500 users, 5min)
+	@echo "🔬 Running MCP STREAMABLE HTTP protocol HEAVY load test..."
+	@echo "   Host: $(MCP_PROTOCOL_HOST)"
+	@echo "   Users: 500, Spawn: 50/s, Duration: 5 minutes"
+	@echo "   ⚠️  This will generate sustained MCP protocol load"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_PROTOCOL_HOST) \
+			--users=500 \
+			--spawn-rate=50 \
+			--run-time=300s \
+			--headless \
+			--html=reports/loadtest_mcp_protocol_heavy.html \
+			--csv=reports/loadtest_mcp_protocol_heavy \
+			--processes=-1'
 
 # =============================================================================
 # 📊 JMETER PERFORMANCE TESTING
@@ -4309,7 +4384,7 @@ dist: clean uv               ## Build wheel + sdist into ./dist (optionally incl
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust plugins..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
-		echo '🦀 Rust wheels written to ./plugins_rust/target/wheels/'; \
+		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
 	fi
@@ -4325,7 +4400,7 @@ wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
-		echo '🦀 Rust wheels written to ./plugins_rust/target/wheels/'; \
+		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
 	fi
@@ -7779,97 +7854,128 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # 🦀 RUST PLUGIN FRAMEWORK (OPTIONAL)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # help:
-# help: Rust Plugin Framework (Optional - requires Rust toolchain)
+# help: Rust Plugin Framework (Optional - auto-installs Rust + maturin if needed)
 # help: ========================================================================================================
-# help: rust-build          - Build Rust plugins in release mode (native)
-# help: rust-dev            - Build and install Rust plugins in development mode
-# help: rust-test           - Run Rust plugin tests
-# help: rust-test-all       - Run all Rust and Python integration tests
-# help: rust-bench          - Run Rust plugin benchmarks
-# help: rust-bench-compare  - Compare Rust vs Python performance
-# help: rust-check          - Run all Rust checks (format, lint, test)
-# help: rust-clean          - Clean Rust build artifacts
-# help: rust-verify         - Verify Rust plugin installation
+# help: rust-install                          - Install all Rust plugins into venv
+# help: rust-ensure-deps                      - Ensure Rust toolchain, maturin, and all plugins are installed
+# help: rust-build                            - Build Rust plugins in release mode (native)
+# help: rust-dev                              - Build and install Rust plugins in development mode
+# help: rust-test                             - Run Rust plugin tests
+# help: rust-test-integration                 - Run Rust integration tests
+# help: rust-test-all                         - Run all Rust and Python integration tests
+# help: rust-bench                            - Run Rust plugin benchmarks
+# help: rust-bench-compare                    - Compare Rust vs Python performance (with benchmarks)
+# help: rust-compare                          - Run compare_performance.py only (skip benchmarks)
+# help: rust-check                            - Run all Rust checks (format, lint, test)
+# help: rust-verify                           - Verify Rust plugin installation
+# help: rust-verify-stubs                     - Verify stub generation and pyproject.toml for all Rust plugins
+# help: rust-clean                            - Clean Rust build artifacts
 # help:
-# help: rust-check-maturin       - Check/install maturin (auto-runs before builds)
-# help: rust-install-deps        - Install all Rust build dependencies
-# help: rust-install-targets     - Install all Rust cross-compilation targets
-# help: rust-build-x86_64        - Build for Linux x86_64
-# help: rust-build-aarch64       - Build for Linux arm64/aarch64
-# help: rust-build-armv7         - Build for Linux armv7 (32-bit ARM)
-# help: rust-build-s390x         - Build for Linux s390x (IBM mainframe)
-# help: rust-build-ppc64le       - Build for Linux ppc64le (IBM POWER)
-# help: rust-build-all-linux     - Build for all Linux architectures
-# help: rust-build-all-platforms - Build for all platforms (Linux, macOS, Windows)
-# help: rust-cross               - Install targets + build all Linux (convenience)
-# help: rust-cross-install-build - Install targets + build all platforms (one command)
+# help: rust-install-deps                     - Install all Rust build dependencies
+# help: rust-install-targets                  - Install all Rust cross-compilation targets
+# help: rust-build-<TARGET>                   - Build for specific target (use rust-build-<TARGET>)
+# help: rust-build-all-linux                  - Build for all Linux architectures
+# help: rust-build-all-platforms              - Build for all platforms (Linux, macOS, Windows)
+# help: rust-cross                            - Install targets + build all Linux (convenience)
+# help: rust-cross-install-build              - Install targets + build all platforms (one command)
 
-.PHONY: rust-build rust-dev rust-test rust-test-all rust-bench rust-bench-compare rust-check rust-clean rust-verify
-.PHONY: rust-check-maturin rust-install-deps rust-install-targets
-.PHONY: rust-build-x86_64 rust-build-aarch64 rust-build-armv7 rust-build-s390x rust-build-ppc64le
+.PHONY: rust-build rust-dev rust-test rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
+.PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
 
-rust-build: rust-check-maturin          ## Build Rust plugins (release)
-	@echo "🦀 Building Rust plugins (release mode)..."
-	@cd plugins_rust && maturin build --release
-
-rust-dev:                               ## Build and install Rust plugins (development mode)
-	@echo "🦀 Building and installing Rust plugins (development mode)..."
-	@cd plugins_rust && maturin develop --release
-
-rust-test:                              ## Run Rust plugin tests
-	@echo "🦀 Running Rust plugin tests..."
-	@cd plugins_rust && cargo test --release
-
-rust-test-integration:                  ## Run Rust integration tests
-	@echo "🦀 Running Rust integration tests..."
-	@cd plugins_rust && cargo test --test '*' --release
-
-rust-test-all: rust-test                ## Run all Rust and Python tests
-	@echo "🧪 Running Python tests for Rust plugins..."
-	pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py -v
-
-rust-bench:                             ## Run Rust benchmarks
-	@echo "🦀 Running Rust benchmarks..."
-	@cd plugins_rust && cargo bench
-
-rust-bench-compare:                     ## Compare Rust vs Python performance
-	@echo "📊 Comparing Rust vs Python performance..."
-	@cd plugins_rust/benchmarks && python3 compare_pii_filter.py
-
-rust-check:                             ## Run all Rust checks (format, lint, test)
-	@echo "🦀 Running Rust checks..."
-	@cd plugins_rust && cargo fmt --check
-	@cd plugins_rust && cargo clippy --lib -- -D warnings -A deprecated
-	@cd plugins_rust && cargo test --lib --release
-
-rust-clean:                             ## Clean Rust build artifacts
-	@echo "🧹 Cleaning Rust build artifacts..."
-	@cd plugins_rust && cargo clean
-	@rm -rf plugins_rust/target/
-
-rust-verify:                            ## Verify Rust plugin installation
-	@echo "🔍 Verifying Rust plugin installation..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -c 'from plugins_rust import PIIDetectorRust; print(\"✅ Rust PII filter available\")' || \
-		echo '❌ Rust plugins not installed'"
-
-rust-check-maturin:                     ## Check/install maturin
-	@which maturin > /dev/null 2>&1 || { \
-		echo "📦 Installing maturin..."; \
-		/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"; \
-	}
-
-rust-install-deps:                      ## Install all Rust build dependencies
-	@echo "📦 Installing Rust build dependencies..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"
-	@rustup --version > /dev/null 2>&1 || { \
-		echo "❌ Rust not installed. Install with:"; \
-		echo "   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
+rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and all plugins are installed
+	@if ! command -v rustup > /dev/null 2>&1; then \
+		echo "🦀 Rust not found. Installing Rust toolchain..."; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component rustfmt clippy; \
+		echo "✅ Rust installed successfully."; \
+		echo "⚠️  Please run 'source \"$$HOME/.cargo/env\"' or restart your shell, then run 'make' again."; \
 		exit 1; \
-	}
+	fi
+	@if ! command -v cargo > /dev/null 2>&1; then \
+		echo "⚠️  cargo not in PATH. Please run 'source \"$$HOME/.cargo/env\"' or restart your shell."; \
+		exit 1; \
+	fi
+	@rustup component add rustfmt clippy 2>/dev/null || true
+	@if ! command -v maturin > /dev/null 2>&1; then \
+		if [ -f "$(VENV_DIR)/bin/activate" ]; then \
+			echo "📦 Installing maturin into venv..."; \
+			/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"; \
+		elif command -v pip > /dev/null 2>&1; then \
+			echo "📦 Installing maturin globally (venv not found)..."; \
+			pip install maturin; \
+		else \
+			echo "⚠️  maturin not found and cannot be installed (no venv or pip available)"; \
+			echo "   For building wheels, install maturin: pip install maturin"; \
+		fi; \
+	fi
 
-rust-install-targets:                   ## Install all Rust cross-compilation targets
+rust-install: rust-ensure-deps          ## Install all Rust plugins into venv
+	@$(MAKE) -C plugins_rust install
+
+rust-build: rust-ensure-deps            ## Build Rust plugins (release)
+	@$(MAKE) -C plugins_rust build
+
+rust-dev: rust-ensure-deps              ## Build and install Rust plugins (development mode)
+	@$(MAKE) -C plugins_rust install
+
+rust-test: rust-ensure-deps             ## Run Rust plugin tests
+	@$(MAKE) -C plugins_rust test
+
+rust-python-test: rust-install          ## Run Python tests for Rust plugins (installs plugins first)
+	@$(MAKE) -C plugins_rust test-python
+
+rust-test-all: rust-test rust-python-test  ## Run all Rust and Python tests
+
+rust-bench: rust-ensure-deps            ## Run Rust benchmarks
+	@$(MAKE) -C plugins_rust bench
+
+rust-bench-compare: rust-ensure-deps    ## Compare Rust vs Python performance
+	@$(MAKE) -C plugins_rust bench-compare
+
+rust-compare: rust-ensure-deps          ## Run compare_performance.py only (skip Rust benchmarks)
+	@$(MAKE) -C plugins_rust compare
+
+rust-check: rust-ensure-deps            ## Run all Rust checks (format, lint, test)
+	@$(MAKE) -C plugins_rust check
+
+rust-doc: rust-ensure-deps              ## Build Rust documentation
+	@$(MAKE) -C plugins_rust doc
+
+rust-build-wheels: rust-ensure-deps     ## Build Python wheels for all Rust plugins
+	@$(MAKE) -C plugins_rust build-wheels
+
+rust-audit: rust-ensure-deps            ## Run security audit on all Rust plugins
+	@$(MAKE) -C plugins_rust audit
+
+rust-coverage: rust-ensure-deps         ## Run coverage for all Rust plugins
+	@$(MAKE) -C plugins_rust coverage
+
+rust-release: rust-ensure-deps          ## Build release wheels for all Rust plugins
+	@$(MAKE) -C plugins_rust release
+
+rust-release-publish: rust-ensure-deps  ## Publish release wheels to PyPI
+	@$(MAKE) -C plugins_rust release-publish
+
+rust-uninstall-plugins: rust-ensure-deps ## Uninstall all Rust plugins from Python environment
+	@$(MAKE) -C plugins_rust uninstall
+
+rust-clean: rust-ensure-deps            ## Clean Rust build artifacts and uninstall plugins
+	@$(MAKE) -C plugins_rust uninstall
+	@$(MAKE) -C plugins_rust clean
+
+rust-verify: rust-ensure-deps           ## Verify Rust plugin installation
+	@$(MAKE) -C plugins_rust verify
+
+rust-verify-stubs: rust-ensure-deps     ## Verify stub generation and pyproject.toml for all Rust plugins
+	@$(MAKE) -C plugins_rust verify-stubs
+
+rust-clean-stubs: rust-ensure-deps      ## Remove all generated stub files from Rust plugins
+	@$(MAKE) -C plugins_rust clean-stubs
+
+rust-install-deps: rust-ensure-deps     ## Install all Rust build dependencies
+	@echo "✅ Rust build dependencies installed"
+
+rust-install-targets: rust-ensure-deps  ## Install all Rust cross-compilation targets
 	@echo "🎯 Installing Rust cross-compilation targets..."
 	@rustup target add x86_64-unknown-linux-gnu
 	@rustup target add aarch64-unknown-linux-gnu
@@ -7880,35 +7986,20 @@ rust-install-targets:                   ## Install all Rust cross-compilation ta
 	@rustup target add aarch64-apple-darwin
 	@rustup target add x86_64-pc-windows-msvc
 
-rust-build-x86_64: rust-check-maturin   ## Build for Linux x86_64
-	@echo "🦀 Building for x86_64-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target x86_64-unknown-linux-gnu
+rust-build-%: rust-ensure-deps               ## Build for specific target (use rust-build-<TARGET>)
+	@echo "🎯 Ensuring Rust target $* is installed..."
+	@rustup target add $*
+	@$(MAKE) -C plugins_rust build-target-$*
 
-rust-build-aarch64: rust-check-maturin  ## Build for Linux arm64/aarch64
-	@echo "🦀 Building for aarch64-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target aarch64-unknown-linux-gnu
-
-rust-build-armv7: rust-check-maturin    ## Build for Linux armv7 (32-bit ARM)
-	@echo "🦀 Building for armv7-unknown-linux-gnueabihf..."
-	@cd plugins_rust && maturin build --release --target armv7-unknown-linux-gnueabihf
-
-rust-build-s390x: rust-check-maturin    ## Build for Linux s390x (IBM mainframe)
-	@echo "🦀 Building for s390x-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target s390x-unknown-linux-gnu
-
-rust-build-ppc64le: rust-check-maturin  ## Build for Linux ppc64le (IBM POWER)
-	@echo "🦀 Building for powerpc64le-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target powerpc64le-unknown-linux-gnu
-
-rust-build-all-linux: rust-build-x86_64 rust-build-aarch64 rust-build-armv7 rust-build-s390x rust-build-ppc64le  ## Build for all Linux architectures
+rust-build-all-linux: rust-build-x86_64-unknown-linux-gnu rust-build-aarch64-unknown-linux-gnu rust-build-armv7-unknown-linux-gnueabihf rust-build-s390x-unknown-linux-gnu rust-build-powerpc64le-unknown-linux-gnu  ## Build for all Linux architectures
 	@echo "✅ Built for all Linux architectures"
 
 rust-build-all-platforms: rust-build-all-linux  ## Build for all platforms (Linux, macOS, Windows)
 	@echo "🦀 Building for macOS..."
-	@cd plugins_rust && maturin build --release --target x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
-	@cd plugins_rust && maturin build --release --target aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
+	@$(MAKE) -C plugins_rust build-target-x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
+	@$(MAKE) -C plugins_rust build-target-aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
 	@echo "🦀 Building for Windows..."
-	@cd plugins_rust && maturin build --release --target x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
+	@$(MAKE) -C plugins_rust build-target-x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
 	@echo "✅ Built for all platforms"
 
 rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + build all Linux (convenience)
