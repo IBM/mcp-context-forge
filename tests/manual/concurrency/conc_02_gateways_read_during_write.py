@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """CONC-02 manual concurrency check: read during write for /gateways/{id}."""
 
+# Future
 from __future__ import annotations
 
+# Standard
 import asyncio
+from collections import Counter
 import os
 import time
-from collections import Counter
 
+# Third-Party
 import httpx
 
 
@@ -49,7 +52,7 @@ def _is_valid_read_payload(payload: object) -> tuple[bool, str]:
         if key not in payload:
             return False, f"missing_field={key}"
     url = payload.get("url")
-    if not isinstance(url, str) or not url.startswith("http://"):
+    if not isinstance(url, str) or not url.startswith(("http://", "https://")):
         return False, f"invalid_url={url!r}"
     return True, "ok"
 
@@ -167,14 +170,8 @@ async def _run() -> int:
         stop_time = time.monotonic() + duration_sec
         read_errors: list[str] = []
 
-        writer_tasks = [
-            _writer(client, base_url, token, gateway_id, gateway_name, gateway_url, stop_time, idx + 1)
-            for idx in range(writer_workers)
-        ]
-        reader_tasks = [
-            _reader(client, base_url, token, gateway_id, stop_time, read_errors)
-            for _ in range(reader_workers)
-        ]
+        writer_tasks = [_writer(client, base_url, token, gateway_id, gateway_name, gateway_url, stop_time, idx + 1) for idx in range(writer_workers)]
+        reader_tasks = [_reader(client, base_url, token, gateway_id, stop_time, read_errors) for _ in range(reader_workers)]
 
         task_results = await asyncio.gather(*writer_tasks, *reader_tasks)
 
@@ -221,13 +218,7 @@ async def _run() -> int:
         for item in read_errors[:10]:
             print(f"  - {item}")
 
-    passed = (
-        write_5xx == 0
-        and read_5xx == 0
-        and len(read_errors) == 0
-        and final_read.status_code == 200
-        and final_payload_ok
-    )
+    passed = write_5xx == 0 and read_5xx == 0 and len(read_errors) == 0 and final_read.status_code == 200 and final_payload_ok
     if passed:
         print("\nPASS: CONC-02 read-during-write consistency checks passed.")
         return 0
