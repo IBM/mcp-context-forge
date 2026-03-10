@@ -4,6 +4,11 @@ Last updated: March 10, 2026
 
 Status focus in this update:
 
+- runtime/process tuning knobs for the Rust-enabled compose stack
+- verified `>1000 RPS` on the rebuilt Rust-enabled mixed MCP benchmark
+- `MCP_RUST_LOG=warn` and `GUNICORN_WORKERS=32` as the first clearly effective mixed-workload tuning levers
+- new Rust client/pool/cache TTL configurables exposed through compose
+- confirmation that `HTTP_SERVER=granian` underperformed on this workload
 - backend JSON-RPC error propagation for direct `tools/call` resolve failures
 - fresh compose rebuild validation on the latest Rust-enabled gateway image
 - verified `make test-mcp-cli` and `make test-mcp-rbac` on the rebuilt stack
@@ -17,6 +22,113 @@ Status focus in this update:
 - clean server-scoped `MCPToolCallerUser` benchmark results for the real hot path
 - direct Rust handling of upstream MCP SSE-framed responses for `initialize` and `tools/call`
 - verified `>1000 RPS` on the pinned tools-only benchmark after the SSE fix
+
+## Latest Tuning Results
+
+The most important March 10, 2026 result is that the mixed MCP workload can now
+exceed `1000 RPS` on the rebuilt Rust-enabled image without moving additional DB
+reads into Rust.
+
+The effective benchmarked runtime configuration was:
+
+- `ENABLE_RUST_BUILD=true`
+- `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`
+- `EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true`
+- `EXPERIMENTAL_RUST_MCP_RUNTIME_UDS=/tmp/contextforge-mcp-rust.sock`
+- `MCP_RUST_LISTEN_UDS=/tmp/contextforge-mcp-rust.sock`
+- `MCP_RUST_LOG=warn`
+- `HTTP_SERVER=gunicorn`
+- `GUNICORN_WORKERS=32`
+
+Key findings:
+
+- `MCP_RUST_LOG=warn` was a real throughput win compared with per-request Rust
+  `info` logging
+- `GUNICORN_WORKERS=32` was the first process-level tuning change that clearly
+  pushed the mixed benchmark over `1000 RPS`
+- `HTTP_SERVER=granian` was materially worse on this workload and is not the
+  recommended front door for the current Rust MCP path
+- the rebuilt stack still passed the main protocol and RBAC suites while using
+  the tuned settings
+
+### Tuned mixed-workload sweep
+
+Mixed MCP benchmark, same `Fast Time Server`
+(`9779b6698cbd4b4995ee04a4fab38737`), tuned Rust-enabled stack:
+
+| Users | RPS | Avg (ms) | p95 | p99 | Fails |
+|------:|----:|---------:|----:|----:|------:|
+| 110 | 984.02 | 22.49 | 39 | 88 | 0.00% |
+| 120 | 1027.37 | 27.15 | 48 | 83 | 0.00% |
+| 125 | 1013.27 | 33.80 | 60 | 100 | 0.00% |
+| 130 | 1021.22 | 37.92 | 67 | 110 | 0.00% |
+| 140 | 1008.10 | 49.69 | 84 | 140 | 0.00% |
+| 150 | 1011.66 | 59.88 | 110 | 170 | 0.00% |
+
+Interpretation:
+
+- the Rust-enabled stack is no longer merely "close" to `1000 RPS` on the mixed
+  benchmark
+- the current practical operating knee for the tuned mixed workload is roughly
+  `120` to `150` users
+- adding far more concurrency than that still degrades throughput into queueing,
+  as seen in the earlier `1000`-user run
+
+### Rebuilt-image verification
+
+After rebuilding the gateway image with `ENABLE_RUST_BUILD=true` and
+restarting the Rust-enabled compose stack with the tuned runtime flags:
+
+- `120` users: `1003.82 RPS`, `29.51 ms` avg, `53 ms` p95
+- warm rerun at `120` users: `1015.44 RPS`, `28.83 ms` avg, `51 ms` p95
+
+Important nuance:
+
+- both rebuilt-image warm runs showed a single isolated `502` on `tools/call`
+  out of roughly `27k` requests, so Locust exited nonzero even though the
+  failure rate rounded to `0.00%`
+- this looks like a rare hot-path instability rather than a broad Rust parity
+  regression, because the rebuilt stack simultaneously passed:
+  - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
+  - `make test-mcp-cli`
+  - `make test-mcp-rbac`
+
+### New runtime knobs now exposed
+
+The Rust runtime now supports explicit tuning for:
+
+- `MCP_RUST_CLIENT_CONNECT_TIMEOUT_MS`
+- `MCP_RUST_CLIENT_POOL_IDLE_TIMEOUT_SECONDS`
+- `MCP_RUST_CLIENT_POOL_MAX_IDLE_PER_HOST`
+- `MCP_RUST_CLIENT_TCP_KEEPALIVE_SECONDS`
+- `MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS`
+- `MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS`
+
+Compose now also allows easy override of:
+
+- `HTTP_SERVER`
+- `GUNICORN_WORKERS`
+- `GUNICORN_TIMEOUT`
+- `GUNICORN_GRACEFUL_TIMEOUT`
+- `GUNICORN_KEEP_ALIVE`
+- `GUNICORN_MAX_REQUESTS`
+- `GUNICORN_MAX_REQUESTS_JITTER`
+- `GUNICORN_BACKLOG`
+- `GRANIAN_WORKERS`
+- `GRANIAN_BACKLOG`
+- `GRANIAN_BACKPRESSURE`
+- `GRANIAN_HTTP1_BUFFER_SIZE`
+- `GRANIAN_RESPAWN_FAILED`
+
+One practical gotcha discovered during rebuild validation:
+
+- `docker compose build gateway` will only include the Rust runtime when
+  `ENABLE_RUST_BUILD=true` is passed at build time
+- restarting the stack without
+  `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true` will silently benchmark the
+  Python path instead of Rust, so the response header
+  `x-contextforge-mcp-runtime: rust` should be checked before trusting any
+  benchmark number
 
 ## Latest Performance Update
 

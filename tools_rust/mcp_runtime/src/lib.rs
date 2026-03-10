@@ -62,6 +62,8 @@ pub struct AppState {
     db_pool: Option<Pool>,
     upstream_tool_sessions: Arc<Mutex<HashMap<String, UpstreamToolSession>>>,
     resolved_tool_call_plans: Arc<Mutex<HashMap<String, CachedResolvedToolCallPlan>>>,
+    tools_call_plan_ttl: Duration,
+    upstream_session_ttl: Duration,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -160,8 +162,14 @@ impl JsonRpcRequest {
 impl AppState {
     pub fn new(config: &RuntimeConfig) -> Result<Self, RuntimeError> {
         let client = Client::builder()
-            .pool_idle_timeout(Duration::from_secs(90))
-            .tcp_keepalive(Duration::from_secs(30))
+            .connect_timeout(Duration::from_millis(config.client_connect_timeout_ms))
+            .pool_idle_timeout(Duration::from_secs(
+                config.client_pool_idle_timeout_seconds,
+            ))
+            .pool_max_idle_per_host(config.client_pool_max_idle_per_host)
+            .tcp_keepalive(Duration::from_secs(
+                config.client_tcp_keepalive_seconds,
+            ))
             .timeout(Duration::from_millis(config.request_timeout_ms))
             .build()?;
         let db_pool = build_db_pool(config)?;
@@ -189,6 +197,8 @@ impl AppState {
             db_pool,
             upstream_tool_sessions: Arc::new(Mutex::new(HashMap::new())),
             resolved_tool_call_plans: Arc::new(Mutex::new(HashMap::new())),
+            tools_call_plan_ttl: Duration::from_secs(config.tools_call_plan_ttl_seconds),
+            upstream_session_ttl: Duration::from_secs(config.upstream_session_ttl_seconds),
         })
     }
 
@@ -244,6 +254,14 @@ impl AppState {
         &self,
     ) -> &Arc<Mutex<HashMap<String, CachedResolvedToolCallPlan>>> {
         &self.resolved_tool_call_plans
+    }
+
+    fn tools_call_plan_ttl(&self) -> Duration {
+        self.tools_call_plan_ttl
+    }
+
+    fn upstream_session_ttl(&self) -> Duration {
+        self.upstream_session_ttl
     }
 }
 
@@ -1040,14 +1058,12 @@ async fn resolve_tools_call(
     request: &JsonRpcRequest,
     body: Bytes,
 ) -> Result<ResolvedMcpToolCallPlan, ResolveToolsCallError> {
-    const TOOL_CALL_PLAN_TTL: Duration = Duration::from_secs(30);
-
     let cache_key =
         build_tools_call_plan_cache_key(incoming_headers, request).map_err(ResolveToolsCallError::Fallback)?;
     {
         let mut cached_plans = state.resolved_tool_call_plans().lock().await;
         if let Some(cached) = cached_plans.get_mut(&cache_key) {
-            if cached.cached_at.elapsed() < TOOL_CALL_PLAN_TTL {
+            if cached.cached_at.elapsed() < state.tools_call_plan_ttl() {
                 cached.cached_at = Instant::now();
                 return Ok(cached.plan.clone());
             }
@@ -1189,12 +1205,10 @@ async fn ensure_upstream_session(
     protocol_version: &str,
     timeout_ms: u64,
 ) -> Result<Option<String>, String> {
-    const UPSTREAM_SESSION_TTL: Duration = Duration::from_secs(300);
-
     let session_key = build_upstream_session_key(downstream_session_id, plan)?;
     let mut sessions = state.upstream_tool_sessions().lock().await;
     if let Some(existing) = sessions.get_mut(&session_key) {
-        if existing.last_used.elapsed() < UPSTREAM_SESSION_TTL {
+        if existing.last_used.elapsed() < state.upstream_session_ttl() {
             existing.last_used = Instant::now();
             return Ok(existing.session_id.clone());
         }

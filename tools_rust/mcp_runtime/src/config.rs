@@ -47,6 +47,24 @@ pub struct RuntimeConfig {
     #[arg(long, env = "MCP_RUST_REQUEST_TIMEOUT_MS", default_value_t = 30_000)]
     pub request_timeout_ms: u64,
 
+    #[arg(long, env = "MCP_RUST_CLIENT_CONNECT_TIMEOUT_MS", default_value_t = 5_000)]
+    pub client_connect_timeout_ms: u64,
+
+    #[arg(long, env = "MCP_RUST_CLIENT_POOL_IDLE_TIMEOUT_SECONDS", default_value_t = 90)]
+    pub client_pool_idle_timeout_seconds: u64,
+
+    #[arg(long, env = "MCP_RUST_CLIENT_POOL_MAX_IDLE_PER_HOST", default_value_t = 1024)]
+    pub client_pool_max_idle_per_host: usize,
+
+    #[arg(long, env = "MCP_RUST_CLIENT_TCP_KEEPALIVE_SECONDS", default_value_t = 30)]
+    pub client_tcp_keepalive_seconds: u64,
+
+    #[arg(long, env = "MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS", default_value_t = 30)]
+    pub tools_call_plan_ttl_seconds: u64,
+
+    #[arg(long, env = "MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS", default_value_t = 300)]
+    pub upstream_session_ttl_seconds: u64,
+
     #[arg(long, env = "MCP_RUST_DATABASE_URL")]
     pub database_url: Option<String>,
 
