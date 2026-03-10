@@ -12306,9 +12306,10 @@ async function testTool(toolId) {
                             fieldInput.value = prop.default;
                         } else if (isObjectType) {
                             // For object types, stringify the default value
-                            fieldInput.value = typeof prop.default === "object"
-                                ? JSON.stringify(prop.default, null, 2)
-                                : prop.default;
+                            fieldInput.value =
+                                typeof prop.default === "object"
+                                    ? JSON.stringify(prop.default, null, 2)
+                                    : prop.default;
                         } else {
                             fieldInput.value = prop.default;
                         }
@@ -14322,13 +14323,18 @@ async function runToolTest() {
                     } else if (prop.type === "object") {
                         try {
                             const parsed = JSON.parse(value);
-                            if (typeof parsed !== "object" || Array.isArray(parsed)) {
+                            if (
+                                typeof parsed !== "object" ||
+                                Array.isArray(parsed)
+                            ) {
                                 throw new Error("Value must be an object");
                             }
                             params[keyValidation.value] = parsed;
-                            } catch (error) {
-                                showErrorMessage(`Invalid JSON object for ${key}: ${error.message}`);
-                                throw error;
+                        } catch (error) {
+                            showErrorMessage(
+                                `Invalid JSON object for ${key}: ${error.message}`,
+                            );
+                            throw error;
                         }
                     } else {
                         params[keyValidation.value] = value;
