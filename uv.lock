@@ -2820,6 +2820,7 @@ playwright = [
     { name = "pytest-html" },
     { name = "pytest-playwright" },
     { name = "pytest-timeout" },
+    { name = "python-owasp-zap-v2-4" },
 ]
 postgres = [
     { name = "psycopg", extra = ["binary", "c"] },
@@ -2978,6 +2979,7 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'fuzz'", specifier = ">=3.8.0" },
     { name = "python-json-logger", specifier = ">=4.0.0" },
     { name = "python-multipart", specifier = ">=0.0.22" },
+    { name = "python-owasp-zap-v2-4", marker = "extra == 'playwright'", specifier = ">=0.0.21" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "redis", marker = "extra == 'redis-pure'", specifier = ">=7.3.0" },
     { name = "redis", extras = ["hiredis"], marker = "extra == 'redis'", specifier = ">=7.3.0" },
@@ -4879,6 +4881,18 @@ wheels = [
 ]
 
 [[package]]
+name = "python-owasp-zap-v2-4"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "zaproxy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/54/fc/91192ca872399544c09c1cf3053c71d87d8fc21a4a0ddba1a890940a761a/python-owasp-zap-v2.4-0.1.0.tar.gz", hash = "sha256:2af4252320b3b77a38712081422688e676e038306cf1f2792feed811235afa8b", size = 5222, upload-time = "2023-08-09T12:33:16.127Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/aa/2d32daaa560bd2ed4f338bc97e3ff845906c6190bf7aa778b7c7911c1844/python_owasp_zap_v2.4-0.1.0-py2.py3-none-any.whl", hash = "sha256:d4dc00387b0089d81683be01b8272577ad39fb47674377f65c7da0fd30b8abe9", size = 5418, upload-time = "2023-08-09T12:33:14.61Z" },
+]
+
+[[package]]
 name = "python-slugify"
 version = "8.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -6706,6 +6720,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/31/74/8b74bae38ed7fe6793d0c15a0c8207bbb819cf287788459e5ed230996cdd/yarl-1.22.0-cp313-cp313t-win_amd64.whl", hash = "sha256:ff86011bd159a9d2dfc89c34cfd8aff12875980e3bd6a39ff097887520e60249", size = 93715, upload-time = "2025-10-06T14:11:11.739Z" },
     { url = "https://files.pythonhosted.org/packages/69/66/991858aa4b5892d57aef7ee1ba6b4d01ec3b7eb3060795d34090a3ca3278/yarl-1.22.0-cp313-cp313t-win_arm64.whl", hash = "sha256:7861058d0582b847bc4e3a4a4c46828a410bca738673f35a29ba3ca5db0b473b", size = 83857, upload-time = "2025-10-06T14:11:13.586Z" },
     { url = "https://files.pythonhosted.org/packages/73/ae/b48f95715333080afb75a4504487cbe142cae1268afc482d06692d605ae6/yarl-1.22.0-py3-none-any.whl", hash = "sha256:1380560bdba02b6b6c90de54133c81c9f2a453dee9912fe58c1dcced1edb7cff", size = 46814, upload-time = "2025-10-06T14:12:53.872Z" },
+]
+
+[[package]]
+name = "zaproxy"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f7/e9/43828866052d4154fbb11fee6cb842d3e74f46d116be626bfa53624572c0/zaproxy-0.5.0.tar.gz", hash = "sha256:3a952d7ec9af7a689a986400dcd885abf4685152119b1390ee8a42a2877636c8", size = 38597, upload-time = "2025-12-15T15:39:17.732Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/85/d0/f57fee17a8d3015ca868b120966793e76d258503056530c7b08a6d52972b/zaproxy-0.5.0-py3-none-any.whl", hash = "sha256:532125007c2381ae2d121774a7da9f69e045e040e3a448772988cc17eba472a9", size = 73295, upload-time = "2025-12-15T15:39:16.278Z" },
 ]
 
 [[package]]
