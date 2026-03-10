@@ -66,24 +66,25 @@ describe("clearSearch", () => {
         expect(win.performTokenSearch).toHaveBeenCalledWith("");
     });
 
-    test("calls legacy filter function to immediately clear rows for panel entities", () => {
-        // clearSearch invokes the entity-specific filter as a fallback to keep
-        // rows visible even when the HTMX reload is delayed or missed.
-        const original = win.filterToolsTable;
-        win.filterToolsTable = vi.fn();
-
+    test("clears search input and triggers server-side reload for panel entities", () => {
+        // clearSearch clears the search input and triggers loadSearchablePanel
+        // to fetch filtered results from the server (fixes #3128)
         const searchInput = doc.createElement("input");
         searchInput.id = "tools-search-input";
+        searchInput.value = "test query";
         doc.body.appendChild(searchInput);
 
-        const table = doc.createElement("div");
-        table.id = "tools-table";
-        doc.body.appendChild(table);
+        const tagInput = doc.createElement("input");
+        tagInput.id = "tools-tag-filter";
+        tagInput.value = "tag1";
+        doc.body.appendChild(tagInput);
 
         f()("tools");
 
-        expect(win.filterToolsTable).toHaveBeenCalledWith("");
-        win.filterToolsTable = original;
+        // Verify inputs are cleared
+        expect(searchInput.value).toBe("");
+        expect(tagInput.value).toBe("");
+        // Note: loadSearchablePanel is called but we don't test HTMX behavior here
     });
 });
 
