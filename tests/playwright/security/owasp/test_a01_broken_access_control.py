@@ -2,7 +2,7 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""OWASP A01:2025 – Broken Access Control direct Playwright tests.
+"""OWASP A01:2021 – Broken Access Control direct Playwright tests.
 
 Covers attack patterns NOT already tested in sibling security test files:
 
@@ -28,9 +28,9 @@ from __future__ import annotations
 
 # Standard
 import base64
+from contextlib import suppress
 import json
 import time
-from contextlib import suppress
 from typing import Any
 import uuid
 
@@ -43,25 +43,7 @@ from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 # Local
 from ..conftest import BASE_URL, TEST_PASSWORD
-
-_UNSET = object()
-
-
-def _make_jwt(email: str, *, is_admin: bool, teams=None, expires_in_minutes: int = 30) -> str:  # type: ignore[no-untyped-def]
-    """Create a JWT token for OWASP A01 testing with a short-lived expiry."""
-    return _create_jwt_token(
-        {"sub": email},
-        expires_in_minutes=expires_in_minutes,
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
-        teams=teams,
-    )
-
-
-def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
-    return playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+from .conftest import _api_context, _make_jwt
 
 
 def _anon_context(playwright: Playwright) -> APIRequestContext:
@@ -175,9 +157,7 @@ class TestIDORCrossTenantObjects:
         ctx_a: APIRequestContext = two_teams_setup["ctx_team_a"]
         server_b_id: str = two_teams_setup["server_b_id"]
         resp = ctx_a.get(f"/servers/{server_b_id}")
-        assert resp.status in (403, 404), (
-            f"Team A token should not read Team B server, got {resp.status}: {resp.text()}"
-        )
+        assert resp.status in (403, 404), f"Team A token should not read Team B server, got {resp.status}: {resp.text()}"
 
     def test_team_a_token_cannot_update_team_b_server_by_id(self, two_teams_setup: dict) -> None:
         ctx_a: APIRequestContext = two_teams_setup["ctx_team_a"]
@@ -186,17 +166,13 @@ class TestIDORCrossTenantObjects:
             f"/servers/{server_b_id}",
             data={"server": {"name": "cross-tenant-takeover"}, "visibility": "public"},
         )
-        assert resp.status in (403, 404), (
-            f"Team A token should not update Team B server, got {resp.status}: {resp.text()}"
-        )
+        assert resp.status in (403, 404), f"Team A token should not update Team B server, got {resp.status}: {resp.text()}"
 
     def test_team_a_token_cannot_delete_team_b_server_by_id(self, two_teams_setup: dict) -> None:
         ctx_a: APIRequestContext = two_teams_setup["ctx_team_a"]
         server_b_id: str = two_teams_setup["server_b_id"]
         resp = ctx_a.delete(f"/servers/{server_b_id}")
-        assert resp.status in (403, 404), (
-            f"Team A token should not delete Team B server, got {resp.status}: {resp.text()}"
-        )
+        assert resp.status in (403, 404), f"Team A token should not delete Team B server, got {resp.status}: {resp.text()}"
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +198,7 @@ class TestVerticalPrivilegeEscalation:
         yield ctx
         ctx.dispose()
         with suppress(Exception):
-            owasp_admin_api.delete(f"/admin/users/{email}")
+            owasp_admin_api.delete(f"/auth/email/admin/users/{email}")
 
     def test_non_admin_cannot_list_all_users(self, non_admin_ctx: APIRequestContext) -> None:
         resp = non_admin_ctx.get("/auth/email/admin/users")
@@ -285,9 +261,7 @@ class TestJWTTampering:
         ctx = _raw_bearer_context(playwright, tampered)
         try:
             resp = ctx.get("/tokens/admin/all")
-            assert resp.status == 401, (
-                f"Tampered JWT (is_admin escalation) should be rejected with 401, got {resp.status}"
-            )
+            assert resp.status == 401, f"Tampered JWT (is_admin escalation) should be rejected with 401, got {resp.status}"
         finally:
             ctx.dispose()
 
@@ -372,9 +346,7 @@ class TestCORSEnforcement:
         try:
             resp = ctx.get("/servers")
             acao = resp.headers.get("access-control-allow-origin", "")
-            assert acao != "*", (
-                f"API must not return wildcard CORS header for arbitrary origin, got: '{acao}'"
-            )
+            assert acao != "*", f"API must not return wildcard CORS header for arbitrary origin, got: '{acao}'"
         finally:
             ctx.dispose()
 
@@ -395,9 +367,6 @@ class TestCORSEnforcement:
             # Permissive: wildcard origin OR (reflect evil origin AND allow credentials)
             reflects_evil = acao == "https://evil.example.com"
             allows_credentials = acac.lower() == "true"
-            assert not (reflects_evil and allows_credentials), (
-                f"CORS preflight must not reflect arbitrary origin with credentials. "
-                f"ACAO={acao!r} ACAC={acac!r}"
-            )
+            assert not (reflects_evil and allows_credentials), f"CORS preflight must not reflect arbitrary origin with credentials. " f"ACAO={acao!r} ACAC={acac!r}"
         finally:
             ctx.dispose()

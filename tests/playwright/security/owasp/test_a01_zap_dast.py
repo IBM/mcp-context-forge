@@ -2,7 +2,7 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""OWASP A01:2025 – ZAP DAST integration layer.
+"""OWASP A01:2021 – ZAP DAST integration layer.
 
 Activated only when the ``ZAP_BASE_URL`` environment variable is set.
 Skipped silently in normal CI runs.
@@ -36,14 +36,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
-from requests.exceptions import ConnectionError, Timeout, RequestException
 
 # Third-Party
 import pytest
+from requests.exceptions import ConnectionError, RequestException, Timeout
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +73,11 @@ if not ZAP_BASE_URL:
     pytest.skip("ZAP_BASE_URL not set – skipping ZAP DAST tests", allow_module_level=True)
 
 try:
+    # Third-Party
     from zapv2 import ZAPv2  # type: ignore[import-untyped]
 except ImportError as exc:  # pragma: no cover
     pytest.skip(
-        f"python-owasp-zap-v2.4 not installed: {exc}. "
-        "Install it via: pip install 'python-owasp-zap-v2.4>=0.0.21'",
+        f"python-owasp-zap-v2.4 not installed: {exc}. " "Install it via: pip install 'python-owasp-zap-v2.4>=0.0.21'",
         allow_module_level=True,
     )
 
@@ -95,6 +95,7 @@ def _make_admin_jwt() -> str:
     """Generate an admin JWT for the ZAP scanner to authenticate with."""
     # Import here so the module-level skip fires before any mcpgateway import
     # errors in environments where the package is not installed.
+    # First-Party
     from mcpgateway.utils.create_jwt_token import _create_jwt_token  # noqa: PLC0415
 
     return _create_jwt_token(
@@ -197,19 +198,12 @@ def zap() -> ZAPv2:
         )
         logger.info("ZAP Replacer: injected admin Authorization header for all requests")
     except ConnectionError as exc:
-        pytest.skip(
-            f"ZAP daemon not reachable - Error: {exc}"
-        )
+        pytest.skip(f"ZAP daemon not reachable - Error: {exc}")
     except (Timeout, RequestException) as exc:
-        pytest.skip(
-            f"ZAP request failed: {exc}"
-        )
+        pytest.skip(f"ZAP request failed: {exc}")
     except Exception as exc:
         # ZAP raises bare Exception for non-2xx; 404 means Replacer add-on not installed
-        pytest.skip(
-            f"ZAP Replacer add-on required for authenticated endpoint testing. "
-            f"Install it in ZAP or tests will only cover public endpoints. Error: {exc}"
-        )
+        pytest.skip(f"ZAP Replacer add-on required for authenticated endpoint testing. " f"Install it in ZAP or tests will only cover public endpoints. Error: {exc}")
 
     return client
 
@@ -233,7 +227,7 @@ def zap_context(zap: ZAPv2) -> dict:
 @pytest.mark.owasp_a01_zap
 @pytest.mark.slow
 class TestZAPAccessControlScan:
-    """ZAP DAST scan tests for OWASP A01:2025 – Broken Access Control."""
+    """ZAP DAST scan tests for OWASP A01:2021 – Broken Access Control."""
 
     def test_zap_spider_discovers_protected_endpoints(self, zap: ZAPv2, zap_context: dict) -> None:
         """Seed ZAP's site tree with known protected paths, then confirm they are present.
@@ -294,13 +288,8 @@ class TestZAPAccessControlScan:
 
         if a01_alerts:
             _write_report(a01_alerts, "passive_failures")
-            summary = "\n".join(
-                f"  [{a['risk']}] CWE-{a.get('cweid','?')} – {a['alert']} @ {a['url']}"
-                for a in a01_alerts
-            )
-            pytest.fail(
-                f"ZAP passive scan found {len(a01_alerts)} HIGH/CRITICAL A01 alert(s):\n{summary}"
-            )
+            summary = "\n".join(f"  [{a['risk']}] CWE-{a.get('cweid','?')} – {a['alert']} @ {a['url']}" for a in a01_alerts)
+            pytest.fail(f"ZAP passive scan found {len(a01_alerts)} HIGH/CRITICAL A01 alert(s):\n{summary}")
 
     def test_zap_active_scan_finds_no_critical_access_control_issues(self, zap: ZAPv2, zap_context: dict) -> None:
         """Active scan must produce no CRITICAL A01 alerts."""
@@ -324,9 +313,7 @@ class TestZAPAccessControlScan:
             try:
                 progress = int(zap.ascan.status(scan_id))
             except (ConnectionError, Timeout, RequestException) as exc:
-                pytest.skip(
-                    f"ZAP connection lost during active scan; proceeding with partial results. Error: {exc}"
-                )
+                pytest.skip(f"ZAP connection lost during active scan; proceeding with partial results. Error: {exc}")
                 break
             except Exception as exc:
                 logger.warning(
@@ -348,28 +335,17 @@ class TestZAPAccessControlScan:
             fresh_zap = _zap_client()
             all_alerts = fresh_zap.core.alerts()
         except (ConnectionError, Timeout, RequestException) as exc:
-            pytest.skip(
-                f"ZAP unreachable after active scan: {exc}. "
-                "If this is an OOM crash, increase the ZAP memory limit in docker-compose.yml."
-            )
+            pytest.skip(f"ZAP unreachable after active scan: {exc}. " "If this is an OOM crash, increase the ZAP memory limit in docker-compose.yml.")
         except json.JSONDecodeError as exc:
             logger.warning("ZAP returned malformed JSON after active scan (possible crash/partial response): %s", exc)
-            pytest.skip(
-                f"ZAP response unparseable after active scan: {exc}. "
-                "If this is an OOM crash, increase the ZAP memory limit in docker-compose.yml."
-            )
+            pytest.skip(f"ZAP response unparseable after active scan: {exc}. " "If this is an OOM crash, increase the ZAP memory limit in docker-compose.yml.")
 
         critical_a01 = [a for a in _filter_a01_alerts(all_alerts) if a.get("risk") == "Critical"]
 
         if critical_a01:
             _write_report(critical_a01, "active_critical")
-            summary = "\n".join(
-                f"  [Critical] CWE-{a.get('cweid','?')} – {a['alert']} @ {a['url']}"
-                for a in critical_a01
-            )
-            pytest.fail(
-                f"ZAP active scan found {len(critical_a01)} CRITICAL A01 alert(s):\n{summary}"
-            )
+            summary = "\n".join(f"  [Critical] CWE-{a.get('cweid','?')} – {a['alert']} @ {a['url']}" for a in critical_a01)
+            pytest.fail(f"ZAP active scan found {len(critical_a01)} CRITICAL A01 alert(s):\n{summary}")
 
     def test_zap_generates_a01_report_artifact(self, zap: ZAPv2) -> None:
         """Write a full A01 alert JSON report to reports/ for artifact collection."""

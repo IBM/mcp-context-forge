@@ -660,7 +660,7 @@ markers = [
     "regression: marks regression tests for previously-fixed bugs",
     "proxy: marks tests that run through a simulated proxy prefix",
     "iframe: marks tests that run inside an iframe host page",
-    "owasp_a01: marks OWASP A01:2025 Broken Access Control security tests",
+    "owasp_a01: marks OWASP A01:2021 Broken Access Control security tests",
     "owasp_a01_zap: marks OWASP A01 ZAP DAST scan tests (requires ZAP daemon; set ZAP_BASE_URL)",
 ]
 

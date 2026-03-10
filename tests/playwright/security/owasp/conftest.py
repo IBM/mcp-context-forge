@@ -20,11 +20,11 @@ import pytest
 # First-Party
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
-# Local
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
 TEST_PASSWORD = "SecureTestPass123!"
 
-def _make_jwt(email: str, *, is_admin: bool, teams=None, expires_in_minutes: int = 30) -> str:  # type: ignore[no-untyped-def]
+
+def _make_jwt(email: str, *, is_admin: bool, teams: list[str] | None = None, expires_in_minutes: int = 30) -> str:
     """Create a JWT token for OWASP A01 testing with a short-lived expiry."""
     return _create_jwt_token(
         {"sub": email},
@@ -41,6 +41,7 @@ def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
         extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
     )
 
+
 @pytest.fixture(scope="module")
 def owasp_anon_api(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
     """Unauthenticated API context for force-browsing tests."""
@@ -50,6 +51,7 @@ def owasp_anon_api(playwright: Playwright) -> Generator[APIRequestContext, None,
     )
     yield ctx
     ctx.dispose()
+
 
 @pytest.fixture(scope="module")
 def owasp_admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
@@ -61,6 +63,7 @@ def owasp_admin_api(playwright: Playwright) -> Generator[APIRequestContext, None
     )
     yield ctx
     ctx.dispose()
+
 
 @pytest.fixture
 def owasp_user_a_api(owasp_admin_api: APIRequestContext, playwright: Playwright):
