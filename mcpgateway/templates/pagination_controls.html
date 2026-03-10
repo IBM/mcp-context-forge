@@ -27,6 +27,7 @@
   baseUrl: '',
 
   init() {
+    this._rootEl = $el;
     this.baseUrl = $el.dataset.baseUrl || '';
     if (!this.tableName) return;
     const urlParams = new URLSearchParams(window.location.search);
@@ -100,12 +101,39 @@
 
     // Preserve extra server-side query params (team_id, gateway_id, q, tags, etc.)
     // Stored in a data attribute to avoid double-quote conflicts inside x-data.
-    const extraParams = JSON.parse(this.$el.dataset.extraParams || '{}');
+    const extraParams = JSON.parse(this._rootEl.dataset.extraParams || '{}');
     Object.entries(extraParams).forEach(([k, v]) => {
       if (k !== 'include_inactive' && v !== null && v !== undefined) {
         url.searchParams.set(k, String(v));
       }
     });
+
+    // Dynamically read current search query from search input (fixes #3128)
+    // This ensures pagination preserves the user's search filter across all pages
+    if (this.tableName) {
+      const searchInputId = this.tableName + '-search-input';
+      const searchInput = document.getElementById(searchInputId);
+      if (searchInput) {
+        const trimmedQuery = searchInput.value.trim();
+        if (trimmedQuery) {
+          url.searchParams.set('q', trimmedQuery);
+        } else {
+          url.searchParams.delete('q');
+        }
+      }
+
+      // Also preserve tag filter if present
+      const tagInputId = this.tableName + '-tag-filter';
+      const tagInput = document.getElementById(tagInputId);
+      if (tagInput) {
+        const trimmedTags = tagInput.value.trim();
+        if (trimmedTags) {
+          url.searchParams.set('tags', trimmedTags);
+        } else {
+          url.searchParams.delete('tags');
+        }
+      }
+    }
 
     // Also pick up team_id if the parent app injects it into the browser URL
     // (e.g. when the gateway is embedded in an iframe).
