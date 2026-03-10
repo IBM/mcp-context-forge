@@ -1495,8 +1495,9 @@ class TestExecuteForwardedRequest:
         pool = MCPSessionPool()
 
         class DummyResponse:
-            def __init__(self, data):
+            def __init__(self, data, status_code):
                 self._data = data
+                self.status_code = status_code
             def json(self):
                 return self._data
 
@@ -1512,7 +1513,7 @@ class TestExecuteForwardedRequest:
                 self.post_calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
                 return self._response
 
-        dummy_client = DummyClient(DummyResponse({"jsonrpc": "2.0", "result": {"x": 1}, "id": 1}))
+        dummy_client = DummyClient(DummyResponse({"jsonrpc": "2.0", "result": {"x": 1}, "id": 1}, 200))
 
         with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
             mock_settings.port = 4444
@@ -1532,8 +1533,9 @@ class TestExecuteForwardedRequest:
         pool = MCPSessionPool()
 
         class DummyResponse:
-            def __init__(self, data):
+            def __init__(self, data, status_code):
                 self._data = data
+                self.status_code = status_code
             def json(self):
                 return self._data
 
@@ -1547,7 +1549,7 @@ class TestExecuteForwardedRequest:
             async def post(self, *_args, **_kwargs):
                 return self._response
 
-        dummy_client = DummyClient(DummyResponse({"jsonrpc": "2.0", "error": {"code": -32601, "message": "nope"}, "id": 1}))
+        dummy_client = DummyClient(DummyResponse({"jsonrpc": "2.0", "error": {"code": -32601, "message": "nope"}, "id": 1}, status_code=200))
 
         with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
             mock_settings.port = 4444
@@ -1580,6 +1582,93 @@ class TestExecuteForwardedRequest:
 
         assert result["error"]["code"] == -32603
         assert result["error"]["message"] == "Internal request timeout"
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_non_2xx_jsonrpc_error(self):
+        """Non-2xx with JSON-RPC error body should propagate the error."""
+        pool = MCPSessionPool()
+
+        class DummyResponse:
+            def __init__(self):
+                self.status_code = 403
+            def json(self):
+                return {"error": {"code": -32003, "message": "Token not authorized"}}
+
+        class DummyClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def post(self, *_args, **_kwargs):
+                return DummyResponse()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+                result = await pool._execute_forwarded_request({"method": "tools/call", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-123"})
+
+        assert result == {"error": {"code": -32003, "message": "Token not authorized"}}
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_non_2xx_non_jsonrpc(self):
+        """Non-2xx with non-JSON-RPC body should map to a JSON-RPC error."""
+        pool = MCPSessionPool()
+
+        class DummyResponse:
+            def __init__(self):
+                self.status_code = 401
+                self.text = '{"detail": "Authorization token required"}'
+            def json(self):
+                return {"detail": "Authorization token required"}
+
+        class DummyClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def post(self, *_args, **_kwargs):
+                return DummyResponse()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+                result = await pool._execute_forwarded_request({"method": "tools/call", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-123"})
+
+        assert result["error"]["code"] == -32603
+        assert "401" in result["error"]["message"]
+        assert "Authorization token required" in result["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_non_2xx_unparseable_body(self):
+        """Non-2xx with unparseable JSON body should fall back to response text."""
+        pool = MCPSessionPool()
+
+        class DummyResponse:
+            def __init__(self):
+                self.status_code = 502
+                self.text = "Bad Gateway"
+            def json(self):
+                raise ValueError("No JSON")
+
+        class DummyClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def post(self, *_args, **_kwargs):
+                return DummyResponse()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+                result = await pool._execute_forwarded_request({"method": "tools/call", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-123"})
+
+        assert result["error"]["code"] == -32603
+        assert "502" in result["error"]["message"]
+        assert "Bad Gateway" in result["error"]["message"]
 
 
 # ---------------------------------------------------------------------------
