@@ -10840,6 +10840,12 @@ logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
 if ADMIN_API_ENABLED:
     logger.info("Including admin_router - Admin API enabled")
     app.include_router(admin_router)  # Admin routes imported from admin.py
+
+    # Validate section-to-permission mapping consistency at startup
+    # First-Party
+    from mcpgateway.admin import validate_section_permissions
+
+    validate_section_permissions(admin_router)
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 
