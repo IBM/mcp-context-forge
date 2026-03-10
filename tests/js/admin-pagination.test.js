@@ -773,6 +773,142 @@ describe("pagination_controls data-extra-params handling", () => {
 });
 
 // ---------------------------------------------------------------------------
+// pagination_controls: dynamic search input reading (#3128)
+//
+// When paginating, loadPage() reads the current search and tag filter input
+// values from the DOM. This ensures the user's active search filter is
+// preserved across pages even if the input changed after the last server
+// render (which would make data-extra-params stale).
+// ---------------------------------------------------------------------------
+describe("pagination_controls dynamic search input reading (#3128)", () => {
+    /**
+     * Replicates the full loadPage() URL-building logic from
+     * pagination_controls.html, including extraParams AND the dynamic
+     * input-reading block added in #3128.
+     */
+    function buildUrlWithInputs(
+        baseUrl,
+        extraParamsJson,
+        tableName,
+        inputs = {},
+    ) {
+        const url = new URL(baseUrl, "http://localhost");
+        url.searchParams.set("page", "1");
+        url.searchParams.set("per_page", "50");
+
+        // Step 1: extraParams from server-rendered data attribute
+        const extraParams = JSON.parse(extraParamsJson || "{}");
+        Object.entries(extraParams).forEach(([k, v]) => {
+            if (k !== "include_inactive" && v !== null && v !== undefined) {
+                url.searchParams.set(k, String(v));
+            }
+        });
+
+        // Step 2: dynamic input reading (mirrors #3128 fix)
+        if (tableName) {
+            if (inputs.search !== undefined) {
+                const trimmedQuery = inputs.search.trim();
+                if (trimmedQuery) {
+                    url.searchParams.set("q", trimmedQuery);
+                } else {
+                    url.searchParams.delete("q");
+                }
+            }
+            if (inputs.tags !== undefined) {
+                const trimmedTags = inputs.tags.trim();
+                if (trimmedTags) {
+                    url.searchParams.set("tags", trimmedTags);
+                } else {
+                    url.searchParams.delete("tags");
+                }
+            }
+        }
+
+        return url;
+    }
+
+    test("search input value is used for q param", () => {
+        const url = buildUrlWithInputs("/admin/tools/partial", "{}", "tools", {
+            search: "my query",
+        });
+        expect(url.searchParams.get("q")).toBe("my query");
+    });
+
+    test("tag input value is used for tags param", () => {
+        const url = buildUrlWithInputs("/admin/tools/partial", "{}", "tools", {
+            tags: "prod,staging",
+        });
+        expect(url.searchParams.get("tags")).toBe("prod,staging");
+    });
+
+    test("input values override stale extraParams q and tags", () => {
+        const json = JSON.stringify({ q: "old query", tags: "old-tag" });
+        const url = buildUrlWithInputs("/admin/tools/partial", json, "tools", {
+            search: "new query",
+            tags: "new-tag",
+        });
+        expect(url.searchParams.get("q")).toBe("new query");
+        expect(url.searchParams.get("tags")).toBe("new-tag");
+    });
+
+    test("empty input clears stale extraParams q", () => {
+        const json = JSON.stringify({ q: "stale search" });
+        const url = buildUrlWithInputs("/admin/tools/partial", json, "tools", {
+            search: "",
+        });
+        expect(url.searchParams.has("q")).toBe(false);
+    });
+
+    test("empty input clears stale extraParams tags", () => {
+        const json = JSON.stringify({ tags: "stale-tag" });
+        const url = buildUrlWithInputs("/admin/tools/partial", json, "tools", {
+            tags: "",
+        });
+        expect(url.searchParams.has("tags")).toBe(false);
+    });
+
+    test("whitespace-only input clears q", () => {
+        const json = JSON.stringify({ q: "stale" });
+        const url = buildUrlWithInputs("/admin/tools/partial", json, "tools", {
+            search: "   ",
+        });
+        expect(url.searchParams.has("q")).toBe(false);
+    });
+
+    test("input values are trimmed", () => {
+        const url = buildUrlWithInputs("/admin/tools/partial", "{}", "tools", {
+            search: "  hello  ",
+            tags: "  alpha  ",
+        });
+        expect(url.searchParams.get("q")).toBe("hello");
+        expect(url.searchParams.get("tags")).toBe("alpha");
+    });
+
+    test("other extraParams are preserved when input overrides q", () => {
+        const json = JSON.stringify({
+            q: "old",
+            gateway_id: "42",
+            team_id: "t1",
+        });
+        const url = buildUrlWithInputs("/admin/tools/partial", json, "tools", {
+            search: "new",
+        });
+        expect(url.searchParams.get("q")).toBe("new");
+        expect(url.searchParams.get("gateway_id")).toBe("42");
+        expect(url.searchParams.get("team_id")).toBe("t1");
+    });
+
+    test("skips input reading when tableName is empty", () => {
+        const json = JSON.stringify({ q: "from-server" });
+        const url = buildUrlWithInputs("/admin/tools/partial", json, "", {
+            search: "from-input",
+        });
+        // Without tableName, input reading is skipped; extraParams value stands
+        expect(url.searchParams.get("q")).toBe("from-server");
+    });
+});
+
+// ---------------------------------------------------------------------------
 // Pagination swapStyle used by loadPage (#3396)
 //
 // Table-targeted pagination must use outerHTML swap to prevent nested <table>
@@ -800,7 +936,7 @@ describe("pagination loadPage swapStyle (#3396)", () => {
             hasNext: true,
             hasPrev: false,
             targetSelector: "#tools-table",
-            swapStyle: swapStyle,
+            swapStyle,
             tableName: "tools",
             baseUrl: "/admin/tools/partial",
             $el: {
