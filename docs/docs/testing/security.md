@@ -124,24 +124,18 @@ No manual login or session configuration is required.
 
 ### Scan Resilience
 
-The active scan sends thousands of attack payloads and can exhaust ZAP's
-memory in a resource-constrained environment (Docker limit: 2 GB).  The test
-handles this gracefully:
+The test suite imports the full OpenAPI spec (300+ paths) into ZAP.  The
+default Docker memory limit is 16 GB.  The **passive scan** completes
+reliably at this limit and covers the full API surface.  The **active scan**
+(attack payloads against every endpoint) may time out or OOM on very large
+APIs and is skipped gracefully when this happens:
 
 - If ZAP disconnects mid-scan, the polling loop breaks and proceeds with
   partial results.
 - After the scan, the test reconnects via a fresh ZAP client (ZAP restarts
   automatically via `restart: unless-stopped`).
 - If ZAP is still unreachable after reconnecting, the test is **skipped**
-  with a message indicating the memory limit.  To make the active scan more
-  stable, increase ZAP's memory in `docker-compose.yml`:
-
-```yaml
-deploy:
-  resources:
-    limits:
-      memory: 4G   # increase from 2G
-```
+  with a message indicating the memory limit.
 
 ### Reports
 

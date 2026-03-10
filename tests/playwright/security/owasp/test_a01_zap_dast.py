@@ -226,14 +226,43 @@ def zap() -> ZAPv2:
     return client
 
 
+# Security-sensitive path prefixes for the active scan.
+# The passive scan covers the full OpenAPI surface; the active scan focuses
+# on paths where access-control vulnerabilities are most likely.
+_ACTIVE_SCAN_PREFIXES = [
+    "/auth/",
+    "/rbac/",
+    "/tokens/",
+    "/servers",
+    "/teams/",
+    "/tools",
+    "/gateways",
+]
+
+
 @pytest.fixture(scope="module")
 def zap_context(zap: ZAPv2) -> dict:
-    """Create a new ZAP context scoped to ZAP_TARGET_URL."""
-    ctx_name = f"owasp_a01_{int(time.time())}"
-    ctx_id = zap.context.new_context(ctx_name)
-    zap.context.include_in_context(ctx_name, f"{ZAP_TARGET_URL}.*")
-    logger.info("Created ZAP context %s (id=%s) for target %s", ctx_name, ctx_id, ZAP_TARGET_URL)
-    yield {"ctx_id": ctx_id, "ctx_name": ctx_name}
+    """Create two ZAP contexts: a broad one for import/spider and a narrow one for active scan.
+
+    The broad context (``.*``) is used for OpenAPI import and spidering so ZAP
+    discovers the full API surface.  The narrow context only includes
+    security-sensitive prefixes, keeping the active scan focused and fast.
+    """
+    ts = int(time.time())
+
+    # Broad context for OpenAPI import and spider
+    broad_name = f"owasp_a01_broad_{ts}"
+    broad_id = zap.context.new_context(broad_name)
+    zap.context.include_in_context(broad_name, f"{ZAP_TARGET_URL}.*")
+
+    # Narrow context for active scan (security-sensitive prefixes only)
+    narrow_name = f"owasp_a01_scan_{ts}"
+    narrow_id = zap.context.new_context(narrow_name)
+    for prefix in _ACTIVE_SCAN_PREFIXES:
+        zap.context.include_in_context(narrow_name, f"{ZAP_TARGET_URL}{prefix}.*")
+
+    logger.info("ZAP contexts: broad=%s (id=%s), scan=%s (id=%s, %d prefixes)", broad_name, broad_id, narrow_name, narrow_id, len(_ACTIVE_SCAN_PREFIXES))
+    yield {"ctx_id": broad_id, "ctx_name": broad_name, "scan_ctx_id": narrow_id, "scan_ctx_name": narrow_name}
     # No explicit cleanup needed; ZAP contexts are ephemeral
 
 
@@ -248,58 +277,39 @@ class TestZAPAccessControlScan:
     """ZAP DAST scan tests for OWASP A01:2021 – Broken Access Control."""
 
     def test_zap_spider_discovers_protected_endpoints(self, zap: ZAPv2, zap_context: dict) -> None:
-        """Seed ZAP's site tree with protected API paths, then spider for HTML/UI paths.
+        """Import the OpenAPI spec and spider to build full site tree coverage.
 
-        ZAP's traditional spider follows HTML hyperlinks and cannot discover REST
-        API endpoints on its own.  We seed the site tree by directly accessing
-        each protected path via ``zap.core.access_url()`` — ZAP records the
-        response and then the passive/active scans operate on them.
+        FastAPI auto-generates an OpenAPI 3.x spec at ``/openapi.json``.
+        Importing it gives ZAP knowledge of all API paths, methods, and
+        parameters.  We also manually seed a handful of key paths as a
+        fallback and run the traditional spider for any HTML/UI routes.
 
-        Note: ZAP's ``openapi.import_url()`` can import the full OpenAPI spec but
-        consistently OOMs with the default 2 GB memory limit (344 paths triggers
-        immediate fetching).  Manual seeding is more reliable.
+        Requires ZAP memory >= 4 GB (set in docker-compose.yml).
         """
-        # Key protected paths covering the main security-sensitive surface area.
-        # Grouped by domain: auth, RBAC, resources, admin, observability.
-        protected_paths = [
-            # Auth & user management
-            "/auth/email/admin/users",
-            "/auth/email/login",
-            "/auth/email/signup",
-            # RBAC
-            "/rbac/roles",
-            "/rbac/permissions",
-            # Resources
-            "/servers",
-            "/tools",
-            "/gateways",
-            "/resources",
-            "/prompts",
-            "/teams/",
-            # Tokens
-            "/tokens",
-            "/tokens/admin/all",
-            # Observability & admin
-            "/api/logs/audit-trails",
-            "/health",
-            "/health/security",
-            "/metrics/prometheus",
-        ]
+        protected_paths = ["/servers", "/tools", "/teams/", "/rbac", "/auth/email", "/tokens", "/gateways"]
 
-        # --- 1. Seed the site tree by directly accessing each protected path ---
-        for path in protected_paths:
-            url = f"{ZAP_TARGET_URL}{path}"
-            try:
-                zap.core.access_url(url, followredirects="true")
-                logger.debug("Seeded ZAP site tree: %s", url)
-            except (ConnectionError, Timeout, RequestException) as exc:
-                logger.warning("access_url network error for %s: %s", url, exc)
-            except json.JSONDecodeError as exc:
-                logger.warning("access_url malformed JSON response for %s: %s", url, exc)
-            except Exception as exc:
-                logger.warning("access_url failed for %s: %s", url, exc)
+        # --- 1. Import OpenAPI spec (primary discovery mechanism) ---
+        openapi_url = f"{ZAP_TARGET_URL}/openapi.json"
+        openapi_imported = False
+        try:
+            result = zap.openapi.import_url(openapi_url, hostoverride=None, contextid=zap_context["ctx_id"])
+            logger.info("OpenAPI import result: %s", result)
+            openapi_imported = True
+        except (ConnectionError, Timeout, RequestException) as exc:
+            logger.warning("OpenAPI import failed (network): %s – falling back to manual seeding", exc)
+        except Exception as exc:
+            logger.warning("OpenAPI import failed: %s – falling back to manual seeding", exc)
 
-        # --- 2. Run the traditional spider (picks up any linked HTML/UI paths) ---
+        # --- 2. Manual seed as fallback (or belt-and-suspenders) ---
+        if not openapi_imported:
+            for path in protected_paths:
+                url = f"{ZAP_TARGET_URL}{path}"
+                try:
+                    zap.core.access_url(url, followredirects="true")
+                except Exception as exc:
+                    logger.debug("access_url failed for %s: %s", url, exc)
+
+        # --- 3. Run the traditional spider (picks up any linked HTML/UI paths) ---
         scan_id = zap.spider.scan(ZAP_TARGET_URL, contextname=zap_context["ctx_name"])
         logger.info("ZAP spider started with scan_id=%s targeting %s", scan_id, ZAP_TARGET_URL)
 
@@ -342,11 +352,13 @@ class TestZAPAccessControlScan:
             pytest.fail(f"ZAP passive scan found {len(a01_alerts)} HIGH/CRITICAL A01 alert(s):\n{summary}")
 
     def test_zap_active_scan_finds_no_critical_access_control_issues(self, zap: ZAPv2, zap_context: dict) -> None:
-        """Active scan must produce no CRITICAL A01 alerts."""
+        """Active scan of security-sensitive prefixes must produce no CRITICAL A01 alerts."""
         try:
             scan_id = zap.ascan.scan(
                 ZAP_TARGET_URL,
-                contextid=zap_context["ctx_id"],
+                recurse="true",
+                inscopeonly="true",
+                contextid=zap_context["scan_ctx_id"],
                 scanpolicyname=None,  # default policy, full strength
             )
         except (ConnectionError, Timeout, RequestException) as exc:
@@ -356,9 +368,9 @@ class TestZAPAccessControlScan:
         except Exception as exc:
             pytest.skip(f"Could not start ZAP active scan: {exc}")
 
-        logger.info("ZAP active scan started with scan_id=%s", scan_id)
+        logger.info("ZAP active scan started with scan_id=%s (in-scope only)", scan_id)
 
-        deadline = time.time() + 900  # 15 min hard cap
+        deadline = time.time() + 2700  # 45 min hard cap
         while time.time() < deadline:
             try:
                 progress = int(zap.ascan.status(scan_id))
@@ -376,7 +388,7 @@ class TestZAPAccessControlScan:
                 break
             time.sleep(5)
         else:
-            pytest.skip("Active scan exceeded 15 min timeout - results incomplete. Increase timeout or optimize scan scope.")
+            pytest.skip("Active scan exceeded 45 min timeout - results incomplete.")
 
         # ZAP may have restarted after a crash; open a fresh client and allow
         # time for ZAP to come back up before querying alerts.

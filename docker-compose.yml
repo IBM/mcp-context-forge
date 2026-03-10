@@ -2440,8 +2440,8 @@ services:
       resources:
         limits:
           cpus: '2'
-          memory: 2G
+          memory: 16G
         reservations:
           cpus: '0.5'
-          memory: 1G
+          memory: 8G
     profiles: ["dast"]
