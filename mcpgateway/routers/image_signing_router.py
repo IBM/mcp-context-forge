@@ -17,7 +17,9 @@ from typing import List, Optional
 from types import SimpleNamespace
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
@@ -35,6 +37,8 @@ router = APIRouter(
     prefix="/api/v1/image-signing",
     tags=["image-signing"],
 )
+
+templates = Jinja2Templates(directory="mcpgateway/templates")
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +86,13 @@ class CreateSignerRequest(BaseModel):
     kms_key_ref: Optional[str] = None
     enabled: bool = True
     expires_at: Optional[datetime] = None
+
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("name must not be empty")
+        return v.strip()    
 
 
 class UpdateSignerRequest(BaseModel):
@@ -164,12 +175,21 @@ def _build_plugin() -> ImageSigningPlugin:
 
 @router.get("/signers", response_model=List[SignerResponse])
 def list_signers(
-    enabled_only: bool = Query(True, description="Filter to enabled signers only"),
+    enabled: Optional[bool] = Query(None, description="Filter by enabled status"),
     db: Session = Depends(get_db),
 ) -> List[SignerResponse]:
-    """List all trusted signers."""
     repo = ImageSigningRepository(db)
-    signers = repo.list_trusted_signers(enabled_only=enabled_only)
+
+    if enabled is None:
+        signers = repo.list_trusted_signers(enabled_only=False)
+    elif enabled is True:
+        signers = repo.list_trusted_signers(enabled_only=True)
+    else:
+        signers = [
+            s for s in repo.list_trusted_signers(enabled_only=False)
+            if s.enabled is False
+        ]
+
     return [_signer_to_response(s) for s in signers]
 
 
@@ -291,3 +311,17 @@ async def verify_image_endpoint(
             status_code=500,
             detail=f"Image verification failed: {exc}",
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Admin UI partial
+# ---------------------------------------------------------------------------
+
+
+@router.get("/partial", response_class=HTMLResponse, include_in_schema=False)
+async def image_signing_partial(request: Request) -> HTMLResponse:
+    """Serve the Admin UI partial for the image-signing tab."""
+    return templates.TemplateResponse(
+        "image_signing_partial.html",
+        {"request": request},
+    )

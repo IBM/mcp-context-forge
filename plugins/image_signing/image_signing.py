@@ -40,8 +40,11 @@ from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
-#    AssessmentPostContainerScanPayload
-#    AssessmentPostContainerScanResult
+    # TODO(#2216): Replace stubs below when runtime_pre_deploy hook is added
+    # from mcpgateway.plugins.framework.hooks.runtime import (
+    #     RuntimePreDeployPayload,  # will contain image_ref, image_digest
+    #     RuntimePreDeployResult,
+    # )
     PluginViolation,
 )
 from plugins.image_signing.config import ImageSigningConfig, TrustedSignerConfig
@@ -61,6 +64,14 @@ from plugins.image_signing.types import (
     SignerType,
 )
 
+# TODO(#2216): Remove these stubs once framework exports runtime hook types.
+#   Expected hook: runtime_pre_deploy (priority 20, after ContainerScannerPlugin)
+#   Expected payload fields: image_ref, image_digest, assessment_id
+#   Config entry:
+#     - name: "ImageSigningPlugin"
+#       kind: "plugins.image_signing.image_signing.ImageSigningPlugin"
+#       hooks: ["runtime_pre_deploy"]
+#       priority: 20
 logger = logging.getLogger(__name__)
 
 @dataclass
