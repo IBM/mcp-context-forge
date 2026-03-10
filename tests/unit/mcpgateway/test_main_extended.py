@@ -2843,6 +2843,21 @@ class TestGatewayEndpointsCoverage:
         assert excinfo.value.status_code == 409
 
     @pytest.mark.asyncio
+    async def test_get_gateway_does_not_pass_include_unmasked(self, monkeypatch):
+        """SECURITY: Non-admin GET /gateways/{id} must NOT request unmasked credentials."""
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        db = MagicMock()
+
+        mock_get_gw = AsyncMock(return_value=SimpleNamespace(id="gw-1"))
+        monkeypatch.setattr(main_mod.gateway_service, "get_gateway", mock_get_gw)
+        monkeypatch.setattr(main_mod, "_enforce_scoped_resource_access", lambda *_a, **_kw: None)
+
+        await main_mod.get_gateway("gw-1", request=request, db=db, user={"email": "user@example.com"})
+        mock_get_gw.assert_called_once_with(db, "gw-1")
+
+    @pytest.mark.asyncio
     async def test_refresh_gateway_tools_denies_cross_scope_access(self, monkeypatch):
         import mcpgateway.main as main_mod
 

@@ -2714,6 +2714,16 @@ class TestAdminGatewayRoutes:
             assert result["transport"] == transport
 
     @patch.object(GatewayService, "get_gateway")
+    async def test_admin_get_gateway_passes_include_unmasked(self, mock_get_gateway, mock_db):
+        """Verify admin_get_gateway passes include_unmasked=True so the UI can reveal credentials."""
+        mock_gateway = MagicMock()
+        mock_gateway.model_dump.return_value = {"id": "gw-1", "name": "GW", "url": "https://example.com"}
+        mock_get_gateway.return_value = mock_gateway
+
+        await admin_get_gateway("gw-1", mock_db, user={"email": "test-user", "db": mock_db})
+        mock_get_gateway.assert_called_once_with(mock_db, "gw-1", include_unmasked=True)
+
+    @patch.object(GatewayService, "get_gateway")
     async def test_admin_get_gateway_error_handlers(self, mock_get_gateway, mock_db):
         """Cover not-found translation and generic exception logging in admin_get_gateway."""
         mock_get_gateway.side_effect = GatewayNotFoundError("missing")
