@@ -1240,6 +1240,14 @@ class SSOService:
                     if claim in keycloak_id_token_claims and claim not in user_data:
                         user_data[claim] = keycloak_id_token_claims[claim]
 
+            # For generic OIDC providers (e.g. Okta), extract groups/roles from
+            # id_token when the userinfo response does not already contain them.
+            # Many OIDC providers only include group claims in the id_token.
+            if provider.id not in ("entra", "keycloak", "github", "google") and verified_id_token_claims:
+                for claim in ["groups", "roles"]:
+                    if claim in verified_id_token_claims and claim not in user_data:
+                        user_data[claim] = verified_id_token_claims[claim]
+
             # Normalize user info across providers
             return self._normalize_user_info(provider, user_data)
 
@@ -1413,6 +1421,18 @@ class SSOService:
             }
 
         # Generic OIDC format for all other providers
+        groups_claim = (provider.provider_metadata or {}).get("groups_claim", "groups")
+        groups = []
+        if groups_claim in user_data:
+            groups_value = user_data.get(groups_claim, [])
+            if isinstance(groups_value, list):
+                groups.extend(groups_value)
+            elif isinstance(groups_value, str):
+                groups.append(groups_value)
+        if "roles" in user_data:
+            roles_value = user_data.get("roles", [])
+            if isinstance(roles_value, list):
+                groups.extend(roles_value)
         return {
             "email": user_data.get("email"),
             "email_verified": user_data.get("email_verified"),
@@ -1421,6 +1441,7 @@ class SSOService:
             "provider_id": user_data.get("sub"),
             "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
             "provider": provider.id,
+            "groups": list(set(groups)),
         }
 
     async def authenticate_or_create_user(self, user_info: Dict[str, Any]) -> Optional[str]:
