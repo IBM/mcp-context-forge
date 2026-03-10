@@ -1,6 +1,5 @@
 # Rust build artifacts
 target/
-Cargo.lock
 
 # Python build artifacts
 *.pyc
