@@ -212,6 +212,7 @@ class ObservabilityService:
     # Trace Management
     # ==============================
 
+    # pylint: disable=too-many-arguments,too-many-locals
     def start_trace(
         self,
         db: Session,
@@ -360,6 +361,7 @@ class ObservabilityService:
     # Span Management
     # ==============================
 
+    # pylint: disable=too-many-locals
     def start_span(
         self,
         db: Session,

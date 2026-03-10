@@ -11,6 +11,7 @@ import base64
 import json
 import pytest
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from starlette.requests import Request
 from starlette.responses import Response
@@ -228,8 +229,8 @@ def test_get_safe_token_claims_from_request_no_auth():
     """When no Authorization header, returns None."""
     request = MagicMock(spec=Request)
     request.headers = {}
-    request.state = MagicMock()
-    assert not hasattr(request.state, "token_claims")
+    # Use SimpleNamespace so hasattr(state, "token_claims") is False (MagicMock would have it)
+    request.state = SimpleNamespace()
     assert _get_safe_token_claims_from_request(request) is None
 
 
