@@ -130,14 +130,18 @@ class _PassthroughMasked:
         self._obj = obj
 
     def masked(self):
-        return self._obj
+        return self  # Keep wrapper active; don't unwrap
 
     def model_dump(self, **kw):
         if hasattr(self._obj, "model_dump"):
             return self._obj.model_dump(**kw)
-        return vars(self._obj)
+        return vars(self._obj) if not isinstance(self._obj, dict) else self._obj
 
     def __getattr__(self, name):
+        # If the wrapped object is a dict, try to access as a key first
+        if isinstance(self._obj, dict) and name in self._obj:
+            return self._obj[name]
+        # Otherwise try normal attribute access
         return getattr(self._obj, name)
 
 
@@ -804,10 +808,8 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         result = await gateway_service.get_gateway(test_db, 1)
         test_db.execute.assert_called_once()
-        # assert result.name == "test_gateway"
-        # assert result.capabilities == mock_gateway.capabilities
-        assert result["name"] == "test_gateway"
-        assert result["capabilities"] == mock_gateway.capabilities
+        assert result.name == "test_gateway"
+        assert result.capabilities == mock_gateway.capabilities
 
     @pytest.mark.asyncio
     async def test_get_gateway_not_found(self, gateway_service, test_db):
@@ -3860,18 +3862,16 @@ class TestPrepareGatewayForRead:
     def test_prepare_gateway_encodes_dict_auth(self, gateway_service, mock_gateway):
         mock_gateway.auth_value = {"Authorization": "Bearer token"}
         mock_gateway.tags = []
-        # result = gateway_service._prepare_gateway_for_read(mock_gateway)
         result = gateway_service.convert_gateway_to_read(mock_gateway)
         # Auth value should be encoded as string now
-        assert isinstance(result["auth_value"], str)
+        assert isinstance(result.auth_value, str)
 
     def test_prepare_gateway_converts_string_tags(self, gateway_service, mock_gateway):
         mock_gateway.tags = ["tag1", "tag2"]
         mock_gateway.auth_value = None
-        # result = gateway_service._prepare_gateway_for_read(mock_gateway)
         result = gateway_service.convert_gateway_to_read(mock_gateway)
         # Tags should be converted from List[str] to List[Dict]
-        assert isinstance(result["tags"][0], dict)
+        assert isinstance(result.tags[0], dict)
 
 
 # ---------------------------------------------------------------------------
@@ -5679,8 +5679,6 @@ class TestUpdateGatewayAdvanced:
         monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [])))
 
         result = await gateway_service.update_gateway(db, mock_gateway.id, update_data)
-        # auth_value gets encoded by _prepare_gateway_for_read; verify it's a non-empty encoded string
-        # assert isinstance(mock_gateway.auth_value, str) and len(mock_gateway.auth_value) > 0
         assert isinstance(mock_gateway.auth_value, dict) and len(mock_gateway.auth_value) > 0
 
     @pytest.mark.asyncio
