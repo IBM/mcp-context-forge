@@ -4,6 +4,67 @@ Last updated: March 10, 2026
 
 Status focus in this update:
 
+- the optional `rmcp` integration spike is now wired through the container
+  build and compose runtime
+- compose image builds now support:
+  - `ENABLE_RUST=true`
+  - `ENABLE_RUST_MCP_RMCP=true`
+- runtime activation is separately gated by:
+  - `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`
+  - `EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true`
+  - `MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=true`
+- the managed Rust sidecar is running over UDS in the validated compose stack:
+  - `EXPERIMENTAL_RUST_MCP_RUNTIME_UDS=/tmp/contextforge-mcp-rust.sock`
+  - `MCP_RUST_LISTEN_UDS=/tmp/contextforge-mcp-rust.sock`
+- the compose-built live stack now proves all of the following at runtime:
+  - `/health` returns:
+    - `x-contextforge-mcp-runtime-mode: rust-managed`
+    - `x-contextforge-mcp-transport-mounted: rust`
+    - `x-contextforge-rust-build-included: true`
+  - live `tools/call` responses return:
+    - `x-contextforge-mcp-runtime: rust`
+    - `x-contextforge-mcp-upstream-client: rmcp`
+- `docker compose build gateway` succeeded with the classic builder path:
+  - `DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker compose build gateway`
+- note on host behavior:
+  - the default BuildKit/Bake compose build path on this host failed with a
+    Docker cgroup/systemd builder error
+  - the repo code and image build are valid; the compose build succeeds with
+    the legacy builder mode above
+- compose-built image validation on the live stack passed:
+  - `make test-mcp-cli` -> `23 passed`
+  - `make test-mcp-rbac` -> `40 passed`
+- full `make test-ui-headless` was run against the same compose-built Rust
+  stack and completed:
+  - `761 passed`
+  - `83 skipped`
+  - `3 failed`
+  - `5 errors`
+  - total runtime about `41m55s`
+- important UI-suite quality note:
+  - the exact `8` failed/error cases from the full headless run were rerun
+    individually against the same live stack and all `8` passed
+  - current evidence points to suite-order or shared-state Playwright flake,
+    not a deterministic Rust MCP regression
+- current compose-built performance on the live `Fast Time Server` target:
+  - mixed MCP:
+    - `100 users` -> `880.72 RPS`, `15.88 ms` avg, `25 ms` p95, `59 ms` p99
+    - `120 users` -> `1007.35 RPS`, `21.65 ms` avg, `37 ms` p95, `79 ms` p99
+    - `150 users` -> `1033.01 RPS`, `47.18 ms` avg, `83 ms` p95, `130 ms` p99
+    - `175 users` -> `1008.24 RPS`, `77.57 ms` avg, `130 ms` p95, `220 ms` p99
+  - tools-only:
+    - `125 users` -> `1126.96 RPS` overall
+    - `MCP tools/call [rapid]` -> `1068.5 RPS`
+    - `58.32 ms` avg, `72 ms` p95, `100 ms` p99
+- comparison point:
+  - earlier Python mixed baseline peaked at `759 RPS` at `100` users
+  - the current compose-built Rust stack now exceeds `1000 RPS` on the mixed
+    workload and exceeds `1100 RPS` on the tools-only hot path
+- current quality summary:
+  - MCP transport/runtime path is working correctly on the compose-built image
+  - core MCP protocol parity suites are green
+  - full UI coverage is mostly healthy but not yet fully stable end-to-end
+  - historical implementation notes continue below
 - `resources/subscribe`, `resources/unsubscribe`, and `roots/list` are no
   longer routed through the generic Python `/_internal/mcp/rpc` switch
 - dedicated trusted internal Python routes now handle:

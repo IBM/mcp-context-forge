@@ -119,6 +119,7 @@ services:
       dockerfile: Containerfile.lite     # Same one the Makefile builds
       args:
         ENABLE_RUST: ${ENABLE_RUST_BUILD:-false}
+        ENABLE_RUST_MCP_RMCP: ${ENABLE_RUST_MCP_RMCP_BUILD:-false}
     restart: unless-stopped
     # NOTE: When using replicas > 1, access via nginx:8080 instead of direct port 4444
     # ports:
@@ -168,6 +169,7 @@ services:
       - MCP_RUST_CLIENT_TCP_KEEPALIVE_SECONDS=${MCP_RUST_CLIENT_TCP_KEEPALIVE_SECONDS:-30}
       - MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS=${MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS:-30}
       - MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS=${MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS:-300}
+      - MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT:-false}
       # WebSocket transport features (disabled by default; opt-in only)
       - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
       - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}

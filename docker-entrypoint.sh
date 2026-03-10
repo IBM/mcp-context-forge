@@ -7,6 +7,8 @@ EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED="${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED:-
 EXPERIMENTAL_RUST_MCP_RUNTIME_URL="${EXPERIMENTAL_RUST_MCP_RUNTIME_URL:-http://127.0.0.1:8787}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_UDS="${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-}"
 CONTEXTFORGE_ENABLE_RUST_BUILD="${CONTEXTFORGE_ENABLE_RUST_BUILD:-false}"
+CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD="${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD:-false}"
+MCP_RUST_USE_RMCP_UPSTREAM_CLIENT="${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT:-false}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}" || {
@@ -35,14 +37,25 @@ cleanup() {
 
 print_mcp_runtime_mode() {
     local runtime_mode="python"
+    local upstream_client_mode="native"
+
+    if [[ "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" = "true" ]]; then
+        upstream_client_mode="rmcp"
+    fi
 
     if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
         if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
             runtime_mode="rust-managed"
-            echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container)"
+            echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container, upstream client: ${upstream_client_mode})"
         else
             runtime_mode="rust-external"
-            echo "MCP runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}})"
+            echo "MCP runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}}, upstream client: ${upstream_client_mode})"
+        fi
+
+        if [[ "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" = "true" && "${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD}" != "true" ]]; then
+            echo "ERROR: MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=true but this image was built without rmcp support."
+            echo "Rebuild with --build-arg ENABLE_RUST_MCP_RMCP=true."
+            exit 1
         fi
         return
     fi

@@ -45,6 +45,7 @@ fn test_runtime_config() -> RuntimeConfig {
         client_tcp_keepalive_seconds: 30,
         tools_call_plan_ttl_seconds: 30,
         upstream_session_ttl_seconds: 300,
+        use_rmcp_upstream_client: false,
         database_url: None,
         db_pool_max_size: 20,
         log_filter: "error".to_string(),
@@ -166,7 +167,12 @@ async fn health_alias_is_available_for_gateway_style_probes() {
 
 #[tokio::test]
 async fn get_and_delete_mcp_routes_forward_to_internal_transport_bridge() {
-    let transport_calls = Arc::new(Mutex::new(Vec::<(String, Option<String>, Option<String>, Option<String>)>::new()));
+    let transport_calls = Arc::new(Mutex::new(Vec::<(
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )>::new()));
     let backend = {
         let get_transport_calls = transport_calls.clone();
         let delete_transport_calls = transport_calls.clone();
@@ -189,7 +195,10 @@ async fn get_and_delete_mcp_routes_forward_to_internal_transport_bridge() {
                     ));
                     (
                         StatusCode::OK,
-                        [( "content-type", HeaderValue::from_static("text/event-stream"))],
+                        [(
+                            "content-type",
+                            HeaderValue::from_static("text/event-stream"),
+                        )],
                         "data: ping\n\n",
                     )
                 }
@@ -250,7 +259,10 @@ async fn get_and_delete_mcp_routes_forward_to_internal_transport_bridge() {
             .and_then(|value| value.to_str().ok()),
         Some("rust")
     );
-    assert_eq!(get_response.text().await.expect("stream text"), "data: ping\n\n");
+    assert_eq!(
+        get_response.text().await.expect("stream text"),
+        "data: ping\n\n"
+    );
 
     let delete_response = client
         .delete(format!("{runtime_url}/mcp?session_id=session-42"))
@@ -272,8 +284,24 @@ async fn get_and_delete_mcp_routes_forward_to_internal_transport_bridge() {
 
     let calls = transport_calls.lock().expect("lock");
     assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0], ("GET".to_string(), Some("Bearer test-token".to_string()), Some("client-session-1".to_string()), Some("session_id=session-42".to_string())));
-    assert_eq!(calls[1], ("DELETE".to_string(), Some("Bearer test-token".to_string()), Some("client-session-1".to_string()), Some("session_id=session-42".to_string())));
+    assert_eq!(
+        calls[0],
+        (
+            "GET".to_string(),
+            Some("Bearer test-token".to_string()),
+            Some("client-session-1".to_string()),
+            Some("session_id=session-42".to_string())
+        )
+    );
+    assert_eq!(
+        calls[1],
+        (
+            "DELETE".to_string(),
+            Some("Bearer test-token".to_string()),
+            Some("client-session-1".to_string()),
+            Some("session_id=session-42".to_string())
+        )
+    );
 }
 
 #[tokio::test]
@@ -2150,6 +2178,157 @@ async fn tools_call_reuses_shared_upstream_session_without_client_session_id() {
     assert_eq!(*upstream_tool_calls.lock().expect("lock"), 2);
 }
 
+#[cfg(feature = "rmcp-upstream-client")]
+#[tokio::test]
+async fn tools_call_can_use_rmcp_upstream_client() {
+    let upstream_initialize_calls = Arc::new(Mutex::new(0usize));
+    let upstream_tool_calls = Arc::new(Mutex::new(0usize));
+    let backend_fallback_calls = Arc::new(Mutex::new(0usize));
+    let backend_resolve_calls = Arc::new(Mutex::new(0usize));
+
+    let upstream = {
+        let upstream_initialize_calls = upstream_initialize_calls.clone();
+        let upstream_tool_calls = upstream_tool_calls.clone();
+        Router::new().route(
+            "/mcp",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let upstream_initialize_calls = upstream_initialize_calls.clone();
+                let upstream_tool_calls = upstream_tool_calls.clone();
+                async move {
+                    match body.get("method").and_then(Value::as_str) {
+                        Some("initialize") => {
+                            *upstream_initialize_calls.lock().expect("lock") += 1;
+                            assert_eq!(
+                                headers
+                                    .get("x-upstream-auth")
+                                    .and_then(|value| value.to_str().ok()),
+                                Some("rust-plan")
+                            );
+                            Json(json!({
+                                "jsonrpc":"2.0",
+                                "id": body["id"],
+                                "result": {
+                                    "protocolVersion": "2025-11-25",
+                                    "serverInfo": {"name": "upstream", "version": "1.0.0"},
+                                    "capabilities": {}
+                                }
+                            }))
+                            .into_response()
+                        }
+                        Some("notifications/initialized") => StatusCode::ACCEPTED.into_response(),
+                        Some("tools/call") => {
+                            *upstream_tool_calls.lock().expect("lock") += 1;
+                            assert_eq!(body["params"]["name"], "echo_remote");
+                            Json(json!({
+                                "jsonrpc":"2.0",
+                                "id": body["id"],
+                                "result": {
+                                    "content": [{"type": "text", "text": "ok-rmcp"}],
+                                    "isError": false
+                                }
+                            }))
+                            .into_response()
+                        }
+                        other => (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({"unexpected_method": other})),
+                        )
+                            .into_response(),
+                    }
+                }
+            }),
+        )
+    };
+    let upstream_url = spawn_router(upstream).await;
+
+    let backend = {
+        let backend_fallback_calls = backend_fallback_calls.clone();
+        let backend_resolve_calls = backend_resolve_calls.clone();
+        let upstream_url = upstream_url.clone();
+        Router::new()
+            .route(
+                "/_internal/mcp/tools/call/resolve",
+                post(move |Json(body): Json<Value>| {
+                    let backend_resolve_calls = backend_resolve_calls.clone();
+                    let upstream_url = upstream_url.clone();
+                    async move {
+                        *backend_resolve_calls.lock().expect("lock") += 1;
+                        assert_eq!(body["params"]["name"], "echo");
+                        Json(json!({
+                            "eligible": true,
+                            "transport": "streamablehttp",
+                            "serverUrl": format!("{upstream_url}/mcp"),
+                            "remoteToolName": "echo_remote",
+                            "headers": {"x-upstream-auth": "rust-plan"},
+                            "timeoutMs": 30000
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/tools/call",
+                post(move || {
+                    let backend_fallback_calls = backend_fallback_calls.clone();
+                    async move {
+                        *backend_fallback_calls.lock().expect("lock") += 1;
+                        Json(json!({
+                            "jsonrpc":"2.0",
+                            "id": 1,
+                            "result": {"unexpected": true}
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            use_rmcp_upstream_client: true,
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+    let client = reqwest::Client::new();
+
+    for request_id in [61, 62] {
+        let response = client
+            .post(format!("{runtime_url}/mcp"))
+            .header("authorization", "Bearer test-token")
+            .header("x-contextforge-server-id", "server-1")
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/call",
+                "params": {
+                    "name": "echo",
+                    "arguments": {"text": "hello"}
+                }
+            }))
+            .send()
+            .await
+            .expect("tools/call response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("x-contextforge-mcp-upstream-client")
+                .and_then(|value| value.to_str().ok()),
+            Some("rmcp")
+        );
+        let body: Value = response.json().await.expect("json body");
+        assert_eq!(body["result"]["content"][0]["text"], "ok-rmcp");
+    }
+
+    assert_eq!(*backend_resolve_calls.lock().expect("lock"), 1);
+    assert_eq!(*backend_fallback_calls.lock().expect("lock"), 0);
+    assert_eq!(*upstream_initialize_calls.lock().expect("lock"), 1);
+    assert_eq!(*upstream_tool_calls.lock().expect("lock"), 2);
+}
+
 #[tokio::test]
 async fn tools_call_direct_execution_supports_sse_upstream_responses() {
     let upstream_initialize_calls = Arc::new(Mutex::new(0usize));
@@ -2462,21 +2641,21 @@ async fn notifications_are_forwarded_but_return_accepted() {
                 }),
             )
             .route(
-            "/_internal/mcp/notifications/initialized",
-            post(move |headers: HeaderMap, Json(body): Json<Value>| {
-                let initialized_calls = initialized_calls.clone();
-                async move {
-                    *initialized_calls.lock().expect("lock") += 1;
-                    assert_eq!(
-                        headers
-                            .get("x-contextforge-mcp-runtime")
-                            .and_then(|value| value.to_str().ok()),
-                        Some("rust")
-                    );
-                    assert_eq!(body["method"], "notifications/initialized");
-                    StatusCode::NO_CONTENT.into_response()
-                }
-            }),
+                "/_internal/mcp/notifications/initialized",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let initialized_calls = initialized_calls.clone();
+                    async move {
+                        *initialized_calls.lock().expect("lock") += 1;
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-mcp-runtime")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("rust")
+                        );
+                        assert_eq!(body["method"], "notifications/initialized");
+                        StatusCode::NO_CONTENT.into_response()
+                    }
+                }),
             )
             .route(
                 "/_internal/mcp/notifications/message",
