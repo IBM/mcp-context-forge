@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 # Third-Party
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response as FastAPIResponse
 from fastapi.testclient import TestClient
 import orjson
 import pytest
@@ -36,6 +36,7 @@ from mcpgateway.main import (
     AdminAuthMiddleware,
     DocsAuthMiddleware,
     InternalTrustedMCPTransportBridge,
+    MCPRuntimeHeaderTransportWrapper,
     MCPPathRewriteMiddleware,
     _serialize_mcp_tool_definition,
     app,
@@ -48,6 +49,7 @@ from mcpgateway.main import (
     export_configuration,
     export_selective_configuration,
     get_a2a_agent,
+    handle_internal_mcp_initialize,
     handle_internal_mcp_tools_call,
     handle_internal_mcp_tools_call_resolve,
     handle_internal_mcp_tools_list_authz,
@@ -190,6 +192,20 @@ class TestConditionalPaths:
 
         assert module.mcp_transport_app.__class__.__name__ == "RustMCPRuntimeProxy"
 
+    def test_import_warns_when_rust_artifacts_present_but_runtime_disabled(self, monkeypatch, caplog):
+        """A Rust-built image with the runtime flag disabled should warn loudly at import time."""
+        caplog.set_level("WARNING")
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": False,
+            },
+            env={"CONTEXTFORGE_ENABLE_RUST_BUILD": "true"},
+        )
+
+        assert module.mcp_transport_app.__class__.__name__ == "MCPRuntimeHeaderTransportWrapper"
+        assert any("python-rust-built-disabled" in rec.message for rec in caplog.records)
+
     def test_redis_initialization_path(self, test_client, auth_headers):
         """Test Redis initialization path by mocking settings."""
         # Test that the Redis path is covered indirectly through existing functionality
@@ -207,6 +223,28 @@ class TestConditionalPaths:
 
 class TestInternalTrustedMcpTransportBridge:
     """Test the trusted Rust -> Python MCP transport bridge."""
+
+    @pytest.mark.asyncio
+    async def test_python_transport_wrapper_sets_runtime_header(self):
+        sent = []
+
+        class FakeTransportApp:
+            async def handle_streamable_http(self, _scope, _receive, send):
+                await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+                await send({"type": "http.response.body", "body": b"{}", "more_body": False})
+
+        wrapper = MCPRuntimeHeaderTransportWrapper(FakeTransportApp(), runtime_name="python")
+
+        async def _receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def _send(message):
+            sent.append(message)
+
+        await wrapper.handle_streamable_http({"type": "http", "method": "POST"}, _receive, _send)
+
+        start = next(message for message in sent if message["type"] == "http.response.start")
+        assert (b"x-contextforge-mcp-runtime", b"python") in start["headers"]
 
     @pytest.mark.asyncio
     async def test_bridge_sets_scope_and_forwarded_auth_context(self):
@@ -4387,6 +4425,85 @@ class TestRpcHandling:
 
         assert result["result"]["tools"][0]["name"] == "tool-1"
 
+    async def test_handle_internal_mcp_initialize_returns_jsonrpc_result(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "init-1", "method": "initialize", "params": {"session_id": "sess-1", "protocolVersion": "2025-11-25"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "mcp-session-id": "client-session-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "scoped_server_id": "srv-1",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        init_result = MagicMock()
+        init_result.model_dump.return_value = {"protocolVersion": "2025-11-25", "capabilities": {}}
+        monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value="user@example.com"))
+        handle_initialize_logic = AsyncMock(return_value=init_result)
+        monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", handle_initialize_logic)
+
+        response = await handle_internal_mcp_initialize(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "jsonrpc": "2.0",
+            "id": "init-1",
+            "result": {"protocolVersion": "2025-11-25", "capabilities": {}},
+        }
+        handle_initialize_logic.assert_awaited_once_with(
+            {"session_id": "sess-1", "protocolVersion": "2025-11-25"},
+            session_id="sess-1",
+            server_id="srv-1",
+        )
+
+    async def test_handle_internal_mcp_initialize_rejects_session_owner_mismatch(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "init-deny", "method": "initialize", "params": {"session_id": "sess-1", "protocolVersion": "2025-11-25"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "scoped_server_id": "srv-1",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value="other@example.com"))
+        handle_initialize_logic = AsyncMock()
+        monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", handle_initialize_logic)
+
+        response = await handle_internal_mcp_initialize(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "jsonrpc": "2.0",
+            "id": "init-deny",
+            "error": {"code": -32003, "message": "Access denied", "data": {"method": "initialize"}},
+        }
+        handle_initialize_logic.assert_not_awaited()
+
     async def test_handle_internal_mcp_tools_list_returns_direct_definitions(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
         request.headers = {
@@ -5965,6 +6082,35 @@ class TestRemainingCoverageGaps:
         assert "db down" in result["error"]
         assert sess.closed is True
 
+    def test_healthcheck_reports_runtime_mode_and_headers(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        class FakeSession:  # noqa: D401 - test helper
+            def execute(self, _stmt):  # noqa: ANN001
+                return None
+
+            def commit(self):
+                return None
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+        monkeypatch.setenv("CONTEXTFORGE_ENABLE_RUST_BUILD", "true")
+        monkeypatch.setenv("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", "false")
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", False)
+
+        response = FastAPIResponse()
+        result = main_mod.healthcheck(response)
+
+        assert result["status"] == "healthy"
+        assert result["mcp_runtime"]["mode"] == "python-rust-built-disabled"
+        assert result["mcp_runtime"]["mounted"] == "python"
+        assert result["mcp_runtime"]["rust_build_included"] is True
+        assert response.headers["x-contextforge-mcp-runtime-mode"] == "python-rust-built-disabled"
+        assert response.headers["x-contextforge-mcp-transport-mounted"] == "python"
+        assert response.headers["x-contextforge-rust-build-included"] == "true"
+
     async def test_readiness_check_invalidate_failure_is_best_effort(self, monkeypatch):
         import mcpgateway.main as main_mod
 
@@ -5995,6 +6141,42 @@ class TestRemainingCoverageGaps:
         assert response.status_code == 503
         payload = json.loads(response.body.decode())
         assert payload["status"] == "not ready"
+
+    async def test_readiness_check_reports_runtime_mode_headers(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        class FakeSession:  # noqa: D401 - test helper
+            def execute(self, _stmt):  # noqa: ANN001
+                return None
+
+            def commit(self):
+                return None
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+
+        async def _to_thread(func, *args, **kwargs):  # noqa: ANN001
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr(main_mod.asyncio, "to_thread", _to_thread)
+        monkeypatch.setenv("CONTEXTFORGE_ENABLE_RUST_BUILD", "true")
+        monkeypatch.setenv("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", "true")
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_uds", "/tmp/contextforge-mcp-rust.sock")
+
+        response = await main_mod.readiness_check()
+        payload = json.loads(response.body.decode())
+
+        assert response.status_code == 200
+        assert payload["status"] == "ready"
+        assert payload["mcp_runtime"]["mode"] == "rust-managed"
+        assert payload["mcp_runtime"]["mounted"] == "rust"
+        assert payload["mcp_runtime"]["sidecar_transport"] == "uds"
+        assert response.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
+        assert response.headers["x-contextforge-mcp-transport-mounted"] == "rust"
+        assert response.headers["x-contextforge-rust-build-included"] == "true"
 
     async def test_sse_endpoint_cookie_auth_and_disconnect_cleanup(self, monkeypatch):
         import mcpgateway.main as main_mod

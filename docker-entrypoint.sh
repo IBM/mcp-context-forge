@@ -33,6 +33,31 @@ cleanup() {
     fi
 }
 
+print_mcp_runtime_mode() {
+    local runtime_mode="python"
+
+    if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
+        if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
+            runtime_mode="rust-managed"
+            echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container)"
+        else
+            runtime_mode="rust-external"
+            echo "MCP runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}})"
+        fi
+        return
+    fi
+
+    if [[ "${CONTEXTFORGE_ENABLE_RUST_BUILD}" = "true" ]]; then
+        runtime_mode="python-rust-built-disabled"
+        echo "WARNING: MCP runtime mode: ${runtime_mode}"
+        echo "WARNING: Rust MCP artifacts are present in this image, but EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=false so /mcp will run on the Python transport."
+        echo "WARNING: Set EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true to activate the Rust MCP runtime."
+        return
+    fi
+
+    echo "MCP runtime mode: ${runtime_mode} (Rust MCP artifacts not built into this image)"
+}
+
 build_server_command() {
     case "${HTTP_SERVER}" in
         granian)
@@ -138,6 +163,7 @@ PY
 }
 
 build_server_command "$@"
+print_mcp_runtime_mode
 
 if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
     trap cleanup EXIT INT TERM

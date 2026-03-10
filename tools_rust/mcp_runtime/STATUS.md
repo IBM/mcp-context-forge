@@ -4,6 +4,24 @@ Last updated: March 10, 2026
 
 Status focus in this update:
 
+- explicit operator-facing runtime visibility for Rust vs Python MCP mounting
+- `docker-entrypoint.sh` now prints `MCP runtime mode: ...` on startup
+- `/health` and `/ready` now expose `mcp_runtime` status plus runtime-mode headers
+- Python-mounted MCP transport now stamps `x-contextforge-mcp-runtime: python`
+- importing the Python app now warns loudly when Rust artifacts are present but
+  `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED` is not set
+- live proof that rebuilt Rust-enabled compose stack reports:
+  - `x-contextforge-mcp-runtime-mode: rust-managed`
+  - `x-contextforge-mcp-transport-mounted: rust`
+  - `x-contextforge-rust-build-included: true`
+- live proof that raw `POST /mcp initialize` still returns
+  `x-contextforge-mcp-runtime: rust`
+- `initialize` is no longer routed through the generic Python `/_internal/mcp/rpc` switch
+- a dedicated trusted internal Python `/_internal/mcp/initialize` route now preserves initialize session ownership and session-affinity semantics
+- Rust now forwards MCP `initialize` directly to that specialized internal route as `backend-initialize-direct`
+- live validation was rerun on an explicitly Rust-enabled compose stack after rebuilding the image and reapplying the runtime env flags
+- raw `POST /mcp initialize` now again proves `x-contextforge-mcp-runtime: rust` on the rebuilt live stack
+- `make test-mcp-cli` and `make test-mcp-rbac` were rerun on the actual Rust-enabled stack, not just a Rust-built image
 - first transport/session parity increment for the Rust MCP edge
 - Rust now fronts outer `GET /mcp`, `POST /mcp`, and `DELETE /mcp`
 - a trusted internal Python transport bridge at `/_internal/mcp/transport`
@@ -241,6 +259,137 @@ Why this matters:
   external MCP clients always hit Rust first
 - future session-manager work can now be moved incrementally behind the same
   transport seam instead of changing the public mount shape again
+
+## Latest Dispatcher Narrowing Increment
+
+The next MCP-core step after outer transport parity was to stop treating
+`initialize` as just another generic backend JSON-RPC method.
+
+What changed:
+
+- Python now exposes a dedicated trusted internal route at
+  `/_internal/mcp/initialize`
+- the existing initialize ownership and affinity behavior was factored into one
+  shared helper so both the generic dispatcher and the internal Rust route use
+  the same logic
+- Rust now forwards `initialize` to the specialized internal route instead of
+  `/_internal/mcp/rpc`
+- Rust request mode classification now records initialize as
+  `backend-initialize-direct`
+
+What did not change:
+
+- Python still owns the real initialize side effects:
+  - session ownership claims
+  - capability storage
+  - optional session-affinity registration
+- this removes generic dispatcher coupling for initialize, but it does not yet
+  move initialize state deeper into Rust
+
+Focused validation for this increment:
+
+- `uv run pytest -q tests/unit/mcpgateway/test_main_extended.py -k 'handle_internal_mcp_initialize or handle_rpc_initialize'`
+  - `6 passed`
+- `uv run pytest -q tests/unit/mcpgateway/test_main_extended.py -k 'InternalTrustedMcpTransportBridge or handle_internal_mcp_initialize or handle_rpc_initialize'`
+  - `8 passed`
+- `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
+  - `19 passed`
+- rebuilt compose stack with:
+  - `ENABLE_RUST_BUILD=true`
+  - `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`
+  - `EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true`
+  - `EXPERIMENTAL_RUST_MCP_RUNTIME_UDS=/tmp/contextforge-mcp-rust.sock`
+  - `MCP_RUST_LISTEN_UDS=/tmp/contextforge-mcp-rust.sock`
+  - `MCP_RUST_LOG=warn`
+  - `GUNICORN_WORKERS=32`
+- live raw initialize proof on the rebuilt stack:
+  - `POST /mcp/` returned `x-contextforge-mcp-runtime: rust`
+- `make test-mcp-cli`
+  - `23 passed`
+- `make test-mcp-rbac`
+  - `40 passed`
+
+Operational note:
+
+- building the image with `ENABLE_RUST_BUILD=true` is not sufficient by itself
+- the runtime flags must also be set when the compose stack is started, or the
+  gateway falls back to the Python MCP path
+- that fallback is no longer silent:
+  - container startup now logs `MCP runtime mode: ...`
+  - Python app startup now logs the mounted MCP transport mode
+  - `/health` and `/ready` now return `mcp_runtime` details
+  - `/health` and `/ready` now set:
+    - `x-contextforge-mcp-runtime-mode`
+    - `x-contextforge-mcp-transport-mounted`
+    - `x-contextforge-rust-build-included`
+  - Python-mounted `/mcp` responses now include
+    `x-contextforge-mcp-runtime: python`
+- the safest proof check before trusting a benchmark or protocol run is now:
+  - `/health` reports `mcp_runtime.mode`
+  - MCP responses carry `x-contextforge-mcp-runtime`
+
+## Latest Runtime Visibility Update
+
+The newest operator-facing fix was not about raw throughput. It was about
+making it obvious which MCP runtime is actually serving traffic.
+
+Problem that existed before this update:
+
+- a Rust-built image could still serve the Python MCP path if the runtime env
+  flags were not set when the container started
+- protocol tests could still pass in that state
+- without checking headers or logs carefully, it was too easy to think Rust was
+  active when it was not
+
+What changed:
+
+- `docker-entrypoint.sh` now prints the active MCP runtime mode at container
+  startup
+- the Python app now logs a loud warning when Rust artifacts are present but
+  the Rust runtime is disabled
+- `/health` and `/ready` now expose a structured `mcp_runtime` object
+- `/health` and `/ready` now set:
+  - `x-contextforge-mcp-runtime-mode`
+  - `x-contextforge-mcp-transport-mounted`
+  - `x-contextforge-rust-build-included`
+- the Python MCP transport wrapper now stamps
+  `x-contextforge-mcp-runtime: python`
+- the Rust MCP transport still stamps
+  `x-contextforge-mcp-runtime: rust`
+
+Example live `/health` response on the rebuilt Rust-enabled compose stack:
+
+```json
+{
+  "status": "healthy",
+  "mcp_runtime": {
+    "mode": "rust-managed",
+    "mounted": "rust",
+    "rust_build_included": true,
+    "rust_runtime_enabled": true,
+    "rust_runtime_managed": true,
+    "sidecar_transport": "uds",
+    "sidecar_target": "/tmp/contextforge-mcp-rust.sock"
+  }
+}
+```
+
+Example live `/health` headers on the same stack:
+
+- `x-contextforge-mcp-runtime-mode: rust-managed`
+- `x-contextforge-mcp-transport-mounted: rust`
+- `x-contextforge-rust-build-included: true`
+
+Current recommended proof checks:
+
+1. Check container startup logs for `MCP runtime mode: ...`
+2. Check `GET /health` for the `mcp_runtime` payload and headers
+3. Check a real MCP response for `x-contextforge-mcp-runtime: rust` or
+   `x-contextforge-mcp-runtime: python`
+
+This removes the earlier “silent fallback” failure mode. The system can still
+run on Python if the Rust runtime is not enabled, but it is now much harder to
+miss.
 
 ### Infrastructure saturation snapshot
 
@@ -614,6 +763,8 @@ Integrated in the main application:
 - Python can connect to the managed Rust runtime over `EXPERIMENTAL_RUST_MCP_RUNTIME_UDS`
 - the managed Rust runtime can listen on `MCP_RUST_LISTEN_UDS`
 - Rust now forwards backend calls to `/_internal/mcp/rpc` instead of the public `/rpc` route
+- Rust now forwards `initialize` to `/_internal/mcp/initialize` instead of the
+  generic internal JSON-RPC switch
 - Rust now forwards transport `GET`/`DELETE` calls to
   `/_internal/mcp/transport` instead of falling straight back to the public
   Python mount
@@ -767,6 +918,16 @@ added:
 - raw `POST /mcp/` and `DELETE /mcp/` now have explicit E2E proof under the
   Rust-enabled stack
 - full result is now `23 passed`
+
+Validated again on March 10, 2026 after the specialized internal initialize
+route was added and the compose stack was explicitly relaunched with the Rust
+runtime flags:
+
+- `mcp-cli` initialize now reports `Server: ContextForge v1.0.0-RC-2` on the
+  Rust path instead of the previous forwarded server signature
+- raw `POST /mcp/` initialize again returned
+  `x-contextforge-mcp-runtime: rust`
+- full result remained `23 passed`
 
 ### Live compose validation
 
@@ -973,10 +1134,13 @@ Recommended direction:
 
 1. Keep the existing dedicated internal routes as the baseline:
    - `/_internal/mcp/transport`
+   - `/_internal/mcp/initialize`
    - `/_internal/mcp/tools/list`
    - `/_internal/mcp/tools/call`
 2. Add more narrow internal contracts instead of expanding `/_internal/mcp/rpc`.
-3. Move `initialize` off the generic dispatcher next.
+3. Move the remaining generic MCP lifecycle methods off the dispatcher next:
+   - `notifications/initialized`
+   - any remaining session-lifecycle-specific helper paths
 4. Keep Python authoritative for auth/RBAC while these seams are being split.
 
 ### Phase 3: move the remaining read-only MCP discovery paths
@@ -1356,7 +1520,7 @@ Expected examples:
 ```text
 Starting experimental Rust MCP runtime on unix:///tmp/contextforge-mcp-rust.sock
 rust_mcp_runtime method=ping mode=local
-rust_mcp_runtime method=initialize mode=backend-forward
+rust_mcp_runtime method=initialize mode=backend-initialize-direct
 rust_mcp_runtime method=tools/list mode=db-tools-list-direct
 rust_mcp_runtime method=tools/call mode=backend-tools-call-direct
 ```

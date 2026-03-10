@@ -1544,6 +1544,112 @@ async fn internal_only_headers_are_not_forwarded_to_backend() {
 }
 
 #[tokio::test]
+async fn initialize_uses_specialized_internal_endpoint() {
+    let rpc_calls = Arc::new(Mutex::new(0usize));
+    let initialize_calls = Arc::new(Mutex::new(0usize));
+
+    let backend = {
+        let rpc_calls = rpc_calls.clone();
+        let initialize_calls = initialize_calls.clone();
+        Router::new()
+            .route(
+                "/rpc",
+                post(move || {
+                    let rpc_calls = rpc_calls.clone();
+                    async move {
+                        *rpc_calls.lock().expect("lock") += 1;
+                        Json(json!({
+                            "jsonrpc":"2.0",
+                            "id":"unexpected-rpc-path",
+                            "result": {}
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/initialize",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let initialize_calls = initialize_calls.clone();
+                    async move {
+                        *initialize_calls.lock().expect("lock") += 1;
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-mcp-runtime")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("rust")
+                        );
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-server-id")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("server-1")
+                        );
+                        assert_eq!(body["method"], "initialize");
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": body["id"],
+                            "result": {
+                                "protocolVersion": "2025-11-25",
+                                "capabilities": {},
+                                "serverInfo": {"name": "ContextForge", "version": "1.0.0"}
+                            }
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("x-contextforge-server-id", "server-1")
+        .header(
+            "x-contextforge-auth-context",
+            URL_SAFE_NO_PAD.encode(r#"{"email":"user@example.com","teams":["team-1"],"is_authenticated":true,"is_admin":false,"permission_is_admin":false}"#),
+        )
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": "init-1",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {}
+            }
+        }))
+        .send()
+        .await
+        .expect("initialize response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["id"], "init-1");
+    assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
+    assert_eq!(*initialize_calls.lock().expect("lock"), 1);
+    assert_eq!(*rpc_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
 async fn initialize_missing_protocol_version_returns_invalid_params() {
     let backend = Router::new().route(
         "/rpc",
