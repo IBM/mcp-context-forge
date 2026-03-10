@@ -57,9 +57,15 @@ pub struct AppState {
     backend_tools_list_url: Arc<str>,
     backend_resources_list_url: Arc<str>,
     backend_resources_read_url: Arc<str>,
+    backend_resources_subscribe_url: Arc<str>,
+    backend_resources_unsubscribe_url: Arc<str>,
     backend_resource_templates_list_url: Arc<str>,
     backend_prompts_list_url: Arc<str>,
     backend_prompts_get_url: Arc<str>,
+    backend_roots_list_url: Arc<str>,
+    backend_completion_complete_url: Arc<str>,
+    backend_sampling_create_message_url: Arc<str>,
+    backend_logging_set_level_url: Arc<str>,
     backend_tools_list_authz_url: Arc<str>,
     backend_tools_call_url: Arc<str>,
     backend_tools_call_resolve_url: Arc<str>,
@@ -210,6 +216,12 @@ impl AppState {
             backend_resources_read_url: Arc::from(derive_backend_resources_read_url(
                 &config.backend_rpc_url,
             )),
+            backend_resources_subscribe_url: Arc::from(
+                derive_backend_resources_subscribe_url(&config.backend_rpc_url),
+            ),
+            backend_resources_unsubscribe_url: Arc::from(
+                derive_backend_resources_unsubscribe_url(&config.backend_rpc_url),
+            ),
             backend_resource_templates_list_url: Arc::from(
                 derive_backend_resource_templates_list_url(&config.backend_rpc_url),
             ),
@@ -219,6 +231,18 @@ impl AppState {
             backend_prompts_get_url: Arc::from(derive_backend_prompts_get_url(
                 &config.backend_rpc_url,
             )),
+            backend_roots_list_url: Arc::from(derive_backend_roots_list_url(
+                &config.backend_rpc_url,
+            )),
+            backend_completion_complete_url: Arc::from(
+                derive_backend_completion_complete_url(&config.backend_rpc_url),
+            ),
+            backend_sampling_create_message_url: Arc::from(
+                derive_backend_sampling_create_message_url(&config.backend_rpc_url),
+            ),
+            backend_logging_set_level_url: Arc::from(
+                derive_backend_logging_set_level_url(&config.backend_rpc_url),
+            ),
             backend_tools_list_authz_url: Arc::from(derive_backend_tools_list_authz_url(
                 &config.backend_rpc_url,
             )),
@@ -278,6 +302,14 @@ impl AppState {
         &self.backend_resources_read_url
     }
 
+    pub fn backend_resources_subscribe_url(&self) -> &str {
+        &self.backend_resources_subscribe_url
+    }
+
+    pub fn backend_resources_unsubscribe_url(&self) -> &str {
+        &self.backend_resources_unsubscribe_url
+    }
+
     pub fn backend_resource_templates_list_url(&self) -> &str {
         &self.backend_resource_templates_list_url
     }
@@ -288,6 +320,22 @@ impl AppState {
 
     pub fn backend_prompts_get_url(&self) -> &str {
         &self.backend_prompts_get_url
+    }
+
+    pub fn backend_roots_list_url(&self) -> &str {
+        &self.backend_roots_list_url
+    }
+
+    pub fn backend_completion_complete_url(&self) -> &str {
+        &self.backend_completion_complete_url
+    }
+
+    pub fn backend_sampling_create_message_url(&self) -> &str {
+        &self.backend_sampling_create_message_url
+    }
+
+    pub fn backend_logging_set_level_url(&self) -> &str {
+        &self.backend_logging_set_level_url
     }
 
     pub fn backend_tools_list_authz_url(&self) -> &str {
@@ -422,15 +470,33 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
     let specialized_initialize = request.method == "initialize";
     let specialized_resources_list = request.method == "resources/list";
     let specialized_resources_read = request.method == "resources/read";
+    let specialized_resources_subscribe = request.method == "resources/subscribe";
+    let specialized_resources_unsubscribe = request.method == "resources/unsubscribe";
     let specialized_resource_templates_list = request.method == "resources/templates/list";
     let specialized_prompts_list = request.method == "prompts/list";
     let specialized_prompts_get = request.method == "prompts/get";
+    let specialized_roots_list = request.method == "roots/list";
+    let specialized_completion_complete = request.method == "completion/complete";
+    let specialized_sampling_create_message = request.method == "sampling/createMessage";
+    let specialized_logging_set_level = request.method == "logging/setLevel";
     let specialized_initialized_notification =
         request.is_notification() && request.method == "notifications/initialized";
     let specialized_message_notification =
         request.is_notification() && request.method == "notifications/message";
     let specialized_cancelled_notification =
         request.is_notification() && request.method == "notifications/cancelled";
+    let catch_all_notifications = request.method.starts_with("notifications/")
+        && !specialized_initialized_notification
+        && !specialized_message_notification
+        && !specialized_cancelled_notification;
+    let catch_all_sampling =
+        request.method.starts_with("sampling/") && !specialized_sampling_create_message;
+    let catch_all_completion =
+        request.method.starts_with("completion/") && !specialized_completion_complete;
+    let catch_all_logging =
+        request.method.starts_with("logging/") && !specialized_logging_set_level;
+    let catch_all_elicitation =
+        request.method.starts_with("elicitation/") && request.method != "elicitation/create";
     let specialized_tools_call = request.method == "tools/call";
 
     let mode = if request.method == "ping" {
@@ -445,12 +511,34 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
         "backend-resources-list-direct"
     } else if specialized_resources_read {
         "backend-resources-read-direct"
+    } else if specialized_resources_subscribe {
+        "backend-resources-subscribe-direct"
+    } else if specialized_resources_unsubscribe {
+        "backend-resources-unsubscribe-direct"
     } else if specialized_resource_templates_list {
         "backend-resource-templates-list-direct"
     } else if specialized_prompts_list {
         "backend-prompts-list-direct"
     } else if specialized_prompts_get {
         "backend-prompts-get-direct"
+    } else if specialized_roots_list {
+        "backend-roots-list-direct"
+    } else if specialized_completion_complete {
+        "backend-completion-complete-direct"
+    } else if specialized_sampling_create_message {
+        "backend-sampling-create-message-direct"
+    } else if specialized_logging_set_level {
+        "backend-logging-set-level-direct"
+    } else if catch_all_notifications {
+        "local-notifications-catchall"
+    } else if catch_all_sampling {
+        "local-sampling-catchall"
+    } else if catch_all_completion {
+        "local-completion-catchall"
+    } else if catch_all_logging {
+        "local-logging-catchall"
+    } else if catch_all_elicitation {
+        "local-elicitation-catchall"
     } else if specialized_initialize {
         "backend-initialize-direct"
     } else if specialized_tools_call {
@@ -484,6 +572,16 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
         return forward_resources_read_to_backend(&state, headers, body, request.id.clone()).await;
     }
 
+    if specialized_resources_subscribe {
+        return forward_resources_subscribe_to_backend(&state, headers, body, request.id.clone())
+            .await;
+    }
+
+    if specialized_resources_unsubscribe {
+        return forward_resources_unsubscribe_to_backend(&state, headers, body, request.id.clone())
+            .await;
+    }
+
     if specialized_resource_templates_list {
         return forward_resource_templates_list_to_backend(&state, headers, body, request.id.clone())
             .await;
@@ -495,6 +593,59 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
 
     if specialized_prompts_get {
         return forward_prompts_get_to_backend(&state, headers, body, request.id.clone()).await;
+    }
+
+    if specialized_roots_list {
+        return forward_roots_list_to_backend(&state, headers, body, request.id.clone()).await;
+    }
+
+    if specialized_completion_complete {
+        return forward_completion_complete_to_backend(&state, headers, body, request.id.clone())
+            .await;
+    }
+
+    if specialized_sampling_create_message {
+        return forward_sampling_create_message_to_backend(
+            &state,
+            headers,
+            body,
+            request.id.clone(),
+        )
+        .await;
+    }
+
+    if specialized_logging_set_level {
+        return forward_logging_set_level_to_backend(&state, headers, body, request.id.clone())
+            .await;
+    }
+
+    if catch_all_notifications {
+        if request.is_notification() {
+            return empty_response(StatusCode::ACCEPTED);
+        }
+        return json_response(
+            StatusCode::OK,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request.id,
+                "result": {},
+            }),
+        );
+    }
+
+    if catch_all_sampling
+        || catch_all_completion
+        || catch_all_logging
+        || catch_all_elicitation
+    {
+        return json_response(
+            StatusCode::OK,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request.id,
+                "result": {},
+            }),
+        );
     }
 
     if request.is_notification() {
@@ -596,6 +747,44 @@ fn derive_backend_resources_read_url(backend_rpc_url: &str) -> String {
     )
 }
 
+fn derive_backend_resources_subscribe_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/resources/subscribe");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/resources/subscribe");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/resources/subscribe");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/resources/subscribe");
+    }
+    format!(
+        "{}/_internal/mcp/resources/subscribe",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
+fn derive_backend_resources_unsubscribe_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/resources/unsubscribe");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/resources/unsubscribe");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/resources/unsubscribe");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/resources/unsubscribe");
+    }
+    format!(
+        "{}/_internal/mcp/resources/unsubscribe",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
 fn derive_backend_resource_templates_list_url(backend_rpc_url: &str) -> String {
     if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
         return format!("{prefix}/_internal/mcp/resources/templates/list");
@@ -649,6 +838,82 @@ fn derive_backend_prompts_get_url(backend_rpc_url: &str) -> String {
     }
     format!(
         "{}/_internal/mcp/prompts/get",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
+fn derive_backend_roots_list_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/roots/list");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/roots/list");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/roots/list");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/roots/list");
+    }
+    format!(
+        "{}/_internal/mcp/roots/list",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
+fn derive_backend_completion_complete_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/completion/complete");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/completion/complete");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/completion/complete");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/completion/complete");
+    }
+    format!(
+        "{}/_internal/mcp/completion/complete",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
+fn derive_backend_sampling_create_message_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/sampling/createMessage");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/sampling/createMessage");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/sampling/createMessage");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/sampling/createMessage");
+    }
+    format!(
+        "{}/_internal/mcp/sampling/createMessage",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
+fn derive_backend_logging_set_level_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/logging/setLevel");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/logging/setLevel");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/logging/setLevel");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/logging/setLevel");
+    }
+    format!(
+        "{}/_internal/mcp/logging/setLevel",
         backend_rpc_url.trim_end_matches('/')
     )
 }
@@ -1479,6 +1744,106 @@ async fn forward_resources_read_to_backend(
     response_from_json_with_headers(status, response_payload, &backend_headers)
 }
 
+async fn forward_resources_subscribe_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+    request_id: Option<Value>,
+) -> Response {
+    let backend_response =
+        match send_resources_subscribe_to_backend(state, incoming_headers, body).await {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
+
+    let status = backend_response.status();
+    let backend_headers = backend_response.headers().clone();
+    let payload: Value = match backend_response.json().await {
+        Ok(payload) => payload,
+        Err(err) => {
+            error!("backend MCP resources/subscribe response decode failed: {err}");
+            return json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request_id,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP resources/subscribe decode failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            );
+        }
+    };
+
+    let response_payload = if status.is_success() {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "result": payload,
+        })
+    } else {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "error": payload,
+        })
+    };
+
+    response_from_json_with_headers(status, response_payload, &backend_headers)
+}
+
+async fn forward_resources_unsubscribe_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+    request_id: Option<Value>,
+) -> Response {
+    let backend_response =
+        match send_resources_unsubscribe_to_backend(state, incoming_headers, body).await {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
+
+    let status = backend_response.status();
+    let backend_headers = backend_response.headers().clone();
+    let payload: Value = match backend_response.json().await {
+        Ok(payload) => payload,
+        Err(err) => {
+            error!("backend MCP resources/unsubscribe response decode failed: {err}");
+            return json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request_id,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP resources/unsubscribe decode failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            );
+        }
+    };
+
+    let response_payload = if status.is_success() {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "result": payload,
+        })
+    } else {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "error": payload,
+        })
+    };
+
+    response_from_json_with_headers(status, response_payload, &backend_headers)
+}
+
 async fn forward_resource_templates_list_to_backend(
     state: &AppState,
     incoming_headers: HeaderMap,
@@ -1505,6 +1870,55 @@ async fn forward_resource_templates_list_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP resources/templates/list decode failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            );
+        }
+    };
+
+    let response_payload = if status.is_success() {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "result": payload,
+        })
+    } else {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "error": payload,
+        })
+    };
+
+    response_from_json_with_headers(status, response_payload, &backend_headers)
+}
+
+async fn forward_roots_list_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+    request_id: Option<Value>,
+) -> Response {
+    let backend_response = match send_roots_list_to_backend(state, incoming_headers, body).await {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
+    let status = backend_response.status();
+    let backend_headers = backend_response.headers().clone();
+    let payload: Value = match backend_response.json().await {
+        Ok(payload) => payload,
+        Err(err) => {
+            error!("backend MCP roots/list response decode failed: {err}");
+            return json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request_id,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP roots/list decode failed",
                         "data": err.to_string(),
                     }
                 }),
@@ -1604,6 +2018,156 @@ async fn forward_prompts_get_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP prompts/get decode failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            );
+        }
+    };
+
+    let response_payload = if status.is_success() {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "result": payload,
+        })
+    } else {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "error": payload,
+        })
+    };
+
+    response_from_json_with_headers(status, response_payload, &backend_headers)
+}
+
+async fn forward_completion_complete_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+    request_id: Option<Value>,
+) -> Response {
+    let backend_response =
+        match send_completion_complete_to_backend(state, incoming_headers, body).await {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
+
+    let status = backend_response.status();
+    let backend_headers = backend_response.headers().clone();
+    let payload: Value = match backend_response.json().await {
+        Ok(payload) => payload,
+        Err(err) => {
+            error!("backend MCP completion/complete response decode failed: {err}");
+            return json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request_id,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP completion/complete decode failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            );
+        }
+    };
+
+    let response_payload = if status.is_success() {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "result": payload,
+        })
+    } else {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "error": payload,
+        })
+    };
+
+    response_from_json_with_headers(status, response_payload, &backend_headers)
+}
+
+async fn forward_sampling_create_message_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+    request_id: Option<Value>,
+) -> Response {
+    let backend_response =
+        match send_sampling_create_message_to_backend(state, incoming_headers, body).await {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
+
+    let status = backend_response.status();
+    let backend_headers = backend_response.headers().clone();
+    let payload: Value = match backend_response.json().await {
+        Ok(payload) => payload,
+        Err(err) => {
+            error!("backend MCP sampling/createMessage response decode failed: {err}");
+            return json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request_id,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP sampling/createMessage decode failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            );
+        }
+    };
+
+    let response_payload = if status.is_success() {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "result": payload,
+        })
+    } else {
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "error": payload,
+        })
+    };
+
+    response_from_json_with_headers(status, response_payload, &backend_headers)
+}
+
+async fn forward_logging_set_level_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+    request_id: Option<Value>,
+) -> Response {
+    let backend_response =
+        match send_logging_set_level_to_backend(state, incoming_headers, body).await {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
+
+    let status = backend_response.status();
+    let backend_headers = backend_response.headers().clone();
+    let payload: Value = match backend_response.json().await {
+        Ok(payload) => payload,
+        Err(err) => {
+            error!("backend MCP logging/setLevel response decode failed: {err}");
+            return json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request_id,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP logging/setLevel decode failed",
                         "data": err.to_string(),
                     }
                 }),
@@ -1763,6 +2327,64 @@ async fn send_resources_read_to_backend(
         })
 }
 
+async fn send_resources_subscribe_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+) -> Result<reqwest::Response, Response> {
+    state
+        .client
+        .post(state.backend_resources_subscribe_url())
+        .headers(build_forwarded_headers(&incoming_headers))
+        .body(body)
+        .send()
+        .await
+        .map_err(|err| {
+            error!("backend MCP resources/subscribe dispatch failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP resources/subscribe dispatch failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            )
+        })
+}
+
+async fn send_resources_unsubscribe_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+) -> Result<reqwest::Response, Response> {
+    state
+        .client
+        .post(state.backend_resources_unsubscribe_url())
+        .headers(build_forwarded_headers(&incoming_headers))
+        .body(body)
+        .send()
+        .await
+        .map_err(|err| {
+            error!("backend MCP resources/unsubscribe dispatch failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP resources/unsubscribe dispatch failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            )
+        })
+}
+
 async fn send_resource_templates_list_to_backend(
     state: &AppState,
     incoming_headers: HeaderMap,
@@ -1785,6 +2407,122 @@ async fn send_resource_templates_list_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP resources/templates/list dispatch failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            )
+        })
+}
+
+async fn send_roots_list_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+) -> Result<reqwest::Response, Response> {
+    state
+        .client
+        .post(state.backend_roots_list_url())
+        .headers(build_forwarded_headers(&incoming_headers))
+        .body(body)
+        .send()
+        .await
+        .map_err(|err| {
+            error!("backend MCP roots/list dispatch failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP roots/list dispatch failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            )
+        })
+}
+
+async fn send_completion_complete_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+) -> Result<reqwest::Response, Response> {
+    state
+        .client
+        .post(state.backend_completion_complete_url())
+        .headers(build_forwarded_headers(&incoming_headers))
+        .body(body)
+        .send()
+        .await
+        .map_err(|err| {
+            error!("backend MCP completion/complete dispatch failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP completion/complete dispatch failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            )
+        })
+}
+
+async fn send_sampling_create_message_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+) -> Result<reqwest::Response, Response> {
+    state
+        .client
+        .post(state.backend_sampling_create_message_url())
+        .headers(build_forwarded_headers(&incoming_headers))
+        .body(body)
+        .send()
+        .await
+        .map_err(|err| {
+            error!("backend MCP sampling/createMessage dispatch failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP sampling/createMessage dispatch failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            )
+        })
+}
+
+async fn send_logging_set_level_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+) -> Result<reqwest::Response, Response> {
+    state
+        .client
+        .post(state.backend_logging_set_level_url())
+        .headers(build_forwarded_headers(&incoming_headers))
+        .body(body)
+        .send()
+        .await
+        .map_err(|err| {
+            error!("backend MCP logging/setLevel dispatch failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP logging/setLevel dispatch failed",
                         "data": err.to_string(),
                     }
                 }),

@@ -641,6 +641,164 @@ async fn resources_read_uses_specialized_internal_endpoint() {
 }
 
 #[tokio::test]
+async fn resources_subscribe_uses_specialized_internal_endpoint() {
+    let rpc_calls = Arc::new(Mutex::new(0usize));
+    let subscribe_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let rpc_calls = rpc_calls.clone();
+        let subscribe_calls = subscribe_calls.clone();
+        Router::new()
+            .route(
+                "/rpc",
+                post(move || {
+                    let rpc_calls = rpc_calls.clone();
+                    async move {
+                        *rpc_calls.lock().expect("lock") += 1;
+                        Json(json!({"jsonrpc":"2.0","id":"unexpected-rpc-path","result":{}}))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/resources/subscribe",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let subscribe_calls = subscribe_calls.clone();
+                    async move {
+                        *subscribe_calls.lock().expect("lock") += 1;
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-mcp-runtime")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("rust")
+                        );
+                        assert_eq!(body["method"], "resources/subscribe");
+                        assert_eq!(body["params"]["uri"], "resource://one");
+                        Json(json!({}))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 17,
+            "method": "resources/subscribe",
+            "params": {"uri": "resource://one"}
+        }))
+        .send()
+        .await
+        .expect("resources/subscribe response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["result"], json!({}));
+    assert_eq!(*subscribe_calls.lock().expect("lock"), 1);
+    assert_eq!(*rpc_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
+async fn resources_unsubscribe_uses_specialized_internal_endpoint() {
+    let rpc_calls = Arc::new(Mutex::new(0usize));
+    let unsubscribe_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let rpc_calls = rpc_calls.clone();
+        let unsubscribe_calls = unsubscribe_calls.clone();
+        Router::new()
+            .route(
+                "/rpc",
+                post(move || {
+                    let rpc_calls = rpc_calls.clone();
+                    async move {
+                        *rpc_calls.lock().expect("lock") += 1;
+                        Json(json!({"jsonrpc":"2.0","id":"unexpected-rpc-path","result":{}}))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/resources/unsubscribe",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let unsubscribe_calls = unsubscribe_calls.clone();
+                    async move {
+                        *unsubscribe_calls.lock().expect("lock") += 1;
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-mcp-runtime")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("rust")
+                        );
+                        assert_eq!(body["method"], "resources/unsubscribe");
+                        assert_eq!(body["params"]["uri"], "resource://one");
+                        Json(json!({}))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 18,
+            "method": "resources/unsubscribe",
+            "params": {"uri": "resource://one"}
+        }))
+        .send()
+        .await
+        .expect("resources/unsubscribe response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["result"], json!({}));
+    assert_eq!(*unsubscribe_calls.lock().expect("lock"), 1);
+    assert_eq!(*rpc_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
 async fn resource_templates_list_uses_specialized_internal_endpoint() {
     let rpc_calls = Arc::new(Mutex::new(0usize));
     let templates_calls = Arc::new(Mutex::new(0usize));
@@ -893,6 +1051,451 @@ async fn prompts_get_uses_specialized_internal_endpoint() {
     let body: Value = response.json().await.expect("json body");
     assert_eq!(body["result"]["name"], "prompt-one");
     assert_eq!(*prompts_get_calls.lock().expect("lock"), 1);
+    assert_eq!(*rpc_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
+async fn roots_list_uses_specialized_internal_endpoint() {
+    let rpc_calls = Arc::new(Mutex::new(0usize));
+    let roots_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let rpc_calls = rpc_calls.clone();
+        let roots_calls = roots_calls.clone();
+        Router::new()
+            .route(
+                "/rpc",
+                post(move || {
+                    let rpc_calls = rpc_calls.clone();
+                    async move {
+                        *rpc_calls.lock().expect("lock") += 1;
+                        Json(json!({"jsonrpc":"2.0","id":"unexpected-rpc-path","result":{}}))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/roots/list",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let roots_calls = roots_calls.clone();
+                    async move {
+                        *roots_calls.lock().expect("lock") += 1;
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-mcp-runtime")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("rust")
+                        );
+                        assert_eq!(body["method"], "roots/list");
+                        Json(json!({
+                            "roots": [{
+                                "uri": "file:///tmp",
+                                "name": "tmp"
+                            }]
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 19,
+            "method": "roots/list",
+            "params": {}
+        }))
+        .send()
+        .await
+        .expect("roots/list response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["result"]["roots"][0]["uri"], "file:///tmp");
+    assert_eq!(*roots_calls.lock().expect("lock"), 1);
+    assert_eq!(*rpc_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
+async fn completion_complete_uses_specialized_internal_endpoint() {
+    let rpc_calls = Arc::new(Mutex::new(0usize));
+    let completion_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let rpc_calls = rpc_calls.clone();
+        let completion_calls = completion_calls.clone();
+        Router::new()
+            .route(
+                "/rpc",
+                post(move || {
+                    let rpc_calls = rpc_calls.clone();
+                    async move {
+                        *rpc_calls.lock().expect("lock") += 1;
+                        Json(json!({"jsonrpc":"2.0","id":"unexpected-rpc-path","result":{}}))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/completion/complete",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let completion_calls = completion_calls.clone();
+                    async move {
+                        *completion_calls.lock().expect("lock") += 1;
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-mcp-runtime")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("rust")
+                        );
+                        assert_eq!(body["method"], "completion/complete");
+                        Json(json!({
+                            "completion": {
+                                "values": [{"value": "done"}],
+                                "hasMore": false
+                            }
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 20,
+            "method": "completion/complete",
+            "params": {"prompt": "hi"}
+        }))
+        .send()
+        .await
+        .expect("completion/complete response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["result"]["completion"]["values"][0]["value"], "done");
+    assert_eq!(*completion_calls.lock().expect("lock"), 1);
+    assert_eq!(*rpc_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
+async fn sampling_create_message_uses_specialized_internal_endpoint() {
+    let rpc_calls = Arc::new(Mutex::new(0usize));
+    let sampling_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let rpc_calls = rpc_calls.clone();
+        let sampling_calls = sampling_calls.clone();
+        Router::new()
+            .route(
+                "/rpc",
+                post(move || {
+                    let rpc_calls = rpc_calls.clone();
+                    async move {
+                        *rpc_calls.lock().expect("lock") += 1;
+                        Json(json!({"jsonrpc":"2.0","id":"unexpected-rpc-path","result":{}}))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/sampling/createMessage",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let sampling_calls = sampling_calls.clone();
+                    async move {
+                        *sampling_calls.lock().expect("lock") += 1;
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-mcp-runtime")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("rust")
+                        );
+                        assert_eq!(body["method"], "sampling/createMessage");
+                        Json(json!({
+                            "role": "assistant",
+                            "content": {"type": "text", "text": "sampled"}
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 21,
+            "method": "sampling/createMessage",
+            "params": {"messages": []}
+        }))
+        .send()
+        .await
+        .expect("sampling/createMessage response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["result"]["content"]["text"], "sampled");
+    assert_eq!(*sampling_calls.lock().expect("lock"), 1);
+    assert_eq!(*rpc_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
+async fn logging_set_level_uses_specialized_internal_endpoint() {
+    let rpc_calls = Arc::new(Mutex::new(0usize));
+    let logging_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let rpc_calls = rpc_calls.clone();
+        let logging_calls = logging_calls.clone();
+        Router::new()
+            .route(
+                "/rpc",
+                post(move || {
+                    let rpc_calls = rpc_calls.clone();
+                    async move {
+                        *rpc_calls.lock().expect("lock") += 1;
+                        Json(json!({"jsonrpc":"2.0","id":"unexpected-rpc-path","result":{}}))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/logging/setLevel",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let logging_calls = logging_calls.clone();
+                    async move {
+                        *logging_calls.lock().expect("lock") += 1;
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-mcp-runtime")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("rust")
+                        );
+                        assert_eq!(body["method"], "logging/setLevel");
+                        Json(json!({}))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 22,
+            "method": "logging/setLevel",
+            "params": {"level": "warning"}
+        }))
+        .send()
+        .await
+        .expect("logging/setLevel response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["result"], json!({}));
+    assert_eq!(*logging_calls.lock().expect("lock"), 1);
+    assert_eq!(*rpc_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
+async fn unknown_notification_catchall_stays_local() {
+    let rpc_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let rpc_calls = rpc_calls.clone();
+        Router::new().route(
+            "/rpc",
+            post(move || {
+                let rpc_calls = rpc_calls.clone();
+                async move {
+                    *rpc_calls.lock().expect("lock") += 1;
+                    Json(json!({"jsonrpc":"2.0","id":"unexpected-rpc-path","result":{}}))
+                }
+            }),
+        )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/unknown",
+            "params": {}
+        }))
+        .send()
+        .await
+        .expect("notifications/unknown response");
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_eq!(*rpc_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
+async fn unsupported_prefix_methods_stay_local() {
+    let rpc_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let rpc_calls = rpc_calls.clone();
+        Router::new().route(
+            "/rpc",
+            post(move || {
+                let rpc_calls = rpc_calls.clone();
+                async move {
+                    *rpc_calls.lock().expect("lock") += 1;
+                    Json(json!({"jsonrpc":"2.0","id":"unexpected-rpc-path","result":{}}))
+                }
+            }),
+        )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+    let client = reqwest::Client::new();
+
+    for (id, method) in [
+        (23, "sampling/unknown"),
+        (24, "completion/unknown"),
+        (25, "logging/other"),
+        (26, "elicitation/other"),
+    ] {
+        let response = client
+            .post(format!("{runtime_url}/mcp"))
+            .header("authorization", "Bearer test-token")
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": method,
+                "params": {}
+            }))
+            .send()
+            .await
+            .expect("catchall response");
+
+        assert_eq!(response.status(), StatusCode::OK, "method={method}");
+        let body: Value = response.json().await.expect("json body");
+        assert_eq!(body["result"], json!({}), "method={method}");
+    }
+
     assert_eq!(*rpc_calls.lock().expect("lock"), 0);
 }
 
