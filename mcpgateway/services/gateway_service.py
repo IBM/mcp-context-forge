@@ -4123,7 +4123,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     except Exception:
                         gateway_tool_auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
                         auth_value_changed = existing_tool.auth_value != gateway_tool_auth_value
-                    
+
                     should_update_visibility = created_via == "update"
                     auth_fields_changed = existing_tool.auth_type != gateway.auth_type or auth_value_changed or (should_update_visibility and existing_tool.visibility != gateway.visibility)
 
