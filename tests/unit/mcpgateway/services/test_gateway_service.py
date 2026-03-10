@@ -3854,24 +3854,28 @@ class TestHandleGatewayFailure:
 
 
 # ---------------------------------------------------------------------------
-# _prepare_gateway_for_read tests (deprecated but still exercised)
+# convert_gateway_to_read tests
 # ---------------------------------------------------------------------------
 
 
-class TestPrepareGatewayForRead:
-    def test_prepare_gateway_encodes_dict_auth(self, gateway_service, mock_gateway):
+class TestConvertGatewayToRead:
+    def test_encodes_dict_auth_without_mutating_orm(self, gateway_service, mock_gateway):
         mock_gateway.auth_value = {"Authorization": "Bearer token"}
         mock_gateway.tags = []
         result = gateway_service.convert_gateway_to_read(mock_gateway)
-        # Auth value should be encoded as string now
+        # Auth value should be encoded as string in the result
         assert isinstance(result.auth_value, str)
+        # ORM object must NOT be mutated (core invariant of convert_gateway_to_read)
+        assert isinstance(mock_gateway.auth_value, dict)
 
-    def test_prepare_gateway_converts_string_tags(self, gateway_service, mock_gateway):
+    def test_converts_string_tags_without_mutating_orm(self, gateway_service, mock_gateway):
         mock_gateway.tags = ["tag1", "tag2"]
         mock_gateway.auth_value = None
         result = gateway_service.convert_gateway_to_read(mock_gateway)
-        # Tags should be converted from List[str] to List[Dict]
+        # Tags should be converted from List[str] to List[Dict] in the result
         assert isinstance(result.tags[0], dict)
+        # ORM object must NOT be mutated
+        assert isinstance(mock_gateway.tags[0], str)
 
 
 # ---------------------------------------------------------------------------
