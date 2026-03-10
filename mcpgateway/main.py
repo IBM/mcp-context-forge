@@ -6344,6 +6344,173 @@ async def handle_internal_mcp_initialize(request: Request):
         )
 
 
+@utility_router.post("/_internal/mcp/notifications/initialized/")
+@utility_router.post("/_internal/mcp/notifications/initialized")
+async def handle_internal_mcp_notifications_initialized(request: Request):
+    """Handle trusted MCP notifications/initialized requests from the local Rust runtime."""
+    _build_internal_mcp_forwarded_user(request)
+    req_id = None
+    try:
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id")
+        if body.get("method") != "notifications/initialized":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        if server_id:
+            _enforce_internal_mcp_server_scope(request, server_id)
+
+        logger.info("Client initialized")
+        await logging_service.notify("Client initialized", LogLevel.INFO)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Internal MCP notifications/initialized error: %s", exc)
+        return ORJSONResponse(
+            content={
+                "jsonrpc": "2.0",
+                "error": {"code": -32000, "message": "Internal error", "data": str(exc)},
+                "id": req_id,
+            }
+        )
+
+
+@utility_router.post("/_internal/mcp/notifications/message/")
+@utility_router.post("/_internal/mcp/notifications/message")
+async def handle_internal_mcp_notifications_message(request: Request):
+    """Handle trusted MCP notifications/message requests from the local Rust runtime."""
+    _build_internal_mcp_forwarded_user(request)
+    req_id = None
+    try:
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id")
+        if body.get("method") != "notifications/message":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        if server_id:
+            _enforce_internal_mcp_server_scope(request, server_id)
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        await logging_service.notify(
+            params.get("data"),
+            LogLevel(params.get("level", "info")),
+            params.get("logger"),
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Internal MCP notifications/message error: %s", exc)
+        return ORJSONResponse(
+            content={
+                "jsonrpc": "2.0",
+                "error": {"code": -32000, "message": "Internal error", "data": str(exc)},
+                "id": req_id,
+            }
+        )
+
+
+@utility_router.post("/_internal/mcp/notifications/cancelled/")
+@utility_router.post("/_internal/mcp/notifications/cancelled")
+async def handle_internal_mcp_notifications_cancelled(request: Request):
+    """Handle trusted MCP notifications/cancelled requests from the local Rust runtime."""
+    user = _build_internal_mcp_forwarded_user(request)
+    req_id = None
+    try:
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id")
+        if body.get("method") != "notifications/cancelled":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        if server_id:
+            _enforce_internal_mcp_server_scope(request, server_id)
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        raw_request_id = params.get("requestId")
+        request_id = str(raw_request_id) if raw_request_id is not None else None
+        reason = params.get("reason")
+        logger.info("Request cancelled: %s, reason: %s", request_id, reason)
+        if request_id is not None:
+            await _authorize_run_cancellation(request, user, request_id, as_jsonrpc_error=False)
+            await cancellation_service.cancel_run(request_id, reason=reason)
+        await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Internal MCP notifications/cancelled error: %s", exc)
+        return ORJSONResponse(
+            content={
+                "jsonrpc": "2.0",
+                "error": {"code": -32000, "message": "Internal error", "data": str(exc)},
+                "id": req_id,
+            }
+        )
+
+
 @utility_router.post("/_internal/mcp/tools/list/")
 @utility_router.post("/_internal/mcp/tools/list")
 async def handle_internal_mcp_tools_list(request: Request):
@@ -6377,6 +6544,505 @@ async def handle_internal_mcp_tools_list(request: Request):
         return ORJSONResponse(content={"tools": tools})
     except JSONRPCError as exc:
         return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/mcp/resources/list/")
+@utility_router.post("/_internal/mcp/resources/list")
+async def handle_internal_mcp_resources_list(request: Request):
+    """Handle trusted resources/list requests forwarded from the Rust runtime."""
+    db = SessionLocal()
+    req_id = None
+    try:
+        user = _build_internal_mcp_forwarded_user(request)
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or body.get("method") != "resources/list":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        if server_id:
+            _enforce_internal_mcp_server_scope(request, server_id)
+        else:
+            server_id = params.get("server_id")
+        cursor = params.get("cursor")
+
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission="resources.read",
+            method="resources/list",
+            server_id=server_id,
+        )
+
+        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        if is_admin and token_teams is None:
+            user_email = None
+            token_teams = None
+        elif token_teams is None:
+            token_teams = []
+
+        if server_id:
+            resources = await resource_service.list_server_resources(
+                db,
+                server_id,
+                user_email=user_email,
+                token_teams=token_teams,
+            )
+            payload = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
+        else:
+            resources, next_cursor = await resource_service.list_resources(
+                db,
+                cursor=cursor,
+                limit=0,
+                user_email=user_email,
+                token_teams=token_teams,
+            )
+            payload = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
+            if next_cursor:
+                payload["nextCursor"] = next_cursor
+
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return ORJSONResponse(content=payload)
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/mcp/resources/read/")
+@utility_router.post("/_internal/mcp/resources/read")
+async def handle_internal_mcp_resources_read(request: Request):
+    """Handle trusted resources/read requests forwarded from the Rust runtime."""
+    db = SessionLocal()
+    req_id = None
+    uri = None
+    try:
+        user = _build_internal_mcp_forwarded_user(request)
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or body.get("method") != "resources/read":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        if server_id:
+            _enforce_internal_mcp_server_scope(request, server_id)
+        else:
+            server_id = params.get("server_id")
+
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission="resources.read",
+            method="resources/read",
+            server_id=server_id,
+        )
+
+        uri = params.get("uri")
+        request_id = params.get("requestId")
+        meta_data = params.get("_meta")
+        if not uri:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "code": -32602,
+                    "message": "Missing resource URI in parameters",
+                    "data": params,
+                },
+            )
+
+        auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+        if auth_is_admin and auth_token_teams is None:
+            auth_user_email = None
+        elif auth_token_teams is None:
+            auth_token_teams = []
+
+        plugin_context_table = getattr(request.state, "plugin_context_table", None)
+        plugin_global_context = getattr(request.state, "plugin_global_context", None)
+        result = await resource_service.read_resource(
+            db,
+            resource_uri=uri,
+            request_id=request_id,
+            user=auth_user_email,
+            server_id=server_id,
+            token_teams=auth_token_teams,
+            plugin_context_table=plugin_context_table,
+            plugin_global_context=plugin_global_context,
+            meta_data=meta_data,
+        )
+        if hasattr(result, "model_dump"):
+            payload = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
+        else:
+            payload = {"contents": [result]}
+
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return ORJSONResponse(content=payload)
+    except ResourceNotFoundError as exc:
+        return ORJSONResponse(
+            status_code=404,
+            content={
+                "code": -32002,
+                "message": str(exc),
+                "data": {"uri": uri} if uri else None,
+            },
+        )
+    except JSONRPCError as exc:
+        status_code = 403 if exc.code == -32003 else 400
+        return ORJSONResponse(status_code=status_code, content=exc.to_dict()["error"])
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/mcp/resources/templates/list/")
+@utility_router.post("/_internal/mcp/resources/templates/list")
+async def handle_internal_mcp_resource_templates_list(request: Request):
+    """Handle trusted resources/templates/list requests forwarded from the Rust runtime."""
+    db = SessionLocal()
+    req_id = None
+    try:
+        user = _build_internal_mcp_forwarded_user(request)
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or body.get("method") != "resources/templates/list":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        if server_id:
+            _enforce_internal_mcp_server_scope(request, server_id)
+        else:
+            server_id = params.get("server_id")
+
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission="resources.read",
+            method="resources/templates/list",
+            server_id=server_id,
+        )
+
+        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        if is_admin and token_teams is None:
+            token_teams = None
+        elif token_teams is None:
+            token_teams = []
+
+        resource_templates = await resource_service.list_resource_templates(
+            db,
+            user_email=user_email,
+            token_teams=token_teams,
+            server_id=server_id,
+        )
+        payload = {"resourceTemplates": [rt.model_dump(by_alias=True, exclude_none=True) for rt in resource_templates]}
+
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return ORJSONResponse(content=payload)
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/mcp/prompts/list/")
+@utility_router.post("/_internal/mcp/prompts/list")
+async def handle_internal_mcp_prompts_list(request: Request):
+    """Handle trusted prompts/list requests forwarded from the Rust runtime."""
+    db = SessionLocal()
+    req_id = None
+    try:
+        user = _build_internal_mcp_forwarded_user(request)
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or body.get("method") != "prompts/list":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        if server_id:
+            _enforce_internal_mcp_server_scope(request, server_id)
+        else:
+            server_id = params.get("server_id")
+        cursor = params.get("cursor")
+
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission="prompts.read",
+            method="prompts/list",
+            server_id=server_id,
+        )
+
+        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        if is_admin and token_teams is None:
+            user_email = None
+            token_teams = None
+        elif token_teams is None:
+            token_teams = []
+
+        if server_id:
+            prompts = await prompt_service.list_server_prompts(
+                db,
+                server_id,
+                cursor=cursor,
+                user_email=user_email,
+                token_teams=token_teams,
+            )
+            payload = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
+        else:
+            prompts, next_cursor = await prompt_service.list_prompts(
+                db,
+                cursor=cursor,
+                limit=0,
+                user_email=user_email,
+                token_teams=token_teams,
+            )
+            payload = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
+            if next_cursor:
+                payload["nextCursor"] = next_cursor
+
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return ORJSONResponse(content=payload)
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/mcp/prompts/get/")
+@utility_router.post("/_internal/mcp/prompts/get")
+async def handle_internal_mcp_prompts_get(request: Request):
+    """Handle trusted prompts/get requests forwarded from the Rust runtime."""
+    db = SessionLocal()
+    req_id = None
+    name = None
+    try:
+        user = _build_internal_mcp_forwarded_user(request)
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or body.get("method") != "prompts/get":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        if server_id:
+            _enforce_internal_mcp_server_scope(request, server_id)
+        else:
+            server_id = params.get("server_id")
+
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission="prompts.read",
+            method="prompts/get",
+            server_id=server_id,
+        )
+
+        name = params.get("name")
+        arguments = params.get("arguments", {})
+        meta_data = params.get("_meta")
+        if not name:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "code": -32602,
+                    "message": "Missing prompt name in parameters",
+                    "data": params,
+                },
+            )
+
+        auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+        if auth_is_admin and auth_token_teams is None:
+            auth_user_email = None
+        elif auth_token_teams is None:
+            auth_token_teams = []
+
+        plugin_context_table = getattr(request.state, "plugin_context_table", None)
+        plugin_global_context = getattr(request.state, "plugin_global_context", None)
+        result = await prompt_service.get_prompt(
+            db,
+            name,
+            arguments,
+            user=auth_user_email,
+            server_id=server_id,
+            token_teams=auth_token_teams,
+            plugin_context_table=plugin_context_table,
+            plugin_global_context=plugin_global_context,
+            _meta_data=meta_data,
+        )
+        payload = result.model_dump(by_alias=True, exclude_none=True) if hasattr(result, "model_dump") else result
+
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return ORJSONResponse(content=payload)
+    except PromptNotFoundError as exc:
+        return ORJSONResponse(
+            status_code=404,
+            content={
+                "code": -32002,
+                "message": str(exc),
+                "data": {"name": name} if name else None,
+            },
+        )
+    except JSONRPCError as exc:
+        status_code = 403 if exc.code == -32003 else 400
+        return ORJSONResponse(status_code=status_code, content=exc.to_dict()["error"])
     except Exception:
         try:
             db.rollback()
