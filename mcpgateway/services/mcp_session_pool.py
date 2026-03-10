@@ -1562,6 +1562,11 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                 )
 
+                # Treat non-2xx HTTP responses as errors
+                if not response.is_success:
+                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
+                    return {"error": {"code": -32603, "message": f"Internal request failed with HTTP {response.status_code}"}}
+
                 # Parse response
                 response_data = response.json()
 
