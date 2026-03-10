@@ -20958,39 +20958,39 @@ class TestUserManagementUIIntegration:
         assert response.headers.get("pragma") == "no-cache"
         assert response.headers.get("expires") == "0"
 
-        @pytest.mark.asyncio
-        async def test_admin_delete_user_success_has_hx_trigger(monkeypatch, mock_request, mock_db, allow_permission):
-            """Successful user deletion must include HX-Trigger header so the users list
-            refreshes automatically without a full page reload."""
-            monkeypatch.setattr(settings, "email_auth_enabled", True)
-            auth_service = MagicMock()
-            auth_service.is_last_active_admin = AsyncMock(return_value=False)
-            auth_service.delete_user = AsyncMock(return_value=None)
-            monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+    @pytest.mark.asyncio
+    async def test_admin_delete_user_success_has_hx_trigger(self, monkeypatch, mock_request, mock_db, allow_permission):
+        """Successful user deletion must include HX-Trigger header so the users list
+        refreshes automatically without a full page reload."""
+        monkeypatch.setattr(settings, "email_auth_enabled", True)
+        auth_service = MagicMock()
+        auth_service.is_last_active_admin = AsyncMock(return_value=False)
+        auth_service.delete_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-            response = await admin_delete_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
-            assert response.status_code == 200
-            hx_trigger = response.headers.get("hx-trigger")
-            assert hx_trigger is not None, "HX-Trigger header must be present after user deletion"
-            assert "adminUserAction" in hx_trigger
-            assert "refreshUsersList" in hx_trigger
+        response = await admin_delete_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+        assert response.status_code == 200
+        hx_trigger = response.headers.get("hx-trigger")
+        assert hx_trigger is not None, "HX-Trigger header must be present after user deletion"
+        assert "adminUserAction" in hx_trigger
+        assert "refreshUsersList" in hx_trigger
 
-        @pytest.mark.asyncio
-        async def test_admin_create_team_success_has_hx_trigger(monkeypatch, mock_db, allow_permission):
-            """Successful team creation must include HX-Trigger header so the teams list
-            refreshes automatically without a full page reload."""
-            monkeypatch.setattr(settings, "email_auth_enabled", True)
-            request = MagicMock(spec=Request)
-            request.scope = {"root_path": ""}
-            request.form = AsyncMock(return_value=FakeForm({"name": "New Team", "slug": "new-team", "description": "", "visibility": "private"}))
-            team = SimpleNamespace(id="team-2", name="New Team", slug="new-team", visibility="private", description="", is_personal=False)
-            team_service = MagicMock()
-            team_service.create_team = AsyncMock(return_value=team)
-            monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    @pytest.mark.asyncio
+    async def test_admin_create_team_success_has_hx_trigger(self, monkeypatch, mock_db, allow_permission):
+        """Successful team creation must include HX-Trigger header so the teams list
+        refreshes automatically without a full page reload."""
+        monkeypatch.setattr(settings, "email_auth_enabled", True)
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.form = AsyncMock(return_value=FakeForm({"name": "New Team", "slug": "new-team", "description": "", "visibility": "private"}))
+        team = SimpleNamespace(id="team-2", name="New Team", slug="new-team", visibility="private", description="", is_personal=False)
+        team_service = MagicMock()
+        team_service.create_team = AsyncMock(return_value=team)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-            response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
-            assert response.status_code == 201
-            hx_trigger = response.headers.get("hx-trigger")
-            assert hx_trigger is not None, "HX-Trigger header must be present after team creation"
-            assert "adminTeamAction" in hx_trigger
-            assert "refreshUnifiedTeamsList" in hx_trigger
+        response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+        assert response.status_code == 201
+        hx_trigger = response.headers.get("hx-trigger")
+        assert hx_trigger is not None, "HX-Trigger header must be present after team creation"
+        assert "adminTeamAction" in hx_trigger
+        assert "refreshUnifiedTeamsList" in hx_trigger

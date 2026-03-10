@@ -7412,7 +7412,7 @@ async def admin_get_user_edit(
         </div>
         """
         response = HTMLResponse(content=edit_form)
-        # Prevent nginx caching for real-time team member updates
+        # Prevent nginx caching for real-time user updates
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
