@@ -146,7 +146,7 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy
 from mcpgateway.transports.sse_transport import SSETransport
-from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, set_shared_session_registry, streamable_http_auth
+from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, set_shared_session_registry, streamable_http_auth, user_context_var
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -8432,17 +8432,58 @@ def _build_mcp_transport_app():
     """Choose the MCP transport app for the mounted /mcp path."""
     if settings.experimental_rust_mcp_runtime_enabled:
         logger.warning(
-            "EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true. POST /mcp requests will be proxied to %s while non-POST MCP session management stays on Python.",
+            "EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true. GET/POST/DELETE /mcp requests will be proxied to %s while Python still owns the underlying session manager.",
             settings.experimental_rust_mcp_runtime_url,
         )
         return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
     return streamable_http_session
 
 
+class InternalTrustedMCPTransportBridge:
+    """Trusted internal bridge from Rust MCP transport requests to the Python session manager."""
+
+    def __init__(self, transport_app) -> None:
+        self.transport_app = transport_app
+
+    async def handle_streamable_http(self, scope, receive, send):
+        if scope.get("type") != "http":
+            response = ORJSONResponse(status_code=404, content={"detail": "Not found"})
+            await response(scope, receive, send)
+            return
+
+        method = str(scope.get("method", "GET")).upper()
+        if method not in {"GET", "DELETE"}:
+            response = ORJSONResponse(status_code=405, content={"detail": "Method not allowed"})
+            await response(scope, receive, send)
+            return
+
+        request = Request(scope, receive=receive)
+        try:
+            _build_internal_mcp_forwarded_user(request)
+        except HTTPException as exc:
+            response = ORJSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+            await response(scope, receive, send)
+            return
+
+        auth_context = _get_internal_mcp_auth_context(request) or {}
+        server_id = request.headers.get("x-contextforge-server-id")
+        forwarded_scope = dict(scope)
+        forwarded_scope["path"] = "/mcp/"
+        forwarded_scope["modified_path"] = f"/servers/{server_id}/mcp" if server_id else "/mcp/"
+
+        token = user_context_var.set(auth_context)
+        try:
+            await self.transport_app.handle_streamable_http(forwarded_scope, receive, send)
+        finally:
+            user_context_var.reset(token)
+
+
 mcp_transport_app = _build_mcp_transport_app()
+internal_trusted_mcp_transport = InternalTrustedMCPTransportBridge(streamable_http_session)
 
 # Streamable http Mount
 app.mount("/mcp", app=mcp_transport_app.handle_streamable_http)
+app.mount("/_internal/mcp/transport", app=internal_trusted_mcp_transport.handle_streamable_http)
 
 # Conditional static files mounting and root redirect
 if UI_ENABLED:

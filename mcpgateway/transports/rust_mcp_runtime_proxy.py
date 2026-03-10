@@ -6,10 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Experimental MCP transport proxy for the Rust runtime edge.
 
 This module keeps Python auth/path-rewrite middleware in front of MCP traffic
-while proxying POST JSON-RPC calls to the optional Rust runtime sidecar.
-Non-POST requests continue to use the existing Python streamable HTTP handler so
-that current session-management semantics remain available while the Rust edge
-is still transport-focused.
+while proxying MCP transport requests to the optional Rust runtime sidecar.
 """
 
 # Future
@@ -53,7 +50,7 @@ _RESPONSE_HOP_BY_HOP_HEADERS = frozenset({"connection", "transfer-encoding", "ke
 
 
 class RustMCPRuntimeProxy:
-    """Proxy POST MCP traffic to the experimental Rust runtime."""
+    """Proxy MCP transport traffic to the experimental Rust runtime."""
 
     def __init__(self, python_fallback_app) -> None:
         """Initialize the proxy with the existing Python MCP transport fallback."""
@@ -62,13 +59,13 @@ class RustMCPRuntimeProxy:
         self._uds_client_lock = asyncio.Lock()
 
     async def handle_streamable_http(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Route POST requests to the Rust runtime and preserve Python fallback for others."""
+        """Route MCP transport requests to the Rust runtime and preserve Python fallback for others."""
         if scope.get("type") != "http":
             await self.python_fallback_app(scope, receive, send)
             return
 
         method = str(scope.get("method", "GET")).upper()
-        if method != "POST":
+        if method not in {"GET", "POST", "DELETE"}:
             await self.python_fallback_app(scope, receive, send)
             return
 
@@ -79,9 +76,9 @@ class RustMCPRuntimeProxy:
         try:
             client = await self._get_runtime_client()
             async with client.stream(
-                "POST",
+                method,
                 target_url,
-                content=_stream_request_body(receive),
+                content=_stream_request_body(receive) if method == "POST" else b"",
                 headers=headers,
                 timeout=timeout,
             ) as response:

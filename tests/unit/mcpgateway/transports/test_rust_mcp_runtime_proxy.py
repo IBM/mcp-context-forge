@@ -236,6 +236,80 @@ async def test_post_requests_without_server_scope_stream_body_to_rust(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_get_requests_proxy_to_rust_runtime(monkeypatch):
+    """GET MCP transport traffic should be proxied to Rust instead of falling back to Python."""
+    captured = {}
+
+    class FakeResponse:
+        def __init__(self):
+            self.status_code = 200
+            self.headers = httpx.Headers(
+                {
+                    "content-type": "text/event-stream",
+                    "x-contextforge-mcp-runtime": "rust",
+                    "mcp-session-id": "session-1",
+                }
+            )
+
+        async def aiter_bytes(self):
+            yield b"data: ping\\n\\n"
+
+    class FakeStreamContext:
+        async def __aenter__(self):
+            return FakeResponse()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeClient:
+        def stream(self, method, url, *, content, headers, timeout):  # noqa: ANN001
+            captured["method"] = method
+            captured["url"] = url
+            captured["content"] = content
+            captured["headers"] = headers
+            captured["timeout"] = timeout
+            return FakeStreamContext()
+
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_timeout_seconds", 17)
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_http_client", AsyncMock(return_value=FakeClient()))
+
+    fallback = AsyncMock()
+    proxy = RustMCPRuntimeProxy(fallback)
+    events = []
+
+    async def send(message):
+        events.append(message)
+
+    await proxy.handle_streamable_http(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "modified_path": "/servers/123e4567-e89b-12d3-a456-426614174000/mcp",
+            "query_string": b"session_id=abc123",
+            "headers": [
+                (b"authorization", b"Bearer test-token"),
+                (b"mcp-session-id", b"session-1"),
+            ],
+        },
+        _make_receive(b""),
+        send,
+    )
+
+    fallback.assert_not_awaited()
+    assert captured["method"] == "GET"
+    assert captured["url"] == "http://127.0.0.1:8787/mcp/?session_id=abc123"
+    assert captured["content"] == b""
+    assert dict(captured["headers"])["x-contextforge-server-id"] == "123e4567-e89b-12d3-a456-426614174000"
+    assert events[0]["status"] == 200
+    assert (b"content-type", b"text/event-stream") in events[0]["headers"]
+    assert (b"mcp-session-id", b"session-1") in events[0]["headers"]
+    assert events[1]["body"] == b"data: ping\\n\\n"
+    assert events[2] == {"type": "http.response.body", "body": b"", "more_body": False}
+
+
+@pytest.mark.asyncio
 async def test_post_requests_use_uds_client_when_configured(monkeypatch):
     """Configured Rust runtime UDS should use a dedicated client instead of the shared HTTP client."""
     constructed = {}
@@ -301,8 +375,8 @@ async def test_post_requests_use_uds_client_when_configured(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_non_post_requests_fall_back_to_python_transport():
-    """Non-POST MCP requests should keep using the Python transport."""
+async def test_unsupported_methods_fall_back_to_python_transport():
+    """Unsupported MCP transport methods should keep using the Python transport."""
     fallback = AsyncMock()
     proxy = RustMCPRuntimeProxy(fallback)
 
@@ -315,7 +389,7 @@ async def test_non_post_requests_fall_back_to_python_transport():
     await proxy.handle_streamable_http(
         {
             "type": "http",
-            "method": "GET",
+            "method": "OPTIONS",
             "path": "/",
             "modified_path": "/mcp/",
             "headers": [],
