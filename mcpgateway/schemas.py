@@ -7292,6 +7292,7 @@ class PaginationMeta(BaseModel):
     total_pages: int = Field(..., description="Total number of pages", ge=0)
     has_next: bool = Field(..., description="Whether there is a next page")
     has_prev: bool = Field(..., description="Whether there is a previous page")
+    page_items: Optional[int] = Field(None, description="Actual number of items on current page (after conversion failures)", ge=0)
     next_cursor: Optional[str] = Field(None, description="Cursor for next page (cursor-based only)")
     prev_cursor: Optional[str] = Field(None, description="Cursor for previous page (cursor-based only)")
 
