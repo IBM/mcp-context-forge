@@ -18,7 +18,7 @@ use std::{
     collections::{BTreeMap, HashMap, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     path::Path,
-    str::FromStr,
+    str::{self, FromStr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -126,6 +126,15 @@ struct UpstreamToolSession {
 struct CachedResolvedToolCallPlan {
     plan: ResolvedMcpToolCallPlan,
     cached_at: Instant,
+}
+
+#[derive(Debug)]
+enum ResolveToolsCallError {
+    Fallback(String),
+    JsonRpcError {
+        payload: Value,
+        headers: reqwest::header::HeaderMap,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -945,7 +954,10 @@ async fn handle_tools_call(
     let plan = match resolve_tools_call(state, &incoming_headers, &request, body.clone()).await
     {
         Ok(plan) => plan,
-        Err(err) => {
+        Err(ResolveToolsCallError::JsonRpcError { payload, headers }) => {
+            return response_from_json_with_headers(StatusCode::OK, payload, &headers);
+        }
+        Err(ResolveToolsCallError::Fallback(err)) => {
             warn!("Rust MCP direct tools/call resolve fallback: {err}");
             return forward_tools_call_to_backend(state, incoming_headers, body).await;
         }
@@ -984,7 +996,7 @@ async fn resolve_tools_call_plan_via_backend(
     state: &AppState,
     incoming_headers: &HeaderMap,
     body: Bytes,
-) -> Result<ResolvedMcpToolCallPlan, String> {
+) -> Result<ResolvedMcpToolCallPlan, ResolveToolsCallError> {
     let response = state
         .client
         .post(state.backend_tools_call_resolve_url())
@@ -992,16 +1004,34 @@ async fn resolve_tools_call_plan_via_backend(
         .body(body)
         .send()
         .await
-        .map_err(|err| format!("resolve request failed: {err}"))?;
+        .map_err(|err| ResolveToolsCallError::Fallback(format!("resolve request failed: {err}")))?;
 
-    if !response.status().is_success() {
-        return Err(format!("resolve returned status {}", response.status()));
+    let status = response.status();
+    let headers = response.headers().clone();
+    let response_body = response
+        .bytes()
+        .await
+        .map_err(|err| ResolveToolsCallError::Fallback(format!("resolve read failed: {err}")))?;
+
+    if !status.is_success() {
+        if let Ok(payload) = serde_json::from_slice::<Value>(&response_body) {
+            if payload.get("jsonrpc") == Some(&Value::String(JSONRPC_VERSION.to_string())) && payload.get("error").is_some() {
+                return Err(ResolveToolsCallError::JsonRpcError { payload, headers });
+            }
+        }
+        return Err(ResolveToolsCallError::Fallback(format!(
+            "resolve returned status {status}"
+        )));
     }
 
-    response
-        .json::<ResolvedMcpToolCallPlan>()
-        .await
-        .map_err(|err| format!("resolve decode failed: {err}"))
+    serde_json::from_slice::<ResolvedMcpToolCallPlan>(&response_body).map_err(|err| {
+        if let Ok(payload) = serde_json::from_slice::<Value>(&response_body) {
+            if payload.get("jsonrpc") == Some(&Value::String(JSONRPC_VERSION.to_string())) && payload.get("error").is_some() {
+                return ResolveToolsCallError::JsonRpcError { payload, headers };
+            }
+        }
+        ResolveToolsCallError::Fallback(format!("resolve decode failed: {err}"))
+    })
 }
 
 async fn resolve_tools_call(
@@ -1009,10 +1039,11 @@ async fn resolve_tools_call(
     incoming_headers: &HeaderMap,
     request: &JsonRpcRequest,
     body: Bytes,
-) -> Result<ResolvedMcpToolCallPlan, String> {
+) -> Result<ResolvedMcpToolCallPlan, ResolveToolsCallError> {
     const TOOL_CALL_PLAN_TTL: Duration = Duration::from_secs(30);
 
-    let cache_key = build_tools_call_plan_cache_key(incoming_headers, request)?;
+    let cache_key =
+        build_tools_call_plan_cache_key(incoming_headers, request).map_err(ResolveToolsCallError::Fallback)?;
     {
         let mut cached_plans = state.resolved_tool_call_plans().lock().await;
         if let Some(cached) = cached_plans.get_mut(&cache_key) {
@@ -1136,8 +1167,7 @@ async fn execute_tools_call_direct(
     }
 
     let status = tool_response.status();
-    let payload: Value = tool_response
-        .json()
+    let payload = decode_upstream_json_payload(tool_response)
         .await
         .map_err(|err| format!("direct tools/call decode failed: {err}"))?;
 
@@ -1223,8 +1253,7 @@ async fn initialize_upstream_session(
         .get("mcp-session-id")
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
-    let payload: Value = response
-        .json()
+    let payload = decode_upstream_json_payload(response)
         .await
         .map_err(|err| format!("upstream initialize decode failed: {err}"))?;
     if payload.get("error").is_some() {
@@ -1330,6 +1359,56 @@ fn build_upstream_headers(
     }
 
     Ok(headers)
+}
+
+async fn decode_upstream_json_payload(response: reqwest::Response) -> Result<Value, String> {
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|err| format!("read body failed: {err}"))?;
+
+    decode_upstream_json_payload_bytes(&body, &content_type)
+}
+
+fn decode_upstream_json_payload_bytes(body: &[u8], content_type: &str) -> Result<Value, String> {
+    if content_type.contains("text/event-stream") || body.starts_with(b"data:") {
+        let text = str::from_utf8(body).map_err(|err| format!("invalid utf-8 SSE body: {err}"))?;
+        let data = extract_first_sse_data_payload(text)
+            .ok_or_else(|| "missing SSE data payload".to_string())?;
+        return serde_json::from_str(&data).map_err(|err| format!("invalid SSE JSON payload: {err}"));
+    }
+
+    serde_json::from_slice(body).map_err(|err| format!("invalid JSON payload: {err}"))
+}
+
+fn extract_first_sse_data_payload(body: &str) -> Option<String> {
+    let mut current_event_data = Vec::new();
+
+    for raw_line in body.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        if line.is_empty() {
+            if !current_event_data.is_empty() {
+                return Some(current_event_data.join("\n"));
+            }
+            continue;
+        }
+
+        if let Some(data) = line.strip_prefix("data:") {
+            current_event_data.push(data.trim_start().to_string());
+        }
+    }
+
+    if current_event_data.is_empty() {
+        None
+    } else {
+        Some(current_event_data.join("\n"))
+    }
 }
 
 fn build_upstream_session_key(

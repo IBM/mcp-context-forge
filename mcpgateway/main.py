@@ -6607,6 +6607,26 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
         if db.is_active and db.in_transaction() is not None:
             db.commit()
         return ORJSONResponse(content=plan)
+    except ToolNotFoundError as exc:
+        request_id = body.get("id") if isinstance(body, dict) else None
+        return ORJSONResponse(
+            status_code=404,
+            content={
+                "jsonrpc": "2.0",
+                "error": {"code": -32601, "message": str(exc)},
+                "id": request_id,
+            },
+        )
+    except ToolError as exc:
+        request_id = body.get("id") if isinstance(body, dict) else None
+        return ORJSONResponse(
+            status_code=400,
+            content={
+                "jsonrpc": "2.0",
+                "error": {"code": -32000, "message": str(exc)},
+                "id": request_id,
+            },
+        )
     except (PluginError, PluginViolationError):
         raise
     except JSONRPCError as exc:
