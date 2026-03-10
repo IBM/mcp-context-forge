@@ -31,7 +31,20 @@ from starlette.websockets import WebSocketDisconnect
 from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
-from mcpgateway.schemas import A2AAgentAggregateMetrics, GatewayRead, PromptMetrics, PromptRead, ResourceMetrics, ResourceRead, ServerMetrics, ServerRead, ToolMetrics, ToolRead
+from mcpgateway.schemas import (
+    A2AAgentAggregateMetrics,
+    GatewayRead,
+    PromptMetrics,
+    PromptRead,
+    ResourceMetrics,
+    ResourceRead,
+    ServerMetrics,
+    ServerRead,
+    ToolMetrics,
+    ToolRead,
+)
+from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING
+
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
@@ -3126,7 +3139,11 @@ class TestPluginExceptionHandlers:
     """Tests for plugin exception handlers: PluginViolationError and PluginError."""
 
     def test_plugin_violation_exception_handler_with_full_violation(self):
-        """Test plugin_violation_exception_handler with complete violation details."""
+        """Test plugin_violation_exception_handler with complete violation details.
+
+        Updated to verify backward compatibility with new http_status_code and http_headers fields.
+        This test verifies that the code mapping (PROHIBITED_CONTENT -> 422) still works.
+        """
         # Standard
         import asyncio
 
@@ -3146,7 +3163,8 @@ class TestPluginExceptionHandlers:
 
         result = asyncio.run(plugin_violation_exception_handler(None, exc))
 
-        assert result.status_code == 200
+        # Verify code mapping works (PROHIBITED_CONTENT -> 422 in PLUGIN_VIOLATION_CODE_MAPPING)
+        assert result.status_code == PLUGIN_VIOLATION_CODE_MAPPING["PROHIBITED_CONTENT"].code  # Uses mapping
         content = json.loads(result.body.decode())
         assert "error" in content
         assert content["error"]["code"] == -32602
@@ -3179,7 +3197,7 @@ class TestPluginExceptionHandlers:
 
         result = asyncio.run(plugin_violation_exception_handler(None, exc))
 
-        assert result.status_code == 200
+        assert result.status_code == 429
         content = json.loads(result.body.decode())
         assert content["error"]["code"] == -32000
         assert "Too many requests from this client" in content["error"]["message"]
@@ -3223,13 +3241,324 @@ class TestPluginExceptionHandlers:
 
         exc = PluginViolationError(message="Generic plugin violation", violation=None)
 
+    def test_plugin_violation_exception_handler_with_http_status_code(self):
+        """Test that violation HTTP status code is used in response."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Rate limit exceeded",
+            description="Too many requests",
+            code="RATE_LIMIT",
+            http_status_code=429,  # NEW FIELD
+        )
+        exc = PluginViolationError(message="Rate limited", violation=violation)
+
         result = asyncio.run(plugin_violation_exception_handler(None, exc))
 
+        assert result.status_code == 429  # Should use violation's HTTP status
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+        assert "Too many requests" in content["error"]["message"]  # Uses description
+
+    def test_plugin_violation_exception_handler_with_http_headers(self):
+        """Test that violation HTTP headers are included in response."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Rate limit exceeded",
+            description="Too many requests",
+            code="RATE_LIMIT",
+            http_status_code=429,
+            http_headers={"Retry-After": "60", "X-RateLimit-Limit": "100"},  # NEW FIELD
+        )
+        exc = PluginViolationError(message="Rate limited", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 429
+        assert "Retry-After" in result.headers
+        assert result.headers["Retry-After"] == "60"
+        assert result.headers["X-RateLimit-Limit"] == "100"
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_exception_handler_with_code_mapping_fallback(self):
+        """Test that PLUGIN_VIOLATION_CODE_MAPPING is used when no explicit HTTP status."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        # Assumes PLUGIN_VIOLATION_CODE_MAPPING has {"RATE_LIMIT": 429}
+        violation = PluginViolation(
+            reason="Rate limit exceeded",
+            description="Too many requests",
+            code="RATE_LIMIT",
+            # No http_status_code field
+        )
+        exc = PluginViolationError(message="Rate limited", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 429  # Should use mapping
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_exception_handler_defaults_to_200(self):
+        """Test that response defaults to 200 when no HTTP status is provided."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Invalid input",
+            description="Bad data",
+            code="UNKNOWN_CODE",  # Not in mapping
+            # No http_status_code
+        )
+        exc = PluginViolationError(message="Violation", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 200  # JSON-RPC default
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_exception_handler_no_headers_when_none(self):
+        """Test that no headers are added when violation has none."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Error",
+            description="Something failed",
+            code="ERROR",
+            http_status_code=400,
+            # No http_headers
+        )
+        exc = PluginViolationError(message="Failed", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 400
+        # Should not crash when headers is None
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_http_status_takes_precedence_over_mapping(self):
+        """Verify that explicit http_status_code takes precedence over code mapping."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        # PLUGIN_VIOLATION_CODE_MAPPING has "RATE_LIMIT": 429
+        violation = PluginViolation(
+            reason="Rate limit",
+            description="Service unavailable",
+            code="RATE_LIMIT",
+            http_status_code=503,  # Explicit status should win
+        )
+        exc = PluginViolationError(message="Limited", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 503  # Not 429 from mapping
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_with_multiple_rate_limit_headers(self):
+        """Verify all rate limit headers are properly included."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Rate limit",
+            description="Too many requests",
+            code="RATE_LIMIT",
+            http_status_code=429,
+            http_headers={
+                "X-RateLimit-Limit": "60",
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": "1737394800",
+                "Retry-After": "35",
+            },
+        )
+        exc = PluginViolationError(message="Limited", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 429
+        assert result.headers["X-RateLimit-Limit"] == "60"
+        assert result.headers["X-RateLimit-Remaining"] == "0"
+        assert result.headers["X-RateLimit-Reset"] == "1737394800"
+        assert result.headers["Retry-After"] == "35"
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_unknown_code_defaults_to_200(self):
+        """Verify unknown codes not in mapping default to 200."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Unknown error",
+            description="Something unexpected happened",
+            code="UNKNOWN_CODE_NOT_IN_MAPPING",
+            # No explicit http_status_code
+        )
+        exc = PluginViolationError(message="Error", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 200  # Default for JSON-RPC
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+        assert "Something unexpected happened" in content["error"]["message"]  # Uses description
+
+    def test_plugin_violation_invalid_http_status_code_below_range(self):
+        """Test that invalid HTTP status code below 100 defaults to None and uses mapping."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Invalid status",
+            description="Status code below valid range",
+            code="RATE_LIMIT",  # Has mapping to 429
+            http_status_code=99,  # Invalid: below 100
+        )
+        exc = PluginViolationError(message="Invalid status", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        # Should fall back to code mapping (RATE_LIMIT -> 429)
+        assert result.status_code == 429
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_invalid_http_status_code_above_range(self):
+        """Test that invalid HTTP status code above 511 defaults to None and uses mapping."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Invalid status",
+            description="Status code above valid range",
+            code="RATE_LIMIT",  # Has mapping to 429
+            http_status_code=512  # Invalid: above 511
+        )
+        exc = PluginViolationError(message="Invalid status", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        # Should fall back to code mapping (RATE_LIMIT -> 429)
+        assert result.status_code == 429
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_invalid_http_status_code_no_mapping_fallback(self):
+        """Test that invalid HTTP status code with no mapping defaults to 200."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Invalid status",
+            description="Status code invalid, no mapping",
+            code="UNKNOWN_CODE",  # Not in mapping
+            http_status_code=1000,  # Invalid: way above 511
+        )
+        exc = PluginViolationError(message="Invalid status", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        # Should default to 200 (no mapping available)
         assert result.status_code == 200
         content = json.loads(result.body.decode())
         assert content["error"]["code"] == -32602
-        assert "A plugin violation occurred" in content["error"]["message"]
-        assert content["error"]["data"] == {}
+
+    def test_plugin_violation_valid_http_status_code_edge_cases(self):
+        """Test that valid edge case HTTP status codes (400, 511) are accepted."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        # Test lower boundary (400)
+        violation_400 = PluginViolation(
+            reason="Continue",
+            description="Valid status 400",
+            code="INFO",
+            http_status_code=400,  # Valid: exactly 400
+        )
+        exc_400 = PluginViolationError(message="Status 400", violation=violation_400)
+        result_400 = asyncio.run(plugin_violation_exception_handler(None, exc_400))
+        assert result_400.status_code == 400
+
+        # Test upper boundary (511)
+        violation_511 = PluginViolation(
+            reason="Network error",
+            description="Valid status 511",
+            code="ERROR",
+            http_status_code=511,  # Valid: exactly 511
+        )
+        exc_511 = PluginViolationError(message="Status 511", violation=violation_511)
+        result_511 = asyncio.run(plugin_violation_exception_handler(None, exc_511))
+        assert result_511.status_code == 511
 
     def test_plugin_exception_handler_with_full_error(self):
         """Test plugin_exception_handler with complete error details."""

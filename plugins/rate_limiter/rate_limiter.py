@@ -87,7 +87,7 @@ class _Window:
 _store: Dict[str, _Window] = {}
 
 
-def _allow(key: str, limit: Optional[str]) -> tuple[bool, dict[str, Any]]:
+def _allow(key: str, limit: Optional[str]) -> tuple[bool, int, int, dict[str, Any]]:
     """Check if a request is allowed under the rate limit.
 
     Args:
@@ -95,23 +95,121 @@ def _allow(key: str, limit: Optional[str]) -> tuple[bool, dict[str, Any]]:
         limit: Rate limit string (e.g., '60/m') or None to allow unlimited.
 
     Returns:
-        Tuple of (allowed, metadata) where allowed is True if the request is allowed,
-        and metadata contains rate limiting information.
+        Tuple of (allowed, limit_count, reset_timestamp, metadata) where:
+        - allowed: True if the request is allowed
+        - limit_count: The rate limit count (0 if unlimited)
+        - reset_timestamp: Unix timestamp when the window resets (0 if unlimited)
+        - metadata: Additional rate limiting information
     """
     if not limit:
-        return True, {"limited": False}
+        return True, 0, 0, {"limited": False}
     count, window_seconds = _parse_rate(limit)
     now = int(time.time())
     win_key = f"{key}:{window_seconds}"
     wnd = _store.get(win_key)
+
     if not wnd or now - wnd.window_start >= window_seconds:
+        # New window
+        reset_timestamp = now + window_seconds
         _store[win_key] = _Window(window_start=now, count=1)
-        return True, {"limited": True, "remaining": count - 1, "reset_in": window_seconds}
+        return True, count, reset_timestamp, {"limited": True, "remaining": count - 1, "reset_in": window_seconds}
+
+    reset_timestamp = wnd.window_start + window_seconds
     if wnd.count < count:
+        # Within limit
         wnd.count += 1
-        return True, {"limited": True, "remaining": count - wnd.count, "reset_in": window_seconds - (now - wnd.window_start)}
-    # exceeded
-    return False, {"limited": True, "remaining": 0, "reset_in": window_seconds - (now - wnd.window_start)}
+        reset_in = window_seconds - (now - wnd.window_start)
+        return True, count, reset_timestamp, {"limited": True, "remaining": count - wnd.count, "reset_in": reset_in}
+
+    # Exceeded
+    reset_in = window_seconds - (now - wnd.window_start)
+    return False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": reset_in}
+
+
+def _make_headers(limit: int, remaining: int, reset_timestamp: int, retry_after: int, include_retry_after: bool = True) -> dict[str, str]:
+    """Create RFC-compliant rate limit headers.
+
+    Args:
+        limit: The rate limit count.
+        remaining: Number of requests remaining in the current window.
+        reset_timestamp: Unix timestamp when the window resets.
+        retry_after: Seconds until the window resets (for Retry-After header).
+        include_retry_after: Whether to include Retry-After header (only for violations).
+
+    Returns:
+        Dictionary of HTTP headers for rate limiting.
+    """
+    headers = {
+        "X-RateLimit-Limit": str(limit),
+        "X-RateLimit-Remaining": str(remaining),
+        "X-RateLimit-Reset": str(reset_timestamp),
+    }
+    if include_retry_after:
+        headers["Retry-After"] = str(retry_after)
+    return headers
+
+
+def _select_most_restrictive(
+    results: list[tuple[bool, int, int, dict[str, Any]]]
+) -> tuple[bool, int, int, int, dict[str, Any]]:
+    """Select the most restrictive rate limit from multiple dimensions.
+
+    Args:
+        results: List of (allowed, limit, reset_timestamp, metadata) tuples from _allow().
+        - allowed: True if the request is allowed
+        - limit_count: The rate limit count (0 if unlimited)
+        - reset_timestamp: Unix timestamp when the window resets (0 if unlimited)
+        - metadata: Additional rate limiting information
+
+    Returns:
+        Tuple of (allowed, limit, remaining, reset_timestamp, metadata) representing
+        the most restrictive limit. If any dimension is violated, allowed is False.
+        The metadata includes aggregated information from all dimensions.
+    """
+    # Filter out unlimited results (limit == 0)
+    limited_results = [(allowed, limit, reset_ts, meta) for allowed, limit, reset_ts, meta in results if limit > 0]
+
+    if not limited_results:
+        # All unlimited
+        return True, 0, 0, 0, {"limited": False}
+
+    # Separate violated and allowed dimensions
+    violated = [(allowed, limit, reset_ts, meta) for allowed, limit, reset_ts, meta in limited_results if not allowed]
+    allowed_dims = [(allowed, limit, reset_ts, meta) for allowed, limit, reset_ts, meta in limited_results if allowed]
+
+    # If any dimension is violated, pick the one with shortest retry_after (resets soonest)
+    if violated:
+        most_restrictive = min(violated, key=lambda x: x[3].get("reset_in", float("inf")))
+        _, limit, reset_ts, meta = most_restrictive
+        remaining = meta.get("remaining", 0)
+        retry_after = meta.get("reset_in", 0)
+
+        # Aggregate metadata from all dimensions for observability
+        aggregated_meta = {
+            "limited": True,
+            "remaining": remaining,
+            "reset_in": retry_after,
+            "dimensions": {
+                "violated": [m for _, _, _, m in violated],
+                "allowed": [m for _, _, _, m in allowed_dims],
+            }
+        }
+        return False, limit, remaining, reset_ts, aggregated_meta
+
+    # All dimensions allowed - find the most restrictive (lowest remaining)
+    most_restrictive = min(allowed_dims, key=lambda x: x[3].get("remaining", float("inf")))
+    _, limit, reset_ts, meta = most_restrictive
+    remaining = meta.get("remaining", 0)
+    retry_after = meta.get("reset_in", 0)
+
+    # Aggregate metadata from all dimensions
+    aggregated_meta = {
+        "limited": True,
+        "remaining": remaining,
+        "reset_in": retry_after,
+        "dimensions": {"allowed": [m for _, _, _, m in allowed_dims]},
+    }
+    return True, limit, remaining, reset_ts, aggregated_meta
 
 
 class RateLimiterPlugin(Plugin):
@@ -139,31 +237,36 @@ class RateLimiterPlugin(Plugin):
         user = context.global_context.user or "anonymous"
         tenant = context.global_context.tenant_id or "default"
 
-        ok_u, meta_u = _allow(f"user:{user}", self._cfg.by_user)
-        if not ok_u:
+        # Check all dimensions
+        results = [
+            _allow(f"user:{user}", self._cfg.by_user),
+            _allow(f"tenant:{tenant}", self._cfg.by_tenant),
+        ]
+
+        # Select most restrictive
+        allowed, limit, remaining, reset_ts, meta = _select_most_restrictive(results)
+        retry_after = meta.get("reset_in", 0)
+
+        if not allowed:
+            # Rate limit exceeded - include Retry-After header
+            headers = _make_headers(limit, remaining, reset_ts, retry_after, include_retry_after=True)
             return PromptPrehookResult(
                 continue_processing=False,
                 violation=PluginViolation(
                     reason="Rate limit exceeded",
-                    description=f"User {user} rate limit exceeded",
+                    description=f"Rate limit exceeded for user {user} or tenant {tenant}",
                     code="RATE_LIMIT",
-                    details=meta_u,
+                    details=meta,
+                    http_status_code=429,
+                    http_headers=headers,
                 ),
             )
 
-        ok_t, meta_t = _allow(f"tenant:{tenant}", self._cfg.by_tenant)
-        if not ok_t:
-            return PromptPrehookResult(
-                continue_processing=False,
-                violation=PluginViolation(
-                    reason="Rate limit exceeded",
-                    description=f"Tenant {tenant} rate limit exceeded",
-                    code="RATE_LIMIT",
-                    details=meta_t,
-                ),
-            )
+        # Success - include informational headers (without Retry-After)
+        if limit > 0:
+            headers = _make_headers(limit, remaining, reset_ts, retry_after, include_retry_after=False)
+            return PromptPrehookResult(metadata=meta, http_headers=headers)
 
-        meta = {"by_user": meta_u, "by_tenant": meta_t}
         return PromptPrehookResult(metadata=meta)
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
@@ -180,27 +283,40 @@ class RateLimiterPlugin(Plugin):
         user = context.global_context.user or "anonymous"
         tenant = context.global_context.tenant_id or "default"
 
-        meta: dict[str, Any] = {}
-        ok_u, meta_u = _allow(f"user:{user}", self._cfg.by_user)
-        ok_t, meta_t = _allow(f"tenant:{tenant}", self._cfg.by_tenant)
-        ok_tool = True
-        meta_tool: dict[str, Any] | None = None
-        by_tool_config = self._cfg.by_tool
-        if hasattr(by_tool_config, "__contains__"):
-            if tool in by_tool_config:  # pylint: disable=unsupported-membership-test
-                ok_tool, meta_tool = _allow(f"tool:{tool}", by_tool_config[tool])
-        meta.update({"by_user": meta_u, "by_tenant": meta_t})
-        if meta_tool is not None:
-            meta["by_tool"] = meta_tool
+        # Check all dimensions
+        results = [
+            _allow(f"user:{user}", self._cfg.by_user),
+            _allow(f"tenant:{tenant}", self._cfg.by_tenant),
+        ]
 
-        if not (ok_u and ok_t and ok_tool):
+        # Check per-tool limit if configured
+        by_tool_config = self._cfg.by_tool
+        if by_tool_config:
+            if hasattr(by_tool_config, "__contains__") and tool in by_tool_config:  # pylint: disable=unsupported-membership-test
+                results.append(_allow(f"tool:{tool}", by_tool_config[tool]))
+
+        # Select most restrictive
+        allowed, limit, remaining, reset_ts, meta = _select_most_restrictive(results)
+        retry_after = meta.get("reset_in", 0)
+
+        if not allowed:
+            # Rate limit exceeded - include Retry-After header
+            headers = _make_headers(limit, remaining, reset_ts, retry_after, include_retry_after=True)
             return ToolPreInvokeResult(
                 continue_processing=False,
                 violation=PluginViolation(
                     reason="Rate limit exceeded",
-                    description=f"Rate limit exceeded for {'tool ' + tool if not ok_tool else ('user' if not ok_u else 'tenant')}",
+                    description=f"Rate limit exceeded for tool {tool}, user {user}, or tenant {tenant}",
                     code="RATE_LIMIT",
                     details=meta,
+                    http_status_code=429,
+                    http_headers=headers,
                 ),
             )
+
+        # Success - include informational headers (without Retry-After)
+        if limit > 0:
+            headers = _make_headers(limit, remaining, reset_ts, retry_after, include_retry_after=False)
+            return ToolPreInvokeResult(metadata=meta, http_headers=headers)
+
         return ToolPreInvokeResult(metadata=meta)
