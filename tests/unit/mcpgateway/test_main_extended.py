@@ -25,6 +25,7 @@ import uuid
 # Third-Party
 from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
+import orjson
 import pytest
 import sqlalchemy as sa
 from starlette.responses import Response as StarletteResponse
@@ -34,6 +35,7 @@ from mcpgateway.config import settings
 from mcpgateway.main import (
     AdminAuthMiddleware,
     DocsAuthMiddleware,
+    InternalTrustedMCPTransportBridge,
     MCPPathRewriteMiddleware,
     _serialize_mcp_tool_definition,
     app,
@@ -75,6 +77,7 @@ import mcpgateway.db as db_mod
 from mcpgateway.plugins.framework import PluginError
 from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.tool_service import ToolNotFoundError
+from mcpgateway.transports.streamablehttp_transport import user_context_var
 
 
 def _make_request(
@@ -200,6 +203,95 @@ class TestConditionalPaths:
         # Test the functionality that exercises the loop path
         response = test_client.get("/health", headers=auth_headers)
         assert response.status_code == 200
+
+
+class TestInternalTrustedMcpTransportBridge:
+    """Test the trusted Rust -> Python MCP transport bridge."""
+
+    @pytest.mark.asyncio
+    async def test_bridge_sets_scope_and_forwarded_auth_context(self):
+        observed = {}
+
+        class FakeTransportApp:
+            async def handle_streamable_http(self, scope, receive, send):
+                observed["path"] = scope["path"]
+                observed["modified_path"] = scope["modified_path"]
+                observed["user_context"] = user_context_var.get()
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 204,
+                        "headers": [(b"x-contextforge-mcp-runtime", b"python")],
+                    }
+                )
+                await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+        bridge = InternalTrustedMCPTransportBridge(FakeTransportApp())
+        encoded_auth = base64.urlsafe_b64encode(
+            orjson.dumps(
+                {
+                    "email": "user@example.com",
+                    "teams": ["team-a"],
+                    "is_authenticated": True,
+                    "is_admin": False,
+                    "permission_is_admin": False,
+                    "token_use": "session",
+                }
+            )
+        ).decode("ascii").rstrip("=")
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/_internal/mcp/transport",
+            "query_string": b"session_id=abc123",
+            "headers": [
+                (b"x-contextforge-mcp-runtime", b"rust"),
+                (b"x-contextforge-auth-context", encoded_auth.encode("ascii")),
+                (b"x-contextforge-server-id", b"server-1"),
+            ],
+            "client": ("127.0.0.1", 5000),
+        }
+
+        async def receive():
+            return {"type": "http.disconnect"}
+
+        events = []
+
+        async def send(message):
+            events.append(message)
+
+        await bridge.handle_streamable_http(scope, receive, send)
+
+        assert observed["path"] == "/mcp/"
+        assert observed["modified_path"] == "/servers/server-1/mcp"
+        assert observed["user_context"]["email"] == "user@example.com"
+        assert observed["user_context"]["teams"] == ["team-a"]
+        assert events[0]["status"] == 204
+
+    @pytest.mark.asyncio
+    async def test_bridge_rejects_missing_internal_auth_context(self):
+        bridge = InternalTrustedMCPTransportBridge(AsyncMock())
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/_internal/mcp/transport",
+            "query_string": b"",
+            "headers": [(b"x-contextforge-mcp-runtime", b"rust")],
+            "client": ("127.0.0.1", 5000),
+        }
+
+        async def receive():
+            return {"type": "http.disconnect"}
+
+        events = []
+
+        async def send(message):
+            events.append(message)
+
+        await bridge.handle_streamable_http(scope, receive, send)
+
+        assert events[0]["status"] == 400
 
 
 class TestMcpSerialization:

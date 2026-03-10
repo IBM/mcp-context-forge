@@ -4,6 +4,12 @@ Last updated: March 10, 2026
 
 Status focus in this update:
 
+- first transport/session parity increment for the Rust MCP edge
+- Rust now fronts outer `GET /mcp`, `POST /mcp`, and `DELETE /mcp`
+- a trusted internal Python transport bridge at `/_internal/mcp/transport`
+- preserved server-scoped Streamable HTTP semantics across the Rust -> Python transport seam
+- focused Python and Rust regression coverage for server-scoped `GET`/`DELETE` MCP transport requests
+- direct live raw-HTTP proof that `POST /mcp` and `DELETE /mcp` are traversing Rust on the rebuilt Rust-enabled stack
 - multi-server Locust MCP protocol benchmarking via `MCP_SERVER_IDS`
 - quieter benchmark runs via `LOCUST_LOG_LEVEL` and cleaner multiprocess summaries
 - additional scaling investigation with both `Fast Time Server` and `Fast Test Server`
@@ -41,7 +47,8 @@ The most recent benchmarking pass was focused on separating:
 The current conclusion is:
 
 - the Rust MCP hot path is already above `1000 RPS`
-- the mixed MCP benchmark is still below that in the current workload shape
+- the mixed MCP benchmark can exceed `1000 RPS` on the tuned single-server
+  fast-time setup, but not every workload shape does
 - adding a second fast MCP server did not materially improve the ceiling
 - Locust itself is not the limiter at the current peak
 
@@ -170,6 +177,70 @@ Current best-case statement:
   against `Fast Time Server`
 - the strongest measured number in this pass is `1094.59 RPS` at `100` users
   with `0.00%` failures
+
+## Latest Transport/Session Parity Increment
+
+The newest implementation step was not another throughput tweak. It was the
+first real transport-parity increment toward a fuller Rust-owned MCP runtime.
+
+What changed:
+
+- Rust now fronts the outer `GET /mcp`, `POST /mcp`, and `DELETE /mcp` paths
+- Rust forwards `GET` and `DELETE` to a trusted internal Python transport bridge
+  at `/_internal/mcp/transport`
+- that bridge reconstructs the mounted MCP path semantics for both global and
+  server-scoped routes by restoring:
+  - `path=/mcp/`
+  - `modified_path=/mcp/` or `/servers/<id>/mcp`
+- the internal hop reuses the forwarded MCP auth context instead of re-running
+  public auth middleware logic
+- query strings and `mcp-session-id` survive the Rust -> Python transport hop
+- response headers still prove Rust ownership with
+  `x-contextforge-mcp-runtime: rust`
+
+What did not change:
+
+- Python still owns the underlying `StreamableHTTPSessionManager`
+- Python still owns resumable event storage, session registry, and multi-worker
+  session-affinity logic
+- this is transport-fronting parity, not a full Rust replacement of session
+  state machinery
+
+Focused validation for this increment:
+
+- `uv run pytest -q tests/unit/mcpgateway/transports/test_rust_mcp_runtime_proxy.py`
+  - `6 passed`
+- `uv run pytest -q tests/unit/mcpgateway/test_main_extended.py -k 'InternalTrustedMcpTransportBridge'`
+  - `2 passed`
+- `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
+  - Rust runtime crate tests passed, including new GET/DELETE transport coverage
+- `make test-mcp-cli`
+  - `23 passed`
+- `make test-mcp-rbac`
+  - `40 passed`
+
+Additional live proof on the rebuilt Rust-enabled compose stack:
+
+- raw `POST /mcp/` `initialize` returned `x-contextforge-mcp-runtime: rust`
+- raw `DELETE /mcp/` returned `405 Method Not Allowed` with
+  `x-contextforge-mcp-runtime: rust`
+- this is now covered by
+  [`tests/e2e/test_mcp_cli_protocol.py`](/home/cmihai/agents2/pr/mcp-context-forge/tests/e2e/test_mcp_cli_protocol.py)
+
+Important current nuance:
+
+- simple black-box `GET /mcp/` validation is still awkward because the stream is
+  long-lived and does not behave like a bounded request/response probe
+- the Rust `GET` forwarding path is currently proven by focused Python unit
+  tests plus Rust crate tests, while the live E2E proof is currently strongest
+  for `POST` and `DELETE`
+
+Why this matters:
+
+- the mounted MCP transport boundary is now simpler and more consistent:
+  external MCP clients always hit Rust first
+- future session-manager work can now be moved incrementally behind the same
+  transport seam instead of changing the public mount shape again
 
 ### Infrastructure saturation snapshot
 
@@ -366,7 +437,7 @@ compose stack, and reran the live protocol suites against `http://localhost:8080
 
 Validated:
 
-- `make test-mcp-cli`: `22 passed`
+- `make test-mcp-cli`: `23 passed`
 - `make test-mcp-rbac`: `40 passed`
 - targeted nonexistent-tool wrapper regression:
   `tests/e2e/test_mcp_cli_protocol.py::TestMcpStdioProtocol::test_tools_call_nonexistent_tool`
@@ -437,19 +508,27 @@ Current interpretation:
 
 The Rust MCP runtime is now a real, integrated stage-1 implementation, not just a throwaway prototype.
 
-Today it successfully owns the MCP HTTP transport edge for `POST /mcp` when
+Today it successfully owns the public MCP HTTP transport edge for `GET /mcp`,
+`POST /mcp`, and `DELETE /mcp` when
 `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`, while Python still owns:
 
 - auth and RBAC
 - business execution behind the internal MCP dispatcher
-- MCP session management for non-`POST` transport flows
+- MCP session-manager internals and resumable stream state
 
 In practice, this means:
 
-- Rust is already on the hot path for `ping`, `initialize`, `tools/list`, `tools/call`, `resources/list`, `prompts/list`, and similar JSON-RPC `POST /mcp` traffic
+- Rust is already on the hot path for public `GET /mcp`, `POST /mcp`, and
+  `DELETE /mcp` traffic
+- Rust is already on the method path for `ping`, `initialize`, `tools/list`,
+  `tools/call`, `resources/list`, `prompts/list`, and similar JSON-RPC MCP
+  traffic
 - Python no longer reparses and rewrites server-scoped MCP JSON bodies just to inject `server_id`
 - the managed Python -> Rust hop can now run over a Unix domain socket instead of loopback TCP
 - Python forwards a trusted auth context to the internal dispatcher, so auth and RBAC stay Python-owned without being recomputed on the internal hop
+- Python also exposes a trusted internal transport bridge at
+  `/_internal/mcp/transport` so Rust can front `GET`/`DELETE` without changing
+  the mounted MCP path shape
 - Rust now owns the server-scoped `tools/list` read path end-to-end after a Python auth/RBAC subrequest, using direct read-only Postgres queries instead of the generic Python JSON-RPC dispatcher
 - Rust now routes `tools/call` to a dedicated Python internal endpoint instead of the generic `/_internal/mcp/rpc` switch
 - the trusted internal MCP dispatcher now owns its SQLAlchemy session directly instead of paying FastAPI `Depends(get_db)` overhead on every Rust-backed call
@@ -459,6 +538,36 @@ In practice, this means:
 - Rust is not yet the full MCP implementation for resumable Streamable HTTP or SSE/session orchestration
 - the current cut is viable, testable, containerized, and live behind an experimental flag
 
+### Direct Answer: Is Real MCP JSON-RPC Traffic Going Through Rust?
+
+Yes.
+
+On a Rust-enabled stack, real MCP client traffic hits Rust first at the public
+`/mcp` mount.
+
+Current live request shape:
+
+- client `POST /mcp` JSON-RPC request
+- Python auth/token-scope/RBAC gate
+- Rust MCP runtime
+- then one of:
+  - Rust handles it locally, for example `ping`
+  - Rust handles it directly with its own implementation, currently the
+    server-scoped `tools/list` direct-read path
+  - Rust forwards it to a narrow trusted Python internal route such as:
+    - `/_internal/mcp/rpc`
+    - `/_internal/mcp/tools/call`
+    - `/_internal/mcp/transport`
+
+So the honest boundary is:
+
+- yes, actual MCP JSON-RPC transport traffic is going through Rust
+- no, not all MCP business execution is Rust-owned yet
+- the remaining Python-owned pieces are mainly:
+  - auth/RBAC policy
+  - session manager internals
+  - most execution paths other than the current Rust-owned `tools/list` slice
+
 ## What Is Implemented
 
 ### Runtime crate
@@ -467,6 +576,10 @@ Implemented in this crate:
 
 - `GET /health`
 - `GET /healthz`
+- `GET /mcp`
+- `GET /mcp/`
+- `DELETE /mcp`
+- `DELETE /mcp/`
 - `POST /rpc`
 - `POST /rpc/`
 - `POST /mcp`
@@ -495,12 +608,15 @@ Implemented in this crate:
 Integrated in the main application:
 
 - Python mounts a hybrid MCP transport app
-- `POST /mcp` is proxied to the Rust runtime when enabled
-- non-`POST` MCP traffic still falls back to the Python transport
+- `GET /mcp`, `POST /mcp`, and `DELETE /mcp` are proxied to the Rust runtime
+  when enabled
 - `/servers/<id>/mcp` requests preserve semantics by carrying `server_id` across the Python -> Rust -> Python seam via `x-contextforge-server-id`
 - Python can connect to the managed Rust runtime over `EXPERIMENTAL_RUST_MCP_RUNTIME_UDS`
 - the managed Rust runtime can listen on `MCP_RUST_LISTEN_UDS`
 - Rust now forwards backend calls to `/_internal/mcp/rpc` instead of the public `/rpc` route
+- Rust now forwards transport `GET`/`DELETE` calls to
+  `/_internal/mcp/transport` instead of falling straight back to the public
+  Python mount
 - Rust can call `/_internal/mcp/tools/list/authz` to preserve Python auth/RBAC while keeping the server-scoped `tools/list` query in Rust
 - Rust can call `/_internal/mcp/tools/call` to preserve Python execution while bypassing the generic JSON-RPC backend switch for the hottest MCP method
 - Python forwards a trusted internal MCP auth blob via `x-contextforge-auth-context`
@@ -531,7 +647,7 @@ This is the cleanest proof that live requests are actually traversing Rust.
 
 ### Rust-owned today
 
-- outer HTTP MCP runtime shell for `POST /mcp`
+- outer HTTP MCP runtime shell for `GET /mcp`, `POST /mcp`, and `DELETE /mcp`
 - optional UDS listener for the managed sidecar
 - protocol-version compatibility checks
 - JSON-RPC envelope validation
@@ -540,6 +656,8 @@ This is the cleanest proof that live requests are actually traversing Rust.
 - server-scoped `tools/list` authz handoff + direct read-only Postgres query path
 - specialized backend dispatch for `tools/call`
 - backend proxying to Python `/_internal/mcp/rpc`
+- backend proxying to Python `/_internal/mcp/transport` for GET/DELETE session
+  manager behavior
 - runtime-level response header stamping
 
 ### Python-owned today
@@ -549,11 +667,12 @@ This is the cleanest proof that live requests are actually traversing Rust.
 - RBAC decision-making
 - creation of the forwarded internal auth context
 - business execution behind the internal MCP dispatcher
+- underlying `StreamableHTTPSessionManager`
 - session registry
 - session pool ownership
 - Redis-backed caches and eventing
-- SSE/resumable stream management
-- non-`POST` Streamable HTTP transport behavior
+- SSE/resumable stream management internals
+- session-affinity routing and ownership
 - upstream MCP federation/client logic
 
 ### Redis / cache boundary
@@ -588,7 +707,12 @@ Important current nuance for the hot path:
 
 This is not yet a full Rust rewrite of MCP in ContextForge.
 
-It is a transport-edge replacement for the `POST /mcp` JSON-RPC path, with Python still acting as the execution core behind a trusted internal MCP dispatcher.
+It is now a transport-edge replacement for the outer `GET /mcp`, `POST /mcp`,
+and `DELETE /mcp` path, with Python still acting as:
+
+- the session manager / resumable stream core
+- the policy and auth authority
+- most of the execution core behind trusted internal MCP routes
 
 That is intentional. It gives a low-risk seam that already works while keeping the next migration steps clear.
 
@@ -606,6 +730,8 @@ Validated:
 These currently cover:
 
 - `ping` handled locally
+- `GET /mcp` forwarding to the internal transport bridge
+- `DELETE /mcp` forwarding to the internal transport bridge
 - header propagation
 - runtime response header presence
 - unsupported protocol version rejection
@@ -634,6 +760,13 @@ Validated again after the specialized `tools/call` route and parity fix:
 
 - nonexistent-tool `tools/call` once again returns a JSON-RPC error instead of a `500`
 - full result remains `22 passed`
+
+Validated again on March 10, 2026 after the raw HTTP transport parity check was
+added:
+
+- raw `POST /mcp/` and `DELETE /mcp/` now have explicit E2E proof under the
+  Rust-enabled stack
+- full result is now `23 passed`
 
 ### Live compose validation
 
@@ -671,11 +804,12 @@ The major missing items are structural, not cosmetic.
 
 Not yet in Rust:
 
-- `GET /mcp` session-management behavior
-- `DELETE /mcp` session teardown behavior
-- resumable Streamable HTTP semantics
-- SSE event streaming orchestration
-- Python `StreamableHTTPSessionManager` replacement
+- direct Rust ownership of Streamable HTTP session lifecycle state
+- direct Rust ownership of resumable event-store semantics
+- direct Rust ownership of SSE event streaming orchestration
+- replacement of Python `StreamableHTTPSessionManager`
+- replacement of Python session-affinity and session-owner logic on the
+  transport path
 
 ### Core execution gaps
 
@@ -700,11 +834,20 @@ These are not accidental omissions. They are part of the current staged migratio
 
 ## Known Risks / Open Issues
 
-### 1. Rust is only on `POST /mcp`
+### 1. Rust fronts the MCP transport, but Python still owns session state
 
 This is the most important current limitation.
 
-If a flow depends on MCP `GET`/`DELETE` session-management behavior, it is still using Python transport code.
+External MCP clients now hit Rust for `GET /mcp`, `POST /mcp`, and
+`DELETE /mcp`, but the actual session manager and resumable transport state are
+still Python-owned behind the internal transport bridge.
+
+That means:
+
+- Rust currently owns the public transport edge
+- Python still owns the stateful transport internals
+- a fully replaceable Rust MCP transport still requires moving the underlying
+  session/event-store machinery out of Python
 
 ### 2. `/rpc` is still the real backend contract
 
@@ -806,33 +949,66 @@ But they do make debugging noisier than it should be.
 
 ## Recommended Next Steps
 
-### Phase 1: finish parity hardening
+### Phase 1: continue transport/session parity
 
 Immediate priorities:
 
-- finish `make test-ui-headless` validation against the Rust-enabled stack
-- add more explicit integration tests proving Rust is used for:
-  - `initialize`
-  - `tools/call`
-  - server-scoped `/servers/<id>/mcp`
-- add regression coverage for non-`POST` fallback behavior so the hybrid boundary stays intentional
-- keep validating load runs with an explicit server-scope sanity check before each run, so benchmark results are not polluted by accidental global discovery
+- keep the new Rust-fronted `GET`/`DELETE` transport boundary under broader
+  suite coverage
+- add explicit live validation for server-scoped `GET /servers/<id>/mcp` and
+  `DELETE /servers/<id>/mcp`
+- move the next transport internals behind the same Rust seam:
+  - session-lifecycle state ownership
+  - resumable event-store behavior
+  - multi-worker session-affinity / owner checks
+- keep the public mount shape stable while shrinking Python’s transport-specific
+  internals behind `/_internal/mcp/transport`
 
-### Phase 2: prioritize Rust-native `tools/call`
+### Phase 2: remove the remaining generic dispatcher coupling
 
-This is now the highest-impact performance step.
+The next architectural cleanup after transport parity is to stop treating
+generic Python JSON-RPC dispatch as the long-term internal contract.
+
+Recommended direction:
+
+1. Keep the existing dedicated internal routes as the baseline:
+   - `/_internal/mcp/transport`
+   - `/_internal/mcp/tools/list`
+   - `/_internal/mcp/tools/call`
+2. Add more narrow internal contracts instead of expanding `/_internal/mcp/rpc`.
+3. Move `initialize` off the generic dispatcher next.
+4. Keep Python authoritative for auth/RBAC while these seams are being split.
+
+### Phase 3: move the remaining read-only MCP discovery paths
+
+After the transport and dispatcher seams are cleaner, move the remaining
+read-only methods into Rust with direct Postgres reads:
+
+- `resources/list`
+- `prompts/list`
+- `resources/templates/list`
+- then `resources/read` and `prompts/get`
+
+### Phase 4: finish the `tools/call` migration
+
+The hottest path still deserves the most care.
 
 Recommended direction:
 
 1. Keep the current `backend-tools-call-direct` seam as the baseline.
-2. Add a narrower Python authz/metadata route for `tools/call`, returning:
-   - allow/deny
-   - resolved tool metadata
-   - resolved gateway / server target
-   - normalized auth/header context
-3. Let Rust perform the actual upstream MCP `call_tool` execution and stream the result back directly.
-4. Keep cancellation, metrics, and broader session ownership Python-owned at first if needed, but avoid making them the blocking path for the happy-case tool call.
-5. Only after the hot `tools/call` path is reduced should the next Rust DB work move on to `resources/*` and `prompts/*`.
+2. Keep the Python `tools/call` policy/resolve step narrow and explicit.
+3. Move more of session reuse and upstream call execution under Rust ownership.
+4. Keep cancellation, metrics, and broader session ownership Python-owned until
+   measurements prove they are the next limiter.
+
+### Phase 5: decide the long-term control-plane boundary
+
+At that point there are two viable end states:
+
+- Rust owns transport and MCP execution, while Python remains auth/RBAC and
+  policy authority
+- or Rust becomes a fully replaceable MCP subsystem and Python is reduced to a
+  separate control plane
 
 ## Performance Investigation Update
 
@@ -1187,13 +1363,13 @@ rust_mcp_runtime method=tools/call mode=backend-tools-call-direct
 
 ### 3. Remember the current boundary
 
-Only MCP `POST` traffic is on Rust today.
+Rust now fronts MCP `GET`, `POST`, and `DELETE` traffic at the public mount.
 
-These still remain on Python:
+These still remain Python-owned behind the internal transport seam:
 
-- MCP `GET`
-- MCP `DELETE`
-- session-management flows
+- session-management internals
+- resumable event-store behavior
+- session-affinity / session-owner logic
 
 ## Test Commands
 
@@ -1210,7 +1386,7 @@ uv run pytest -q tests/unit/mcpgateway/transports/test_rust_mcp_runtime_proxy.py
 
 ```bash
 uv run pytest -q \
-  tests/unit/mcpgateway/test_main_extended.py -k 'internal_mcp_rpc or rust_server_header or tools_list_server'
+  tests/unit/mcpgateway/test_main_extended.py -k 'InternalTrustedMcpTransportBridge or internal_mcp_rpc or rust_server_header or tools_list_server'
 ```
 
 ### End-to-end MCP CLI
@@ -1291,7 +1467,8 @@ Python integration:
 
 ## Bottom Line
 
-The Rust MCP runtime is already real enough to use as the live `POST /mcp` transport edge.
+The Rust MCP runtime is already real enough to use as the live public MCP
+transport edge for `GET /mcp`, `POST /mcp`, and `DELETE /mcp`.
 
 It now also owns the first real read-only MCP query in production shape: server-scoped `tools/list` with direct Postgres reads behind Python-owned auth/RBAC.
 
@@ -1299,9 +1476,11 @@ It is not yet the complete MCP implementation for ContextForge.
 
 The remaining work is mostly:
 
-- parity hardening across broader test suites, mainly UI coverage
+- moving the underlying session-manager and resumable transport internals out of Python
+- narrowing and replacing the remaining generic internal dispatcher routes
 - moving the remaining read-only discovery queries (`resources/list`, `prompts/list`, `resources/templates/list`) into Rust with direct Postgres reads
-- keeping Redis/session/cancellation Python-owned until the read path is solid
-- only then moving session orchestration and heavier execution logic like `tools/call`
+- deciding how much of session orchestration and `tools/call` ownership should ultimately live in Rust versus a Python control plane
 
-That is a credible migration path. The current implementation has moved from transport-edge infrastructure into the first real Rust-owned MCP core slice, but it is not yet the final Rust end state.
+That is a credible migration path. The current implementation has moved from a
+Rust `POST` accelerator into a Rust-fronted MCP transport with the first real
+Rust-owned MCP core slice, but it is not yet the final Rust end state.

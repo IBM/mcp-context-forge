@@ -1,8 +1,8 @@
 use axum::{
     Json, Router,
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, Uri},
     response::IntoResponse,
-    routing::post,
+    routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use contextforge_mcp_runtime::{AppState, build_router, config::RuntimeConfig};
@@ -162,6 +162,118 @@ async fn health_alias_is_available_for_gateway_style_probes() {
             .iter()
             .any(|value| value == "2025-03-26")
     );
+}
+
+#[tokio::test]
+async fn get_and_delete_mcp_routes_forward_to_internal_transport_bridge() {
+    let transport_calls = Arc::new(Mutex::new(Vec::<(String, Option<String>, Option<String>, Option<String>)>::new()));
+    let backend = {
+        let get_transport_calls = transport_calls.clone();
+        let delete_transport_calls = transport_calls.clone();
+        Router::new().route(
+            "/_internal/mcp/transport",
+            get(move |headers: HeaderMap, uri: Uri| {
+                let transport_calls = get_transport_calls.clone();
+                async move {
+                    transport_calls.lock().expect("lock").push((
+                        "GET".to_string(),
+                        headers
+                            .get("authorization")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        headers
+                            .get("mcp-session-id")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        uri.query().map(str::to_string),
+                    ));
+                    (
+                        StatusCode::OK,
+                        [( "content-type", HeaderValue::from_static("text/event-stream"))],
+                        "data: ping\n\n",
+                    )
+                }
+            })
+            .delete(move |headers: HeaderMap, uri: Uri| {
+                let transport_calls = delete_transport_calls.clone();
+                async move {
+                    transport_calls.lock().expect("lock").push((
+                        "DELETE".to_string(),
+                        headers
+                            .get("authorization")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        headers
+                            .get("mcp-session-id")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        uri.query().map(str::to_string),
+                    ));
+                    StatusCode::NO_CONTENT
+                }
+            }),
+        )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+    let client = reqwest::Client::new();
+
+    let get_response = client
+        .get(format!("{runtime_url}/mcp?session_id=session-42"))
+        .header("authorization", "Bearer test-token")
+        .header("mcp-session-id", "client-session-1")
+        .header("x-contextforge-server-id", "server-1")
+        .send()
+        .await
+        .expect("get response");
+
+    assert_eq!(get_response.status(), StatusCode::OK);
+    assert_eq!(
+        get_response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("text/event-stream")
+    );
+    assert_eq!(
+        get_response
+            .headers()
+            .get("x-contextforge-mcp-runtime")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
+    assert_eq!(get_response.text().await.expect("stream text"), "data: ping\n\n");
+
+    let delete_response = client
+        .delete(format!("{runtime_url}/mcp?session_id=session-42"))
+        .header("authorization", "Bearer test-token")
+        .header("mcp-session-id", "client-session-1")
+        .header("x-contextforge-server-id", "server-1")
+        .send()
+        .await
+        .expect("delete response");
+
+    assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        delete_response
+            .headers()
+            .get("x-contextforge-mcp-runtime")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
+
+    let calls = transport_calls.lock().expect("lock");
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0], ("GET".to_string(), Some("Bearer test-token".to_string()), Some("client-session-1".to_string()), Some("session_id=session-42".to_string())));
+    assert_eq!(calls[1], ("DELETE".to_string(), Some("Bearer test-token".to_string()), Some("client-session-1".to_string()), Some("session_id=session-42".to_string())));
 }
 
 #[tokio::test]

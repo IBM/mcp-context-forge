@@ -49,6 +49,7 @@ pub enum RuntimeError {
 #[derive(Debug, Clone)]
 pub struct AppState {
     backend_rpc_url: Arc<str>,
+    backend_transport_url: Arc<str>,
     backend_tools_list_url: Arc<str>,
     backend_tools_list_authz_url: Arc<str>,
     backend_tools_call_url: Arc<str>,
@@ -176,6 +177,9 @@ impl AppState {
 
         Ok(Self {
             backend_rpc_url: Arc::from(config.backend_rpc_url.clone()),
+            backend_transport_url: Arc::from(derive_backend_transport_url(
+                &config.backend_rpc_url,
+            )),
             backend_tools_list_url: Arc::from(derive_backend_tools_list_url(
                 &config.backend_rpc_url,
             )),
@@ -204,6 +208,10 @@ impl AppState {
 
     pub fn backend_rpc_url(&self) -> &str {
         &self.backend_rpc_url
+    }
+
+    pub fn backend_transport_url(&self) -> &str {
+        &self.backend_transport_url
     }
 
     pub fn backend_tools_list_url(&self) -> &str {
@@ -271,8 +279,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/rpc", post(rpc))
         .route("/rpc/", post(rpc))
-        .route("/mcp", post(rpc))
-        .route("/mcp/", post(rpc))
+        .route("/mcp", get(transport_get).delete(transport_delete).post(rpc))
+        .route("/mcp/", get(transport_get).delete(transport_delete).post(rpc))
         .with_state(state)
 }
 
@@ -308,6 +316,22 @@ async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
         supported_protocol_versions: state.supported_protocol_versions().to_vec(),
         server_name: state.server_name().to_string(),
     })
+}
+
+async fn transport_get(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+) -> Response {
+    forward_transport_request(&state, reqwest::Method::GET, headers, uri).await
+}
+
+async fn transport_delete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+) -> Response {
+    forward_transport_request(&state, reqwest::Method::DELETE, headers, uri).await
 }
 
 async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
@@ -393,6 +417,25 @@ fn derive_backend_tools_list_url(backend_rpc_url: &str) -> String {
     }
     format!(
         "{}/_internal/mcp/tools/list",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
+fn derive_backend_transport_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/transport");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/transport");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/transport");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/transport");
+    }
+    format!(
+        "{}/_internal/mcp/transport",
         backend_rpc_url.trim_end_matches('/')
     )
 }
@@ -649,6 +692,21 @@ async fn forward_to_backend(
     body: Bytes,
 ) -> Response {
     let backend_response = match send_to_backend(state, incoming_headers, body).await {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
+    response_from_backend(backend_response)
+}
+
+async fn forward_transport_request(
+    state: &AppState,
+    method: reqwest::Method,
+    incoming_headers: HeaderMap,
+    uri: axum::http::Uri,
+) -> Response {
+    let backend_response = match send_transport_to_backend(state, method, &incoming_headers, &uri).await
+    {
         Ok(response) => response,
         Err(response) => return response,
     };
@@ -931,6 +989,32 @@ async fn send_to_backend(
                         "message": "Backend MCP dispatch failed",
                         "data": err.to_string(),
                     }
+                }),
+            )
+        })
+}
+
+async fn send_transport_to_backend(
+    state: &AppState,
+    method: reqwest::Method,
+    incoming_headers: &HeaderMap,
+    uri: &axum::http::Uri,
+) -> Result<reqwest::Response, Response> {
+    let target_url = build_backend_transport_url(state.backend_transport_url(), uri);
+    state
+        .client
+        .request(method, target_url)
+        .headers(build_forwarded_headers(incoming_headers))
+        .send()
+        .await
+        .map_err(|err| {
+            error!("backend MCP transport dispatch failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "error": "Bad Gateway",
+                    "message": "Backend MCP transport dispatch failed",
+                    "data": err.to_string(),
                 }),
             )
         })
@@ -1490,6 +1574,13 @@ fn build_forwarded_headers(incoming_headers: &HeaderMap) -> reqwest::header::Hea
         HeaderValue::from_static(RUNTIME_NAME),
     );
     forwarded_headers
+}
+
+fn build_backend_transport_url(base_url: &str, uri: &axum::http::Uri) -> String {
+    match uri.query() {
+        Some(query) if !query.is_empty() => format!("{base_url}?{query}"),
+        _ => base_url.to_string(),
+    }
 }
 
 fn response_from_backend(backend_response: reqwest::Response) -> Response {
