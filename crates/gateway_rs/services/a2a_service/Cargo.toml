@@ -1,0 +1,14 @@
+[package]
+name = "a2a_service"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Placeholder A2A service crate for ContextForge gateway_rs"
+
+[lib]
+name = "a2a_service"
+path = "src/lib.rs"
+
+[dependencies]
