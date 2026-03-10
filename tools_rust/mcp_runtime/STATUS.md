@@ -4,6 +4,13 @@ Last updated: March 10, 2026
 
 Status focus in this update:
 
+- multi-server Locust MCP protocol benchmarking via `MCP_SERVER_IDS`
+- quieter benchmark runs via `LOCUST_LOG_LEVEL` and cleaner multiprocess summaries
+- additional scaling investigation with both `Fast Time Server` and `Fast Test Server`
+- confirmation that single-process Locust and `--processes=-1` are effectively equivalent at the current gateway knee
+- confirmation that the public gateway tier, not Redis or the upstream test servers, is still the main saturation point
+- confirmation that adding a second fast MCP server does not improve the current mixed-workload ceiling
+- refreshed best-case hot-path number: `1094.59 RPS` on `MCPToolCallerUser` against `fast_time`
 - runtime/process tuning knobs for the Rust-enabled compose stack
 - verified `>1000 RPS` on the rebuilt Rust-enabled mixed MCP benchmark
 - `MCP_RUST_LOG=warn` and `GUNICORN_WORKERS=32` as the first clearly effective mixed-workload tuning levers
@@ -22,6 +29,186 @@ Status focus in this update:
 - clean server-scoped `MCPToolCallerUser` benchmark results for the real hot path
 - direct Rust handling of upstream MCP SSE-framed responses for `initialize` and `tools/call`
 - verified `>1000 RPS` on the pinned tools-only benchmark after the SSE fix
+
+## Latest Load-Test Harness Update
+
+The most recent benchmarking pass was focused on separating:
+
+- real gateway/runtime limits
+- Locust load-generator limits
+- upstream MCP server limits
+
+The current conclusion is:
+
+- the Rust MCP hot path is already above `1000 RPS`
+- the mixed MCP benchmark is still below that in the current workload shape
+- adding a second fast MCP server did not materially improve the ceiling
+- Locust itself is not the limiter at the current peak
+
+### Load-test harness changes
+
+The MCP protocol Locust file now supports:
+
+- `MCP_SERVER_IDS` as a comma-separated list of virtual server IDs
+- per-server MCP discovery of tools/resources/prompts
+- per-user round-robin assignment to one discovered target server
+- `LOCUST_LOG_LEVEL` for quieter benchmark runs
+- cleaner `test_stop` handling so multiprocess/distributed runs do not spam
+  duplicate worker summaries
+
+These changes live in
+[`tests/loadtest/locustfile_mcp_protocol.py`](/home/cmihai/agents2/pr/mcp-context-forge/tests/loadtest/locustfile_mcp_protocol.py).
+
+Practical value:
+
+- the benchmark can now exercise multiple MCP virtual servers in one run
+- mixed-workload and tools-only comparisons are easier to reproduce
+- it is now straightforward to check whether extra upstream server capacity
+  actually helps the Rust MCP path
+
+### Additional benchmark targets used
+
+In addition to the earlier `Fast Time Server`
+(`9779b6698cbd4b4995ee04a4fab38737`), I created and exercised a second live
+virtual server backed by `fast_test`:
+
+- `Fast Test Server`: `3ac0d72e43f24b2bb3d084a11af0b712`
+
+Both targets were verified on the Rust path using:
+
+- `POST /servers/<id>/mcp`
+- response header `x-contextforge-mcp-runtime: rust`
+
+### Locust scaling result
+
+At the current gateway knee, Locust multiprocessing did not materially improve
+throughput.
+
+Same stack, same two-server mixed workload, `150` users:
+
+| Mode | RPS | Avg (ms) | p95 | Fails |
+|------|----:|---------:|----:|------:|
+| single-process Locust | 1014.48 | 54.41 | 94 | 0.00% |
+| `--processes=-1` | 1003.26 | 54.17 | 96 | 0.00% |
+
+Interpretation:
+
+- the load generator is not the first ceiling at the current `~1k RPS` range
+- more Locust workers are not the next meaningful optimization
+
+### Two-server mixed-workload sweep
+
+Mixed MCP benchmark using both:
+
+- `Fast Time Server`
+- `Fast Test Server`
+
+Results:
+
+| Users | RPS | Avg (ms) | p50 | p95 | p99 | Fails |
+|------:|----:|---------:|----:|----:|----:|------:|
+| 100 | 692.98 | 36.06 | 26 | 73 | 120 | 0.00% |
+| 120 | 923.84 | 35.53 | 25 | 72 | 150 | 0.00% |
+| 130 | 910.18 | 48.90 | 40 | 94 | 140 | 0.00% |
+| 140 | 853.95 | 71.49 | 65 | 130 | 220 | 0.00% |
+| 150 | 908.62 | 73.37 | 66 | 140 | 220 | 0.00% |
+| 175 | 980.83 | 88.66 | 80 | 140 | 240 | 0.00% |
+| 200 | 949.03 | 122.60 | 110 | 220 | 380 | 0.00% |
+| 250 | 876.71 | 207.96 | 190 | 370 | 560 | 0.00% |
+| 300 | 948.67 | 241.73 | 220 | 440 | 640 | 0.00% |
+
+Interpretation:
+
+- two-server mixed traffic did not improve on the earlier tuned single-server
+  mixed peak
+- the best observed two-server mixed point was `980.83 RPS` at `175` users
+- the extra fast-test target increases variety, but it does not reduce the main
+  gateway-side cost enough to raise the ceiling
+
+### Two-server tools-only sweep
+
+`MCPToolCallerUser`, both fast servers in rotation:
+
+| Users | RPS | Avg (ms) | p50 | p95 | p99 | Fails |
+|------:|----:|---------:|----:|----:|----:|------:|
+| 100 | 1084.28 | 41.17 | 31 | 79 | 95 | 0.00% |
+| 125 | 1018.10 | 74.76 | 67 | 120 | 150 | 0.00% |
+| 150 | 1019.89 | 101.19 | 95 | 150 | 180 | 0.00% |
+| 175 | 862.56 | 162.63 | 160 | 230 | 300 | 0.00% |
+| 200 | 1011.46 | 157.33 | 150 | 200 | 310 | 0.00% |
+| 250 | 1032.58 | 205.54 | 200 | 290 | 470 | 0.00% |
+| 300 | 885.79 | 273.44 | 280 | 390 | 590 | 0.00% |
+
+Interpretation:
+
+- the Rust hot path still exceeds `1000 RPS`
+- however, adding the second server does not improve the best tools-only
+  result beyond the single-server fast-time path
+
+### Single-server comparison
+
+`MCPToolCallerUser`, `100` users:
+
+| Target | RPS | Avg (ms) | p50 | p95 | p99 | Fails |
+|--------|----:|---------:|----:|----:|----:|------:|
+| `Fast Time Server` | 1074.09 | 42.61 | 41 | 58 | 88 | 0.00% |
+| `Fast Test Server` | 982.49 | 52.22 | 56 | 65 | 78 | 0.00% |
+| two-server rotation | 1084.28 | 41.17 | 31 | 79 | 95 | 0.00% |
+
+And a tighter `fast_time`-only tools sweep:
+
+| Users | RPS | Avg (ms) | p50 | p95 | p99 | Fails |
+|------:|----:|---------:|----:|----:|----:|------:|
+| 100 | 1094.59 | 40.57 | 39 | 56 | 77 | 0.00% |
+| 125 | 1065.65 | 69.40 | 68 | 85 | 110 | 0.00% |
+| 150 | 1041.42 | 98.57 | 96 | 120 | 150 | 0.00% |
+| 175 | 1028.12 | 127.56 | 120 | 150 | 210 | 0.00% |
+
+Current best-case statement:
+
+- the cleanest current `>1000 RPS` claim is the Rust `tools/call` hot path
+  against `Fast Time Server`
+- the strongest measured number in this pass is `1094.59 RPS` at `100` users
+  with `0.00%` failures
+
+### Infrastructure saturation snapshot
+
+Tools-only run at `1040.74 RPS` (`100` users, two-server setup):
+
+- `gateway-1`: `339.33%` CPU
+- `gateway-2`: `333.00%` CPU
+- `gateway-3`: `342.96%` CPU
+- `postgres`: `88.35%` CPU
+- `pgbouncer`: `56.34%` CPU
+- `redis`: `0.30%` CPU
+- `fast_test_server`: `10.89%` CPU
+- `fast_time_server`: `18.37%` CPU
+
+Mixed run at `833.76 RPS` (`175` users, two-server setup):
+
+- `gateway-1`: `375.09%` CPU
+- `gateway-2`: `354.11%` CPU
+- `gateway-3`: `340.31%` CPU
+- `postgres`: `104.48%` CPU
+- `pgbouncer`: `89.32%` CPU
+- `redis`: `1.01%` CPU
+
+Interpretation:
+
+- Redis is not the current steady-state bottleneck
+- the upstream fast MCP servers are not saturated
+- the main ceiling is still the public gateway tier plus DB mediation on the
+  mixed path
+
+### What this changes about next steps
+
+This benchmarking pass sharpened the roadmap:
+
+- do not spend time scaling Locust first
+- do not assume that adding more fast MCP upstreams will improve the current
+  ceiling
+- the next real mixed-workload gain still comes from shrinking the remaining
+  Python ingress/auth/RBAC/DB work, not from more benchmark harness changes
 
 ## Latest Tuning Results
 
