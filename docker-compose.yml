@@ -2392,9 +2392,9 @@ services:
 
 ###############################################################################
 #  OWASP ZAP DAST - Dynamic Application Security Testing daemon
-#  Usage: make testing-up
-#  ZAP API:    http://localhost:8090  (set ZAP_BASE_URL=http://localhost:8090)
-#  ZAP Web UI: http://localhost:8091  (browser-based scan control)
+#  Usage: make testing-zap-up
+#  ZAP API + UI: http://localhost:8090  (set ZAP_BASE_URL=http://localhost:8090)
+#  ZAP API UI:   http://localhost:8090/UI
 #
 #  Run OWASP A01 ZAP tests after the stack is up:
 #    ZAP_BASE_URL=http://localhost:8090 ZAP_API_KEY=changeme \
@@ -2409,8 +2409,7 @@ services:
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "8090:8090"    # ZAP API daemon (set ZAP_BASE_URL=http://localhost:8090)
-      - "8091:8091"    # ZAP web UI
+      - "8090:8090"    # ZAP API daemon + UI (http://localhost:8090/UI)
     command:
       - zap.sh
       - -daemon

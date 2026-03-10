@@ -1291,7 +1291,7 @@ testing-zap-up:                            ## Start OWASP ZAP DAST daemon (requi
 	@echo "✅ ZAP DAST daemon started!"
 	@echo ""
 	@echo "   OWASP ZAP API:    http://localhost:8090"
-	@echo "   OWASP ZAP Web UI: http://localhost:8091"
+	@echo "   OWASP ZAP API UI: http://localhost:8090/UI"
 	@echo ""
 	@echo "   Run security tests: make test-zap"
 
