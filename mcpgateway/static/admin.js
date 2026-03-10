@@ -861,7 +861,26 @@ function _navigateAdmin(fragment, searchParams) {
         adminIdx >= 0
             ? window.location.origin + currentPath.slice(0, adminIdx)
             : window.ROOT_PATH || window.location.origin;
-    const qs = searchParams ? searchParams.toString() : "";
+
+    // Preserve namespaced pagination state (*_page, *_size, *_inactive, *_q, *_tags)
+    // from the current URL so that editing an item on page 3 returns to page 3.
+    if (!searchParams) {
+        searchParams = new URLSearchParams();
+    }
+    const currentUrlParams = new URLSearchParams(window.location.search);
+    currentUrlParams.forEach((value, key) => {
+        const isPaginationParam =
+            key.endsWith("_page") ||
+            key.endsWith("_size") ||
+            (key.endsWith("_inactive") && key !== "include_inactive") ||
+            key.endsWith("_q") ||
+            key.endsWith("_tags");
+        if (isPaginationParam && !searchParams.has(key)) {
+            searchParams.set(key, value);
+        }
+    });
+
+    const qs = searchParams.toString();
     const target = `${base}/admin${qs ? `?${qs}` : ""}#${fragment}`;
 
     // When the target URL is identical to the current URL (same path, query,
