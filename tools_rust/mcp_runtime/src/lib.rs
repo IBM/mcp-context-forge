@@ -27,11 +27,27 @@ use tokio::sync::Mutex;
 use tokio_postgres::NoTls;
 use tracing::{error, info, warn};
 
+#[cfg(feature = "rmcp-upstream-client")]
+use rmcp::{
+    ServiceError as RmcpServiceError,
+    model::{
+        CallToolRequestParams as RmcpCallToolRequestParams,
+        ClientCapabilities as RmcpClientCapabilities, ClientInfo as RmcpClientInfo,
+        Implementation as RmcpImplementation, ProtocolVersion as RmcpProtocolVersion,
+    },
+    serve_client as rmcp_serve_client,
+    service::{RoleClient as RmcpRoleClient, RunningService as RmcpRunningService},
+    transport::{
+        StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
+    },
+};
+
 use crate::config::{ListenTarget, RuntimeConfig};
 
 const JSONRPC_VERSION: &str = "2.0";
 const RUNTIME_HEADER: &str = "x-contextforge-mcp-runtime";
 const RUNTIME_NAME: &str = "rust";
+const UPSTREAM_CLIENT_HEADER: &str = "x-contextforge-mcp-upstream-client";
 const MCP_PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
 
 #[derive(Debug, Error)]
@@ -75,8 +91,12 @@ pub struct AppState {
     server_name: Arc<str>,
     server_version: Arc<str>,
     instructions: Arc<str>,
+    #[cfg(feature = "rmcp-upstream-client")]
+    use_rmcp_upstream_client: bool,
     db_pool: Option<Pool>,
     upstream_tool_sessions: Arc<Mutex<HashMap<String, UpstreamToolSession>>>,
+    #[cfg(feature = "rmcp-upstream-client")]
+    rmcp_upstream_clients: Arc<Mutex<HashMap<String, CachedRmcpUpstreamClient>>>,
     resolved_tool_call_plans: Arc<Mutex<HashMap<String, CachedResolvedToolCallPlan>>>,
     tools_call_plan_ttl: Duration,
     upstream_session_ttl: Duration,
@@ -140,6 +160,13 @@ struct UpstreamToolSession {
     last_used: Instant,
 }
 
+#[cfg(feature = "rmcp-upstream-client")]
+#[derive(Debug, Clone)]
+struct CachedRmcpUpstreamClient {
+    client: Arc<RmcpRunningService<RmcpRoleClient, RmcpClientInfo>>,
+    last_used: Instant,
+}
+
 #[derive(Debug, Clone)]
 struct CachedResolvedToolCallPlan {
     plan: ResolvedMcpToolCallPlan,
@@ -179,13 +206,9 @@ impl AppState {
     pub fn new(config: &RuntimeConfig) -> Result<Self, RuntimeError> {
         let client = Client::builder()
             .connect_timeout(Duration::from_millis(config.client_connect_timeout_ms))
-            .pool_idle_timeout(Duration::from_secs(
-                config.client_pool_idle_timeout_seconds,
-            ))
+            .pool_idle_timeout(Duration::from_secs(config.client_pool_idle_timeout_seconds))
             .pool_max_idle_per_host(config.client_pool_max_idle_per_host)
-            .tcp_keepalive(Duration::from_secs(
-                config.client_tcp_keepalive_seconds,
-            ))
+            .tcp_keepalive(Duration::from_secs(config.client_tcp_keepalive_seconds))
             .timeout(Duration::from_millis(config.request_timeout_ms))
             .build()?;
         let db_pool = build_db_pool(config)?;
@@ -198,15 +221,13 @@ impl AppState {
             backend_notifications_initialized_url: Arc::from(
                 derive_backend_notifications_initialized_url(&config.backend_rpc_url),
             ),
-            backend_notifications_message_url: Arc::from(
-                derive_backend_notifications_message_url(&config.backend_rpc_url),
-            ),
+            backend_notifications_message_url: Arc::from(derive_backend_notifications_message_url(
+                &config.backend_rpc_url,
+            )),
             backend_notifications_cancelled_url: Arc::from(
                 derive_backend_notifications_cancelled_url(&config.backend_rpc_url),
             ),
-            backend_transport_url: Arc::from(derive_backend_transport_url(
-                &config.backend_rpc_url,
-            )),
+            backend_transport_url: Arc::from(derive_backend_transport_url(&config.backend_rpc_url)),
             backend_tools_list_url: Arc::from(derive_backend_tools_list_url(
                 &config.backend_rpc_url,
             )),
@@ -216,12 +237,12 @@ impl AppState {
             backend_resources_read_url: Arc::from(derive_backend_resources_read_url(
                 &config.backend_rpc_url,
             )),
-            backend_resources_subscribe_url: Arc::from(
-                derive_backend_resources_subscribe_url(&config.backend_rpc_url),
-            ),
-            backend_resources_unsubscribe_url: Arc::from(
-                derive_backend_resources_unsubscribe_url(&config.backend_rpc_url),
-            ),
+            backend_resources_subscribe_url: Arc::from(derive_backend_resources_subscribe_url(
+                &config.backend_rpc_url,
+            )),
+            backend_resources_unsubscribe_url: Arc::from(derive_backend_resources_unsubscribe_url(
+                &config.backend_rpc_url,
+            )),
             backend_resource_templates_list_url: Arc::from(
                 derive_backend_resource_templates_list_url(&config.backend_rpc_url),
             ),
@@ -234,15 +255,15 @@ impl AppState {
             backend_roots_list_url: Arc::from(derive_backend_roots_list_url(
                 &config.backend_rpc_url,
             )),
-            backend_completion_complete_url: Arc::from(
-                derive_backend_completion_complete_url(&config.backend_rpc_url),
-            ),
+            backend_completion_complete_url: Arc::from(derive_backend_completion_complete_url(
+                &config.backend_rpc_url,
+            )),
             backend_sampling_create_message_url: Arc::from(
                 derive_backend_sampling_create_message_url(&config.backend_rpc_url),
             ),
-            backend_logging_set_level_url: Arc::from(
-                derive_backend_logging_set_level_url(&config.backend_rpc_url),
-            ),
+            backend_logging_set_level_url: Arc::from(derive_backend_logging_set_level_url(
+                &config.backend_rpc_url,
+            )),
             backend_tools_list_authz_url: Arc::from(derive_backend_tools_list_authz_url(
                 &config.backend_rpc_url,
             )),
@@ -258,8 +279,12 @@ impl AppState {
             server_name: Arc::from(config.server_name.clone()),
             server_version: Arc::from(config.server_version.clone()),
             instructions: Arc::from(config.instructions.clone()),
+            #[cfg(feature = "rmcp-upstream-client")]
+            use_rmcp_upstream_client: config.use_rmcp_upstream_client,
             db_pool,
             upstream_tool_sessions: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(feature = "rmcp-upstream-client")]
+            rmcp_upstream_clients: Arc::new(Mutex::new(HashMap::new())),
             resolved_tool_call_plans: Arc::new(Mutex::new(HashMap::new())),
             tools_call_plan_ttl: Duration::from_secs(config.tools_call_plan_ttl_seconds),
             upstream_session_ttl: Duration::from_secs(config.upstream_session_ttl_seconds),
@@ -370,6 +395,17 @@ impl AppState {
         &self.instructions
     }
 
+    fn use_rmcp_upstream_client(&self) -> bool {
+        #[cfg(feature = "rmcp-upstream-client")]
+        {
+            self.use_rmcp_upstream_client
+        }
+        #[cfg(not(feature = "rmcp-upstream-client"))]
+        {
+            false
+        }
+    }
+
     pub fn db_pool(&self) -> Option<&Pool> {
         self.db_pool.as_ref()
     }
@@ -378,9 +414,12 @@ impl AppState {
         &self.upstream_tool_sessions
     }
 
-    fn resolved_tool_call_plans(
-        &self,
-    ) -> &Arc<Mutex<HashMap<String, CachedResolvedToolCallPlan>>> {
+    #[cfg(feature = "rmcp-upstream-client")]
+    fn rmcp_upstream_clients(&self) -> &Arc<Mutex<HashMap<String, CachedRmcpUpstreamClient>>> {
+        &self.rmcp_upstream_clients
+    }
+
+    fn resolved_tool_call_plans(&self) -> &Arc<Mutex<HashMap<String, CachedResolvedToolCallPlan>>> {
         &self.resolved_tool_call_plans
     }
 
@@ -399,8 +438,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/rpc", post(rpc))
         .route("/rpc/", post(rpc))
-        .route("/mcp", get(transport_get).delete(transport_delete).post(rpc))
-        .route("/mcp/", get(transport_get).delete(transport_delete).post(rpc))
+        .route(
+            "/mcp",
+            get(transport_get).delete(transport_delete).post(rpc),
+        )
+        .route(
+            "/mcp/",
+            get(transport_get).delete(transport_delete).post(rpc),
+        )
         .with_state(state)
 }
 
@@ -583,8 +628,13 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
     }
 
     if specialized_resource_templates_list {
-        return forward_resource_templates_list_to_backend(&state, headers, body, request.id.clone())
-            .await;
+        return forward_resource_templates_list_to_backend(
+            &state,
+            headers,
+            body,
+            request.id.clone(),
+        )
+        .await;
     }
 
     if specialized_prompts_list {
@@ -633,11 +683,7 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
         );
     }
 
-    if catch_all_sampling
-        || catch_all_completion
-        || catch_all_logging
-        || catch_all_elicitation
-    {
+    if catch_all_sampling || catch_all_completion || catch_all_logging || catch_all_elicitation {
         return json_response(
             StatusCode::OK,
             json!({
@@ -1337,11 +1383,11 @@ async fn forward_transport_request(
     incoming_headers: HeaderMap,
     uri: axum::http::Uri,
 ) -> Response {
-    let backend_response = match send_transport_to_backend(state, method, &incoming_headers, &uri).await
-    {
-        Ok(response) => response,
-        Err(response) => return response,
-    };
+    let backend_response =
+        match send_transport_to_backend(state, method, &incoming_headers, &uri).await {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
 
     response_from_backend(backend_response)
 }
@@ -1701,7 +1747,8 @@ async fn forward_resources_read_to_backend(
     body: Bytes,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response = match send_resources_read_to_backend(state, incoming_headers, body).await {
+    let backend_response = match send_resources_read_to_backend(state, incoming_headers, body).await
+    {
         Ok(response) => response,
         Err(response) => return response,
     };
@@ -1949,8 +1996,7 @@ async fn forward_prompts_list_to_backend(
     body: Bytes,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response = match send_prompts_list_to_backend(state, incoming_headers, body).await
-    {
+    let backend_response = match send_prompts_list_to_backend(state, incoming_headers, body).await {
         Ok(response) => response,
         Err(response) => return response,
     };
@@ -2594,8 +2640,7 @@ async fn handle_tools_call(
     body: Bytes,
     request: JsonRpcRequest,
 ) -> Response {
-    let plan = match resolve_tools_call(state, &incoming_headers, &request, body.clone()).await
-    {
+    let plan = match resolve_tools_call(state, &incoming_headers, &request, body.clone()).await {
         Ok(plan) => plan,
         Err(ResolveToolsCallError::JsonRpcError { payload, headers }) => {
             return response_from_json_with_headers(StatusCode::OK, payload, &headers);
@@ -2658,7 +2703,9 @@ async fn resolve_tools_call_plan_via_backend(
 
     if !status.is_success() {
         if let Ok(payload) = serde_json::from_slice::<Value>(&response_body) {
-            if payload.get("jsonrpc") == Some(&Value::String(JSONRPC_VERSION.to_string())) && payload.get("error").is_some() {
+            if payload.get("jsonrpc") == Some(&Value::String(JSONRPC_VERSION.to_string()))
+                && payload.get("error").is_some()
+            {
                 return Err(ResolveToolsCallError::JsonRpcError { payload, headers });
             }
         }
@@ -2669,7 +2716,9 @@ async fn resolve_tools_call_plan_via_backend(
 
     serde_json::from_slice::<ResolvedMcpToolCallPlan>(&response_body).map_err(|err| {
         if let Ok(payload) = serde_json::from_slice::<Value>(&response_body) {
-            if payload.get("jsonrpc") == Some(&Value::String(JSONRPC_VERSION.to_string())) && payload.get("error").is_some() {
+            if payload.get("jsonrpc") == Some(&Value::String(JSONRPC_VERSION.to_string()))
+                && payload.get("error").is_some()
+            {
                 return ResolveToolsCallError::JsonRpcError { payload, headers };
             }
         }
@@ -2683,8 +2732,8 @@ async fn resolve_tools_call(
     request: &JsonRpcRequest,
     body: Bytes,
 ) -> Result<ResolvedMcpToolCallPlan, ResolveToolsCallError> {
-    let cache_key =
-        build_tools_call_plan_cache_key(incoming_headers, request).map_err(ResolveToolsCallError::Fallback)?;
+    let cache_key = build_tools_call_plan_cache_key(incoming_headers, request)
+        .map_err(ResolveToolsCallError::Fallback)?;
     {
         let mut cached_plans = state.resolved_tool_call_plans().lock().await;
         if let Some(cached) = cached_plans.get_mut(&cache_key) {
@@ -2743,6 +2792,14 @@ async fn execute_tools_call_direct(
     request: &JsonRpcRequest,
     plan: &ResolvedMcpToolCallPlan,
 ) -> Result<Response, String> {
+    if state.use_rmcp_upstream_client() {
+        #[cfg(feature = "rmcp-upstream-client")]
+        match execute_tools_call_via_rmcp(state, incoming_headers, request, plan).await {
+            Ok(response) => return Ok(response),
+            Err(err) => warn!("Rust MCP rmcp tools/call fallback: {err}"),
+        }
+    }
+
     let server_url = plan
         .server_url
         .as_deref()
@@ -2785,7 +2842,11 @@ async fn execute_tools_call_direct(
 
     if !tool_response.status().is_success() {
         let session_key = build_upstream_session_key(downstream_session_id.as_deref(), plan)?;
-        state.upstream_tool_sessions().lock().await.remove(&session_key);
+        state
+            .upstream_tool_sessions()
+            .lock()
+            .await
+            .remove(&session_key);
         let refreshed_session_id = ensure_upstream_session(
             state,
             plan,
@@ -2820,6 +2881,69 @@ async fn execute_tools_call_direct(
                 .insert(HeaderName::from_static("mcp-session-id"), value);
         }
     }
+    response.headers_mut().insert(
+        HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
+        HeaderValue::from_static("native"),
+    );
+    Ok(response)
+}
+
+#[cfg(feature = "rmcp-upstream-client")]
+async fn execute_tools_call_via_rmcp(
+    state: &AppState,
+    incoming_headers: &HeaderMap,
+    request: &JsonRpcRequest,
+    plan: &ResolvedMcpToolCallPlan,
+) -> Result<Response, String> {
+    let remote_tool_name = plan
+        .remote_tool_name
+        .as_deref()
+        .ok_or_else(|| "resolved tools/call plan missing remote_tool_name".to_string())?;
+    let protocol_version = incoming_headers
+        .get(MCP_PROTOCOL_VERSION_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or(state.protocol_version())
+        .to_string();
+    let downstream_session_id = incoming_headers
+        .get("mcp-session-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let session_key = build_upstream_session_key(downstream_session_id.as_deref(), plan)?;
+
+    let rmcp_client =
+        get_or_create_rmcp_upstream_client(state, plan, &session_key, &protocol_version).await?;
+
+    let response = match invoke_tools_call_via_rmcp(rmcp_client.as_ref(), request, remote_tool_name)
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            state
+                .rmcp_upstream_clients()
+                .lock()
+                .await
+                .remove(&session_key);
+            let retried_client =
+                get_or_create_rmcp_upstream_client(state, plan, &session_key, &protocol_version)
+                    .await?;
+            invoke_tools_call_via_rmcp(retried_client.as_ref(), request, remote_tool_name)
+                .await
+                .map_err(|retry_err| format!("rmcp retry failed after {err}: {retry_err}"))?
+        }
+    };
+
+    let mut response = response;
+    if let Some(session_id) = downstream_session_id {
+        if let Ok(value) = HeaderValue::from_str(&session_id) {
+            response
+                .headers_mut()
+                .insert(HeaderName::from_static("mcp-session-id"), value);
+        }
+    }
+    response.headers_mut().insert(
+        HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
+        HeaderValue::from_static("rmcp"),
+    );
     Ok(response)
 }
 
@@ -2839,7 +2963,8 @@ async fn ensure_upstream_session(
         }
     }
 
-    let upstream_session_id = initialize_upstream_session(state, plan, protocol_version, timeout_ms).await?;
+    let upstream_session_id =
+        initialize_upstream_session(state, plan, protocol_version, timeout_ms).await?;
     sessions.insert(
         session_key,
         UpstreamToolSession {
@@ -2884,7 +3009,10 @@ async fn initialize_upstream_session(
         .map_err(|err| format!("upstream initialize failed: {err}"))?;
 
     if !response.status().is_success() {
-        return Err(format!("upstream initialize returned status {}", response.status()));
+        return Err(format!(
+            "upstream initialize returned status {}",
+            response.status()
+        ));
     }
 
     let upstream_session_id = response
@@ -2900,8 +3028,9 @@ async fn initialize_upstream_session(
     }
 
     if let Some(session_id) = upstream_session_id.as_deref() {
-        let _ = send_initialized_notification(state, server_url, plan, protocol_version, session_id)
-            .await;
+        let _ =
+            send_initialized_notification(state, server_url, plan, protocol_version, session_id)
+                .await;
     }
 
     Ok(upstream_session_id)
@@ -2944,7 +3073,10 @@ async fn send_direct_tools_call(
     let params_object = params
         .as_object_mut()
         .ok_or_else(|| "tools/call params must be an object".to_string())?;
-    params_object.insert("name".to_string(), Value::String(remote_tool_name.to_string()));
+    params_object.insert(
+        "name".to_string(),
+        Value::String(remote_tool_name.to_string()),
+    );
 
     state
         .client
@@ -3000,6 +3132,140 @@ fn build_upstream_headers(
     Ok(headers)
 }
 
+#[cfg(feature = "rmcp-upstream-client")]
+async fn get_or_create_rmcp_upstream_client(
+    state: &AppState,
+    plan: &ResolvedMcpToolCallPlan,
+    session_key: &str,
+    protocol_version: &str,
+) -> Result<Arc<RmcpRunningService<RmcpRoleClient, RmcpClientInfo>>, String> {
+    {
+        let mut clients = state.rmcp_upstream_clients().lock().await;
+        if let Some(existing) = clients.get_mut(session_key) {
+            if existing.last_used.elapsed() < state.upstream_session_ttl()
+                && !existing.client.is_closed()
+            {
+                existing.last_used = Instant::now();
+                return Ok(existing.client.clone());
+            }
+            clients.remove(session_key);
+        }
+    }
+
+    let transport = StreamableHttpClientTransport::from_config(build_rmcp_transport_config(
+        plan,
+        protocol_version,
+    )?);
+    let client_info = build_rmcp_client_info(state, protocol_version)?;
+    let client = Arc::new(
+        rmcp_serve_client(client_info, transport)
+            .await
+            .map_err(|err| format!("rmcp upstream client initialize failed: {err}"))?,
+    );
+
+    state.rmcp_upstream_clients().lock().await.insert(
+        session_key.to_string(),
+        CachedRmcpUpstreamClient {
+            client: client.clone(),
+            last_used: Instant::now(),
+        },
+    );
+    Ok(client)
+}
+
+#[cfg(feature = "rmcp-upstream-client")]
+fn build_rmcp_transport_config(
+    plan: &ResolvedMcpToolCallPlan,
+    protocol_version: &str,
+) -> Result<StreamableHttpClientTransportConfig, String> {
+    let server_url = plan
+        .server_url
+        .as_deref()
+        .ok_or_else(|| "resolved tools/call plan missing server_url".to_string())?;
+    let mut custom_headers = HashMap::new();
+    custom_headers.insert(
+        HeaderName::from_static(MCP_PROTOCOL_VERSION_HEADER),
+        HeaderValue::from_str(protocol_version)
+            .map_err(|err| format!("invalid protocol version header: {err}"))?,
+    );
+
+    if let Some(header_values) = plan.headers.as_ref() {
+        for (name, value) in header_values {
+            let header_name = HeaderName::from_str(name)
+                .map_err(|err| format!("invalid upstream header name '{name}': {err}"))?;
+            let header_value = HeaderValue::from_str(value)
+                .map_err(|err| format!("invalid upstream header value for '{name}': {err}"))?;
+            custom_headers.insert(header_name, header_value);
+        }
+    }
+
+    Ok(StreamableHttpClientTransportConfig::with_uri(server_url).custom_headers(custom_headers))
+}
+
+#[cfg(feature = "rmcp-upstream-client")]
+fn build_rmcp_client_info(
+    state: &AppState,
+    protocol_version: &str,
+) -> Result<RmcpClientInfo, String> {
+    let protocol_version =
+        serde_json::from_value::<RmcpProtocolVersion>(Value::String(protocol_version.to_string()))
+            .map_err(|err| format!("invalid rmcp protocol version '{protocol_version}': {err}"))?;
+
+    Ok(RmcpClientInfo::new(
+        RmcpClientCapabilities::default(),
+        RmcpImplementation::new(
+            "contextforge-rust-runtime",
+            state.server_version().to_string(),
+        ),
+    )
+    .with_protocol_version(protocol_version))
+}
+
+#[cfg(feature = "rmcp-upstream-client")]
+async fn invoke_tools_call_via_rmcp(
+    client: &RmcpRunningService<RmcpRoleClient, RmcpClientInfo>,
+    request: &JsonRpcRequest,
+    remote_tool_name: &str,
+) -> Result<Response, String> {
+    let mut params = request.params.clone();
+    let params_object = params
+        .as_object_mut()
+        .ok_or_else(|| "tools/call params must be an object".to_string())?;
+    params_object.insert(
+        "name".to_string(),
+        Value::String(remote_tool_name.to_string()),
+    );
+
+    let params = serde_json::from_value::<RmcpCallToolRequestParams>(params)
+        .map_err(|err| format!("rmcp tools/call params decode failed: {err}"))?;
+    let response_id = request
+        .id
+        .clone()
+        .unwrap_or(Value::String("__contextforge_tools_call__".to_string()));
+
+    match client.peer().call_tool(params).await {
+        Ok(result) => Ok(json_response(
+            StatusCode::OK,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": response_id,
+                "result": serde_json::to_value(result)
+                    .map_err(|err| format!("rmcp tools/call result encode failed: {err}"))?,
+            }),
+        )),
+        Err(RmcpServiceError::McpError(error)) => Ok(json_response(
+            StatusCode::OK,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": response_id,
+                "error": serde_json::to_value(error)
+                    .map_err(|err| format!("rmcp tools/call error encode failed: {err}"))?,
+            }),
+        )),
+        Err(err) => Err(format!("rmcp direct tools/call failed: {err}")),
+    }
+}
+
 async fn decode_upstream_json_payload(response: reqwest::Response) -> Result<Value, String> {
     let content_type = response
         .headers()
@@ -3020,7 +3286,8 @@ fn decode_upstream_json_payload_bytes(body: &[u8], content_type: &str) -> Result
         let text = str::from_utf8(body).map_err(|err| format!("invalid utf-8 SSE body: {err}"))?;
         let data = extract_first_sse_data_payload(text)
             .ok_or_else(|| "missing SSE data payload".to_string())?;
-        return serde_json::from_str(&data).map_err(|err| format!("invalid SSE JSON payload: {err}"));
+        return serde_json::from_str(&data)
+            .map_err(|err| format!("invalid SSE JSON payload: {err}"));
     }
 
     serde_json::from_slice(body).map_err(|err| format!("invalid JSON payload: {err}"))
