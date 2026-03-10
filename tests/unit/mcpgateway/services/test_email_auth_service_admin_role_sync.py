@@ -129,7 +129,7 @@ async def test_update_user_revoke_admin_role(mock_db):
                 mock_role_service_cls.return_value = mock_role_service
 
                 # Update user to non-admin
-                updated_user = await service.update_user(email="test@example.com", is_admin=False)
+                updated_user = await service.update_user(email="test@example.com", is_admin=False, requesting_user_email="admin@example.com")
 
                 # Verify user was demoted
                 assert updated_user.is_admin is False
@@ -138,7 +138,7 @@ async def test_update_user_revoke_admin_role(mock_db):
                 mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None)
 
                 # Verify platform_viewer was assigned
-                mock_role_service.assign_role_to_user.assert_called_once_with(user_email="test@example.com", role_id="viewer-role-456", scope="global", scope_id=None, granted_by="test@example.com")
+                mock_role_service.assign_role_to_user.assert_called_once_with(user_email="test@example.com", role_id="viewer-role-456", scope="global", scope_id=None, granted_by="admin@example.com")
 
 
 @pytest.mark.asyncio
@@ -253,7 +253,7 @@ async def test_update_user_demote_admin_user_role_not_found(mock_db):
                 mock_role_service_cls.return_value = mock_role_service
 
                 # Update user to non-admin (demote)
-                updated_user = await service.update_user(email="test@example.com", is_admin=False)
+                updated_user = await service.update_user(email="test@example.com", is_admin=False, requesting_user_email="admin@example.com")
 
                 # Verify user was demoted
                 assert updated_user.is_admin is False

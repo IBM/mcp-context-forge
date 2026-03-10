@@ -1558,8 +1558,12 @@ class EmailAuthService:
             if user.is_admin and user.is_active:
                 would_lose_admin = (is_admin is not None and not is_admin) or (is_active is not None and not is_active)
                 if would_lose_admin:
+                    # Require requesting_user_email for admin demotion/deactivation
+                    if not requesting_user_email:
+                        raise ValueError("requesting_user_email is required for update_user to enforce admin protection")
+
                     # Check if this is self-demotion
-                    is_self_demotion = requesting_user_email and requesting_user_email.lower().strip() == email.lower().strip()
+                    is_self_demotion = requesting_user_email.lower().strip() == email.lower().strip()
 
                     # Block self-demotion
                     if is_self_demotion:
@@ -1596,7 +1600,7 @@ class EmailAuthService:
                             if admin_role:
                                 existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
                                 if not existing or not existing.is_active:
-                                    await self.role_service.assign_role_to_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None, granted_by=email)
+                                    await self.role_service.assign_role_to_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None, granted_by=requesting_user_email or email)
                                     logger.info(f"Assigned {admin_role_name} role to {SecurityValidator.sanitize_log_message(email)}")
                             else:
                                 logger.warning(f"{admin_role_name} role not found, cannot assign to {SecurityValidator.sanitize_log_message(email)}")
@@ -1615,7 +1619,7 @@ class EmailAuthService:
                             if user_role:
                                 existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
                                 if not existing or not existing.is_active:
-                                    await self.role_service.assign_role_to_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None, granted_by=email)
+                                    await self.role_service.assign_role_to_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None, granted_by=requesting_user_email or email)
                                     logger.info(f"Assigned {SecurityValidator.sanitize_log_message(user_role_name)} role to {SecurityValidator.sanitize_log_message(email)}")
                             else:
                                 logger.warning(f"{SecurityValidator.sanitize_log_message(user_role_name)} role not found, cannot assign to {SecurityValidator.sanitize_log_message(email)}")

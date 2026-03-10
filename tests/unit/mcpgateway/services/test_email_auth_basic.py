@@ -2385,7 +2385,7 @@ class TestEmailAuthServiceUserUpdates:
 
         with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=True)):
             with pytest.raises(ValueError, match="last remaining active admin"):
-                await service.update_user(email="admin@example.com", is_admin=False)
+                await service.update_user(email="admin@example.com", is_admin=False, requesting_user_email="another-admin@example.com")
 
 
     @pytest.mark.asyncio
@@ -2460,7 +2460,7 @@ class TestEmailAuthServiceUserUpdates:
                     role_id="user_role_id",
                     scope="global",
                     scope_id=None,
-                    granted_by="admin-b@example.com"
+                    granted_by="admin-a@example.com"
                 )
 
 
@@ -3118,4 +3118,4 @@ class TestEmailAuthServiceAdminCounting:
                     mock_role_service_instance.get_role_by_name.assert_any_call("platform_admin", "global")
                     mock_role_service_instance.get_role_by_name.assert_any_call("user", "global")
                     mock_role_service_instance.revoke_role_from_user.assert_called_once_with(user_email="admin@example.com", role_id="admin_role_id", scope="global", scope_id=None)
-                    mock_role_service_instance.assign_role_to_user.assert_called_once_with(user_email="admin@example.com", role_id="user_role_id", scope="global", scope_id=None, granted_by="admin@example.com")
+                    mock_role_service_instance.assign_role_to_user.assert_called_once_with(user_email="admin@example.com", role_id="user_role_id", scope="global", scope_id=None, granted_by="superadmin@example.com")
