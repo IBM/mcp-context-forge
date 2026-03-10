@@ -6320,6 +6320,18 @@ async function editGateway(gatewayId) {
                             delete authPasswordField.dataset.realValue;
                         }
                         authPasswordField.value = MASKED_AUTH_VALUE;
+                        authPasswordField.type = "password";
+                        const passwordShowBtn = authPasswordField
+                            .closest(".relative")
+                            ?.querySelector("button");
+                        if (passwordShowBtn) {
+                            passwordShowBtn.textContent = "Show";
+                            passwordShowBtn.disabled = false;
+                            passwordShowBtn.classList.remove(
+                                "cursor-not-allowed",
+                                "opacity-50",
+                            );
+                        }
                     }
                 }
                 break;
@@ -6336,6 +6348,18 @@ async function editGateway(gatewayId) {
                             delete authTokenField.dataset.realValue;
                         }
                         authTokenField.value = MASKED_AUTH_VALUE;
+                        authTokenField.type = "password";
+                        const tokenShowBtn = authTokenField
+                            .closest(".relative")
+                            ?.querySelector("button");
+                        if (tokenShowBtn) {
+                            tokenShowBtn.textContent = "Show";
+                            tokenShowBtn.disabled = false;
+                            tokenShowBtn.classList.remove(
+                                "cursor-not-allowed",
+                                "opacity-50",
+                            );
+                        }
                     }
                 }
                 break;
