@@ -49,6 +49,7 @@ pub enum RuntimeError {
 #[derive(Debug, Clone)]
 pub struct AppState {
     backend_rpc_url: Arc<str>,
+    backend_initialize_url: Arc<str>,
     backend_transport_url: Arc<str>,
     backend_tools_list_url: Arc<str>,
     backend_tools_list_authz_url: Arc<str>,
@@ -177,6 +178,9 @@ impl AppState {
 
         Ok(Self {
             backend_rpc_url: Arc::from(config.backend_rpc_url.clone()),
+            backend_initialize_url: Arc::from(derive_backend_initialize_url(
+                &config.backend_rpc_url,
+            )),
             backend_transport_url: Arc::from(derive_backend_transport_url(
                 &config.backend_rpc_url,
             )),
@@ -208,6 +212,10 @@ impl AppState {
 
     pub fn backend_rpc_url(&self) -> &str {
         &self.backend_rpc_url
+    }
+
+    pub fn backend_initialize_url(&self) -> &str {
+        &self.backend_initialize_url
     }
 
     pub fn backend_transport_url(&self) -> &str {
@@ -347,12 +355,15 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
     let server_scoped_tools_list =
         request.method == "tools/list" && is_server_scoped_tools_list(&headers);
     let rust_db_direct_tools_list = server_scoped_tools_list && state.db_pool().is_some();
+    let specialized_initialize = request.method == "initialize";
     let specialized_tools_call = request.method == "tools/call";
 
     let mode = if request.is_notification() {
         "notification-forward"
     } else if request.method == "ping" {
         "local"
+    } else if specialized_initialize {
+        "backend-initialize-direct"
     } else if specialized_tools_call {
         "backend-tools-call-direct"
     } else if rust_db_direct_tools_list {
@@ -387,6 +398,10 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
         }
     }
 
+    if specialized_initialize {
+        return forward_initialize_to_backend(&state, headers, body).await;
+    }
+
     if rust_db_direct_tools_list {
         return direct_server_tools_list(&state, headers, request.id.clone()).await;
     }
@@ -417,6 +432,25 @@ fn derive_backend_tools_list_url(backend_rpc_url: &str) -> String {
     }
     format!(
         "{}/_internal/mcp/tools/list",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
+fn derive_backend_initialize_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/initialize");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/initialize");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/initialize");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/initialize");
+    }
+    format!(
+        "{}/_internal/mcp/initialize",
         backend_rpc_url.trim_end_matches('/')
     )
 }
@@ -691,12 +725,71 @@ async fn forward_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let backend_response = match send_to_backend(state, incoming_headers, body).await {
+    let backend_response =
+        match send_to_backend_url(state, state.backend_rpc_url(), incoming_headers, body).await {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
+
+    response_from_backend(backend_response)
+}
+
+async fn forward_initialize_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let backend_response = match send_to_backend_url(
+        state,
+        state.backend_initialize_url(),
+        incoming_headers,
+        body,
+    )
+    .await
+    {
         Ok(response) => response,
         Err(response) => return response,
     };
 
     response_from_backend(backend_response)
+}
+
+async fn send_to_backend(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+) -> Result<reqwest::Response, Response> {
+    send_to_backend_url(state, state.backend_rpc_url(), incoming_headers, body).await
+}
+
+async fn send_to_backend_url(
+    state: &AppState,
+    backend_url: &str,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+) -> Result<reqwest::Response, Response> {
+    state
+        .client
+        .post(backend_url)
+        .headers(build_forwarded_headers(&incoming_headers))
+        .body(body)
+        .send()
+        .await
+        .map_err(|err| {
+            error!("backend MCP dispatch failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": "Backend MCP dispatch failed",
+                        "data": err.to_string(),
+                    }
+                }),
+            )
+        })
 }
 
 async fn forward_transport_request(
@@ -963,35 +1056,6 @@ async fn forward_notification_to_backend(
     }
 
     response_from_backend(backend_response)
-}
-
-async fn send_to_backend(
-    state: &AppState,
-    incoming_headers: HeaderMap,
-    body: Bytes,
-) -> Result<reqwest::Response, Response> {
-    state
-        .client
-        .post(state.backend_rpc_url())
-        .headers(build_forwarded_headers(&incoming_headers))
-        .body(body)
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": Value::Null,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP dispatch failed",
-                        "data": err.to_string(),
-                    }
-                }),
-            )
-        })
 }
 
 async fn send_transport_to_backend(
