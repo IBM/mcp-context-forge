@@ -27,6 +27,7 @@
   baseUrl: '',
 
   init() {
+    this._rootEl = $el;
     this.baseUrl = $el.dataset.baseUrl || '';
     if (!this.tableName) return;
     const urlParams = new URLSearchParams(window.location.search);
@@ -100,7 +101,7 @@
 
     // Preserve extra server-side query params (team_id, gateway_id, q, tags, etc.)
     // Stored in a data attribute to avoid double-quote conflicts inside x-data.
-    const extraParams = JSON.parse(this.$el.dataset.extraParams || '{}');
+    const extraParams = JSON.parse(this._rootEl.dataset.extraParams || '{}');
     Object.entries(extraParams).forEach(([k, v]) => {
       if (k !== 'include_inactive' && v !== null && v !== undefined) {
         url.searchParams.set(k, String(v));
