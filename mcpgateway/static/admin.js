@@ -12270,7 +12270,11 @@ async function testTool(toolId) {
                     // Input field with validation (with multiline support)
                     let fieldInput;
                     const isTextType = prop.type === "text";
+                    const isObjectType = prop.type === "object";
                     if (isTextType) {
+                        fieldInput = document.createElement("textarea");
+                        fieldInput.rows = 4;
+                    } else if (isObjectType) {
                         fieldInput = document.createElement("textarea");
                         fieldInput.rows = 4;
                     } else {
@@ -12300,6 +12304,11 @@ async function testTool(toolId) {
                             fieldInput.checked = prop.default === true;
                         } else if (isTextType) {
                             fieldInput.value = prop.default;
+                        } else if (isObjectType) {
+                            // For object types, stringify the default value
+                            fieldInput.value = typeof prop.default === "object"
+                                ? JSON.stringify(prop.default, null, 2)
+                                : prop.default;
                         } else {
                             fieldInput.value = prop.default;
                         }
@@ -14309,6 +14318,17 @@ async function runToolTest() {
                     } else if (prop.enum) {
                         if (prop.enum.includes(value)) {
                             params[keyValidation.value] = value;
+                        }
+                    } else if (prop.type === "object") {
+                        try {
+                            const parsed = JSON.parse(value);
+                            if (typeof parsed !== "object" || Array.isArray(parsed)) {
+                                throw new Error("Value must be an object");
+                            }
+                            params[keyValidation.value] = parsed;
+                            } catch (error) {
+                                showErrorMessage(`Invalid JSON object for ${key}: ${error.message}`);
+                                throw error;
                         }
                     } else {
                         params[keyValidation.value] = value;
