@@ -1231,6 +1231,15 @@ class Settings(BaseSettings):
     # Enable span events
     observability_events_enabled: bool = Field(default=True, description="Enable event logging within spans")
 
+    # Store safe JWT claims in trace/span attributes (sub, iss, aud, iat, exp, nbf, jti).
+    # When enabled (OBSERVABILITY_STORE_TOKEN_CLAIMS=true), claims are read from the Bearer token
+    # or request.state.token_claims and stored in observability_traces.attributes and
+    # observability_spans.attributes under keys token.sub, token.iss, etc. Disabled by default.
+    observability_store_token_claims: bool = Field(
+        default=False,
+        description="Store safe JWT claims in trace and span attributes for observability (e.g. user id as token.sub)",
+    )
+
     # Correlation ID Settings
     correlation_id_enabled: bool = Field(default=True, description="Enable automatic correlation ID tracking for requests")
     correlation_id_header: str = Field(default="X-Correlation-ID", description="HTTP header name for correlation ID")

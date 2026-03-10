@@ -56,6 +56,10 @@ _TRACEPARENT_RE: Pattern[str] = re.compile(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9
 # variable must also set the framework copy to keep plugin tracing in sync.
 current_trace_id: ContextVar[Optional[str]] = ContextVar("current_trace_id", default=None)
 
+# Context variable for token claims (sub, iss, aud, iat, exp, etc.) to attach to spans
+# when observability_store_token_claims is enabled. Set by ObservabilityMiddleware.
+current_token_claims: ContextVar[Optional[Dict[str, Any]]] = ContextVar("current_token_claims", default=None)
+
 
 def utc_now() -> datetime:
     """Return current UTC time with timezone.
@@ -221,6 +225,7 @@ class ObservabilityService:
         ip_address: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
         resource_attributes: Optional[Dict[str, Any]] = None,
+        token_claims: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Start a new trace.
 
@@ -236,6 +241,7 @@ class ObservabilityService:
             ip_address: Client IP address
             attributes: Additional trace attributes
             resource_attributes: Resource attributes (service name, version, etc.)
+            token_claims: Safe JWT claims (sub, iss, aud, iat, exp, nbf, jti) to store in trace attributes.
 
         Returns:
             Trace ID (UUID string or W3C format)
@@ -254,9 +260,14 @@ class ObservabilityService:
             trace_id = str(uuid.uuid4())
 
         # Add parent context to attributes if provided
-        attrs = attributes or {}
+        attrs = dict(attributes or {})
         if parent_span_id:
             attrs["parent_span_id"] = parent_span_id
+        # Store safe token claims in trace attributes (token.sub, token.iss, etc.)
+        if token_claims:
+            for key, value in token_claims.items():
+                if value is not None:
+                    attrs[f"token.{key}"] = value
 
         trace = ObservabilityTrace(
             trace_id=trace_id,
@@ -389,6 +400,14 @@ class ObservabilityService:
             ...     resource_name="get_weather"
             ... )
         """
+        span_attrs = dict(attributes or {})
+        # Merge token claims from context so tool/resource spans are linked to the user
+        token_claims = current_token_claims.get()
+        if token_claims:
+            for key, value in token_claims.items():
+                if value is not None:
+                    span_attrs[f"token.{key}"] = value
+
         span_id = str(uuid.uuid4())
         span = ObservabilitySpan(
             span_id=span_id,
@@ -401,7 +420,7 @@ class ObservabilityService:
             resource_name=resource_name,
             resource_type=resource_type,
             resource_id=resource_id,
-            attributes=attributes or {},
+            attributes=span_attrs,
             created_at=utc_now(),
         )
         db.add(span)
