@@ -5502,6 +5502,22 @@ compose-scale:
 		echo "Usage: make compose-scale SERVICE=worker SCALE=3"; exit 1; }
 	$(COMPOSE) up -d --scale $(SERVICE)=$(SCALE)
 
+
+# help: compose-cache-clear  - Clear nginx cache (requires running nginx container)
+.PHONY: compose-cache-clear
+compose-cache-clear:						## 🧹 Clear nginx cache
+	@echo "🧹 Clearing nginx cache..."
+	@if docker ps --format '{{.Names}}' | grep -q nginx; then \
+		echo "   Clearing cache files..."; \
+		$(COMPOSE) exec nginx sh -c "rm -rf /var/cache/nginx/*"; \
+		echo "   Reloading nginx..."; \
+		$(COMPOSE) exec nginx nginx -s reload; \
+	else \
+		echo "   ⚠️  Nginx is not running. Cache is ephemeral and will be fresh on next start."; \
+		echo "   Start the stack with: make compose-up"; \
+	fi
+	@echo "✅ Done"
+
 # Compose with validation and health check
 .PHONY: compose-up-safe
 compose-up-safe: compose-validate compose-up
