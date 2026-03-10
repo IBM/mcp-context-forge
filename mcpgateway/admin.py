@@ -11053,7 +11053,7 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
 
 @admin_router.post("/gateways/discover-oauth")
 @require_permission("gateways.create", allow_admin_bypass=False)
-async def admin_discover_oauth(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_discover_oauth(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:  # pylint: disable=unused-argument
     """Discover OAuth/OIDC endpoints from an issuer URL (RFC 8414 / OIDC discovery).
 
     Args:
@@ -11074,6 +11074,7 @@ async def admin_discover_oauth(request: Request, db: Session = Depends(get_db), 
         if not issuer:
             return JSONResponse({"success": False, "error": "issuer is required"}, status_code=400)
 
+        # First-Party
         from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
 
         dcr = DcrService()
@@ -11096,6 +11097,7 @@ async def admin_discover_oauth(request: Request, db: Session = Depends(get_db), 
             "error": str(e),
             "message": "Discovery failed. Please configure token and authorization endpoints manually.",
         }, status_code=200)
+
 
 @admin_router.post("/gateways")
 @require_permission("gateways.create", allow_admin_bypass=False)
