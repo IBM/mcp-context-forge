@@ -47,6 +47,12 @@ pub struct RuntimeConfig {
     #[arg(long, env = "MCP_RUST_REQUEST_TIMEOUT_MS", default_value_t = 30_000)]
     pub request_timeout_ms: u64,
 
+    #[arg(long, env = "MCP_RUST_DATABASE_URL")]
+    pub database_url: Option<String>,
+
+    #[arg(long, env = "MCP_RUST_DB_POOL_MAX_SIZE", default_value_t = 20)]
+    pub db_pool_max_size: usize,
+
     #[arg(long, env = "MCP_RUST_LOG", default_value = "info")]
     pub log_filter: String,
 }
