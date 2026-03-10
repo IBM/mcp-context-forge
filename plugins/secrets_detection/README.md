@@ -41,4 +41,4 @@ make benchmark    # Compare Python vs Rust performance
 make test         # Run integration tests
 ```
 
-Benchmark shows speedup metrics and detects active implementation (Python/Rust). Integration tests use Python by default; Rust used automatically if available. Build Rust: `cd plugins_rust/secrets_detection && maturin develop --release`
+Benchmark shows speedup metrics and detects active implementation (Python/Rust). Integration tests use Python by default; Rust used automatically if available. Build Rust: from repo root run `make rust-install`, or `cd crates/plugins/secrets_detection && maturin develop --release`

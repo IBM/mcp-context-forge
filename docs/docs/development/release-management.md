@@ -155,8 +155,10 @@ python .github/tools/update_dependencies.py --file plugins/external/cedar/pyproj
 python .github/tools/update_dependencies.py --file plugins/external/llmguard/pyproject.toml
 python .github/tools/update_dependencies.py --file plugins/external/opa/pyproject.toml
 
-# Rust plugins (Python bindings)
-python .github/tools/update_dependencies.py --file plugins_rust/pyproject.toml
+# Rust plugins (Python bindings; one per maturin crate under crates/plugins/)
+python .github/tools/update_dependencies.py --file crates/plugins/pii_filter/pyproject.toml
+python .github/tools/update_dependencies.py --file crates/plugins/secrets_detection/pyproject.toml
+python .github/tools/update_dependencies.py --file crates/plugins/encoded_exfil_detection/pyproject.toml
 
 # Requirements files
 python .github/tools/update_dependencies.py --file docs/requirements.txt
@@ -203,11 +205,8 @@ Update non-Python dependencies across the repository.
 Update `Cargo.lock` files for all Rust crates and verify they build and pass tests:
 
 ```bash
-# Update dependencies
-cd plugins_rust && cargo update && cd ..
-cd mcp-servers/rust/fast-test-server && cargo update && cd ../../..
-cd mcp-servers/rust/filesystem-server && cargo update && cd ../../..
-cd tools_rust/wrapper && cargo update && cd ../..
+# Update dependencies (from repo root; workspace includes all Rust crates)
+cargo update
 
 # Verify build + lint + tests
 make rust-check
@@ -1323,8 +1322,8 @@ make install-dev
 make pip-audit
 
 # 2. Rust / Go / JS / CDN dependency updates
-cd plugins_rust && cargo update && cd ..
-# ... repeat for all Cargo.toml dirs (see Section 3) ...
+cargo update   # from repo root; updates all workspace crates
+# ... see Section 3 for Go/JS/CDN ...
 make rust-check
 # ... go get -u ./... && go mod tidy for all go.mod dirs ...
 make linting-go-gosec linting-go-govulncheck

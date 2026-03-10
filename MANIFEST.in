@@ -15,6 +15,9 @@ include __init__
 include alembic.ini
 include tox.ini
 include alembic/README
+include Cargo.lock
+include Cargo.toml
+include rust-toolchain.toml
 
 # Top-level config, examples and helper scripts
 include *.py
@@ -97,15 +100,19 @@ recursive-include plugins *.sh
 recursive-include plugins *.yaml
 recursive-include plugins *.md
 
-# Rust plugins (optional - exclude build artifacts)
-recursive-include plugins_rust *.rs
-recursive-include plugins_rust *.toml
-recursive-include plugins_rust *.md
-recursive-include plugins_rust *.py
-recursive-include plugins_rust *.pyi
-recursive-include plugins_rust *.lock
-recursive-include plugins_rust Makefile
-prune plugins_rust/target
+# Rust workspace (crates/): plugins, gateway_rs, mcp-servers, tools
+recursive-include crates *.lock
+recursive-include crates *.toml
+recursive-include crates *.rs
+recursive-include crates *.md
+recursive-include crates *.py
+recursive-include crates *.pyi
+recursive-include crates *.sh
+recursive-include crates Makefile
+recursive-include crates pyproject.toml
+recursive-include crates Containerfile
+recursive-include crates Dockerfile
+prune crates/plugins/*/target
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs
