@@ -46,7 +46,7 @@ repos:
         name: 🔐 Detect Private Key
         description: Detects the presence of private keys.
         types: [text]
-        exclude: 'mcpgateway/utils/generate_keys\.py|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils.py|tests/unit/mcpgateway/utils/test_generate_keys.py|plugins_rust/secrets_detection/examples/heavy_workload\.rs|plugins_rust/secrets_detection/src/scanner\.rs|plugins_rust/secrets_detection/src/patterns\.rs'
+        exclude: 'mcpgateway/utils/generate_keys\.py|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils.py|tests/unit/mcpgateway/utils/test_generate_keys.py|crates/plugins/secrets_detection/examples/heavy_workload\.rs|crates/plugins/secrets_detection/src/scanner\.rs|crates/plugins/secrets_detection/src/patterns\.rs'
 
   #   - repo: https://github.com/Yelp/detect-secrets
   #     rev: v1.5.0
@@ -265,7 +265,7 @@ repos:
         name: ✅ Check Shebang Scripts Are Executable
         description: Ensures that (non-binary) files with a shebang are executable.
         types: [text]
-        exclude: 'plugins_rust/secrets_detection/compare_performance\.py'
+        exclude: 'crates/plugins/secrets_detection/compare_performance\.py'
         stages: [pre-commit, pre-push, manual]
 
       - id: forbid-new-submodules
@@ -378,6 +378,19 @@ repos:
   #     - id: flake8
   #       name: 🐍 Flake8 - Python Linter
   #       description: Tool for style guide enforcement.
+
+  # -----------------------------------------------------------------------------
+  # 🦀 Rust (when Rust is installed; same as CI fmt/build/clippy)
+  # -----------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: rust-pre-commit
+        name: 🦀 Rust fmt, build, clippy
+        description: When Rust is installed, runs cargo fmt --check, build, clippy (skips if no cargo).
+        entry: bash scripts/pre-commit-rust.sh
+        language: system
+        pass_filenames: false
+        files: ^(crates/|Cargo\.toml|Cargo\.lock|rust-toolchain\.toml)
 
   # - repo: https://github.com/pycqa/bandit
   #   rev: 1.8.3
