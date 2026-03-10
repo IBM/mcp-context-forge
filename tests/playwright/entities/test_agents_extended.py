@@ -58,7 +58,7 @@ def _close_view_modal(agents_page: AgentsPage) -> None:
     """Close the agent view modal."""
     close_btn = agents_page.page.locator('#agent-modal button:has-text("Close")')
     close_btn.click()
-    agents_page.page.wait_for_timeout(300)
+    agents_page.page.wait_for_selector("#agent-modal", state="hidden", timeout=5000)
 
 
 def _open_edit_modal(agents_page: AgentsPage, index: int = 0) -> None:
@@ -91,7 +91,7 @@ def _close_edit_modal(agents_page: AgentsPage) -> None:
         '#a2a-edit-modal button:has-text("Cancel")'
     )
     cancel_btn.click()
-    agents_page.page.wait_for_timeout(300)
+    agents_page.page.wait_for_selector("#a2a-edit-modal", state="hidden", timeout=5000)
 
 
 def _open_test_modal(agents_page: AgentsPage, index: int = 0) -> None:
@@ -111,7 +111,7 @@ def _close_test_modal(agents_page: AgentsPage) -> None:
     """Close the agent test modal."""
     close_btn = agents_page.page.locator("#a2a-test-close")
     close_btn.click()
-    agents_page.page.wait_for_timeout(300)
+    agents_page.page.wait_for_selector("#a2a-test-modal", state="hidden", timeout=5000)
 
 
 # ---------------------------------------------------------------------------
@@ -134,16 +134,16 @@ class TestA2ATableStructure:
         expect(table.locator('th:has-text("Actions")').first).to_be_visible()
 
     def test_table_column_id(self, agents_page: AgentsPage):
-        """Test that the ID column header is present in the agents table."""
+        """Test that the Agent ID column header is present in the agents table."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
         _skip_if_no_agents(agents_page)
 
         table = agents_page.agents_table.first
-        expect(table.locator('th:has-text("ID")').first).to_be_visible()
+        expect(table.locator('th:has-text("Agent ID")').first).to_be_visible()
 
     def test_table_columns_complete(self, agents_page: AgentsPage):
-        """Test that all 12 expected table column headers are present."""
+        """Test that all 13 expected table column headers are present."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
         _skip_if_no_agents(agents_page)
@@ -151,7 +151,8 @@ class TestA2ATableStructure:
         table = agents_page.agents_table.first
         expected_columns = [
             "Actions",
-            "ID",
+            "S. No.",
+            "Agent ID",
             "Name",
             "Description",
             "Endpoint",
@@ -363,7 +364,7 @@ class TestA2AViewModal:
 
         # View first agent - get name from table
         first_row = agents_page.get_agent_row(0)
-        first_name = first_row.locator("td").nth(2).text_content().strip()
+        first_name = first_row.locator("td").nth(3).text_content().strip()
         _open_view_modal(agents_page, 0)
         details = agents_page.page.locator("#agent-details")
         expect(details).to_contain_text(first_name)
@@ -371,7 +372,7 @@ class TestA2AViewModal:
 
         # View second agent
         second_row = agents_page.get_agent_row(1)
-        second_name = second_row.locator("td").nth(2).text_content().strip()
+        second_name = second_row.locator("td").nth(3).text_content().strip()
         _open_view_modal(agents_page, 1)
         expect(details).to_contain_text(second_name)
         _close_view_modal(agents_page)
@@ -498,7 +499,6 @@ class TestA2AEditModal:
         # Select basic auth
         auth_type = agents_page.page.locator("#auth-type-a2a-edit")
         auth_type.select_option("basic")
-        agents_page.page.wait_for_timeout(300)
 
         basic_fields = agents_page.page.locator("#auth-basic-fields-a2a-edit")
         expect(basic_fields).to_be_visible()
@@ -515,7 +515,6 @@ class TestA2AEditModal:
 
         auth_type = agents_page.page.locator("#auth-type-a2a-edit")
         auth_type.select_option("bearer")
-        agents_page.page.wait_for_timeout(300)
 
         bearer_fields = agents_page.page.locator(
             "#auth-bearer-fields-a2a-edit"
@@ -534,7 +533,6 @@ class TestA2AEditModal:
 
         auth_type = agents_page.page.locator("#auth-type-a2a-edit")
         auth_type.select_option("oauth")
-        agents_page.page.wait_for_timeout(300)
 
         oauth_fields = agents_page.page.locator("#auth-oauth-fields-a2a-edit")
         expect(oauth_fields).to_be_visible()
@@ -553,7 +551,6 @@ class TestA2AEditModal:
 
         auth_type = agents_page.page.locator("#auth-type-a2a-edit")
         auth_type.select_option("query_param")
-        agents_page.page.wait_for_timeout(300)
 
         qp_fields = agents_page.page.locator(
             "#auth-query_param-fields-a2a-edit"
@@ -570,7 +567,7 @@ class TestA2AEditModal:
 
         # Get original name from table
         first_row = agents_page.get_agent_row(0)
-        original_name = first_row.locator("td").nth(2).text_content().strip()
+        original_name = first_row.locator("td").nth(3).text_content().strip()
 
         _open_edit_modal(agents_page, 0)
 
@@ -591,7 +588,7 @@ class TestA2AEditModal:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        current_name = first_row.locator("td").nth(2).text_content().strip()
+        current_name = first_row.locator("td").nth(3).text_content().strip()
         assert current_name == original_name, (
             f"Name should be unchanged after Cancel: expected '{original_name}', "
             f"got '{current_name}'"
@@ -623,13 +620,13 @@ class TestA2AEditModal:
         _open_edit_modal(agents_page, 0)
 
         expect(
-            agents_page.page.locator("#a2a-visibility-public-edit")
+            agents_page.page.locator("#edit-a2a-visibility-public")
         ).to_be_attached()
         expect(
-            agents_page.page.locator("#a2a-visibility-team-edit")
+            agents_page.page.locator("#edit-a2a-visibility-team")
         ).to_be_attached()
         expect(
-            agents_page.page.locator("#a2a-visibility-private-edit")
+            agents_page.page.locator("#edit-a2a-visibility-private")
         ).to_be_attached()
 
         _close_edit_modal(agents_page)
@@ -813,8 +810,8 @@ class TestA2ARowActions:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Status column is at index 7
-        status_cell = first_row.locator("td").nth(7)
+        # Status column is at index 8 (Actions=0, S.No.=1, AgentID=2, Name=3, Description=4, Endpoint=5, Tags=6, Type=7, Status=8)
+        status_cell = first_row.locator("td").nth(8)
         status_text = status_cell.text_content().strip()
         assert "Active" in status_text or "Inactive" in status_text, (
             f"Status should be 'Active' or 'Inactive', got '{status_text}'"
@@ -915,11 +912,9 @@ class TestA2AOAuthGrantTypeSwitching:
 
         # Select OAuth auth type
         agents_page.set_auth_type("oauth")
-        agents_page.page.wait_for_timeout(300)
 
         # Select authorization_code
         agents_page.oauth_grant_type_select.select_option("authorization_code")
-        agents_page.page.wait_for_timeout(300)
 
         # Authorization URL and Redirect URI should be visible
         expect(agents_page.oauth_authorization_url_input).to_be_visible()
@@ -946,10 +941,8 @@ class TestA2AOAuthGrantTypeSwitching:
         agents_page.wait_for_agents_panel_loaded()
 
         agents_page.set_auth_type("oauth")
-        agents_page.page.wait_for_timeout(300)
 
         agents_page.oauth_grant_type_select.select_option("client_credentials")
-        agents_page.page.wait_for_timeout(300)
 
         # Auth URL and Redirect URI should be hidden
         expect(agents_page.oauth_authorization_url_input).to_be_hidden()
@@ -969,10 +962,8 @@ class TestA2AOAuthGrantTypeSwitching:
         agents_page.wait_for_agents_panel_loaded()
 
         agents_page.set_auth_type("oauth")
-        agents_page.page.wait_for_timeout(300)
 
         agents_page.oauth_grant_type_select.select_option("password")
-        agents_page.page.wait_for_timeout(300)
 
         # Username and password fields for password grant should be visible
         username_field = agents_page.page.locator("#oauth-username-a2a")
@@ -988,27 +979,22 @@ class TestA2AOAuthGrantTypeSwitching:
         agents_page.wait_for_agents_panel_loaded()
 
         agents_page.set_auth_type("oauth")
-        agents_page.page.wait_for_timeout(300)
 
         # Start with authorization_code
         agents_page.oauth_grant_type_select.select_option("authorization_code")
-        agents_page.page.wait_for_timeout(300)
         expect(agents_page.oauth_authorization_url_input).to_be_visible()
 
         # Switch to client_credentials
         agents_page.oauth_grant_type_select.select_option("client_credentials")
-        agents_page.page.wait_for_timeout(300)
         expect(agents_page.oauth_authorization_url_input).to_be_hidden()
 
         # Switch to password
         agents_page.oauth_grant_type_select.select_option("password")
-        agents_page.page.wait_for_timeout(300)
         username_field = agents_page.page.locator("#oauth-username-a2a")
         expect(username_field).to_be_visible()
 
         # Switch back to authorization_code
         agents_page.oauth_grant_type_select.select_option("authorization_code")
-        agents_page.page.wait_for_timeout(300)
         expect(agents_page.oauth_authorization_url_input).to_be_visible()
         expect(username_field).to_be_hidden()
 
@@ -1030,8 +1016,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Name is in column index 2
-        name_cell = first_row.locator("td").nth(2)
+        # Name is in column index 3 (after Actions, S.No., Agent ID)
+        name_cell = first_row.locator("td").nth(3)
         name_text = name_cell.text_content().strip()
         assert len(name_text) > 0, "Agent name should not be empty"
 
@@ -1042,8 +1028,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Endpoint is in column index 4
-        endpoint_cell = first_row.locator("td").nth(4)
+        # Endpoint is in column index 5 (after Actions, S.No., Agent ID, Name, Description)
+        endpoint_cell = first_row.locator("td").nth(5)
         endpoint_text = endpoint_cell.text_content().strip()
         assert len(endpoint_text) > 0, "Endpoint URL should not be empty"
         assert "://" in endpoint_text, (
@@ -1057,8 +1043,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Description is in column index 3
-        desc_cell = first_row.locator("td").nth(3)
+        # Description is in column index 4 (after Actions, S.No., Agent ID, Name)
+        desc_cell = first_row.locator("td").nth(4)
         # Description may be empty but the cell should exist
         expect(desc_cell).to_be_attached()
 
@@ -1069,8 +1055,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Tags column is at index 5
-        tags_cell = first_row.locator("td").nth(5)
+        # Tags column is at index 6 (after Actions, S.No., Agent ID, Name, Description, Endpoint)
+        tags_cell = first_row.locator("td").nth(6)
 
         # Check if there are any tag badges (spans with inline-flex styling)
         tag_badges = tags_cell.locator("span")
@@ -1088,8 +1074,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Visibility is the last column, index 11
-        visibility_cell = first_row.locator("td").nth(11)
+        # Visibility is the last column, index 12
+        visibility_cell = first_row.locator("td").nth(12)
         visibility_text = visibility_cell.text_content().strip()
         assert visibility_text in [
             "Public",

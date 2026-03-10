@@ -334,7 +334,7 @@
       crossorigin="anonymous">
     </script>
     <script
-      src="https://cdn.jsdelivr.net/npm/dompurify@3.3.1/dist/purify.min.js"
+      src="https://cdn.jsdelivr.net/npm/dompurify@3.3.2/dist/purify.min.js"
       integrity="{{ sri_hashes.dompurify }}"
       crossorigin="anonymous">
     </script>
@@ -453,12 +453,12 @@
         <div class="flex items-center h-16 px-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0"
              :class="sidebarCollapsed ? 'justify-center' : 'justify-between'">
           <a href="{{ root_path }}/admin" class="flex items-center" x-show="!sidebarCollapsed">
-            <img src="{{ root_path }}/static/contextforge-logo.png" alt="ContextForge" class="h-8 dark:hidden" />
-            <img src="{{ root_path }}/static/contextforge-logo-white.png" alt="ContextForge" class="h-8 hidden dark:block" />
+            <img src="{{ root_path }}/static/contextforge-logo.png" alt="ContextForge logo" class="h-8 dark:hidden" />
+            <img src="{{ root_path }}/static/contextforge-logo-white.png" alt="ContextForge logo" class="h-8 hidden dark:block" />
           </a>
           <button @click="sidebarCollapsed = false" class="flex items-center justify-center" x-show="sidebarCollapsed" title="Expand sidebar">
-            <img src="{{ root_path }}/static/contextforge-icon.png" alt="ContextForge" class="h-8 w-8 dark:hidden" />
-            <img src="{{ root_path }}/static/contextforge-icon-white.png" alt="ContextForge" class="h-8 w-8 hidden dark:block" />
+            <img src="{{ root_path }}/static/contextforge-icon.png" alt="ContextForge icon" class="h-8 w-8 dark:hidden" />
+            <img src="{{ root_path }}/static/contextforge-icon-white.png" alt="ContextForge icon" class="h-8 w-8 hidden dark:block" />
           </button>
           <button
             @click="sidebarCollapsed = !sidebarCollapsed"
@@ -855,17 +855,7 @@
                     }
                   },
                   loadTeams() {
-                    // Load teams via HTMX when dropdown opens
-                    if (this.open) {
-                      const container = document.getElementById('team-selector-items');
-                      if (container && !container.dataset.loaded) {
-                        htmx.ajax('GET', '{{ root_path }}/admin/teams/partial?page=1&per_page=10&render=selector', {
-                          target: '#team-selector-items',
-                          swap: 'innerHTML'
-                        });
-                        container.dataset.loaded = 'true';
-                      }
-                    }
+                    if (this.open) { window.loadTeamSelectorDropdown(); }
                   }
                 }"
                 @click.away="open = false"
@@ -961,6 +951,22 @@
             </div>
           </div>
         </header>
+
+        <!-- Admin Non-Member Team Banner -->
+        {% if admin_viewing_non_member_team %}
+        <div class="bg-red-100 dark:bg-red-900/30 border-b border-red-300 dark:border-red-800">
+          <div class="px-4 py-3">
+            <div class="flex items-center">
+              <svg class="h-5 w-5 text-red-600 dark:text-red-400 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+              </svg>
+              <p class="text-sm font-semibold text-red-800 dark:text-red-200">
+                ⚠ Since you are not a member of this team, team content won't be visible. Defaulting to All Teams.
+              </p>
+            </div>
+          </div>
+        </div>
+        {% endif %}
 
         <!-- Global notification container for flash messages -->
         <div id="global-notification" class="px-4 mt-4" style="display: none;">
@@ -2749,14 +2755,14 @@
                     <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
                       <!-- Row 1: View | Edit -->
                       <button
-                        onclick="viewServer('{{ server.id }}')"
+                        onclick="viewServer({{ server.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View server details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="editServer('{{ server.id }}')"
+                        onclick="editServer({{ server.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit server settings and configuration'"
                       >
@@ -2765,7 +2771,7 @@
 
                       <!-- Row 2: Export Config -->
                       <button
-                        onclick="showConfigSelectionModal('{{ server.id }}', '{{ server.name }}')"
+                        onclick="showConfigSelectionModal({{ server.id|tojson_attr }}, {{ server.name|tojson_attr }})"
                         class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
                         x-tooltip="'💡Generate client configuration files for this server'"
                       >
@@ -2811,7 +2817,7 @@
                           method="POST"
                           action="{{ root_path }}/admin/servers/{{ server.id }}/delete"
                           class="contents"
-                          onsubmit="return handleDeleteSubmit(event, 'server', '{{ server.name }}', 'servers')"
+                          onsubmit="return handleDeleteSubmit(event, 'server', {{ server.name|tojson_attr }}, 'servers')"
                         >
                           <button
                             type="submit"
@@ -5265,7 +5271,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
                       <!-- Row 1: Test -->
                       <button
-                        onclick="testGateway('{{ gateway.url }}')"
+                        onclick="testGateway({{ gateway.url|tojson_attr }})"
                         class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
                         x-tooltip="'💡Test connection to this MCP Server'"
                       >
@@ -5282,7 +5288,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         🔐 Authorize
                       </a>
                       <button
-                        onclick="fetchToolsForGateway('{{ gateway.id }}', '{{ gateway.name }}')"
+                        onclick="fetchToolsForGateway({{ gateway.id|tojson_attr }}, {{ gateway.name|tojson_attr }})"
                         class="flex items-center justify-center px-1 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'🔧 Fetch Tools from MCP Server'"
                         id="fetch-tools-{{ gateway.id }}"
@@ -5292,14 +5298,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                       <!-- Row 3: View | Edit -->
                       <button
-                        onclick="viewGateway('{{ gateway.id }}')"
+                        onclick="viewGateway({{ gateway.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View gateway details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="editGateway('{{ gateway.id }}')"
+                        onclick="editGateway({{ gateway.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit gateway settings and configuration'"
                       >
@@ -5308,14 +5314,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       {% else %}
                       <!-- Row 2: View | Edit (for non-OAuth) -->
                       <button
-                        onclick="viewGateway('{{ gateway.id }}')"
+                        onclick="viewGateway({{ gateway.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View gateway details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="editGateway('{{ gateway.id }}')"
+                        onclick="editGateway({{ gateway.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit gateway settings and configuration'"
                       >
@@ -6659,6 +6665,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 Create Token
               </button>
             </div>
+            <!-- Inline error/status display for token creation; populated by createToken() on failure -->
+            <div id="token-creation-messages" class="mt-3" role="alert" aria-live="polite"></div>
           </form>
         </div>
 
@@ -6938,7 +6946,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           <!-- Row 1: Test (full width) -->
                           <button
 
-                            onclick="testA2AAgent('{{ agent.id }}', '{{ agent.name }}', '{{ agent.endpointUrl }}')"
+                            onclick="testA2AAgent({{ agent.id|tojson_attr }}, {{ agent.name|tojson_attr }}, {{ agent.endpointUrl|tojson_attr }})"
                             class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 transition-colors"
                             x-tooltip="'💡Execute this A2A Agent test'"
                           >
@@ -6947,14 +6955,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                           <!-- Row 2: View | Edit -->
                           <button
-                            onclick="viewAgent('{{ agent.id }}')"
+                            onclick="viewAgent({{ agent.id|tojson_attr }})"
                             class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 transition-colors"
                             x-tooltip="'💡View agent details'"
                           >
                             View
                           </button>
                           <button
-                            onclick="editA2AAgent('{{ agent.id }}')"
+                            onclick="editA2AAgent({{ agent.id|tojson_attr }})"
                             class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 transition-colors"
                             x-tooltip="'💡Edit agent configuration'"
                           >
@@ -6987,7 +6995,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                             </form>
                             {% endif %}
 
-                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'a2a agent', '{{ agent.name }}', 'a2a-agents')">
+                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'a2a agent', {{ agent.name|tojson_attr }}, 'a2a-agents')">
                               <button
                                 type="submit"
                                 class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 transition-colors"
@@ -7977,7 +7985,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       </button>
                     </form>
                     <button
-                      onclick="viewGrpcMethods('{{ service.id }}')"
+                      onclick="viewGrpcMethods({{ service.id|tojson_attr }})"
                       class="px-3 py-1 text-sm font-medium bg-purple-100 text-purple-800 rounded-md hover:bg-purple-200"
                     >
                       View Methods
@@ -8071,14 +8079,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <div class="grid grid-cols-2 gap-1 max-w-48">
                       <!-- Row 1: View | Edit -->
                       <button
-                        onclick="viewRoot('{{ root.uri }}')"
+                        onclick="viewRoot({{ root.uri|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View root directory details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="editRoot('{{ root.uri }}')"
+                        onclick="editRoot({{ root.uri|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit root directory settings and configuration'"
                       >
@@ -8087,7 +8095,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                       <!-- Row 2: Export | Delete -->
                       <button
-                        onclick="exportRoot('{{ root.uri }}')"
+                        onclick="exportRoot({{ root.uri|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
                         x-tooltip="'💡Export root directory configuration'"
                       >
@@ -10964,38 +10972,38 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
                         <div class="flex gap-x-6 mt-2">
 
-                          <label class="flex items-center">
+                          <div class="flex items-center">
                             <input
                               type="radio"
                               name="visibility"
                               value="public"
-                              id="a2a-visibility-public-edit"
+                              id="edit-a2a-visibility-public"
                               class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                               checked
                             />
-                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍 Public</span>
-                          </label>
+                            <label for="edit-a2a-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍 Public</label>
+                          </div>
 
-                          <label class="flex items-center">
+                          <div class="flex items-center">
                             <input
                               type="radio"
                               name="visibility"
                               value="team"
-                              id="a2a-visibility-team-edit"
+                              id="edit-a2a-visibility-team"
                               class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                             />
-                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥 Team</span>
-                          </label>
-                          <label class="flex items-center">
+                            <label for="edit-a2a-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥 Team</label>
+                          </div>
+                          <div class="flex items-center">
                             <input
                               type="radio"
                               name="visibility"
                               value="private"
-                              id="a2a-visibility-private-edit"
+                              id="edit-a2a-visibility-private"
                               class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                             />
-                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒 Private</span>
-                          </label>
+                            <label for="edit-a2a-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒 Private</label>
+                          </div>
                         </div>
                       </div>
 
@@ -11199,10 +11207,10 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             name="visibility"
                             value="public"
                             class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                            id="edit-visibility-public"
+                            id="edit-server-visibility-public"
                           />
                           <label
-                            for="edit-visibility-public"
+                            for="edit-server-visibility-public"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
                             >🌍Public</label
                           >
@@ -11214,10 +11222,10 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             name="visibility"
                             value="team"
                             class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                            id="edit-visibility-team"
+                            id="edit-server-visibility-team"
                           />
                           <label
-                            for="edit-visibility-team"
+                            for="edit-server-visibility-team"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
                             >👥Team</label
                           >
@@ -11228,10 +11236,10 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             name="visibility"
                             value="private"
                             class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                            id="edit-visibility-private"
+                            id="edit-server-visibility-private"
                           />
                           <label
-                            for="edit-visibility-private"
+                            for="edit-server-visibility-private"
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
                             >🔒Private</label
                           >
@@ -12070,17 +12078,17 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       // Build mapping objects using your existing tools, resources, and prompts arrays
       window.toolMapping = {};
       {% for tool in tools %}
-      window.toolMapping["{{ tool.id }}"] = "{{ tool.name }}";
+      window.toolMapping[{{ tool.id|tojson }}] = {{ tool.name|tojson }};
       {% endfor %}
 
       window.resourceMapping = {};
       {% for resource in resources %}
-      window.resourceMapping["{{ resource.id }}"] = "{{ resource.name }}";
+      window.resourceMapping[{{ resource.id|tojson }}] = {{ resource.name|tojson }};
       {% endfor %}
 
       window.promptMapping = {};
       {% for prompt in prompts %}
-      window.promptMapping["{{ prompt.id }}"] = "{{ prompt.displayName or prompt.originalName or prompt.name }}";
+      window.promptMapping[{{ prompt.id|tojson }}] = {{ (prompt.displayName or prompt.originalName or prompt.name)|tojson }};
       {% endfor %}
 
       window.ROOT_PATH = {{ root_path | tojson }};

@@ -182,3 +182,137 @@ async def test_invalidate_resource_cache_clears_entries():
     await main.invalidate_resource_cache()
     assert main.resource_cache.get("/resource1") is None
     assert main.resource_cache.get("/resource2") is None
+
+
+# ---------------------------------------------------------------------------
+# tojson_attr filter tests
+# ---------------------------------------------------------------------------
+class TestTojsonAttrFilter:
+    """Tests for the tojson_attr Jinja2 filter in main.py."""
+
+    def test_returns_plain_str_not_markup(self):
+        """tojson_attr must return plain str so autoescape HTML-encodes it."""
+        # Third-Party
+        from markupsafe import Markup
+
+        result = main.tojson_attr("hello")
+        assert isinstance(result, str)
+        assert not isinstance(result, Markup)
+
+    def test_string_produces_json_with_quotes(self):
+        """String value produces JSON-encoded output with surrounding quotes."""
+        result = main.tojson_attr("hello")
+        assert result == '"hello"'
+
+    def test_escapes_angle_brackets(self):
+        """< and > are escaped to unicode to prevent HTML injection."""
+        result = main.tojson_attr("<script>alert(1)</script>")
+        assert "<" not in result
+        assert ">" not in result
+        assert "\\u003c" in result
+        assert "\\u003e" in result
+
+    def test_escapes_ampersand(self):
+        """& is escaped to unicode to prevent entity injection."""
+        result = main.tojson_attr("a&b")
+        assert "&" not in result.replace("\\u0026", "")
+        assert "\\u0026" in result
+
+    def test_escapes_single_quote(self):
+        """Single quotes are escaped to unicode for safety in HTML contexts."""
+        result = main.tojson_attr("it's")
+        assert "'" not in result
+        assert "\\u0027" in result
+
+    def test_double_quotes_left_for_autoescape(self):
+        """Double quotes remain literal so Jinja2 autoescape encodes them to &quot;."""
+        result = main.tojson_attr('say "hi"')
+        # json.dumps produces: "say \"hi\""  — the backslash-quote is JSON escaping
+        assert '\\"' in result
+
+    def test_none_value(self):
+        """None produces JSON null."""
+        assert main.tojson_attr(None) == "null"
+
+    def test_integer_value(self):
+        """Integer passes through as JSON number."""
+        assert main.tojson_attr(42) == "42"
+
+    def test_xss_payload_is_neutralized(self):
+        """A realistic XSS payload is fully escaped."""
+        result = main.tojson_attr("'); alert(document.cookie);//")
+        assert "\\u0027" in result  # single quote escaped
+        assert "alert" in result  # content preserved but escaped
+        assert result.startswith('"') and result.endswith('"')  # valid JSON string
+
+    def test_fileurl_serialization(self):
+        """FileUrl objects are converted to strings during JSON serialization."""
+        # First-Party
+        from mcpgateway.common.models import FileUrl
+
+        file_url = FileUrl("file:///home/user/documents")
+        result = main.tojson_attr(file_url)
+
+        assert result == '"file:///home/user/documents"'
+        assert isinstance(result, str)
+
+    def test_anyurl_serialization(self):
+        """AnyUrl objects are converted to strings during JSON serialization."""
+        # Third-Party
+        from pydantic import AnyUrl
+
+        any_url = AnyUrl("https://example.com/path")
+        result = main.tojson_attr(any_url)
+
+        assert result == '"https://example.com/path"'
+        assert isinstance(result, str)
+
+    def test_fileurl_in_dict(self):
+        """FileUrl objects in dictionaries are properly serialized."""
+        # First-Party
+        from mcpgateway.common.models import FileUrl
+
+        data = {"uri": FileUrl("file:///tmp"), "name": "Temp Directory"}
+        result = main.tojson_attr(data)
+
+        # orjson uses compact format (no spaces after : and ,)
+        assert '"uri":"file:///tmp"' in result
+        assert '"name":"Temp Directory"' in result
+
+    def test_fileurl_in_list(self):
+        """FileUrl objects in lists are properly serialized."""
+        # First-Party
+        from mcpgateway.common.models import FileUrl
+
+        roots = [{"uri": FileUrl("file:///home"), "name": "Home"}, {"uri": FileUrl("file:///tmp"), "name": "Temp"}]
+        result = main.tojson_attr(roots)
+
+        assert '"file:///home"' in result
+        assert '"file:///tmp"' in result
+
+    def test_mixed_url_types(self):
+        """Both FileUrl and AnyUrl can be serialized in the same structure."""
+        # Third-Party
+        from pydantic import AnyUrl
+
+        # First-Party
+        from mcpgateway.common.models import FileUrl
+
+        data = {"local": FileUrl("file:///data"), "remote": AnyUrl("https://api.example.com")}
+        result = main.tojson_attr(data)
+
+        assert '"file:///data"' in result
+        assert '"https://api.example.com' in result
+
+    def test_non_serializable_object_uses_str_fallback(self):
+        """Non-serializable objects are converted to strings via orjson default=str."""
+
+        class CustomObject:
+            pass
+
+        obj = CustomObject()
+        result = main.tojson_attr(obj)
+
+        # orjson default=str converts to string representation
+        assert isinstance(result, str)
+        assert "CustomObject" in result

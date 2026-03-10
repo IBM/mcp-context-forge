@@ -618,7 +618,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test-mcp-cli test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test-mcp-cli test-mcp-rbac test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -636,6 +636,16 @@ test-mcp-cli:  ## MCP protocol tests via mcp-cli + wrapper stdio (no LLM needed)
 			|| { echo "❌ mcp-cli protocol tests failed!"; exit 1; }; \
 		echo "✅ mcp-cli protocol tests passed!"'
 
+test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
+	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: docker-compose stack with SSE gateway registered"
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		uv pip show pytest-playwright >/dev/null 2>&1 || \
+			{ echo "📦 Installing playwright dependencies..."; uv pip install -q ".[playwright]" && playwright install --with-deps chromium; } && \
+		uv run --active pytest tests/e2e/test_mcp_rbac_transport.py -v -s --tb=short \
+			|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }; \
+		echo "✅ MCP RBAC transport tests passed!"'
+
 test:
 	@echo "🧪 Running tests..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
@@ -646,7 +656,8 @@ test:
 		export ARGON2ID_MEMORY_COST=1024 && \
 		uv run --active pytest -n auto --maxfail=0 -v --durations=5 \
 			--ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py \
-			--ignore=tests/e2e/test_mcp_cli_protocol.py"
+			--ignore=tests/e2e/test_mcp_cli_protocol.py \
+			--ignore=tests/e2e/test_mcp_rbac_transport.py"
 
 test-verbose:
 	@echo "🧪 Running tests (verbose, sequential)..."
@@ -1490,6 +1501,7 @@ resilience-jmeter: jmeter-check            ## Run JMeter baseline test against s
 # help: benchmark-clean        - Stop and remove all benchmark data (volumes)
 # help: benchmark-status       - Show status of benchmark services
 # help: benchmark-logs         - Show benchmark stack logs
+# help: bench-compare          - Run performance comparisons for Rust plugins
 # help:
 # help: Environment variables:
 # help:   BENCHMARK_SERVER_COUNT  - Number of MCP servers to spawn (default: 10)
@@ -1538,6 +1550,74 @@ benchmark-status:                          ## Show status of benchmark services
 .PHONY: benchmark-logs
 benchmark-logs:                            ## Show benchmark stack logs
 	$(COMPOSE_CMD_MONITOR) --profile benchmark logs -f --tail=100
+
+bench-compare:                             ## Run performance comparisons for Rust plugins
+	@$(MAKE) -C plugins_rust bench-compare
+
+# =============================================================================
+# 🖼️  EMBEDDED / EMBEDDED / IFRAME STACK - iframe mode with benchmark servers
+# =============================================================================
+# help: 🖼️  EMBEDDED / EMBEDDED / IFRAME STACK
+# help: embedded-up              - Start embedded stack (iframe mode + benchmark servers)
+# help: embedded-down            - Stop embedded stack
+# help: embedded-clean           - Stop and remove all embedded data (volumes)
+# help: embedded-status          - Show status of embedded services
+# help: embedded-logs            - Show embedded stack logs
+# help:
+# help: Environment variables:
+# help:   BENCHMARK_SERVER_COUNT  - Number of MCP servers to spawn (default: 10)
+
+EMBEDDED_COMPOSE := $(COMPOSE_CMD) -f docker-compose.yml -f docker-compose-embedded.yml --profile benchmark
+
+.PHONY: embedded-up
+embedded-up:                               ## Start embedded stack (iframe mode + benchmark servers)
+	@if [ ! -f "docker-compose-embedded.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose-embedded.yml"; \
+		exit 1; \
+	fi
+	@echo "🖼️  Starting embedded stack (iframe mode + $(BENCHMARK_SERVER_COUNT) benchmark servers)..."
+	BENCHMARK_SERVER_COUNT=$(BENCHMARK_SERVER_COUNT) BENCHMARK_START_PORT=$(BENCHMARK_START_PORT) \
+		$(EMBEDDED_COMPOSE) up -d
+	@echo ""
+	@echo "✅ Embedded stack started!"
+	@echo ""
+	@echo "Service              URL                           Purpose"
+	@echo "──────────────────────────────────────────────────────────────────────────"
+	@echo "iframe Harness       http://localhost:8889         UI inside iframe"
+	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
+	@echo "Gateway Admin UI     http://localhost:8080/admin/  Direct admin access"
+	@echo "Benchmark Servers    http://localhost:9000-9099    MCP benchmark targets"
+	@echo ""
+	@echo "   📝 $(BENCHMARK_SERVER_COUNT) benchmark servers auto-registered (50 tools each = $$(($(BENCHMARK_SERVER_COUNT) * 50)) tools)"
+	@echo ""
+	@echo "   🔧 Embedded settings:"
+	@echo "      • UI mode:       embedded (iframe-safe)"
+	@echo "      • Default role:  developer"
+	@echo "      • Public visibility: disabled"
+	@echo ""
+	@echo "   💡 Configure: BENCHMARK_SERVER_COUNT=50 make embedded-up"
+
+.PHONY: embedded-down
+embedded-down:                             ## Stop embedded stack
+	@echo "🖼️  Stopping embedded stack..."
+	$(EMBEDDED_COMPOSE) down --remove-orphans
+	@echo "✅ Embedded stack stopped."
+
+.PHONY: embedded-clean
+embedded-clean:                            ## Stop and remove all embedded data (volumes)
+	@echo "🖼️  Stopping and cleaning embedded stack..."
+	$(EMBEDDED_COMPOSE) down -v --remove-orphans
+	@echo "✅ Embedded stack stopped and volumes removed."
+
+.PHONY: embedded-status
+embedded-status:                           ## Show status of embedded services
+	@echo "🖼️  Embedded stack status:"
+	@$(EMBEDDED_COMPOSE) ps || \
+		echo "   No embedded services running. Start with 'make embedded-up'"
+
+.PHONY: embedded-logs
+embedded-logs:                             ## Show embedded stack logs
+	$(EMBEDDED_COMPOSE) logs -f --tail=100
 
 # =============================================================================
 # 🚀 PERFORMANCE TESTING STACK - High-capacity configuration
@@ -2097,6 +2177,67 @@ load-test-agentgateway-mcp-server-time:    ## Load test external MCP server (loc
 			--run-time=60s \
 			--class-picker'
 
+# --- MCP Streamable HTTP Protocol Load Test ---
+# help: load-test-mcp-protocol       - MCP-only protocol test (150 users, 2min) — measures pure MCP RPS
+# help: load-test-mcp-protocol-ui    - MCP-only protocol test with Locust Web UI (class picker)
+# help: load-test-mcp-protocol-heavy - MCP-only protocol heavy test (500 users, 5min)
+
+MCP_PROTOCOL_LOCUSTFILE ?= tests/loadtest/locustfile_mcp_protocol.py
+MCP_PROTOCOL_HOST ?= http://localhost:4444
+
+load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
+	@echo "🔬 Running MCP STREAMABLE HTTP protocol load test..."
+	@echo "   Host: $(MCP_PROTOCOL_HOST)"
+	@echo "   Users: 150, Spawn: 30/s, Duration: 2 minutes"
+	@echo "   📝 Tests ONLY MCP protocol path: /servers/{id}/mcp"
+	@echo "   💡 Requires: gateway + at least one MCP server connected"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_PROTOCOL_HOST) \
+			--users=150 \
+			--spawn-rate=30 \
+			--run-time=120s \
+			--headless \
+			--html=reports/loadtest_mcp_protocol.html \
+			--csv=reports/loadtest_mcp_protocol \
+			--processes=-1'
+
+load-test-mcp-protocol-ui:                 ## MCP Streamable HTTP protocol test with Web UI
+	@echo "🔬 Starting MCP STREAMABLE HTTP protocol load test Web UI..."
+	@echo "   🌐 Open http://localhost:8089 in your browser"
+	@echo "   🎯 Host: $(MCP_PROTOCOL_HOST)"
+	@echo "   👥 Defaults: 150 users, 30 spawn/s, 2 min"
+	@echo "   🎛️  Class picker enabled - select which MCP user types to run"
+	@echo "   📝 Tests ONLY MCP protocol path: /servers/{id}/mcp"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_PROTOCOL_HOST) \
+			--users=150 \
+			--spawn-rate=30 \
+			--run-time=120s \
+			--class-picker'
+
+load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy test (500 users, 5min)
+	@echo "🔬 Running MCP STREAMABLE HTTP protocol HEAVY load test..."
+	@echo "   Host: $(MCP_PROTOCOL_HOST)"
+	@echo "   Users: 500, Spawn: 50/s, Duration: 5 minutes"
+	@echo "   ⚠️  This will generate sustained MCP protocol load"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_PROTOCOL_HOST) \
+			--users=500 \
+			--spawn-rate=50 \
+			--run-time=300s \
+			--headless \
+			--html=reports/loadtest_mcp_protocol_heavy.html \
+			--csv=reports/loadtest_mcp_protocol_heavy \
+			--processes=-1'
+
 # =============================================================================
 # 📊 JMETER PERFORMANCE TESTING
 # =============================================================================
@@ -2546,6 +2687,8 @@ scc-report:
 # =============================================================================
 # help: 📚 DOCUMENTATION & SBOM
 # help: docs                 - Build docs (graphviz + handsdown + images + SBOM)
+# help: docs-assets           - Sync logo/icon SVGs from mcpgateway/static to docs
+# help: docs-serve            - Sync assets and serve docs locally with mkdocs
 # help: images               - Generate architecture & dependency diagrams
 
 # Pick the right "in-place" flag for sed (BSD vs GNU)
@@ -2555,8 +2698,30 @@ else
   SED_INPLACE := -i
 endif
 
+.PHONY: docs-assets
+docs-assets:
+	@echo "🖼️   Syncing logo assets to docs..."
+	@mkdir -p $(DOCS_DIR)/docs/images
+	@cp mcpgateway/static/contextforge-logo_horizontal_color.svg \
+	    mcpgateway/static/contextforge-logo_horizontal_white.svg \
+	    mcpgateway/static/contextforge-logo_horizontal_black.svg \
+	    mcpgateway/static/contextforge-logo_vertical_white.svg \
+	    mcpgateway/static/contextforge-logo_vertical_black.svg \
+	    mcpgateway/static/contextforge-icon_white.svg \
+	    mcpgateway/static/contextforge-icon_black.svg \
+	    $(DOCS_DIR)/docs/images/
+	@echo "✅  Logo assets synced"
+
+.PHONY: docs-serve
+docs-serve: docs-assets
+ifeq ($(shell uname),Darwin)
+	@cd $(DOCS_DIR) && DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib mkdocs serve
+else
+	@cd $(DOCS_DIR) && mkdocs serve
+endif
+
 .PHONY: docs
-docs: images sbom
+docs: docs-assets images sbom
 	@echo "📚  Generating documentation with handsdown..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
@@ -3811,7 +3976,14 @@ jsonlint:                         ## 📑 JSON validation (jq)
 		exit 1; \
 	}
 	@echo '📑  jsonlint (jq) ...'
-	@find . -type f -name '*.json' -not -path './node_modules/*' -print0 \
+	@find . -type f -name '*.json' \
+	  -not -path './node_modules/*' \
+	  -not -path './.venv/*' \
+	  -not -path './.git/*' \
+	  -not -path './.cache/*' \
+	  -not -path './coverage/*' \
+	  -not -path './.depupdate.*' \
+	  -print0 \
 	  | xargs -0 -I{} sh -c 'jq empty "{}"' \
 	&& echo '✅  All JSON valid'
 
@@ -4202,7 +4374,7 @@ dist: clean uv               ## Build wheel + sdist into ./dist (optionally incl
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust plugins..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
-		echo '🦀 Rust wheels written to ./plugins_rust/target/wheels/'; \
+		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
 	fi
@@ -4218,7 +4390,7 @@ wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
-		echo '🦀 Rust wheels written to ./plugins_rust/target/wheels/'; \
+		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
 	fi
@@ -5107,7 +5279,8 @@ endef
 	compose-logs compose-ps compose-shell compose-stop compose-down \
 	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
-	monitoring-lite-up monitoring-lite-down
+	monitoring-lite-up monitoring-lite-down \
+	embedded-up embedded-down embedded-clean embedded-status embedded-logs
 
 # Validate compose file
 .PHONY: compose-validate
@@ -6483,6 +6656,7 @@ db-fix-head: ## Fix multiple heads issue
 # help: playwright-install-all - Install all Playwright browsers (chromium, firefox, webkit)
 # help: test-ui              - Run Playwright UI tests with visible browser
 # help: test-ui-headless     - Run Playwright UI tests in headless mode
+# help: test-ui-headless-parallel - Run Playwright UI tests headless in parallel (pytest-xdist)
 # help: test-ui-debug        - Run Playwright UI tests with Playwright Inspector
 # help: test-ui-smoke        - Run Playwright UI smoke tests only (fast subset)
 # help: test-ui-ci-smoke     - Run stable Playwright CI smoke subset (headless, serve-compatible)
@@ -6494,7 +6668,7 @@ db-fix-head: ## Fix multiple heads issue
 # help: test-ui-update-snapshots - Update Playwright visual regression snapshots
 # help: test-ui-clean        - Clean up Playwright test artifacts
 
-.PHONY: playwright-install playwright-install-all playwright-preflight test-ui test-ui-headless test-ui-debug test-ui-smoke test-ui-ci-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-screenshots test-ui-record test-ui-update-snapshots test-ui-clean
+.PHONY: playwright-install playwright-install-all playwright-preflight test-ui test-ui-headless test-ui-headless-parallel test-ui-debug test-ui-smoke test-ui-ci-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-screenshots test-ui-record test-ui-update-snapshots test-ui-clean
 
 # Playwright test variables
 PLAYWRIGHT_DIR := tests/playwright
@@ -6570,6 +6744,19 @@ test-ui-headless: playwright-install
 		pytest ${PLAYWRIGHT_TEST_TARGET} -v --screenshot=only-on-failure \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI tests completed!"
+
+test-ui-headless-parallel: playwright-install
+	@echo "🎭 Running Playwright UI tests headless in parallel..."
+	@$(MAKE) --no-print-directory playwright-preflight
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		uv pip install -q pytest-xdist && \
+		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
+		pytest ${PLAYWRIGHT_TEST_TARGET} -v -n auto --dist loadscope \
+		--screenshot=only-on-failure \
+		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	@echo "✅ UI parallel tests completed!"
 
 test-ui-debug: playwright-install
 	@echo "🎭 Running Playwright UI tests with Playwright Inspector..."
@@ -7657,97 +7844,128 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # 🦀 RUST PLUGIN FRAMEWORK (OPTIONAL)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # help:
-# help: Rust Plugin Framework (Optional - requires Rust toolchain)
+# help: Rust Plugin Framework (Optional - auto-installs Rust + maturin if needed)
 # help: ========================================================================================================
-# help: rust-build          - Build Rust plugins in release mode (native)
-# help: rust-dev            - Build and install Rust plugins in development mode
-# help: rust-test           - Run Rust plugin tests
-# help: rust-test-all       - Run all Rust and Python integration tests
-# help: rust-bench          - Run Rust plugin benchmarks
-# help: rust-bench-compare  - Compare Rust vs Python performance
-# help: rust-check          - Run all Rust checks (format, lint, test)
-# help: rust-clean          - Clean Rust build artifacts
-# help: rust-verify         - Verify Rust plugin installation
+# help: rust-install                          - Install all Rust plugins into venv
+# help: rust-ensure-deps                      - Ensure Rust toolchain, maturin, and all plugins are installed
+# help: rust-build                            - Build Rust plugins in release mode (native)
+# help: rust-dev                              - Build and install Rust plugins in development mode
+# help: rust-test                             - Run Rust plugin tests
+# help: rust-test-integration                 - Run Rust integration tests
+# help: rust-test-all                         - Run all Rust and Python integration tests
+# help: rust-bench                            - Run Rust plugin benchmarks
+# help: rust-bench-compare                    - Compare Rust vs Python performance (with benchmarks)
+# help: rust-compare                          - Run compare_performance.py only (skip benchmarks)
+# help: rust-check                            - Run all Rust checks (format, lint, test)
+# help: rust-verify                           - Verify Rust plugin installation
+# help: rust-verify-stubs                     - Verify stub generation and pyproject.toml for all Rust plugins
+# help: rust-clean                            - Clean Rust build artifacts
 # help:
-# help: rust-check-maturin       - Check/install maturin (auto-runs before builds)
-# help: rust-install-deps        - Install all Rust build dependencies
-# help: rust-install-targets     - Install all Rust cross-compilation targets
-# help: rust-build-x86_64        - Build for Linux x86_64
-# help: rust-build-aarch64       - Build for Linux arm64/aarch64
-# help: rust-build-armv7         - Build for Linux armv7 (32-bit ARM)
-# help: rust-build-s390x         - Build for Linux s390x (IBM mainframe)
-# help: rust-build-ppc64le       - Build for Linux ppc64le (IBM POWER)
-# help: rust-build-all-linux     - Build for all Linux architectures
-# help: rust-build-all-platforms - Build for all platforms (Linux, macOS, Windows)
-# help: rust-cross               - Install targets + build all Linux (convenience)
-# help: rust-cross-install-build - Install targets + build all platforms (one command)
+# help: rust-install-deps                     - Install all Rust build dependencies
+# help: rust-install-targets                  - Install all Rust cross-compilation targets
+# help: rust-build-<TARGET>                   - Build for specific target (use rust-build-<TARGET>)
+# help: rust-build-all-linux                  - Build for all Linux architectures
+# help: rust-build-all-platforms              - Build for all platforms (Linux, macOS, Windows)
+# help: rust-cross                            - Install targets + build all Linux (convenience)
+# help: rust-cross-install-build              - Install targets + build all platforms (one command)
 
-.PHONY: rust-build rust-dev rust-test rust-test-all rust-bench rust-bench-compare rust-check rust-clean rust-verify
-.PHONY: rust-check-maturin rust-install-deps rust-install-targets
-.PHONY: rust-build-x86_64 rust-build-aarch64 rust-build-armv7 rust-build-s390x rust-build-ppc64le
+.PHONY: rust-build rust-dev rust-test rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
+.PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
 
-rust-build: rust-check-maturin          ## Build Rust plugins (release)
-	@echo "🦀 Building Rust plugins (release mode)..."
-	@cd plugins_rust && maturin build --release
-
-rust-dev:                               ## Build and install Rust plugins (development mode)
-	@echo "🦀 Building and installing Rust plugins (development mode)..."
-	@cd plugins_rust && maturin develop --release
-
-rust-test:                              ## Run Rust plugin tests
-	@echo "🦀 Running Rust plugin tests..."
-	@cd plugins_rust && cargo test --release
-
-rust-test-integration:                  ## Run Rust integration tests
-	@echo "🦀 Running Rust integration tests..."
-	@cd plugins_rust && cargo test --test '*' --release
-
-rust-test-all: rust-test                ## Run all Rust and Python tests
-	@echo "🧪 Running Python tests for Rust plugins..."
-	pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py -v
-
-rust-bench:                             ## Run Rust benchmarks
-	@echo "🦀 Running Rust benchmarks..."
-	@cd plugins_rust && cargo bench
-
-rust-bench-compare:                     ## Compare Rust vs Python performance
-	@echo "📊 Comparing Rust vs Python performance..."
-	@cd plugins_rust/benchmarks && python3 compare_pii_filter.py
-
-rust-check:                             ## Run all Rust checks (format, lint, test)
-	@echo "🦀 Running Rust checks..."
-	@cd plugins_rust && cargo fmt --check
-	@cd plugins_rust && cargo clippy --lib -- -D warnings -A deprecated
-	@cd plugins_rust && cargo test --lib --release
-
-rust-clean:                             ## Clean Rust build artifacts
-	@echo "🧹 Cleaning Rust build artifacts..."
-	@cd plugins_rust && cargo clean
-	@rm -rf plugins_rust/target/
-
-rust-verify:                            ## Verify Rust plugin installation
-	@echo "🔍 Verifying Rust plugin installation..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -c 'from plugins_rust import PIIDetectorRust; print(\"✅ Rust PII filter available\")' || \
-		echo '❌ Rust plugins not installed'"
-
-rust-check-maturin:                     ## Check/install maturin
-	@which maturin > /dev/null 2>&1 || { \
-		echo "📦 Installing maturin..."; \
-		/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"; \
-	}
-
-rust-install-deps:                      ## Install all Rust build dependencies
-	@echo "📦 Installing Rust build dependencies..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"
-	@rustup --version > /dev/null 2>&1 || { \
-		echo "❌ Rust not installed. Install with:"; \
-		echo "   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
+rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and all plugins are installed
+	@if ! command -v rustup > /dev/null 2>&1; then \
+		echo "🦀 Rust not found. Installing Rust toolchain..."; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component rustfmt clippy; \
+		echo "✅ Rust installed successfully."; \
+		echo "⚠️  Please run 'source \"$$HOME/.cargo/env\"' or restart your shell, then run 'make' again."; \
 		exit 1; \
-	}
+	fi
+	@if ! command -v cargo > /dev/null 2>&1; then \
+		echo "⚠️  cargo not in PATH. Please run 'source \"$$HOME/.cargo/env\"' or restart your shell."; \
+		exit 1; \
+	fi
+	@rustup component add rustfmt clippy 2>/dev/null || true
+	@if ! command -v maturin > /dev/null 2>&1; then \
+		if [ -f "$(VENV_DIR)/bin/activate" ]; then \
+			echo "📦 Installing maturin into venv..."; \
+			/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"; \
+		elif command -v pip > /dev/null 2>&1; then \
+			echo "📦 Installing maturin globally (venv not found)..."; \
+			pip install maturin; \
+		else \
+			echo "⚠️  maturin not found and cannot be installed (no venv or pip available)"; \
+			echo "   For building wheels, install maturin: pip install maturin"; \
+		fi; \
+	fi
 
-rust-install-targets:                   ## Install all Rust cross-compilation targets
+rust-install: rust-ensure-deps          ## Install all Rust plugins into venv
+	@$(MAKE) -C plugins_rust install
+
+rust-build: rust-ensure-deps            ## Build Rust plugins (release)
+	@$(MAKE) -C plugins_rust build
+
+rust-dev: rust-ensure-deps              ## Build and install Rust plugins (development mode)
+	@$(MAKE) -C plugins_rust install
+
+rust-test: rust-ensure-deps             ## Run Rust plugin tests
+	@$(MAKE) -C plugins_rust test
+
+rust-python-test: rust-install          ## Run Python tests for Rust plugins (installs plugins first)
+	@$(MAKE) -C plugins_rust test-python
+
+rust-test-all: rust-test rust-python-test  ## Run all Rust and Python tests
+
+rust-bench: rust-ensure-deps            ## Run Rust benchmarks
+	@$(MAKE) -C plugins_rust bench
+
+rust-bench-compare: rust-ensure-deps    ## Compare Rust vs Python performance
+	@$(MAKE) -C plugins_rust bench-compare
+
+rust-compare: rust-ensure-deps          ## Run compare_performance.py only (skip Rust benchmarks)
+	@$(MAKE) -C plugins_rust compare
+
+rust-check: rust-ensure-deps            ## Run all Rust checks (format, lint, test)
+	@$(MAKE) -C plugins_rust check
+
+rust-doc: rust-ensure-deps              ## Build Rust documentation
+	@$(MAKE) -C plugins_rust doc
+
+rust-build-wheels: rust-ensure-deps     ## Build Python wheels for all Rust plugins
+	@$(MAKE) -C plugins_rust build-wheels
+
+rust-audit: rust-ensure-deps            ## Run security audit on all Rust plugins
+	@$(MAKE) -C plugins_rust audit
+
+rust-coverage: rust-ensure-deps         ## Run coverage for all Rust plugins
+	@$(MAKE) -C plugins_rust coverage
+
+rust-release: rust-ensure-deps          ## Build release wheels for all Rust plugins
+	@$(MAKE) -C plugins_rust release
+
+rust-release-publish: rust-ensure-deps  ## Publish release wheels to PyPI
+	@$(MAKE) -C plugins_rust release-publish
+
+rust-uninstall-plugins: rust-ensure-deps ## Uninstall all Rust plugins from Python environment
+	@$(MAKE) -C plugins_rust uninstall
+
+rust-clean: rust-ensure-deps            ## Clean Rust build artifacts and uninstall plugins
+	@$(MAKE) -C plugins_rust uninstall
+	@$(MAKE) -C plugins_rust clean
+
+rust-verify: rust-ensure-deps           ## Verify Rust plugin installation
+	@$(MAKE) -C plugins_rust verify
+
+rust-verify-stubs: rust-ensure-deps     ## Verify stub generation and pyproject.toml for all Rust plugins
+	@$(MAKE) -C plugins_rust verify-stubs
+
+rust-clean-stubs: rust-ensure-deps      ## Remove all generated stub files from Rust plugins
+	@$(MAKE) -C plugins_rust clean-stubs
+
+rust-install-deps: rust-ensure-deps     ## Install all Rust build dependencies
+	@echo "✅ Rust build dependencies installed"
+
+rust-install-targets: rust-ensure-deps  ## Install all Rust cross-compilation targets
 	@echo "🎯 Installing Rust cross-compilation targets..."
 	@rustup target add x86_64-unknown-linux-gnu
 	@rustup target add aarch64-unknown-linux-gnu
@@ -7758,35 +7976,20 @@ rust-install-targets:                   ## Install all Rust cross-compilation ta
 	@rustup target add aarch64-apple-darwin
 	@rustup target add x86_64-pc-windows-msvc
 
-rust-build-x86_64: rust-check-maturin   ## Build for Linux x86_64
-	@echo "🦀 Building for x86_64-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target x86_64-unknown-linux-gnu
+rust-build-%: rust-ensure-deps               ## Build for specific target (use rust-build-<TARGET>)
+	@echo "🎯 Ensuring Rust target $* is installed..."
+	@rustup target add $*
+	@$(MAKE) -C plugins_rust build-target-$*
 
-rust-build-aarch64: rust-check-maturin  ## Build for Linux arm64/aarch64
-	@echo "🦀 Building for aarch64-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target aarch64-unknown-linux-gnu
-
-rust-build-armv7: rust-check-maturin    ## Build for Linux armv7 (32-bit ARM)
-	@echo "🦀 Building for armv7-unknown-linux-gnueabihf..."
-	@cd plugins_rust && maturin build --release --target armv7-unknown-linux-gnueabihf
-
-rust-build-s390x: rust-check-maturin    ## Build for Linux s390x (IBM mainframe)
-	@echo "🦀 Building for s390x-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target s390x-unknown-linux-gnu
-
-rust-build-ppc64le: rust-check-maturin  ## Build for Linux ppc64le (IBM POWER)
-	@echo "🦀 Building for powerpc64le-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target powerpc64le-unknown-linux-gnu
-
-rust-build-all-linux: rust-build-x86_64 rust-build-aarch64 rust-build-armv7 rust-build-s390x rust-build-ppc64le  ## Build for all Linux architectures
+rust-build-all-linux: rust-build-x86_64-unknown-linux-gnu rust-build-aarch64-unknown-linux-gnu rust-build-armv7-unknown-linux-gnueabihf rust-build-s390x-unknown-linux-gnu rust-build-powerpc64le-unknown-linux-gnu  ## Build for all Linux architectures
 	@echo "✅ Built for all Linux architectures"
 
 rust-build-all-platforms: rust-build-all-linux  ## Build for all platforms (Linux, macOS, Windows)
 	@echo "🦀 Building for macOS..."
-	@cd plugins_rust && maturin build --release --target x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
-	@cd plugins_rust && maturin build --release --target aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
+	@$(MAKE) -C plugins_rust build-target-x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
+	@$(MAKE) -C plugins_rust build-target-aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
 	@echo "🦀 Building for Windows..."
-	@cd plugins_rust && maturin build --release --target x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
+	@$(MAKE) -C plugins_rust build-target-x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
 	@echo "✅ Built for all platforms"
 
 rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + build all Linux (convenience)

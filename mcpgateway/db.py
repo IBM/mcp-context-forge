@@ -41,6 +41,7 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import NullPool, QueuePool
+from sqlalchemy.types import TypeDecorator
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
@@ -268,6 +269,123 @@ def utc_now() -> datetime:
         True
     """
     return datetime.now(timezone.utc)
+
+
+class TokenEncryptionWriteError(ValueError):
+    """Raised when OAuth token encryption fails during DB write binding."""
+
+
+class EncryptedText(TypeDecorator):  # pylint: disable=too-many-ancestors
+    """Text type that applies best-effort encryption/decryption at ORM boundary.
+
+    This preserves compatibility with service-layer encryption:
+    - Pre-encrypted values pass through unchanged.
+    - Plaintext values are encrypted when possible before persistence.
+    - On read, encrypted values are decrypted for runtime usage.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    @property
+    def python_type(self):
+        """Return the Python type represented by this SQLAlchemy type.
+
+        Returns:
+            type: Python ``str`` type.
+        """
+        return str
+
+    @staticmethod
+    def _get_encryption():
+        """Resolve encryption service for column-level token protection.
+
+        Returns:
+            Optional[EncryptionService]: Encryption service instance when configured,
+                otherwise ``None``.
+        """
+        secret = getattr(settings, "auth_encryption_secret", None)
+        if not secret:
+            return None
+        try:
+            # First-Party
+            from mcpgateway.services.encryption_service import get_encryption_service  # pylint: disable=import-outside-toplevel
+
+            return get_encryption_service(secret)
+        except Exception as exc:
+            logger.debug("Unable to initialize encryption service for EncryptedText: %s", exc)
+            return None
+
+    def process_literal_param(self, value, _dialect):  # pylint: disable=unused-argument
+        """Render literal SQL parameter value via encrypted bind processing.
+
+        Args:
+            value (Any): Raw value from SQLAlchemy.
+            _dialect: SQLAlchemy dialect (unused).
+
+        Returns:
+            Any: Bound parameter value after encryption handling.
+        """
+        processed = self.process_bind_param(value, _dialect)
+        return processed
+
+    def process_bind_param(self, value, _dialect):  # pylint: disable=unused-argument
+        """Encrypt plaintext values before persistence when encryption is available.
+
+        Args:
+            value (Any): Raw value from SQLAlchemy.
+            _dialect: SQLAlchemy dialect (unused).
+
+        Returns:
+            Any: Encrypted value for persistence or unchanged value when no
+                encryption is applied.
+
+        Raises:
+            TokenEncryptionWriteError: If encryption is configured and token
+                encryption fails.
+        """
+        if value in (None, "") or not isinstance(value, str):
+            return value
+
+        encryption = self._get_encryption()
+        if not encryption:
+            return value
+
+        try:
+            if encryption.is_encrypted(value):
+                return value
+            return encryption.encrypt_secret(value)
+        except Exception as exc:
+            logger.warning("EncryptedText bind encryption failed; rejecting token write")
+            logger.debug("EncryptedText bind encryption exception: %s", exc)
+            raise TokenEncryptionWriteError("OAuth token encryption failed during write") from exc
+
+    def process_result_value(self, value, _dialect):  # pylint: disable=unused-argument
+        """Decrypt stored encrypted values when reading rows.
+
+        Args:
+            value (Any): Raw value loaded from database.
+            _dialect: SQLAlchemy dialect (unused).
+
+        Returns:
+            Any: Decrypted value when encrypted, otherwise unchanged.
+        """
+        if value in (None, "") or not isinstance(value, str):
+            return value
+
+        encryption = self._get_encryption()
+        if not encryption:
+            return value
+
+        try:
+            if not encryption.is_encrypted(value):
+                return value
+            decrypted = encryption.decrypt_secret_or_plaintext(value)
+            return decrypted if decrypted is not None else value
+        except Exception as exc:
+            logger.warning("EncryptedText result decryption failed, returning stored value")
+            logger.debug("EncryptedText result decryption exception: %s", exc)
+            return value
 
 
 # Configure SQLite for better concurrency if using SQLite
@@ -860,6 +978,7 @@ class UserRole(Base):
     granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    grant_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)
 
     # Relationships
     role: Mapped["Role"] = relationship("Role", back_populates="user_assignments")
@@ -870,9 +989,13 @@ class UserRole(Base):
         Returns:
             True if assignment has expired, False otherwise
         """
-        if not self.expires_at:
+        if self.expires_at is None:
             return False
-        return utc_now() > self.expires_at
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        return utc_now() > expires_at
 
 
 class PermissionAuditLog(Base):
@@ -947,6 +1070,10 @@ class Permissions:
     PROMPTS_UPDATE = "prompts.update"
     PROMPTS_DELETE = "prompts.delete"
     PROMPTS_EXECUTE = "prompts.execute"
+
+    # MCP method permission prefixes — used by token_catalog_service (generation-time)
+    # and token_scoping middleware (runtime) to auto-grant servers.use transport access.
+    MCP_METHOD_PREFIXES = ("tools.", "resources.", "prompts.")
 
     # LLM proxy permissions
     LLM_READ = "llm.read"
@@ -1151,7 +1278,11 @@ class EmailUser(Base):
         """
         if self.locked_until is None:
             return False
-        if utc_now() >= self.locked_until:
+        locked_until = self.locked_until
+        if locked_until.tzinfo is None:
+            # Treat naive datetimes as UTC (SQLite strips timezone info)
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+        if utc_now() >= locked_until:
             # Lockout expired: reset counters so users get a fresh attempt window.
             self.failed_login_attempts = 0
             self.locked_until = None
@@ -1464,7 +1595,13 @@ class PasswordResetToken(Base):
         Returns:
             bool: True when `expires_at` is in the past.
         """
-        return self.expires_at <= utc_now()
+        if self.expires_at is None:
+            return False
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        return expires_at <= utc_now()
 
     def is_used(self) -> bool:
         """Return whether the reset token was already consumed.
@@ -4847,8 +4984,8 @@ class OAuthToken(Base):
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # OAuth provider's user ID
     app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # ContextForge user
-    access_token: Mapped[str] = mapped_column(Text, nullable=False)
-    refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    access_token: Mapped[str] = mapped_column(EncryptedText(), nullable=False)
+    refresh_token: Mapped[Optional[str]] = mapped_column(EncryptedText(), nullable=True)
     token_type: Mapped[str] = mapped_column(String(50), default="Bearer")
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     scopes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
@@ -4990,9 +5127,13 @@ class EmailApiToken(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
 
-    # Unique constraint for user+name combination
+    # Unique constraint for user+name+team_id combination (per-team scope).
+    # The composite UniqueConstraint handles non-NULL team_id rows.  SQL NULL != NULL
+    # semantics mean it cannot protect global-scope tokens (team_id IS NULL), so we add
+    # a partial unique index for that case — matching the pattern used by resources/prompts.
     __table_args__ = (
-        UniqueConstraint("user_email", "name", name="uq_email_api_tokens_user_name"),
+        UniqueConstraint("user_email", "name", "team_id", name="uq_email_api_tokens_user_name_team"),
+        Index("uq_email_api_tokens_user_name_global", "user_email", "name", unique=True, postgresql_where=text("team_id IS NULL"), sqlite_where=text("team_id IS NULL")),
         Index("idx_email_api_tokens_user_email", "user_email"),
         Index("idx_email_api_tokens_jti", "jti"),
         Index("idx_email_api_tokens_expires_at", "expires_at"),
@@ -5057,7 +5198,10 @@ class EmailApiToken(Base):
         """
         if not self.expires_at:
             return False
-        return utc_now() > self.expires_at
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return utc_now() > expires_at
 
     def is_valid(self) -> bool:
         """Check if token is valid (active and not expired).
@@ -6253,7 +6397,8 @@ def set_email_team_slug(_mapper, _conn, target):
         _conn: Connection
         target: Target EmailTeam instance
     """
-    target.slug = slugify(target.name)
+    if not target.slug:
+        target.slug = slugify(target.name)
 
 
 @event.listens_for(Tool, "before_insert")

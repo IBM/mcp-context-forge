@@ -58,6 +58,9 @@ DEFAULT_PLUGIN_TIMEOUT = 30  # seconds
 MAX_PAYLOAD_SIZE = 1_000_000  # 1MB
 CONTEXT_CLEANUP_INTERVAL = 300  # 5 minutes
 CONTEXT_MAX_AGE = 3600  # 1 hour
+HTTP_AUTH_CHECK_PERMISSION_HOOK = "http_auth_check_permission"
+DECISION_PLUGIN_METADATA_KEY = "_decision_plugin"
+RESERVED_INTERNAL_METADATA_KEYS = frozenset({DECISION_PLUGIN_METADATA_KEY})
 
 
 class PluginTimeoutError(Exception):
@@ -166,6 +169,7 @@ class PluginExecutor:
         res_local_contexts = {}
         combined_metadata: dict[str, Any] = {}
         current_payload: PluginPayload | None = None
+        decision_plugin_name: Optional[str] = None
 
         for hook_ref in hook_refs:
             # Skip disabled plugins
@@ -232,6 +236,7 @@ class PluginExecutor:
                         )
                         if filtered is not None:
                             current_payload = filtered
+                            decision_plugin_name = hook_ref.plugin_ref.name
                     else:
                         # Cross-type payload (e.g. HTTP hooks returning a different
                         # result type than the input).  Field-level filtering is not
@@ -247,6 +252,7 @@ class PluginExecutor:
                                 hook_type,
                             )
                             current_payload = result.modified_payload
+                            decision_plugin_name = hook_ref.plugin_ref.name
                         else:
                             logger.warning(
                                 "Plugin %s returned unexpected type %s on hook %s; ignoring modification",
@@ -257,6 +263,7 @@ class PluginExecutor:
                 elif self.default_hook_policy == DefaultHookPolicy.ALLOW:
                     # No explicit policy + default=allow -- accept all modifications
                     current_payload = result.modified_payload
+                    decision_plugin_name = hook_ref.plugin_ref.name
                 else:
                     # No explicit policy + default=deny -- reject all modifications
                     logger.warning(
@@ -270,6 +277,8 @@ class PluginExecutor:
             # on plugin errors/timeouts, while ENFORCE_IGNORE_ERROR swallows them and
             # lets the chain continue (see execute_plugin exception handlers).
             if not result.continue_processing and hook_ref.plugin_ref.mode in (PluginMode.ENFORCE, PluginMode.ENFORCE_IGNORE_ERROR):
+                if hook_type == HTTP_AUTH_CHECK_PERMISSION_HOOK and decision_plugin_name:
+                    combined_metadata[DECISION_PLUGIN_METADATA_KEY] = decision_plugin_name
                 return (
                     PluginResult(
                         continue_processing=False,
@@ -280,10 +289,10 @@ class PluginExecutor:
                     res_local_contexts,
                 )
 
-        return (
-            PluginResult(continue_processing=True, modified_payload=current_payload, violation=None, metadata=combined_metadata),
-            res_local_contexts,
-        )
+        if hook_type == HTTP_AUTH_CHECK_PERMISSION_HOOK and decision_plugin_name:
+            combined_metadata[DECISION_PLUGIN_METADATA_KEY] = decision_plugin_name
+
+        return (PluginResult(continue_processing=True, modified_payload=current_payload, violation=None, metadata=combined_metadata), res_local_contexts)
 
     async def execute_plugin(
         self,
@@ -324,7 +333,7 @@ class PluginExecutor:
                 global_context.metadata.update(local_context.global_context.metadata)
             # Aggregate metadata from all plugins
             if result.metadata and combined_metadata is not None:
-                combined_metadata.update(result.metadata)
+                combined_metadata.update({k: v for k, v in result.metadata.items() if k not in RESERVED_INTERNAL_METADATA_KEYS})
 
             # Track payload modifications
             # if result.modified_payload is not None:

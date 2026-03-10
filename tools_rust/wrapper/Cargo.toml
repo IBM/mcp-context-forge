@@ -1,6 +1,6 @@
 [package]
 name = "mcp_stdio_wrapper"
-version = "1.0.0-RC-1"
+version = "1.0.0-RC-2"
 edition = "2024"
 default-run = "mcp_stdio_wrapper"
 license = "Apache-2.0"
@@ -12,9 +12,13 @@ serde = { version = "1.0.228", features = ["derive"] }
 tokio = { version = "1.49.0", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
-clap = { version = "4.5.54", features = ["derive","env"] }
-reqwest = { version = "0.13.1", default-features = false, features = ["rustls", "json", "stream","http2"] }
-rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+clap = { version = "4.5.54", features = ["derive", "env"] }
+reqwest = { version = "0.13.1", default-features = false, features = [
+    "native-tls",
+    "json",
+    "stream",
+    "http2",
+] }
 futures = "0.3.31"
 http = "1.4.0"
 serde_json = "1.0.149"

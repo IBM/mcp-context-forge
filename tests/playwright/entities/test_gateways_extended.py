@@ -51,7 +51,7 @@ class TestGatewayTestModal:
 
         # Get the URL from the first row before opening modal
         first_row = gateways_page.get_gateway_row(0)
-        gateway_url = first_row.locator("td").nth(3).text_content().strip()
+        gateway_url = first_row.locator("td").nth(4).text_content().strip()
 
         gateways_page.open_test_modal(0)
 
@@ -159,8 +159,16 @@ class TestGatewayTestModal:
         except PlaywrightTimeoutError:
             pass  # The request may complete very quickly
 
-        # Wait for test to complete (or timeout)
-        gateways_page.page.wait_for_timeout(5000)
+        # Wait for test to complete — submit button re-enables when done.
+        # Gateway test may involve a network request to an unreachable server,
+        # so allow generous timeout.
+        try:
+            gateways_page.page.wait_for_function(
+                "() => { const btn = document.querySelector('#gateway-test-submit'); return btn && !btn.disabled; }",
+                timeout=30000,
+            )
+        except PlaywrightTimeoutError:
+            pass  # Test request may have timed out; proceed to close modal
 
         gateways_page.close_test_modal()
 
@@ -209,7 +217,7 @@ class TestGatewayViewModal:
 
         # Get first gateway name from table
         first_row = gateways_page.get_gateway_row(0)
-        gateway_name = first_row.locator("td").nth(2).text_content().strip()
+        gateway_name = first_row.locator("td").nth(3).text_content().strip()
 
         gateways_page.open_view_modal(0)
 
@@ -243,7 +251,7 @@ class TestGatewayViewModal:
 
         # Get URL from table
         first_row = gateways_page.get_gateway_row(0)
-        gateway_url = first_row.locator("td").nth(3).text_content().strip()
+        gateway_url = first_row.locator("td").nth(4).text_content().strip()
 
         gateways_page.open_view_modal(0)
 
@@ -345,14 +353,14 @@ class TestGatewayViewModal:
 
         # View first gateway
         first_row = gateways_page.get_gateway_row(0)
-        first_name = first_row.locator("td").nth(2).text_content().strip()
+        first_name = first_row.locator("td").nth(3).text_content().strip()
         gateways_page.open_view_modal(0)
         expect(gateways_page.view_modal_details).to_contain_text(first_name)
         gateways_page.close_view_modal()
 
         # View second gateway
         second_row = gateways_page.get_gateway_row(1)
-        second_name = second_row.locator("td").nth(2).text_content().strip()
+        second_name = second_row.locator("td").nth(3).text_content().strip()
         gateways_page.open_view_modal(1)
         expect(gateways_page.view_modal_details).to_contain_text(second_name)
         gateways_page.close_view_modal()
@@ -375,7 +383,7 @@ class TestGatewayEditModal:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        gateway_name = first_row.locator("td").nth(2).text_content().strip()
+        gateway_name = first_row.locator("td").nth(3).text_content().strip()
 
         gateways_page.open_edit_modal(0)
 
@@ -392,7 +400,7 @@ class TestGatewayEditModal:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        gateway_url = first_row.locator("td").nth(3).text_content().strip()
+        gateway_url = first_row.locator("td").nth(4).text_content().strip()
 
         gateways_page.open_edit_modal(0)
         expect(gateways_page.edit_modal_url_input).to_have_value(gateway_url)
@@ -474,7 +482,6 @@ class TestGatewayEditModal:
 
         # Select basic auth
         gateways_page.edit_modal_auth_type_select.select_option("basic")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.edit_auth_basic_fields).to_be_visible()
 
         gateways_page.close_edit_modal()
@@ -490,7 +497,6 @@ class TestGatewayEditModal:
         expect(gateways_page.edit_auth_bearer_fields).to_be_hidden()
 
         gateways_page.edit_modal_auth_type_select.select_option("bearer")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.edit_auth_bearer_fields).to_be_visible()
 
         gateways_page.close_edit_modal()
@@ -506,7 +512,6 @@ class TestGatewayEditModal:
         expect(gateways_page.edit_oauth_fields).to_be_hidden()
 
         gateways_page.edit_modal_auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.edit_oauth_fields).to_be_visible()
 
         gateways_page.close_edit_modal()
@@ -522,7 +527,6 @@ class TestGatewayEditModal:
         expect(gateways_page.edit_auth_headers_fields).to_be_hidden()
 
         gateways_page.edit_modal_auth_type_select.select_option("authheaders")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.edit_auth_headers_fields).to_be_visible()
 
         gateways_page.close_edit_modal()
@@ -538,7 +542,6 @@ class TestGatewayEditModal:
         expect(gateways_page.edit_auth_query_param_fields).to_be_hidden()
 
         gateways_page.edit_modal_auth_type_select.select_option("query_param")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.edit_auth_query_param_fields).to_be_visible()
 
         gateways_page.close_edit_modal()
@@ -551,7 +554,7 @@ class TestGatewayEditModal:
 
         # Get original name
         first_row = gateways_page.get_gateway_row(0)
-        original_name = first_row.locator("td").nth(2).text_content().strip()
+        original_name = first_row.locator("td").nth(3).text_content().strip()
 
         gateways_page.open_edit_modal(0)
 
@@ -568,7 +571,7 @@ class TestGatewayEditModal:
         gateways_page.wait_for_gateways_table_loaded()
 
         first_row = gateways_page.get_gateway_row(0)
-        current_name = first_row.locator("td").nth(2).text_content().strip()
+        current_name = first_row.locator("td").nth(3).text_content().strip()
         assert current_name == original_name, f"Name should be unchanged after Cancel: expected '{original_name}', got '{current_name}'"
 
     def test_edit_modal_visibility_radios_reflect_current(self, gateways_page: GatewaysPage):
@@ -579,7 +582,7 @@ class TestGatewayEditModal:
 
         # Get current visibility from table
         first_row = gateways_page.get_gateway_row(0)
-        visibility_text = first_row.locator("td").nth(9).text_content().strip().lower()
+        visibility_text = first_row.locator("td").nth(10).text_content().strip().lower()
 
         gateways_page.open_edit_modal(0)
 
@@ -609,11 +612,9 @@ class TestOAuthGrantTypeSwitching:
 
         # Select OAuth auth type
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
 
         # Select authorization_code (should be default)
         gateways_page.oauth_grant_type_select.select_option("authorization_code")
-        gateways_page.page.wait_for_timeout(300)
 
         # Authorization URL and Redirect URI should be visible
         expect(gateways_page.oauth_authorization_url_input).to_be_visible()
@@ -628,10 +629,8 @@ class TestOAuthGrantTypeSwitching:
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
 
         gateways_page.oauth_grant_type_select.select_option("client_credentials")
-        gateways_page.page.wait_for_timeout(300)
 
         # Auth URL and Redirect URI should be hidden
         expect(gateways_page.oauth_authorization_url_input).to_be_hidden()
@@ -648,10 +647,8 @@ class TestOAuthGrantTypeSwitching:
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
 
         gateways_page.oauth_grant_type_select.select_option("password")
-        gateways_page.page.wait_for_timeout(300)
 
         # Username and password fields should be visible
         expect(gateways_page.oauth_username_input).to_be_visible()
@@ -662,26 +659,21 @@ class TestOAuthGrantTypeSwitching:
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
 
         # Start with authorization_code
         gateways_page.oauth_grant_type_select.select_option("authorization_code")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.oauth_authorization_url_input).to_be_visible()
 
         # Switch to client_credentials
         gateways_page.oauth_grant_type_select.select_option("client_credentials")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.oauth_authorization_url_input).to_be_hidden()
 
         # Switch to password
         gateways_page.oauth_grant_type_select.select_option("password")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.oauth_username_input).to_be_visible()
 
         # Switch back to authorization_code
         gateways_page.oauth_grant_type_select.select_option("authorization_code")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.oauth_authorization_url_input).to_be_visible()
         expect(gateways_page.oauth_username_input).to_be_hidden()
 
@@ -690,7 +682,6 @@ class TestOAuthGrantTypeSwitching:
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
 
         issuer_url = "https://auth.example.com"
         gateways_page.oauth_issuer_input.fill(issuer_url)
@@ -701,7 +692,6 @@ class TestOAuthGrantTypeSwitching:
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
 
         token_url = "https://auth.example.com/oauth2/token"
         gateways_page.oauth_token_url_input.fill(token_url)
@@ -712,7 +702,6 @@ class TestOAuthGrantTypeSwitching:
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
 
         scopes = "openid profile email api:read"
         gateways_page.oauth_scopes_input.fill(scopes)
@@ -723,10 +712,8 @@ class TestOAuthGrantTypeSwitching:
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
 
         gateways_page.oauth_grant_type_select.select_option("authorization_code")
-        gateways_page.page.wait_for_timeout(300)
 
         expect(gateways_page.oauth_store_tokens_checkbox).to_be_checked()
 
@@ -735,10 +722,8 @@ class TestOAuthGrantTypeSwitching:
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
 
         gateways_page.oauth_grant_type_select.select_option("authorization_code")
-        gateways_page.page.wait_for_timeout(300)
 
         expect(gateways_page.oauth_auto_refresh_checkbox).to_be_checked()
 
@@ -758,7 +743,6 @@ class TestCustomHeadersAuth:
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("authheaders")
-        gateways_page.page.wait_for_timeout(300)
 
         expect(gateways_page.add_header_btn).to_be_visible()
 
@@ -768,7 +752,6 @@ class TestCustomHeadersAuth:
 
         # Click Add Header
         gateways_page.add_header_btn.click()
-        gateways_page.page.wait_for_timeout(300)
 
         new_count = container.locator("> div").count()
         assert new_count == initial_count + 1
@@ -778,7 +761,6 @@ class TestCustomHeadersAuth:
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("authheaders")
-        gateways_page.page.wait_for_timeout(300)
 
         # Add 3 headers
         for _ in range(3):
@@ -793,7 +775,6 @@ class TestCustomHeadersAuth:
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("authheaders")
-        gateways_page.page.wait_for_timeout(300)
 
         gateways_page.add_auth_header("X-Custom-Header", "custom-value-123")
 
@@ -812,11 +793,9 @@ class TestCustomHeadersAuth:
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("authheaders")
-        gateways_page.page.wait_for_timeout(300)
 
         # Add a uniquely-named header to remove
         gateways_page.add_auth_header("X-Remove-Target", "remove-me")
-        gateways_page.page.wait_for_timeout(300)
 
         container = gateways_page.page.locator("#auth-headers-container-gw")
         count_before = container.locator('[id^="auth-header-"]').count()
@@ -836,7 +815,6 @@ class TestCustomHeadersAuth:
             "(headerId) => window.removeAuthHeader(headerId, 'auth-headers-container-gw')",
             last_header_id,
         )
-        gateways_page.page.wait_for_timeout(300)
 
         count_after = container.locator('[id^="auth-header-"]').count()
         assert count_after == count_before - 1, f"Expected {count_before - 1} rows after removal, got {count_after}"
@@ -885,14 +863,20 @@ class TestGatewayPagination:
 
         # Change to 25 per page
         gateways_page.per_page_select.select_option("25")
-        gateways_page.page.wait_for_timeout(1000)
+        gateways_page.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
 
         # Verify the select retains the new value
         expect(gateways_page.per_page_select).to_have_value("25")
 
         # Reset to 10
         gateways_page.per_page_select.select_option("10")
-        gateways_page.page.wait_for_timeout(1000)
+        gateways_page.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
 
     def test_pagination_buttons_present(self, gateways_page: GatewaysPage):
         """Test that pagination navigation buttons exist."""
@@ -1034,7 +1018,6 @@ class TestGatewayCreationWithAuth:
 
         # Select authheaders and add headers
         gateways_page.auth_type_select.select_option("authheaders")
-        gateways_page.page.wait_for_timeout(300)
         gateways_page.add_auth_header("X-API-Key", "test-key-abc123")
         gateways_page.add_auth_header("X-Tenant-Id", "tenant-42")
 
@@ -1074,7 +1057,10 @@ class TestGatewayEditEndToEnd:
             pytest.skip(f"Edit save failed (HTTP {response.status})")
 
         gateways_page.page.wait_for_load_state("domcontentloaded")
-        gateways_page.page.wait_for_timeout(1000)
+        gateways_page.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
 
         # Verify via View modal
         gateways_page.page.reload(wait_until="domcontentloaded")
@@ -1095,7 +1081,7 @@ class TestGatewayEditEndToEnd:
 
         # Track the gateway name so we can find it after reload
         first_row = gateways_page.get_gateway_row(0)
-        gateway_name = first_row.locator("td").nth(2).text_content().strip()
+        gateway_name = first_row.locator("td").nth(3).text_content().strip()
 
         new_tags = f"edited,test-tag-{uuid.uuid4().hex[:6]}"
 
@@ -1117,7 +1103,10 @@ class TestGatewayEditEndToEnd:
             pytest.skip("Edit save timed out (server may be slow)")
 
         gateways_page.page.wait_for_load_state("domcontentloaded")
-        gateways_page.page.wait_for_timeout(1000)
+        gateways_page.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
 
         # Verify tags via view modal (search for the gateway by name to handle reordering)
         gateways_page.page.reload(wait_until="domcontentloaded")
@@ -1130,7 +1119,7 @@ class TestGatewayEditEndToEnd:
 
         # Check tags in the matched row
         gateway_row = gateways_page.get_gateway_row_by_name(gateway_name).first
-        tags_cell = gateway_row.locator("td").nth(4)
+        tags_cell = gateway_row.locator("td").nth(5)
         tags_text = tags_cell.text_content().strip().lower()
         assert "edited" in tags_text, f"Expected 'edited' in tags for '{gateway_name}', got '{tags_text}'"
         gateways_page.clear_search()
@@ -1166,13 +1155,11 @@ class TestAuthTypeSwitching:
 
         # Select basic first
         gateways_page.auth_type_select.select_option("basic")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.auth_basic_fields).to_be_visible()
         expect(gateways_page.auth_bearer_fields).to_be_hidden()
 
         # Switch to bearer
         gateways_page.auth_type_select.select_option("bearer")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.auth_basic_fields).to_be_hidden()
         expect(gateways_page.auth_bearer_fields).to_be_visible()
 
@@ -1181,11 +1168,9 @@ class TestAuthTypeSwitching:
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("oauth")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.oauth_fields).to_be_visible()
 
         gateways_page.auth_type_select.select_option("")
-        gateways_page.page.wait_for_timeout(300)
         expect(gateways_page.oauth_fields).to_be_hidden()
 
     def test_all_auth_fields_hidden_when_none_selected(self, gateways_page: GatewaysPage):
@@ -1194,7 +1179,6 @@ class TestAuthTypeSwitching:
 
         # Select None (default)
         gateways_page.auth_type_select.select_option("")
-        gateways_page.page.wait_for_timeout(300)
 
         expect(gateways_page.auth_basic_fields).to_be_hidden()
         expect(gateways_page.auth_bearer_fields).to_be_hidden()
@@ -1216,7 +1200,6 @@ class TestAuthTypeSwitching:
 
         for auth_type, expected_visible in auth_field_map.items():
             gateways_page.auth_type_select.select_option(auth_type)
-            gateways_page.page.wait_for_timeout(300)
 
             # The selected type's fields should be visible
             expect(expected_visible).to_be_visible()
@@ -1259,7 +1242,7 @@ class TestGatewaySearchEdgeCases:
 
         # Get first gateway name
         first_row = gateways_page.get_gateway_row(0)
-        full_name = first_row.locator("td").nth(2).text_content().strip()
+        full_name = first_row.locator("td").nth(3).text_content().strip()
 
         if len(full_name) < 3:
             pytest.skip("Gateway name too short for partial match test")
@@ -1281,7 +1264,7 @@ class TestGatewaySearchEdgeCases:
 
         # Get URL from first gateway
         first_row = gateways_page.get_gateway_row(0)
-        gateway_url = first_row.locator("td").nth(3).text_content().strip()
+        gateway_url = first_row.locator("td").nth(4).text_content().strip()
 
         # Search by URL (or partial URL)
         search_term = gateway_url.split("//")[-1].split("/")[0]  # hostname
@@ -1308,7 +1291,7 @@ class TestGatewayTableDisplay:
         gateways_page.wait_for_gateways_table_loaded()
 
         table = gateways_page.gateways_table
-        expected_columns = ["Actions", "S. No.", "Name", "URL", "Tags", "Status", "Last Seen", "Owner", "Team", "Visibility"]
+        expected_columns = ["Actions", "S. No.", "Gateway ID", "Name", "URL", "Tags", "Status", "Last Seen", "Owner", "Team", "Visibility"]
 
         for col in expected_columns:
             expect(table.locator(f'th:has-text("{col}")')).to_be_visible()
@@ -1330,7 +1313,8 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        owner = first_row.locator("td").nth(7).text_content().strip()
+        # Owner column index shifted +1 after Gateway ID insertion (Actions=0, S.No.=1, GatewayID=2, Name=3, URL=4, Tags=5, Status=6, LastSeen=7, Owner=8)
+        owner = first_row.locator("td").nth(9).text_content().strip()
         # Owner should be an email or "None"
         assert "@" in owner or owner == "None", f"Unexpected owner value: '{owner}'"
 
@@ -1341,7 +1325,7 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        team = first_row.locator("td").nth(8).text_content().strip()
+        team = first_row.locator("td").nth(9).text_content().strip()
         # Team should be a name or "None"
         assert len(team) > 0, "Team cell should not be empty"
 
@@ -1352,7 +1336,8 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        last_seen = first_row.locator("td").nth(6).text_content().strip()
+        # LastSeen column index shifted +1 after Gateway ID insertion
+        last_seen = first_row.locator("td").nth(8).text_content().strip()
         # Should contain a date-like pattern or "N/A"
         assert len(last_seen) > 0, "Last seen cell should not be empty"
 
@@ -1363,7 +1348,8 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        status_cell = first_row.locator("td").nth(5)
+        # Column order: Actions(0), S.No.(1), GatewayID(2), Name(3), URL(4), Tags(5), Status(6)
+        status_cell = first_row.locator("td").nth(6)
         status_text = status_cell.text_content().strip()
         assert status_text in ("Active", "Inactive"), f"Unexpected status: '{status_text}'"
 
@@ -1374,7 +1360,7 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        visibility_cell = first_row.locator("td").nth(9)
+        visibility_cell = first_row.locator("td").nth(10)
         vis_text = visibility_cell.text_content().strip()
         assert any(v in vis_text for v in ["Public", "Team", "Private"]), f"Unexpected visibility: '{vis_text}'"
 

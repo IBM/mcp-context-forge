@@ -1,6 +1,6 @@
 # mcp-stack
 
-![Version: 1.0.0-RC-1](https://img.shields.io/badge/Version-1.0.0--RC--1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0-RC-1](https://img.shields.io/badge/AppVersion-1.0.0--RC--1-informational?style=flat-square)
+![Version: 1.0.0-RC-2](https://img.shields.io/badge/Version-1.0.0--RC--2-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0-RC-2](https://img.shields.io/badge/AppVersion-1.0.0--RC--2-informational?style=flat-square)
 
 A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 & Registry - Context-Forge**.  It bundles:
@@ -560,7 +560,7 @@ retry the Helm upgrade.
 | mcpContextForge.config.VALIDATION_ALLOWED_MIME_TYPES | string | `"[\"text/plain\", \"text/html\", \"text/css\", \"text/markdown\", \"text/javascript\", \"application/json\", \"application/xml\", \"application/pdf\", \"image/png\", \"image/jpeg\", \"image/gif\", \"image/svg+xml\", \"application/octet-stream\"]"` |  |
 | mcpContextForge.config.VALIDATION_DANGEROUS_HTML_PATTERN | string | `"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"` |  |
 | mcpContextForge.config.VALIDATION_DANGEROUS_JS_PATTERN | string | `"(?i)(?:^|\\s|[\\\"'`<>=])(javascript:|vbscript:|data:\\s*[^,]*[;\\s]*(javascript|vbscript)|\\bon[a-z]+\\s*=|<\\s*script\\b)"` |  |
-| mcpContextForge.config.VALIDATION_NAME_PATTERN | string | `"^[a-zA-Z0-9_.\\-\\s]+$"` |  |
+| mcpContextForge.config.VALIDATION_NAME_PATTERN | string | `"^[a-zA-Z0-9_.\\- ]+$"` |  |
 | mcpContextForge.config.VALIDATION_IDENTIFIER_PATTERN | string | `"^[a-zA-Z0-9_\\-\\.]+$"` |  |
 | mcpContextForge.config.VALIDATION_SAFE_URI_PATTERN | string | `"^[a-zA-Z0-9_\\-.:/?=&%{}]+$"` |  |
 | mcpContextForge.config.VALIDATION_UNSAFE_URI_PATTERN | string | `"[<>\"'\\\\]"` |  |
@@ -817,11 +817,14 @@ retry the Helm upgrade.
 | mcpContextForge.secret.DEFAULT_TEAM_OWNER_ROLE | string | `"team_admin"` |  |
 | mcpContextForge.secret.DEFAULT_TEAM_MEMBER_ROLE | string | `"viewer"` |  |
 | mcpContextForge.secret.AUTO_CREATE_PERSONAL_TEAMS | string | `"true"` |  |
-| mcpContextForge.secret.PERSONAL_TEAM_PREFIX | string | `"personal"` |  |
+| mcpContextForge.secret.PERSONAL_TEAM_PREFIX | string | `""` |  |
 | mcpContextForge.secret.MAX_TEAMS_PER_USER | string | `"50"` |  |
 | mcpContextForge.secret.MAX_MEMBERS_PER_TEAM | string | `"100"` |  |
 | mcpContextForge.secret.INVITATION_EXPIRY_DAYS | string | `"7"` |  |
 | mcpContextForge.secret.REQUIRE_EMAIL_VERIFICATION_FOR_INVITES | string | `"true"` |  |
+| mcpContextForge.secret.ALLOW_TEAM_CREATION | string | `"true"` | Allow users to create organizational teams (admins always can) |
+| mcpContextForge.secret.ALLOW_TEAM_JOIN_REQUESTS | string | `"true"` | Allow users to request to join public teams |
+| mcpContextForge.secret.ALLOW_TEAM_INVITATIONS | string | `"true"` | Allow team owners to send invitations |
 | mcpContextForge.secret.ENABLE_ED25519_SIGNING | string | `"false"` |  |
 | mcpContextForge.secret.ED25519_PRIVATE_KEY | string | `""` |  |
 | mcpContextForge.secret.ED25519_PUBLIC_KEY | string | `""` |  |

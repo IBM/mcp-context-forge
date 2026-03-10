@@ -768,3 +768,83 @@ describe("pagination_controls data-extra-params handling", () => {
         expect(url.searchParams.get("visibility")).toBe("public");
     });
 });
+
+// ---------------------------------------------------------------------------
+// Pagination swapStyle used by loadPage (#3396)
+//
+// Table-targeted pagination must use outerHTML swap to prevent nested <table>
+// elements. When htmx.ajax receives swap: 'innerHTML' and the response body
+// starts with <table>, the browser ejects the inner table as a sibling,
+// leaving the visible table blank.
+// ---------------------------------------------------------------------------
+describe("pagination loadPage swapStyle (#3396)", () => {
+    /**
+     * Create a pagination component that records htmx.ajax calls
+     * instead of actually performing them.
+     */
+    function createComponentWithAjaxSpy(swapStyle) {
+        const ajaxCalls = [];
+        const htmx = {
+            ajax(method, url, opts) {
+                ajaxCalls.push({ method, url, ...opts });
+            },
+        };
+        const component = {
+            currentPage: 1,
+            perPage: 50,
+            totalItems: 75,
+            totalPages: 2,
+            hasNext: true,
+            hasPrev: false,
+            targetSelector: "#tools-table",
+            swapStyle: swapStyle,
+            tableName: "tools",
+            baseUrl: "/admin/tools/partial",
+            $el: {
+                dataset: { extraParams: "{}" },
+            },
+
+            updateBrowserUrl() {},
+
+            loadPage(page) {
+                const url = new URL(this.baseUrl, "http://localhost");
+                url.searchParams.set("page", page);
+                url.searchParams.set("per_page", this.perPage);
+
+                htmx.ajax("GET", url.toString(), {
+                    target: this.targetSelector,
+                    swap: this.swapStyle,
+                    indicator: "#tools-loading",
+                });
+            },
+        };
+        return { component, ajaxCalls };
+    }
+
+    test("outerHTML swapStyle is passed to htmx.ajax for table targets", () => {
+        const { component, ajaxCalls } =
+            createComponentWithAjaxSpy("outerHTML");
+        component.loadPage(2);
+        expect(ajaxCalls).toHaveLength(1);
+        expect(ajaxCalls[0].swap).toBe("outerHTML");
+        expect(ajaxCalls[0].target).toBe("#tools-table");
+    });
+
+    test("innerHTML swapStyle is passed to htmx.ajax for non-table targets", () => {
+        const { component, ajaxCalls } =
+            createComponentWithAjaxSpy("innerHTML");
+        component.targetSelector = "#tokens-table";
+        component.loadPage(2);
+        expect(ajaxCalls).toHaveLength(1);
+        expect(ajaxCalls[0].swap).toBe("innerHTML");
+    });
+
+    test("swapStyle defaults to innerHTML when not explicitly set", () => {
+        // Mirrors pagination_controls.html: swapStyle: '{{ hx_swap|default('innerHTML') }}'
+        const defaultSwap = undefined || "innerHTML";
+        const { component, ajaxCalls } =
+            createComponentWithAjaxSpy(defaultSwap);
+        component.loadPage(2);
+        expect(ajaxCalls[0].swap).toBe("innerHTML");
+    });
+});
