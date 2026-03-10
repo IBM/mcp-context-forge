@@ -1,7 +1,7 @@
 # CONC-02 Gateway Read-During-Write: Runbook + Results
 
-Date: 2026-03-02  
-Ticket scope: CONC-02 for gateway endpoint (`GET/PUT /gateways/{id}`)  
+Date: 2026-03-02
+Ticket scope: CONC-02 for gateway endpoint (`GET/PUT /gateways/{id}`)
 Out of scope: CONC-01 create race, cache/session/leader-election scenarios
 
 ## Objective
