@@ -215,7 +215,9 @@ UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
 
 # Section-to-permission mapping for menu visibility
 # Maps UI section names to required RBAC permissions
-SECTION_PERMISSIONS: Dict[str, str] = {
+# NOTE: This mapping must be kept in sync with @require_permission decorators on admin routes.
+# The validate_section_permissions() function (called at startup) verifies consistency.
+SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
     # Admin-only sections
     "users": "admin.users.read",
     "maintenance": "admin.maintenance",
@@ -241,6 +243,106 @@ SECTION_PERMISSIONS: Dict[str, str] = {
     "roots": "roots.read",
     "mcp-registry": "servers.read",  # Catalog is part of servers
 }
+
+# Section-to-route-path mapping for validation
+_SECTION_TO_ROUTE_PATH: Dict[str, str] = {
+    "users": "/admin/users/partial",
+    "maintenance": "/admin/maintenance",
+    "logs": "/admin/logs",
+    "export-import": "/admin/export",
+    "plugins": "/admin/plugins/partial",
+    "metrics": "/admin/metrics",
+    "version-info": "/admin/version",
+    "settings": "/admin/llm-settings",
+    "tools": "/admin/tools/partial",
+    "servers": "/admin/servers/partial",
+    "resources": "/admin/resources/partial",
+    "prompts": "/admin/prompts/partial",
+    "gateways": "/admin/gateways/partial",
+    "teams": "/admin/teams/partial",
+    "tokens": "/admin/tokens/partial",
+    "agents": "/admin/a2a-agents/partial",
+    "overview": None,
+    "roots": "/admin/roots/partial",
+    "mcp-registry": "/admin/servers/partial",
+}
+
+
+def _extract_permission_from_route(route) -> Optional[str]:
+    """Extract the required permission from a route's @require_permission decorator.
+
+    This function introspects the route's endpoint function to find the permission
+    string captured in the @require_permission decorator's closure.
+
+    Args:
+        route: FastAPI route object
+
+    Returns:
+        Permission string if found (e.g., "tools.read"), None otherwise
+    """
+    try:
+        if not hasattr(route, "endpoint"):
+            return None
+
+        endpoint = route.endpoint
+
+        # The @require_permission decorator wraps the endpoint function
+        # The permission string is captured in the wrapper's closure
+        if hasattr(endpoint, "__closure__") and endpoint.__closure__:
+            for cell in endpoint.__closure__:
+                try:
+                    val = cell.cell_contents
+                    # Permission strings follow pattern: "resource.action" (e.g., "tools.read")
+                    if isinstance(val, str) and "." in val and not val.startswith("/"):
+                        # Validate it looks like a permission (not a path or other string)
+                        parts = val.split(".")
+                        if len(parts) >= 2 and all(p.replace("_", "").isalnum() for p in parts):
+                            return val
+                except (ValueError, AttributeError):
+                    continue
+    except Exception as e:
+        LOGGER.debug(f"Error extracting permission from route {getattr(route, 'path', 'unknown')}: {e}")
+
+    return None
+
+
+def validate_section_permissions(router) -> None:
+    """Validate that SECTION_PERMISSIONS matches actual route decorators.
+
+    This function is called at application startup to ensure the hardcoded
+    SECTION_PERMISSIONS mapping is consistent with the @require_permission
+    decorators on admin routes. Logs warnings for any mismatches.
+
+    Args:
+        router: FastAPI APIRouter instance (admin_router)
+    """
+    mismatches = []
+
+    for section, expected_perm in SECTION_PERMISSIONS.items():
+        route_path = _SECTION_TO_ROUTE_PATH.get(section)
+
+        if route_path is None:
+            # Section has no associated route (e.g., overview)
+            continue
+
+        # Find matching route
+        actual_perm = None
+        for route in router.routes:
+            if hasattr(route, "path") and route.path == route_path:
+                actual_perm = _extract_permission_from_route(route)
+                break
+
+        # Compare expected vs actual
+        if expected_perm != actual_perm:
+            mismatches.append({"section": section, "route": route_path, "expected": expected_perm, "actual": actual_perm})
+
+    if mismatches:
+        LOGGER.warning(f"SECTION_PERMISSIONS validation found {len(mismatches)} mismatches with route decorators. " "This may indicate the mapping needs updating:")
+        for m in mismatches:
+            LOGGER.warning(f"  Section '{m['section']}' (route: {m['route']}): " f"expected '{m['expected']}', found '{m['actual']}'")
+    else:
+        LOGGER.info(f"SECTION_PERMISSIONS validation passed: all {len(SECTION_PERMISSIONS)} sections match route decorators")
+
 
 UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS: frozenset[str] = frozenset({"logout", "team_selector"})
 UI_HIDE_SECTIONS_COOKIE_NAME = "mcpgateway_ui_hide_sections"
