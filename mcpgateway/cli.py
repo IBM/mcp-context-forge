@@ -154,7 +154,7 @@ def _handle_validate_config(path: str = ".env") -> None:
 
 def _handle_config_schema(output: Optional[str] = None) -> None:
     """
-    Export the JSON schema for ContextForge Settings.
+    Export the JSON schema for MCP Gateway Settings.
 
     This function serializes the Pydantic Settings model into a JSON Schema
     suitable for validation or documentation purposes.
@@ -341,6 +341,22 @@ def main() -> None:  # noqa: D401 - imperative mood is fine here
                 include_env=include_env,
                 include_system=include_system,
             )
+            return
+
+        if cmd == "--reindex-embeddings":
+            # Standard
+            import asyncio  # pylint: disable=import-outside-toplevel
+
+            # First-Party
+            from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.embedding_service import reindex_all_tools  # pylint: disable=import-outside-toplevel
+
+            db = SessionLocal()
+            try:
+                result = asyncio.run(reindex_all_tools(db))
+                print(f"Reindexing complete: {result['succeeded']} succeeded, {result['failed']} failed out of {result['total']} tools")
+            finally:
+                db.close()
             return
 
     # Discard the program name and inspect the rest.
