@@ -20,7 +20,7 @@ The detector decodes candidates, scores them using entropy/printability/context 
 ## Configuration example
 ```yaml
 - name: "EncodedExfilDetector"
-  kind: "plugins.encoded_exfil_detector.encoded_exfil_detector.EncodedExfilDetectorPlugin"
+  kind: "plugins.encoded_exfil_detection.encoded_exfil_detector.EncodedExfilDetectorPlugin"
   hooks: ["prompt_pre_fetch", "tool_post_invoke"]
   mode: "enforce"
   priority: 52

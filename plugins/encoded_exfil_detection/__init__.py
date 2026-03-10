@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Encoded exfiltration detector plugin.
 
-Location: ./plugins/encoded_exfil_detector/__init__.py
+Location: ./plugins/encoded_exfil_detection/__init__.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 """

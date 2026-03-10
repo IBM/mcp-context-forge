@@ -247,9 +247,15 @@ class TestToolServiceHelpersExtended:
 
         service = ToolService()
         cached = [SimpleNamespace(id="tool-1")]
+        # Only return cached for the key get_top_tools uses (default limit=5, include_deleted=False).
+        # Other keys (e.g. "a2a", "tools") must get None to avoid polluting aggregate_metrics tests.
+        top_tools_key = "top_tools:5:include_deleted=False"
+
+        def get_only_top_tools(key):
+            return cached if key == top_tools_key else None
 
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
-        cache_module.metrics_cache.get = MagicMock(return_value=cached)
+        cache_module.metrics_cache.get = MagicMock(side_effect=get_only_top_tools)
 
         mock_combined = MagicMock()
         monkeypatch.setattr("mcpgateway.services.tool_service.get_top_performers_combined", mock_combined)
