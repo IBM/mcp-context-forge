@@ -361,6 +361,7 @@ def test_implementation_info():
     else:
         print("\n⚠ Tests will run with Python implementation only")
         print("  To enable Rust tests, build the Rust plugin:")
-        print("  cd plugins_rust/secrets_detection && maturin develop --release")
+        print("  From repo root: make rust-install")
+        print("  Or: cd crates/plugins/secrets_detection && maturin develop --release")
 
     print("=" * 60)

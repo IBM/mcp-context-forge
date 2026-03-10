@@ -44,7 +44,7 @@ except ImportError:
     RustPIIDetector = None
     # Fail in CI if Rust plugins are required
     if os.environ.get("REQUIRE_RUST") == "1":
-        raise ImportError("Rust plugin 'pii_filter' is required in CI but not available")
+        raise ImportError("Rust plugin 'pii_filter_rust' is required in CI but not available")
 
 
 # Parametric fixture for detector implementations
@@ -277,9 +277,6 @@ class TestPIIDetectorParametric:
             # At least one type should be detected
             assert len(detection_keys) > 0, f"{description}: No detection for: {text}"
 
-            # Note: Due to overlapping patterns, multiple types may be detected
-            # This is expected behavior with simple regex patterns
-
     def test_bsn_eleven_proof_validation_note(self, detector_class):
         """Document the need for 11-proef (modulo-11) validation for BSN.
 
@@ -352,7 +349,6 @@ class TestPIIDetectorParametric:
         text = "Card: 4111-1111-1111-1111"
         detections = detector.detect(text)
         masked = detector.mask(text, detections)
-
         # Check that the last 4 digits are preserved and original is masked
         assert "1111" in masked
         assert "4111-1111-1111-1111" not in masked
