@@ -8008,6 +8008,10 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
 
+.PHONY: conc-02-gateways
+conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)
+	@/bin/bash tests/manual/concurrency/run_conc_02_gateways.sh
+
 # -----------------------------------------------------------------------------
 # Temporary CI toggle for Conventional Commit message linting
 # -----------------------------------------------------------------------------
