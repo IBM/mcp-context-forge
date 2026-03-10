@@ -16,9 +16,56 @@ Status focus in this update:
   - `x-contextforge-rust-build-included: true`
 - live proof that raw `POST /mcp initialize` still returns
   `x-contextforge-mcp-runtime: rust`
+- `notifications/initialized` is no longer routed through the generic Python
+  `/_internal/mcp/rpc` switch
+- a dedicated trusted internal Python
+  `/_internal/mcp/notifications/initialized` route now preserves the existing
+  initialize-notification side effects while shrinking the dispatcher seam
+- Rust now forwards MCP `notifications/initialized` directly to that specialized
+  internal route as `backend-notifications-initialized-direct`
+- `notifications/message` is no longer routed through the generic Python
+  `/_internal/mcp/rpc` switch
+- a dedicated trusted internal Python
+  `/_internal/mcp/notifications/message` route now preserves existing logging
+  side effects while shrinking the dispatcher seam
+- Rust now forwards MCP `notifications/message` directly to that specialized
+  internal route as `backend-notifications-message-direct`
+- `notifications/cancelled` is no longer routed through the generic Python
+  `/_internal/mcp/rpc` switch
+- a dedicated trusted internal Python
+  `/_internal/mcp/notifications/cancelled` route now preserves cancellation
+  authorization and cancellation-service side effects while shrinking the
+  dispatcher seam
+- Rust now forwards MCP `notifications/cancelled` directly to that specialized
+  internal route as `backend-notifications-cancelled-direct`
 - `initialize` is no longer routed through the generic Python `/_internal/mcp/rpc` switch
 - a dedicated trusted internal Python `/_internal/mcp/initialize` route now preserves initialize session ownership and session-affinity semantics
 - Rust now forwards MCP `initialize` directly to that specialized internal route as `backend-initialize-direct`
+- `resources/list`, `resources/read`, and `resources/templates/list` are now
+  routed through dedicated trusted internal Python routes instead of the generic
+  `/_internal/mcp/rpc` switch
+- `prompts/list` and `prompts/get` are now routed through dedicated trusted
+  internal Python routes instead of the generic `/_internal/mcp/rpc` switch
+- Rust now forwards those read-only MCP methods as:
+  - `backend-resources-list-direct`
+  - `backend-resources-read-direct`
+  - `backend-resource-templates-list-direct`
+  - `backend-prompts-list-direct`
+  - `backend-prompts-get-direct`
+- focused Python unit coverage and Rust runtime coverage now include the newly
+  specialized `resources/read`, `resources/templates/list`, and `prompts/get`
+  paths
+- `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
+  now passes with `24` runtime tests
+- targeted internal-handler Python coverage passed for the new routes
+- full live MCP validation on the rebuilt Rust-enabled image passed again:
+  - `make test-mcp-cli`: `23 passed`
+  - `make test-mcp-rbac`: `40 passed`
+- raw live `POST /servers/<id>/mcp` calls for:
+  - `resources/templates/list`
+  - `prompts/get`
+  - `resources/read`
+  all returned `x-contextforge-mcp-runtime: rust`
 - live validation was rerun on an explicitly Rust-enabled compose stack after rebuilding the image and reapplying the runtime env flags
 - raw `POST /mcp initialize` now again proves `x-contextforge-mcp-runtime: rust` on the rebuilt live stack
 - `make test-mcp-cli` and `make test-mcp-rbac` were rerun on the actual Rust-enabled stack, not just a Rust-built image
@@ -55,6 +102,84 @@ Status focus in this update:
 - verified `>1000 RPS` on the pinned tools-only benchmark after the SSE fix
 
 ## Latest Load-Test Harness Update
+
+## Latest Dispatcher Narrowing Increment
+
+The most recent correctness-focused Rust MCP increment moved more of the
+read-only JSON-RPC surface off the generic Python `/_internal/mcp/rpc`
+dispatcher and onto explicit trusted internal routes.
+
+### Newly specialized methods
+
+- `notifications/message`
+- `notifications/cancelled`
+- `resources/list`
+- `resources/read`
+- `resources/templates/list`
+- `prompts/list`
+- `prompts/get`
+
+### Current transport and execution shape
+
+For those methods, the live path is now:
+
+- `client -> public /mcp -> Python auth/RBAC gate -> Rust runtime ->
+  specialized internal Python MCP route`
+
+That is still not the final fully Rust-owned execution core, but it removes
+more of the generic JSON-RPC switch and makes the remaining Python boundary
+much narrower and easier to replace method by method.
+
+### Live validation on the rebuilt Rust-enabled stack
+
+Validation rerun after rebuilding the image with Rust enabled:
+
+- `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
+  `24 passed`
+- targeted internal handler tests for:
+  - `notifications/message`
+  - `notifications/cancelled`
+  - `resources/list`
+  - `resources/read`
+  - `resources/templates/list`
+  - `prompts/list`
+  - `prompts/get`
+- `make test-mcp-cli`: `23 passed`
+- `make test-mcp-rbac`: `40 passed`
+
+Raw live proof on `http://localhost:8080`:
+
+- `GET /health` reported:
+  - `x-contextforge-mcp-runtime-mode: rust-managed`
+  - `x-contextforge-mcp-transport-mounted: rust`
+  - `x-contextforge-rust-build-included: true`
+- raw server-scoped MCP calls for:
+  - `resources/templates/list`
+  - `prompts/get`
+  - `resources/read`
+  all returned `x-contextforge-mcp-runtime: rust`
+
+### What is still left on the generic internal dispatcher
+
+The generic Python `/_internal/mcp/rpc` path is now much smaller. The remaining
+notable MCP branches are mainly:
+
+- `resources/subscribe`
+- `resources/unsubscribe`
+- `roots/list` and other `roots/*`
+- elicitation methods
+- any remaining long-tail compatibility or non-hot-path JSON-RPC branches
+
+### Recommended next steps
+
+1. Decide whether the remaining non-hot-path MCP methods need full dedicated
+   narrowing, or whether the generic Python dispatcher can remain as a control
+   plane fallback for those branches.
+2. Continue transport-core migration behind `/_internal/mcp/transport`:
+   session lifecycle, resumable event storage, and session-affinity ownership.
+3. After the Python transport/session core is narrower, decide whether to move
+   those remaining read-only methods to direct Rust ownership or leave them as
+   narrow Python control-plane calls.
 
 The most recent benchmarking pass was focused on separating:
 
@@ -262,20 +387,27 @@ Why this matters:
 
 ## Latest Dispatcher Narrowing Increment
 
-The next MCP-core step after outer transport parity was to stop treating
-`initialize` as just another generic backend JSON-RPC method.
+The next MCP-core steps after outer transport parity were to stop treating
+`initialize` and `notifications/initialized` as generic backend JSON-RPC
+methods.
 
 What changed:
 
 - Python now exposes a dedicated trusted internal route at
   `/_internal/mcp/initialize`
+- Python now also exposes a dedicated trusted internal route at
+  `/_internal/mcp/notifications/initialized`
 - the existing initialize ownership and affinity behavior was factored into one
   shared helper so both the generic dispatcher and the internal Rust route use
   the same logic
 - Rust now forwards `initialize` to the specialized internal route instead of
   `/_internal/mcp/rpc`
+- Rust now forwards `notifications/initialized` to the specialized internal
+  route instead of `/_internal/mcp/rpc`
 - Rust request mode classification now records initialize as
   `backend-initialize-direct`
+- Rust request mode classification now records initialized notifications as
+  `backend-notifications-initialized-direct`
 
 What did not change:
 
@@ -283,13 +415,19 @@ What did not change:
   - session ownership claims
   - capability storage
   - optional session-affinity registration
+- Python still owns the initialized-notification side effect through
+  `logging_service.notify`
 - this removes generic dispatcher coupling for initialize, but it does not yet
   move initialize state deeper into Rust
+- this removes one more generic dispatcher branch, but notification lifecycle
+  handling is not fully Rust-owned yet
 
 Focused validation for this increment:
 
 - `uv run pytest -q tests/unit/mcpgateway/test_main_extended.py -k 'handle_internal_mcp_initialize or handle_rpc_initialize'`
   - `6 passed`
+- `uv run pytest -q tests/unit/mcpgateway/test_main_extended.py -k 'handle_internal_mcp_initialize or handle_internal_mcp_notifications_initialized'`
+  - `4 passed`
 - `uv run pytest -q tests/unit/mcpgateway/test_main_extended.py -k 'InternalTrustedMcpTransportBridge or handle_internal_mcp_initialize or handle_rpc_initialize'`
   - `8 passed`
 - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
@@ -304,6 +442,11 @@ Focused validation for this increment:
   - `GUNICORN_WORKERS=32`
 - live raw initialize proof on the rebuilt stack:
   - `POST /mcp/` returned `x-contextforge-mcp-runtime: rust`
+- live runtime visibility proof on the rebuilt stack:
+  - `GET /health` returned:
+    - `x-contextforge-mcp-runtime-mode: rust-managed`
+    - `x-contextforge-mcp-transport-mounted: rust`
+    - `x-contextforge-rust-build-included: true`
 - `make test-mcp-cli`
   - `23 passed`
 - `make test-mcp-rbac`
@@ -1139,7 +1282,8 @@ Recommended direction:
    - `/_internal/mcp/tools/call`
 2. Add more narrow internal contracts instead of expanding `/_internal/mcp/rpc`.
 3. Move the remaining generic MCP lifecycle methods off the dispatcher next:
-   - `notifications/initialized`
+   - `notifications/message`
+   - `notifications/cancelled`
    - any remaining session-lifecycle-specific helper paths
 4. Keep Python authoritative for auth/RBAC while these seams are being split.
 
