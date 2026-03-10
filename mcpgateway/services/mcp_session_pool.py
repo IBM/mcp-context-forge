@@ -1112,7 +1112,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 else:
                     transport_ctx = sse_client(url=url, headers=merged_headers, timeout=timeout)
                 # pylint: disable=unnecessary-dunder-call,no-member
-                streams = await transport_ctx.__aenter__()  # Must call directly for manual lifecycle management
+                streams = await transport_ctx.__aenter__()  # noqa: PLC2801 - Must call directly for manual lifecycle management
                 read_stream, write_stream = streams[0], streams[1]
             else:  # STREAMABLE_HTTP
                 if httpx_client_factory:
@@ -1120,7 +1120,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 else:
                     transport_ctx = streamablehttp_client(url=url, headers=merged_headers, timeout=timeout)
                 # pylint: disable=unnecessary-dunder-call,no-member
-                read_stream, write_stream, _ = await transport_ctx.__aenter__()  # Must call directly for manual lifecycle management
+                read_stream, write_stream, _ = await transport_ctx.__aenter__()  # noqa: PLC2801 - Must call directly for manual lifecycle management
 
             # Create message handler if factory is configured
             message_handler = None
@@ -1134,7 +1134,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # Create and initialize session
             session = ClientSession(read_stream, write_stream, message_handler=message_handler)
             # pylint: disable=unnecessary-dunder-call
-            await session.__aenter__()  # Must call directly for manual lifecycle management
+            await session.__aenter__()  # noqa: PLC2801 - Must call directly for manual lifecycle management
             await session.initialize()
 
             logger.info(f"Created new MCP session for {sanitize_url_for_logging(url)} (transport={transport_type.value})")
@@ -1561,6 +1561,11 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     headers=internal_headers,
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                 )
+
+                # Treat non-2xx HTTP responses as errors
+                if not response.is_success:
+                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
+                    return {"error": {"code": -32603, "message": f"Internal request failed with HTTP {response.status_code}"}}
 
                 # Parse response
                 response_data = response.json()

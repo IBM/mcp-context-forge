@@ -339,7 +339,7 @@ class TestTokenCatalogService:
             assert token == "jwt_token_scoped"
             call_kwargs = mock_create_jwt.call_args.kwargs
             assert call_kwargs["scopes"]["server_id"] == "server-123"
-            assert call_kwargs["scopes"]["permissions"] == ["tools.read", "resources.read"]
+            assert call_kwargs["scopes"]["permissions"] == ["tools.read", "resources.read", "servers.use"]
             assert call_kwargs["scopes"]["ip_restrictions"] == ["192.168.1.0/24"]
 
     @pytest.mark.asyncio
@@ -399,8 +399,32 @@ class TestTokenCatalogService:
             mock_api_token,  # Token with same name exists
         ]
 
-        with pytest.raises(ValueError, match="Token with name 'Duplicate' already exists for user test@example.com in team None. Please choose a different name."):
+        with pytest.raises(ValueError, match="Token with name 'Duplicate' already exists for user test@example.com in the global scope"):
             await token_service.create_token(user_email="test@example.com", name="Duplicate")
+
+    @pytest.mark.asyncio
+    async def test_create_token_duplicate_name_same_team(self, token_service, mock_db, mock_user, mock_api_token):
+        """Regression test: duplicate name in the same team scope raises ValueError.
+
+        With per-team uniqueness (uq_email_api_tokens_user_name_team), creating
+        the same name twice for the same team_id must be rejected by the pre-check.
+        """
+        from unittest.mock import MagicMock
+
+        mock_team = MagicMock()
+        mock_team.id = "team-456"
+        mock_team_member = MagicMock()
+        mock_team_member.is_active = True
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,         # User exists
+            mock_team,         # Team exists
+            mock_team_member,  # User is active team member
+            mock_api_token,    # Existing token with same name AND same team_id
+        ]
+
+        with pytest.raises(ValueError, match="Token with name .* already exists for user test@example.com in team 'team-456'"):
+            await token_service.create_token(user_email="test@example.com", name="Duplicate", team_id="team-456")
 
     @pytest.mark.asyncio
     async def test_create_token_with_team_success(self, token_service, mock_db, mock_user, mock_team, mock_team_member):
@@ -1908,3 +1932,89 @@ class TestTokenCountFunctions:
         count = await token_service.count_all_tokens()
 
         assert count == 0
+
+
+class TestTokenAutoInjectServersUse:
+    """Verify servers.use is auto-injected for tokens with MCP-related permissions (#3415)."""
+
+    @pytest.fixture
+    def token_service(self, mock_db):
+        return TokenCatalogService(db=mock_db)
+
+    @pytest.mark.asyncio
+    async def test_tools_read_gets_servers_use(self, token_service):
+        """Token with tools.read should auto-get servers.use."""
+        scope = TokenScope(permissions=["tools.read", "tools.execute"])
+
+        with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new=AsyncMock(return_value="fake-jwt")) as mock_jwt:
+            await token_service._generate_token(user_email="user@example.com", jti="test-jti", scope=scope)
+            scopes_arg = mock_jwt.call_args.kwargs["scopes"]
+            assert "servers.use" in scopes_arg["permissions"]
+
+    @pytest.mark.asyncio
+    async def test_resources_read_gets_servers_use(self, token_service):
+        """Token with resources.read should auto-get servers.use."""
+        scope = TokenScope(permissions=["resources.read"])
+
+        with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new=AsyncMock(return_value="fake-jwt")) as mock_jwt:
+            await token_service._generate_token(user_email="user@example.com", jti="test-jti", scope=scope)
+            scopes_arg = mock_jwt.call_args.kwargs["scopes"]
+            assert "servers.use" in scopes_arg["permissions"]
+
+    @pytest.mark.asyncio
+    async def test_prompts_read_gets_servers_use(self, token_service):
+        """Token with prompts.read should auto-get servers.use."""
+        scope = TokenScope(permissions=["prompts.read"])
+
+        with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new=AsyncMock(return_value="fake-jwt")) as mock_jwt:
+            await token_service._generate_token(user_email="user@example.com", jti="test-jti", scope=scope)
+            scopes_arg = mock_jwt.call_args.kwargs["scopes"]
+            assert "servers.use" in scopes_arg["permissions"]
+
+    @pytest.mark.asyncio
+    async def test_empty_permissions_no_injection(self, token_service):
+        """Token with empty permissions should NOT get servers.use injected."""
+        scope = TokenScope(permissions=[])
+
+        with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new=AsyncMock(return_value="fake-jwt")) as mock_jwt:
+            await token_service._generate_token(user_email="user@example.com", jti="test-jti", scope=scope)
+            scopes_arg = mock_jwt.call_args.kwargs["scopes"]
+            assert "servers.use" not in scopes_arg["permissions"]
+
+    @pytest.mark.asyncio
+    async def test_wildcard_permissions_no_injection(self, token_service):
+        """Token with wildcard should NOT get servers.use injected."""
+        scope = TokenScope(permissions=["*"])
+
+        with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new=AsyncMock(return_value="fake-jwt")) as mock_jwt:
+            await token_service._generate_token(user_email="user@example.com", jti="test-jti", scope=scope)
+            scopes_arg = mock_jwt.call_args.kwargs["scopes"]
+            assert scopes_arg["permissions"] == ["*"]
+
+    @pytest.mark.asyncio
+    async def test_no_scope_no_injection(self, token_service):
+        """Token with no scope should NOT get servers.use injected."""
+        with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new=AsyncMock(return_value="fake-jwt")) as mock_jwt:
+            await token_service._generate_token(user_email="user@example.com", jti="test-jti", scope=None)
+            scopes_arg = mock_jwt.call_args.kwargs["scopes"]
+            assert "servers.use" not in scopes_arg["permissions"]
+
+    @pytest.mark.asyncio
+    async def test_already_has_servers_use_no_duplicate(self, token_service):
+        """Token that already has servers.use should not get a duplicate."""
+        scope = TokenScope(permissions=["servers.use", "tools.read"])
+
+        with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new=AsyncMock(return_value="fake-jwt")) as mock_jwt:
+            await token_service._generate_token(user_email="user@example.com", jti="test-jti", scope=scope)
+            scopes_arg = mock_jwt.call_args.kwargs["scopes"]
+            assert scopes_arg["permissions"].count("servers.use") == 1
+
+    @pytest.mark.asyncio
+    async def test_gateways_read_only_no_injection(self, token_service):
+        """Token with only gateways.read should NOT get servers.use (no MCP methods)."""
+        scope = TokenScope(permissions=["gateways.read"])
+
+        with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new=AsyncMock(return_value="fake-jwt")) as mock_jwt:
+            await token_service._generate_token(user_email="user@example.com", jti="test-jti", scope=scope)
+            scopes_arg = mock_jwt.call_args.kwargs["scopes"]
+            assert "servers.use" not in scopes_arg["permissions"]

@@ -780,6 +780,7 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
             full_name=user_request.full_name,
             is_admin=user_request.is_admin,
             is_active=user_request.is_active,
+            email_verified=user_request.email_verified,
             password_change_required=user_request.password_change_required,
             password=user_request.password,
             admin_origin_source="api",

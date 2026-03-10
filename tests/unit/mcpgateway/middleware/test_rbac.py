@@ -209,6 +209,34 @@ async def test_require_permission_granted(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_require_permission_public_only_token_denies_admin_permission(monkeypatch):
+    """Public-only token scope must not pass admin.* checks through decorator paths."""
+
+    async def dummy_func(user=None):
+        return "ok"
+
+    class _ScopedPermissionService:
+        def __init__(self, _db):
+            pass
+
+        async def check_permission(self, **kwargs):
+            token_teams = kwargs.get("token_teams")
+            permission = kwargs.get("permission", "")
+            return not (permission.startswith("admin.") and token_teams is not None and len(token_teams) == 0)
+
+    monkeypatch.setattr(rbac, "PermissionService", _ScopedPermissionService)
+
+    decorated = rbac.require_permission("admin.system_config")(dummy_func)
+
+    with pytest.raises(HTTPException) as exc:
+        await decorated(user={"email": "admin@example.com", "db": MagicMock(), "token_teams": []})
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+    allowed = await decorated(user={"email": "admin@example.com", "db": MagicMock(), "token_teams": None})
+    assert allowed == "ok"
+
+
+@pytest.mark.asyncio
 async def test_require_admin_permission_granted(monkeypatch):
     async def dummy_func(user=None):
         return "admin-ok"
@@ -254,6 +282,54 @@ async def test_permission_checker_methods(monkeypatch):
     assert await checker.has_admin_permission()
     assert await checker.has_any_permission(["tools.read", "tools.execute"])
     await checker.require_permission("tools.read")
+
+
+@pytest.mark.asyncio
+async def test_permission_checker_has_permission_passes_token_teams(monkeypatch):
+    mock_db = MagicMock()
+    mock_user = {"email": "admin@example.com", "db": mock_db, "token_teams": []}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = False
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    checker = rbac.PermissionChecker(mock_user)
+    result = await checker.has_permission("admin.system_config")
+
+    assert result is False
+    assert mock_perm_service.check_permission.call_args.kwargs["token_teams"] == []
+
+
+@pytest.mark.asyncio
+async def test_permission_checker_has_permission_forwards_check_any_team(monkeypatch):
+    """has_permission forwards check_any_team=True to PermissionService (db_session path)."""
+    mock_db = MagicMock()
+    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    checker = rbac.PermissionChecker(mock_user)
+    result = await checker.has_permission("tools.execute", check_any_team=True)
+
+    assert result is True
+    assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+
+@pytest.mark.asyncio
+async def test_permission_checker_has_permission_forwards_check_any_team_fresh_db(monkeypatch):
+    """has_permission forwards check_any_team=True to PermissionService (fresh_db_session path)."""
+    mock_user = {"email": "user@example.com"}  # No 'db' key
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    mock_db = MagicMock()
+    with patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+        checker = rbac.PermissionChecker(mock_user)
+        result = await checker.has_permission("tools.execute", check_any_team=True)
+
+    assert result is True
+    assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
 
 
 # ============================================================================
@@ -763,7 +839,7 @@ async def test_no_proxy_no_trust_auth_required_api_401():
 
 @pytest.mark.asyncio
 async def test_require_permission_plugin_hook_grants(monkeypatch):
-    """Plugin hook grants permission, skipping RBAC (lines 416-452)."""
+    """Plugin hook grants permission when override feature flag is enabled."""
 
     async def dummy_func(user=None):
         return "plugin-granted"
@@ -783,6 +859,7 @@ async def test_require_permission_plugin_hook_grants(monkeypatch):
     mock_pm = MagicMock()
     mock_pm.has_hooks_for.return_value = True
     mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
+    monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", True)
 
     with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
         decorated = rbac.require_permission("tools.read")(dummy_func)
@@ -790,6 +867,44 @@ async def test_require_permission_plugin_hook_grants(monkeypatch):
 
     assert result == "plugin-granted"
     mock_pm.invoke_hook.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_require_permission_plugin_hook_grant_ignored_when_override_disabled(monkeypatch):
+    """Plugin grant should be audit-only by default and fall through to RBAC."""
+
+    async def dummy_func(user=None):
+        return "rbac-granted"
+
+    mock_user = {
+        "email": "user@test.com",
+        "db": MagicMock(),
+        "plugin_context_table": None,
+        "plugin_global_context": None,
+        "request_id": "r1",
+    }
+
+    mock_result = MagicMock()
+    mock_result.modified_payload.granted = True
+    mock_result.modified_payload.reason = "Plugin would allow"
+    mock_result.metadata = {"plugin_name": "test-plugin"}
+
+    mock_pm = MagicMock()
+    mock_pm.has_hooks_for.return_value = True
+    mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
+
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+    monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", False)
+
+    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+        decorated = rbac.require_permission("tools.read")(dummy_func)
+        result = await decorated(user=mock_user)
+
+    assert result == "rbac-granted"
+    mock_pm.invoke_hook.assert_called_once()
+    mock_perm_service.check_permission.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -823,6 +938,81 @@ async def test_require_permission_plugin_hook_denies(monkeypatch):
             await decorated(user=mock_user)
 
     assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_require_permission_plugin_hook_denies_even_with_override_enabled(monkeypatch):
+    """Plugin deny must stay enforced even when grant-override mode is enabled."""
+
+    async def dummy_func(user=None):
+        return "should-not-reach"
+
+    mock_user = {
+        "email": "user@test.com",
+        "db": MagicMock(),
+        "plugin_context_table": None,
+        "plugin_global_context": None,
+        "request_id": "r1",
+    }
+
+    mock_result = MagicMock()
+    mock_result.modified_payload.granted = False
+    mock_result.modified_payload.reason = "Denied by test"
+    mock_result.metadata = {"_decision_plugin": "deny-plugin"}
+
+    mock_pm = MagicMock()
+    mock_pm.has_hooks_for.return_value = True
+    mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
+    monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", True)
+
+    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+        decorated = rbac.require_permission("tools.read")(dummy_func)
+        with pytest.raises(HTTPException) as exc:
+            await decorated(user=mock_user)
+
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_require_permission_plugin_hook_logs_decision_plugin_from_provenance(monkeypatch):
+    """RBAC audit logs should use manager-provided decision provenance."""
+
+    async def dummy_func(user=None):
+        return "plugin-granted"
+
+    mock_user = {
+        "email": "user@test.com",
+        "db": MagicMock(),
+        "plugin_context_table": None,
+        "plugin_global_context": None,
+        "request_id": "r1",
+    }
+
+    mock_result = MagicMock()
+    mock_result.modified_payload.granted = True
+    mock_result.modified_payload.reason = "Allowed by test"
+    # Simulate plugin returning no identity metadata while manager provides provenance.
+    mock_result.metadata = {"_decision_plugin": "authz-plugin"}
+
+    mock_pm = MagicMock()
+    mock_pm.has_hooks_for.return_value = True
+    mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
+    monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", True)
+
+    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+        with patch.object(rbac, "logger") as mock_logger:
+            decorated = rbac.require_permission("tools.read")(dummy_func)
+            result = await decorated(user=mock_user)
+
+    assert result == "plugin-granted"
+    mock_logger.info.assert_any_call(
+        "Plugin permission decision: plugin=%s user=%s permission=%s granted=%s reason=%s",
+        "authz-plugin",
+        "user@test.com",
+        "tools.read",
+        True,
+        "Allowed by test",
+    )
 
 
 # --- Decorator fresh_db_session paths ---

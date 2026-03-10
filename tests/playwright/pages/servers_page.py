@@ -485,3 +485,122 @@ class ServersPage(BasePage):
             server_name: The name of the server
         """
         expect(self.page.locator(f"text={server_name}")).to_be_hidden()
+
+    # ==================== Edit Server Modal Elements ====================
+
+    @property
+    def edit_server_modal(self) -> Locator:
+        """Edit server modal container."""
+        return self.page.locator("#server-edit-modal")
+
+    @property
+    def edit_server_name_input(self) -> Locator:
+        """Name input inside the edit server modal."""
+        return self.edit_server_modal.locator('input[name="name"]')
+
+    @property
+    def edit_server_cancel_btn(self) -> Locator:
+        """Cancel button inside the edit server modal."""
+        return self.edit_server_modal.locator('button:has-text("Cancel")')
+
+    @property
+    def edit_server_save_btn(self) -> Locator:
+        """Save Changes button inside the edit server modal."""
+        return self.edit_server_modal.locator('button:has-text("Save Changes")')
+
+    @property
+    def edit_tools_container(self) -> Locator:
+        """Associated Tools container in edit modal."""
+        return self.page.locator("#edit-server-tools")
+
+    @property
+    def edit_tools_search_input(self) -> Locator:
+        """Tools search input in edit modal."""
+        return self.page.locator("#searchEditTools")
+
+    @property
+    def edit_select_all_tools_btn(self) -> Locator:
+        """Select All tools button in edit modal."""
+        return self.page.locator("#selectAllEditToolsBtn")
+
+    @property
+    def edit_resources_container(self) -> Locator:
+        """Associated Resources container in edit modal."""
+        return self.page.locator("#edit-server-resources")
+
+    @property
+    def edit_resources_search_input(self) -> Locator:
+        """Resources search input in edit modal."""
+        return self.page.locator("#searchEditResources")
+
+    @property
+    def edit_select_all_resources_btn(self) -> Locator:
+        """Select All resources button in edit modal."""
+        return self.page.locator("#selectAllEditResourcesBtn")
+
+    @property
+    def edit_prompts_container(self) -> Locator:
+        """Associated Prompts container in edit modal."""
+        return self.page.locator("#edit-server-prompts")
+
+    @property
+    def edit_prompts_search_input(self) -> Locator:
+        """Prompts search input in edit modal."""
+        return self.page.locator("#searchEditPrompts")
+
+    @property
+    def edit_select_all_prompts_btn(self) -> Locator:
+        """Select All prompts button in edit modal."""
+        return self.page.locator("#selectAllEditPromptsBtn")
+
+    # ==================== Edit Server Modal Methods ====================
+
+    def open_edit_modal(self, server_name: str) -> None:
+        """Find a server row by name and click its Edit button.
+
+        Args:
+            server_name: Name of the server to edit
+        """
+        server_row = self.page.locator(f'[data-testid="server-item"]:has-text("{server_name}")').first
+        expect(server_row).to_be_visible(timeout=10000)
+        edit_btn = server_row.locator('button:has-text("Edit")')
+        edit_btn.click()
+        expect(self.edit_server_modal).to_be_visible(timeout=10000)
+
+    def get_edit_checked_tools(self) -> list[str]:
+        """Return values of checked tool checkboxes in the edit modal."""
+        return self.page.evaluate(
+            """
+            () => {
+                const container = document.getElementById('edit-server-tools');
+                if (!container) return [];
+                return Array.from(
+                    container.querySelectorAll('input[name="associatedTools"]:checked')
+                ).map(cb => cb.value);
+            }
+        """
+        )
+
+    def get_edit_tool_store_size(self) -> int:
+        """Read the in-memory editServerSelections store size for tools."""
+        return self._get_edit_store_size("edit-server-tools")
+
+    def get_edit_resource_store_size(self) -> int:
+        """Read the in-memory editServerSelections store size for resources."""
+        return self._get_edit_store_size("edit-server-resources")
+
+    def get_edit_prompt_store_size(self) -> int:
+        """Read the in-memory editServerSelections store size for prompts."""
+        return self._get_edit_store_size("edit-server-prompts")
+
+    def _get_edit_store_size(self, key: str) -> int:
+        """Read the in-memory editServerSelections store size for a given key."""
+        return self.page.evaluate(
+            """
+            (key) => {
+                const store = window.editServerSelections && window.editServerSelections[key];
+                return store ? store.size : 0;
+            }
+        """,
+            key,
+        )

@@ -484,7 +484,7 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for MCP client operations | `true`            | bool    |
-| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only | `false` | bool |
+| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers               | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
@@ -609,11 +609,14 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | Setting                                  | Description                                      | Default    | Options |
 | ---------------------------------------- | ------------------------------------------------ | ---------- | ------- |
 | `AUTO_CREATE_PERSONAL_TEAMS`             | Enable automatic personal team creation for new users | `true`   | bool    |
-| `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix                      | `personal` | string  |
+| `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix (empty = derive from display name) | `""` | string  |
 | `MAX_TEAMS_PER_USER`                     | Maximum number of teams a user can belong to    | `50`       | int > 0 |
 | `MAX_MEMBERS_PER_TEAM`                   | Maximum number of members per team               | `100`      | int > 0 |
 | `INVITATION_EXPIRY_DAYS`                 | Number of days before team invitations expire   | `7`        | int > 0 |
 | `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` | Require email verification for team invitations | `true`     | bool    |
+| `ALLOW_TEAM_CREATION`                    | Allow users to create organizational teams (admins always can) | `true`  | bool    |
+| `ALLOW_TEAM_JOIN_REQUESTS`               | Allow users to request to join public teams | `true`  | bool    |
+| `ALLOW_TEAM_INVITATIONS`                 | Allow team owners to send invitations       | `true`  | bool    |
 
 ### MCP Server Catalog
 
@@ -812,7 +815,7 @@ ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed 
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | bool                                       |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
-| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-1`               | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-2`               | string                                     |
 | `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |
@@ -856,7 +859,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 
 | Setting                      | Description                                              | Default   | Options          |
 | ---------------------------- | -------------------------------------------------------- | --------- | ---------------- |
-| `ENABLE_METRICS`             | Enable Prometheus metrics instrumentation                | `true`    | bool             |
+| `ENABLE_METRICS`             | Enable Prometheus metrics endpoint (requires JWT auth)   | `false`   | bool             |
 | `METRICS_EXCLUDED_HANDLERS`  | Regex patterns for paths to exclude from metrics         | (empty)   | comma-separated  |
 | `METRICS_NAMESPACE`          | Prometheus metrics namespace (prefix)                    | `default` | string           |
 | `METRICS_SUBSYSTEM`          | Prometheus metrics subsystem (secondary prefix)          | (empty)   | string           |
@@ -1061,113 +1064,42 @@ The gateway includes built-in observability features for tracking HTTP requests,
 
 ### Plugins Configuration
 
-The plugin framework uses its own `PluginsSettings` class (via `pydantic-settings`) with the `PLUGINS_` env var prefix. When used standalone (e.g., via the `mcpplugins` CLI or as a library), only these `PLUGINS_`-prefixed variables are needed. Inside the gateway, the plugin settings are accessed via `settings.plugins`.
+Plugin settings are documented separately to match the plugin-framework
+settings split in code.
 
-**Core Settings:**
-
-| Setting                        | Description                                      | Default               | Options |
-| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
-| `PLUGINS_ENABLED`             | Enable the plugin framework                      | `false`               | bool    |
-| `PLUGINS_CONFIG_FILE`         | Path to plugin configuration file                | `plugins/config.yaml` | string  |
-| `PLUGINS_PLUGIN_TIMEOUT`      | Plugin execution timeout (seconds)               | `30`                  | int     |
-| `PLUGINS_LOG_LEVEL`           | Plugin framework log level                       | `INFO`                | string  |
-| `PLUGINS_SKIP_SSL_VERIFY`     | Skip TLS verification for plugin HTTP requests   | `false`               | bool    |
-
-**HTTP Client Settings:**
-
-| Setting                                   | Description                                      | Default | Options |
-| ----------------------------------------- | ------------------------------------------------ | ------- | ------- |
-| `PLUGINS_HTTPX_MAX_CONNECTIONS`           | Max total concurrent HTTP connections             | `200`   | int     |
-| `PLUGINS_HTTPX_MAX_KEEPALIVE_CONNECTIONS` | Max idle keepalive connections to retain          | `100`   | int     |
-| `PLUGINS_HTTPX_KEEPALIVE_EXPIRY`          | Idle keepalive connection expiry (seconds)        | `30.0`  | float   |
-| `PLUGINS_HTTPX_CONNECT_TIMEOUT`           | TCP connect timeout (seconds)                    | `5.0`   | float   |
-| `PLUGINS_HTTPX_READ_TIMEOUT`             | Read timeout (seconds)                            | `120.0` | float   |
-| `PLUGINS_HTTPX_WRITE_TIMEOUT`            | Write timeout (seconds)                           | `30.0`  | float   |
-| `PLUGINS_HTTPX_POOL_TIMEOUT`             | Connection pool timeout (seconds)                 | `10.0`  | float   |
-
-**CLI Settings:**
-
-| Setting                        | Description                                      | Default | Options |
-| ------------------------------ | ------------------------------------------------ | ------- | ------- |
-| `PLUGINS_CLI_COMPLETION`      | Enable shell auto-completion for `mcpplugins` CLI | `false` | bool    |
-| `PLUGINS_CLI_MARKUP_MODE`     | Markup renderer for CLI output                   | (none)  | `rich`, `markdown`, `disabled` |
-
-**MCP Client mTLS Settings:**
-
-| Setting                                  | Description                                      | Default | Options |
-| ---------------------------------------- | ------------------------------------------------ | ------- | ------- |
-| `PLUGINS_CLIENT_MTLS_CERTFILE`          | Path to PEM client certificate for mTLS          | (none)  | string  |
-| `PLUGINS_CLIENT_MTLS_KEYFILE`           | Path to PEM client private key for mTLS          | (none)  | string  |
-| `PLUGINS_CLIENT_MTLS_CA_BUNDLE`         | Path to CA bundle for client cert verification   | (none)  | string  |
-| `PLUGINS_CLIENT_MTLS_KEYFILE_PASSWORD`  | Password for encrypted client private key        | (none)  | string  |
-| `PLUGINS_CLIENT_MTLS_VERIFY`            | Verify the upstream server certificate           | (none)  | bool    |
-| `PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME`    | Enable hostname verification                     | (none)  | bool    |
-
-**MCP Server SSL Settings:**
-
-| Setting                                  | Description                                      | Default | Options |
-| ---------------------------------------- | ------------------------------------------------ | ------- | ------- |
-| `PLUGINS_SERVER_SSL_KEYFILE`            | Path to PEM server private key                   | (none)  | string  |
-| `PLUGINS_SERVER_SSL_CERTFILE`           | Path to PEM server certificate                   | (none)  | string  |
-| `PLUGINS_SERVER_SSL_CA_CERTS`           | Path to CA certificates for client verification  | (none)  | string  |
-| `PLUGINS_SERVER_SSL_KEYFILE_PASSWORD`   | Password for encrypted server private key        | (none)  | string  |
-| `PLUGINS_SERVER_SSL_CERT_REQS`          | Client certificate requirement                   | (none)  | `0` (NONE), `1` (OPTIONAL), `2` (REQUIRED) |
-
-**MCP Server Settings:**
-
-| Setting                        | Description                                      | Default | Options |
-| ------------------------------ | ------------------------------------------------ | ------- | ------- |
-| `PLUGINS_SERVER_HOST`         | MCP server host to bind to                       | (none)  | string  |
-| `PLUGINS_SERVER_PORT`         | MCP server port to bind to                       | (none)  | int     |
-| `PLUGINS_SERVER_UDS`          | Unix domain socket path for MCP streamable HTTP  | (none)  | string  |
-| `PLUGINS_SERVER_SSL_ENABLED`  | Enable SSL/TLS for the MCP server                | (none)  | bool    |
-
-**MCP Runtime Settings:**
-
-| Setting                        | Description                                      | Default | Options |
-| ------------------------------ | ------------------------------------------------ | ------- | ------- |
-| `PLUGINS_CONFIG_PATH`         | Path to plugin config file for external servers  | (none)  | string  |
-| `PLUGINS_TRANSPORT`           | Transport type for external MCP server           | (none)  | `http`, `stdio` |
-
-**gRPC Client mTLS Settings:**
-
-| Setting                                      | Description                                      | Default | Options |
-| -------------------------------------------- | ------------------------------------------------ | ------- | ------- |
-| `PLUGINS_GRPC_CLIENT_MTLS_CERTFILE`         | Path to PEM client certificate for gRPC mTLS     | (none)  | string  |
-| `PLUGINS_GRPC_CLIENT_MTLS_KEYFILE`          | Path to PEM client private key for gRPC mTLS     | (none)  | string  |
-| `PLUGINS_GRPC_CLIENT_MTLS_CA_BUNDLE`        | Path to CA bundle for gRPC client verification   | (none)  | string  |
-| `PLUGINS_GRPC_CLIENT_MTLS_KEYFILE_PASSWORD` | Password for encrypted gRPC client private key   | (none)  | string  |
-| `PLUGINS_GRPC_CLIENT_MTLS_VERIFY`           | Verify the gRPC upstream server certificate      | (none)  | bool    |
-
-**gRPC Server SSL Settings:**
-
-| Setting                                      | Description                                      | Default | Options |
-| -------------------------------------------- | ------------------------------------------------ | ------- | ------- |
-| `PLUGINS_GRPC_SERVER_SSL_KEYFILE`           | Path to PEM gRPC server private key              | (none)  | string  |
-| `PLUGINS_GRPC_SERVER_SSL_CERTFILE`          | Path to PEM gRPC server certificate              | (none)  | string  |
-| `PLUGINS_GRPC_SERVER_SSL_CA_CERTS`          | Path to CA certificates for gRPC client verification | (none) | string |
-| `PLUGINS_GRPC_SERVER_SSL_KEYFILE_PASSWORD`  | Password for encrypted gRPC server private key   | (none)  | string  |
-| `PLUGINS_GRPC_SERVER_SSL_CLIENT_AUTH`       | gRPC client certificate requirement              | (none)  | `none`, `optional`, `require` |
-
-**gRPC Server Settings:**
-
-| Setting                            | Description                                      | Default | Options |
-| ---------------------------------- | ------------------------------------------------ | ------- | ------- |
-| `PLUGINS_GRPC_SERVER_HOST`        | gRPC server host to bind to                      | (none)  | string  |
-| `PLUGINS_GRPC_SERVER_PORT`        | gRPC server port to bind to                      | (none)  | int     |
-| `PLUGINS_GRPC_SERVER_UDS`         | Unix domain socket path for gRPC server          | (none)  | string  |
-| `PLUGINS_GRPC_SERVER_SSL_ENABLED` | Enable SSL/TLS for the gRPC server               | (none)  | bool    |
-
-**Unix Socket Settings:**
-
-| Setting                        | Description                                      | Default | Options |
-| ------------------------------ | ------------------------------------------------ | ------- | ------- |
-| `PLUGINS_UNIX_SOCKET_PATH`    | Path to the Unix domain socket                   | (none)  | string  |
+- See [Plugin Configuration Reference](configuration-plugins.md) for all
+  `PLUGINS_*` settings and aliases.
 
 
-!!! note "Backwards Compatibility"
-    `PLUGIN_CONFIG_FILE` (without the `S`) is still accepted as an alias for `PLUGINS_CONFIG_FILE`. Similarly, `UNIX_SOCKET_PATH` is accepted as an alias for `PLUGINS_UNIX_SOCKET_PATH`.
+#### Plugin Framework (Standalone) Settings
 
+The plugin framework has its own configuration via `pydantic-settings` with the `PLUGINS_` env var prefix. These settings allow the plugin framework to operate independently of the gateway configuration. When the plugin framework is used standalone (e.g., via the `mcpplugins` CLI or as a library), only these `PLUGINS_`-prefixed variables are needed. When running inside the gateway, **both** the gateway settings (above) and these framework settings are in effect.
+
+`PLUGINS_ENABLED`, `PLUGINS_CLI_COMPLETION`, and `PLUGINS_CLI_MARKUP_MODE` are shared — the same env var is read by both the gateway and the plugin framework. The HTTP client and SSL settings below are scoped specifically to plugin requests.
+
+| Setting                                  | Description                                              | Default               | Options |
+| ---------------------------------------- | -------------------------------------------------------- | --------------------- | ------- |
+| `PLUGINS_ENABLED`                       | Enable the plugin framework (shared with gateway)        | `false`               | bool    |
+| `PLUGINS_CONFIG_FILE`                   | Path to plugin configuration file                        | `plugins/config.yaml` | string  |
+| `PLUGINS_PLUGIN_TIMEOUT`               | Plugin execution timeout (seconds)                       | `30`                  | int     |
+| `PLUGINS_LOG_LEVEL`                     | Plugin framework log level                               | `INFO`                | string  |
+| `PLUGINS_SKIP_SSL_VERIFY`              | Skip TLS verification for plugin HTTP requests           | `false`               | bool    |
+| `PLUGINS_HTTPX_MAX_CONNECTIONS`         | Plugin HTTP client max total connections                 | `200`                 | int     |
+| `PLUGINS_HTTPX_MAX_KEEPALIVE_CONNECTIONS` | Plugin HTTP client max keepalive connections            | `100`                 | int     |
+| `PLUGINS_HTTPX_KEEPALIVE_EXPIRY`        | Plugin HTTP client keepalive expiry (seconds)            | `30.0`                | float   |
+| `PLUGINS_HTTPX_CONNECT_TIMEOUT`         | Plugin HTTP client TCP connect timeout (seconds)         | `5.0`                 | float   |
+| `PLUGINS_HTTPX_READ_TIMEOUT`            | Plugin HTTP client read timeout (seconds)                | `120.0`               | float   |
+| `PLUGINS_HTTPX_WRITE_TIMEOUT`           | Plugin HTTP client write timeout (seconds)               | `30.0`                | float   |
+| `PLUGINS_HTTPX_POOL_TIMEOUT`            | Plugin HTTP client pool timeout (seconds)                | `10.0`                | float   |
+| `PLUGINS_CLI_COMPLETION`               | Enable CLI auto-completion (shared with gateway)          | `false`               | bool    |
+| `PLUGINS_CLI_MARKUP_MODE`              | CLI markup mode (shared with gateway)                     | (none)                | `rich`, `markdown`, `disabled` |
+
+!!! note "Gateway ↔ Plugin Framework Shared Settings"
+    `PLUGINS_ENABLED`, `PLUGINS_CLI_COMPLETION`, and `PLUGINS_CLI_MARKUP_MODE` are read by both the gateway
+    and the plugin framework from the same env var. The gateway also reads `PLUGIN_CONFIG_FILE` for backwards
+    compatibility, while the plugin framework reads `PLUGINS_CONFIG_FILE`. The gateway's `HTTPX_CONNECT_TIMEOUT` /
+    `HTTPX_READ_TIMEOUT` / `SKIP_SSL_VERIFY` are independent of the plugin framework's `PLUGINS_HTTPX_CONNECT_TIMEOUT` /
+    `PLUGINS_HTTPX_READ_TIMEOUT` / `PLUGINS_SKIP_SSL_VERIFY`.
 
 ### HTTP Retry Configuration
 

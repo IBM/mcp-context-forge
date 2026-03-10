@@ -517,22 +517,6 @@ class MetricsBufferService:
                         ],
                     )
 
-                # Bulk insert server metrics
-                if server_metrics:
-                    db.bulk_insert_mappings(
-                        ServerMetric,
-                        [
-                            {
-                                "server_id": m.server_id,
-                                "timestamp": m.timestamp,
-                                "response_time": m.response_time,
-                                "is_success": m.is_success,
-                                "error_message": m.error_message,
-                            }
-                            for m in server_metrics
-                        ],
-                    )
-
                 # Bulk insert A2A agent metrics
                 if a2a_agent_metrics:
                     db.bulk_insert_mappings(
@@ -556,6 +540,30 @@ class MetricsBufferService:
             logger.error(f"Failed to flush metrics to database: {e}", exc_info=True)
             # Metrics are lost on failure - acceptable trade-off for performance
             # Could implement retry queue if needed
+
+        # Flush server metrics in a separate transaction so that an invalid
+        # server_id (FK violation) does not roll back tool/resource/prompt/a2a
+        # metrics.  server_id can originate from untrusted headers (X-Server-ID)
+        # in admin API paths, so it may reference a nonexistent server.
+        if server_metrics:
+            try:
+                with fresh_db_session() as db:
+                    db.bulk_insert_mappings(
+                        ServerMetric,
+                        [
+                            {
+                                "server_id": m.server_id,
+                                "timestamp": m.timestamp,
+                                "response_time": m.response_time,
+                                "is_success": m.is_success,
+                                "error_message": m.error_message,
+                            }
+                            for m in server_metrics
+                        ],
+                    )
+                    db.commit()
+            except Exception as e:
+                logger.error(f"Failed to flush server metrics to database: {e}", exc_info=True)
 
     def _write_tool_metric_immediately(
         self,

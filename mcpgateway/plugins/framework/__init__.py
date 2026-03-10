@@ -92,7 +92,15 @@ def get_plugin_manager(observability: Optional[ObservabilityProvider] = None) ->
         from mcpgateway.plugins.framework.settings import settings  # pylint: disable=import-outside-toplevel
 
         if settings.enabled:
-            _plugin_manager = PluginManager(settings.config_file, observability=observability)
+            # Import concrete policies from the gateway side
+            from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # pylint: disable=import-outside-toplevel
+
+            _plugin_manager = PluginManager(
+                settings.config_file,
+                timeout=settings.plugin_timeout,
+                observability=observability,
+                hook_policies=HOOK_PAYLOAD_POLICIES,
+            )
     return _plugin_manager
 
 

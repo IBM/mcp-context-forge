@@ -1,5 +1,5 @@
 {
-  "description": "ContextForge configuration settings.\n\nExamples:\n    >>> from mcpgateway.config import Settings\n    >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')\n    >>> s.api_key\n    'admin:secret'\n    >>> s2 = Settings(transport_type='http')\n    >>> s2.validate_transport()  # no error\n    >>> s3 = Settings(transport_type='invalid')\n    >>> try:\n    ...     s3.validate_transport()\n    ... except ValueError as e:\n    ...     print('error')\n    error\n    >>> s4 = Settings(database_url='sqlite:///./test.db')\n    >>> isinstance(s4.database_settings, dict)\n    True\n    >>> s5 = Settings()\n    >>> s5.app_name\n    'ContextForge'\n    >>> s5.host in ('0.0.0.0', '127.0.0.1')  # Default can be either\n    True\n    >>> s5.port\n    4444\n    >>> s5.auth_required\n    True\n    >>> isinstance(s5.allowed_origins, set)\n    True\n    >>> s6 = Settings(log_detailed_skip_endpoints=[\"/metrics\", \"/health\"])\n    >>> s6.log_detailed_skip_endpoints\n    ['/metrics', '/health']\n    >>> s7 = Settings(log_detailed_sample_rate=0.5)\n    >>> s7.log_detailed_sample_rate\n    0.5\n    >>> s8 = Settings(log_resolve_user_identity=True)\n    >>> s8.log_resolve_user_identity\n    True\n    >>> s9 = Settings()\n    >>> s9.log_detailed_skip_endpoints\n    []\n    >>> s9.log_detailed_sample_rate\n    1.0\n    >>> s9.log_resolve_user_identity\n    False",
+  "description": "ContextForge AI Gateway configuration settings.\n\nExamples:\n    >>> from mcpgateway.config import Settings\n    >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')\n    >>> s.api_key\n    'admin:secret'\n    >>> s2 = Settings(transport_type='http')\n    >>> s2.validate_transport()  # no error\n    >>> s3 = Settings(transport_type='invalid')\n    >>> try:\n    ...     s3.validate_transport()\n    ... except ValueError as e:\n    ...     print('error')\n    error\n    >>> s4 = Settings(database_url='sqlite:///./test.db')\n    >>> isinstance(s4.database_settings, dict)\n    True\n    >>> s5 = Settings()\n    >>> s5.app_name\n    'ContextForge'\n    >>> s5.host in ('0.0.0.0', '127.0.0.1')  # Default can be either\n    True\n    >>> s5.port\n    4444\n    >>> s5.auth_required\n    True\n    >>> isinstance(s5.allowed_origins, set)\n    True\n    >>> s6 = Settings(log_detailed_skip_endpoints=[\"/metrics\", \"/health\"])\n    >>> s6.log_detailed_skip_endpoints\n    ['/metrics', '/health']\n    >>> s7 = Settings(log_detailed_sample_rate=0.5)\n    >>> s7.log_detailed_sample_rate\n    0.5\n    >>> s8 = Settings(log_resolve_user_identity=True)\n    >>> s8.log_resolve_user_identity\n    True\n    >>> s9 = Settings()\n    >>> s9.log_detailed_skip_endpoints\n    []\n    >>> s9.log_detailed_sample_rate\n    1.0\n    >>> s9.log_resolve_user_identity\n    False",
   "properties": {
     "app_name": {
       "default": "ContextForge",
@@ -63,7 +63,7 @@
       "type": "string"
     },
     "protocol_version": {
-      "default": "2025-06-18",
+      "default": "2025-11-25",
       "title": "Protocol Version",
       "type": "string"
     },
@@ -124,6 +124,12 @@
     "auth_required": {
       "default": true,
       "title": "Auth Required",
+      "type": "boolean"
+    },
+    "allow_unauthenticated_admin": {
+      "default": false,
+      "description": "Allow unauthenticated requests to receive platform-admin context when AUTH_REQUIRED=false (dangerous; development-only override).",
+      "title": "Allow Unauthenticated Admin",
       "type": "boolean"
     },
     "token_expiry": {
@@ -731,6 +737,19 @@
       "description": "OIDC issuer URL",
       "title": "Sso Generic Issuer"
     },
+    "sso_generic_jwks_uri": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "OIDC JWKS endpoint URL for token signature verification",
+      "title": "Sso Generic Jwks Uri"
+    },
     "sso_generic_scope": {
       "anyOf": [
         {
@@ -801,15 +820,28 @@
       "type": "boolean"
     },
     "mcp_require_auth": {
-      "default": false,
-      "description": "Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only. If true, all /mcp requests must include a valid Bearer token.",
-      "title": "Mcp Require Auth",
-      "type": "boolean"
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Require authentication for /mcp endpoints. When unset, inherits AUTH_REQUIRED. Set false explicitly to allow unauthenticated access to public items only; set true to require a valid Bearer token for all /mcp requests.",
+      "title": "Mcp Require Auth"
     },
     "trust_proxy_auth": {
       "default": false,
       "description": "Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",
       "title": "Trust Proxy Auth",
+      "type": "boolean"
+    },
+    "trust_proxy_auth_dangerously": {
+      "default": false,
+      "description": "Acknowledge and allow trusted proxy headers when MCP_CLIENT_AUTH_ENABLED=false (dangerous; only for strictly trusted proxy deployments).",
+      "title": "Trust Proxy Auth Dangerously",
       "type": "boolean"
     },
     "proxy_user_header": {
@@ -993,6 +1025,12 @@
       "default": false,
       "description": "Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",
       "title": "Public Registration Enabled",
+      "type": "boolean"
+    },
+    "allow_public_visibility": {
+      "default": true,
+      "description": "When false, creating or updating any entity with public visibility is blocked in team scope.",
+      "title": "Allow Public Visibility",
       "type": "boolean"
     },
     "protect_all_admins": {
@@ -1276,7 +1314,7 @@
       "type": "boolean"
     },
     "personal_team_prefix": {
-      "default": "personal",
+      "default": "",
       "description": "Personal team naming prefix",
       "title": "Personal Team Prefix",
       "type": "string"
@@ -1303,6 +1341,24 @@
       "default": true,
       "description": "Require email verification for team invitations",
       "title": "Require Email Verification For Invites",
+      "type": "boolean"
+    },
+    "allow_team_creation": {
+      "default": true,
+      "description": "Allow users to create organizational teams. Admins can always create teams.",
+      "title": "Allow Team Creation",
+      "type": "boolean"
+    },
+    "allow_team_join_requests": {
+      "default": true,
+      "description": "Allow users to request to join public teams",
+      "title": "Allow Team Join Requests",
+      "type": "boolean"
+    },
+    "allow_team_invitations": {
+      "default": true,
+      "description": "Allow team owners to send invitations",
+      "title": "Allow Team Invitations",
       "type": "boolean"
     },
     "default_admin_role": {
@@ -1344,6 +1400,28 @@
       "description": "Use local CDN assets instead of external CDNs for airgapped deployments",
       "title": "Mcpgateway Ui Airgapped",
       "type": "boolean"
+    },
+    "mcpgateway_ui_embedded": {
+      "default": false,
+      "description": "Enable embedded UI mode (hides select header controls by default)",
+      "title": "Mcpgateway Ui Embedded",
+      "type": "boolean"
+    },
+    "mcpgateway_ui_hide_sections": {
+      "description": "CSV/JSON list of UI sections to hide. Valid values: overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings",
+      "items": {
+        "type": "string"
+      },
+      "title": "Mcpgateway Ui Hide Sections",
+      "type": "array"
+    },
+    "mcpgateway_ui_hide_header_items": {
+      "description": "CSV/JSON list of header items to hide. Valid values: logout, team_selector, user_identity, theme_toggle",
+      "items": {
+        "type": "string"
+      },
+      "title": "Mcpgateway Ui Hide Header Items",
+      "type": "array"
     },
     "mcpgateway_bulk_import_enabled": {
       "default": true,
@@ -1692,8 +1770,8 @@
     },
     "allowed_origins": {
       "default": [
-        "http://localhost",
-        "http://localhost:4444"
+        "http://localhost:4444",
+        "http://localhost"
       ],
       "items": {
         "type": "string"
@@ -1718,15 +1796,27 @@
       "type": "boolean"
     },
     "llmchat_enabled": {
-      "default": false,
+      "default": true,
       "description": "Enable LLM Chat feature",
       "title": "Llmchat Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_stdio_transport_enabled": {
+      "default": false,
+      "description": "Enable stdio transport for MCP chat client configuration. Disabled by default; set true only in trusted environments that intentionally need stdio process execution.",
+      "title": "Mcpgateway Stdio Transport Enabled",
       "type": "boolean"
     },
     "toolops_enabled": {
       "default": false,
       "description": "Enable ToolOps feature",
       "title": "Toolops Enabled",
+      "type": "boolean"
+    },
+    "plugins_can_override_rbac": {
+      "default": false,
+      "description": "Allow HTTP_AUTH_CHECK_PERMISSION plugins to short-circuit built-in RBAC grants. Disabled by default so plugin grant decisions are audit-only unless explicitly enabled.",
+      "title": "Plugins Can Override Rbac",
       "type": "boolean"
     },
     "poll_interval": {
@@ -2245,6 +2335,20 @@
       "title": "Security Rate Limit Window Minutes",
       "type": "integer"
     },
+    "token_usage_logging_enabled": {
+      "default": true,
+      "description": "Enable API token usage logging middleware",
+      "title": "Token Usage Logging Enabled",
+      "type": "boolean"
+    },
+    "token_last_used_update_interval_minutes": {
+      "default": 5,
+      "description": "Minimum minutes between last_used timestamp updates (rate-limits DB writes)",
+      "maximum": 1440,
+      "minimum": 1,
+      "title": "Token Last Used Update Interval Minutes",
+      "type": "integer"
+    },
     "metrics_aggregation_enabled": {
       "default": true,
       "description": "Enable automatic log aggregation into performance metrics",
@@ -2687,6 +2791,18 @@
       "title": "Webhook Logging Urls",
       "type": "array"
     },
+    "mcpgateway_ws_relay_enabled": {
+      "default": false,
+      "description": "Enable WebSocket JSON-RPC relay endpoint at /ws",
+      "title": "Mcpgateway Ws Relay Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_reverse_proxy_enabled": {
+      "default": false,
+      "description": "Enable reverse-proxy transport endpoints under /reverse-proxy/*",
+      "title": "Mcpgateway Reverse Proxy Enabled",
+      "type": "boolean"
+    },
     "transport_type": {
       "default": "all",
       "title": "Transport Type",
@@ -2767,14 +2883,14 @@
     },
     "allowed_mime_types": {
       "default": [
-        "image/gif",
-        "text/plain",
-        "image/jpeg",
-        "image/png",
         "text/markdown",
-        "text/html",
+        "image/png",
         "application/json",
-        "application/xml"
+        "image/jpeg",
+        "text/plain",
+        "image/gif",
+        "application/xml",
+        "text/html"
       ],
       "items": {
         "type": "string"
@@ -3243,42 +3359,6 @@
       "title": "Streamable Http Event Ttl",
       "type": "integer"
     },
-    "plugins_enabled": {
-      "default": false,
-      "description": "Enable the plugin framework",
-      "title": "Plugins Enabled",
-      "type": "boolean"
-    },
-    "plugin_config_file": {
-      "default": "plugins/config.yaml",
-      "description": "Path to main plugin configuration file",
-      "title": "Plugin Config File",
-      "type": "string"
-    },
-    "plugins_cli_completion": {
-      "default": false,
-      "description": "Enable auto-completion for plugins CLI",
-      "title": "Plugins Cli Completion",
-      "type": "boolean"
-    },
-    "plugins_cli_markup_mode": {
-      "anyOf": [
-        {
-          "enum": [
-            "markdown",
-            "rich",
-            "disabled"
-          ],
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Set markup mode for plugins CLI",
-      "title": "Plugins Cli Markup Mode"
-    },
     "dev_mode": {
       "default": false,
       "title": "Dev Mode",
@@ -3472,7 +3552,7 @@
       "type": "array"
     },
     "validation_name_pattern": {
-      "default": "^[a-zA-Z0-9_.\\-\\s]+$",
+      "default": "^[a-zA-Z0-9_.\\- ]+$",
       "title": "Validation Name Pattern",
       "type": "string"
     },
@@ -3737,8 +3817,8 @@
       "type": "string"
     },
     "ENABLE_METRICS": {
-      "default": true,
-      "description": "Enable Prometheus metrics instrumentation",
+      "default": false,
+      "description": "Enable Prometheus metrics endpoint at /metrics/prometheus (requires authentication)",
       "title": "Enable Metrics",
       "type": "boolean"
     },

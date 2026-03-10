@@ -19,6 +19,7 @@ underlying data.
 
 # Standard
 import asyncio
+import base64
 import binascii
 from collections import defaultdict
 import csv
@@ -78,7 +79,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_any_permission, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_any_permission, require_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -153,7 +154,7 @@ from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
-from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.validate_signature import sign_data
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
@@ -420,6 +421,34 @@ def _validated_team_id_param(team_id: Optional[str] = Query(None, description="F
         raise HTTPException(status_code=400, detail="Invalid team ID") from exc
 
 
+def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str] = None, include_inactive: bool = False, team_id: Optional[str] = None) -> str:
+    """Build an admin redirect URL preserving query parameters.
+
+    Args:
+        root_path: The root path prefix for the application.
+        fragment: The URL fragment/hash (e.g. "tools", "catalog").
+        error: Optional error message to include as a query parameter.
+        include_inactive: Whether the include_inactive flag was set.
+        team_id: Optional team ID to preserve in the redirect.
+
+    Returns:
+        A fully constructed redirect URL string.
+    """
+    params: dict[str, str] = {}
+    if error:
+        params["error"] = error
+    if include_inactive:
+        params["include_inactive"] = "true"
+    if team_id:
+        try:
+            params["team_id"] = _normalize_team_id(team_id)
+        except ValueError:
+            pass
+    query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote) if params else ""
+    sep = "/?" if query else ""
+    return f"{root_path}/admin{sep}{query}#{fragment}"
+
+
 def get_client_ip(request: Request) -> str:
     """Extract client IP address from request.
 
@@ -668,16 +697,18 @@ def _get_user_team_roles(db: Session, user_email: str) -> Dict[str, str]:
     return get_user_team_roles(db, user_email)
 
 
-def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", failed_count: int) -> None:
+def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", failed_count: int, rendered_count: int) -> None:
     """Adjust pagination metadata to account for DB-to-Pydantic conversion failures.
 
     When items on the current page fail to convert, the "Showing X of Y" display
     would otherwise count items that aren't actually displayed. This adjusts
     total_items and recomputes derived fields (total_pages, has_next, has_prev).
+    Also sets page_items to the actual number of successfully rendered items.
 
     Args:
         pagination: The PaginationMeta object to adjust (modified in-place).
         failed_count: Number of items that failed conversion on the current page.
+        rendered_count: Number of items successfully converted and rendered on the current page.
     """
     if failed_count > 0:
         pagination.total_items = max(0, pagination.total_items - failed_count)
@@ -686,6 +717,8 @@ def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", fai
         # so the page number must match the displayed data.
         pagination.has_next = pagination.page < pagination.total_pages
         pagination.has_prev = pagination.page > 1
+    # Always set page_items to reflect actual rendered count (even if failed_count == 0)
+    pagination.page_items = rendered_count
 
 
 def _get_span_entity_performance(
@@ -992,6 +1025,29 @@ ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 ADMIN_CSRF_FORM_FIELD = "csrf_token"
 
 
+def _resolve_root_path(request: Request) -> str:
+    """Resolve the application root path from the request scope with fallback.
+
+    Some embedded/proxy deployments do not populate ``scope["root_path"]``
+    consistently.  This helper checks the ASGI scope first and falls back
+    to ``settings.app_root_path`` when the scope value is empty.
+
+    Args:
+        request: Incoming request used to read ASGI ``root_path``.
+
+    Returns:
+        Normalized root path (leading ``/``, no trailing ``/``), or empty
+        string when no root path is configured.
+    """
+    root_path = request.scope.get("root_path", "") or ""
+    if not root_path or not str(root_path).strip():
+        root_path = settings.app_root_path or ""
+    root_path = str(root_path).strip()
+    if root_path:
+        root_path = "/" + root_path.lstrip("/")
+    return root_path.rstrip("/")
+
+
 def _admin_cookie_path(request: Request) -> str:
     """Build admin cookie path honoring ASGI root_path.
 
@@ -1001,7 +1057,7 @@ def _admin_cookie_path(request: Request) -> str:
     Returns:
         Admin cookie path scoped under the deployed app root.
     """
-    root_path = request.scope.get("root_path", "") or ""
+    root_path = _resolve_root_path(request)
     return f"{root_path}/admin" if root_path else "/admin"
 
 
@@ -1027,16 +1083,20 @@ def _normalize_origin_parts(scheme: str, netloc: str) -> tuple[str, str, int]:
 def _request_origin_matches(request: Request) -> bool:
     """Return ``True`` when Origin/Referer matches this request origin.
 
+    The function first performs an exact same-origin comparison using the
+    request's forwarded headers (``X-Forwarded-Proto`` / ``X-Forwarded-Host``).
+    When that fails — common behind layered reverse proxies where forwarded
+    headers reflect internal hops rather than the external scheme — it falls
+    back to checking whether the candidate origin is explicitly listed in
+    ``settings.allowed_origins``.  Wildcard entries (``*``, ``null``, ``""``)
+    are excluded from the fallback to preserve fail-closed behavior.
+
     Args:
         request: Incoming request carrying Origin/Referer and host headers.
 
     Returns:
-        ``True`` when candidate origin exactly matches request origin; otherwise ``False``.
-
-    Note:
-        When the service is deployed behind a reverse proxy, this check relies on
-        ``X-Forwarded-Proto`` / ``X-Forwarded-Host`` values emitted by that proxy.
-        The deployment boundary must sanitize and overwrite forwarded headers.
+        ``True`` when candidate origin matches either the request origin or an
+        entry in ``settings.allowed_origins``; otherwise ``False``.
     """
     origin = request.headers.get("origin")
     referer = request.headers.get("referer")
@@ -1064,7 +1124,29 @@ def _request_origin_matches(request: Request) -> bool:
 
     candidate_parts = _normalize_origin_parts(parsed_candidate.scheme, parsed_candidate.netloc)
     request_parts = _normalize_origin_parts(request_scheme, request_netloc)
-    return candidate_parts == request_parts
+    if candidate_parts == request_parts:
+        return True
+
+    # Fallback: accept origins explicitly listed in settings.allowed_origins.
+    # Handles reverse-proxy deployments where forwarded headers may not
+    # accurately reflect the external scheme/host.
+    for allowed in settings.allowed_origins:
+        # Normalize each allowed origin to avoid config surprises such as
+        # ["https://a.com "] or [" null "], which could otherwise be
+        # mis-parsed or skipped.
+        allowed_normalized = str(allowed).strip()
+        if not allowed_normalized or allowed_normalized == "*" or allowed_normalized.casefold() == "null":
+            continue
+        try:
+            allowed_parsed = urllib.parse.urlparse(allowed_normalized if "://" in allowed_normalized else f"https://{allowed_normalized}")
+            if not allowed_parsed.scheme or not allowed_parsed.netloc:
+                continue
+            if candidate_parts == _normalize_origin_parts(allowed_parsed.scheme, allowed_parsed.netloc):
+                return True
+        except Exception:  # nosec B112 - malformed allowed_origins entry should not crash
+            continue
+
+    return False
 
 
 def _set_admin_csrf_cookie(request: Request, response: Response) -> str:
@@ -1237,6 +1319,26 @@ async def _get_user_team_ids(user: dict, db: Session) -> list:
     return [t.id for t in user_teams]
 
 
+def _check_public_visibility_allowed(visibility: str, team_id: Optional[str] = None) -> None:
+    """Raise HTTP 422 if public visibility is disabled and the request is team-scoped.
+
+    Public visibility is only restricted when a team_id is present — on the
+    global admin view (no team) public entities are still permitted.
+
+    Args:
+        visibility: The visibility value from the incoming form or request body.
+        team_id: The team ID from the form or request body, if any.
+
+    Raises:
+        HTTPException: 422 when flag is false, team_id is set, and visibility is 'public'.
+    """
+    if not settings.allow_public_visibility and visibility == "public" and team_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Public visibility is disabled by platform configuration (ALLOW_PUBLIC_VISIBILITY=false).",
+        )
+
+
 def _is_explicit_token_team_scope(user: Any) -> bool:
     """Return whether the auth context carries explicit token team scope.
 
@@ -1305,6 +1407,7 @@ async def _has_permission(
         user_email=get_user_email(user),
         permission=permission,
         team_id=team_id,
+        token_teams=user.get("token_teams"),
         ip_address=user.get("ip_address"),
         user_agent=user.get("user_agent"),
         allow_admin_bypass=allow_admin_bypass,
@@ -1596,7 +1699,7 @@ async def get_overview_partial(
         # Prepare context
         context = {
             "request": request,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             # Inputs
             "servers_total": servers_total,
             "servers_active": servers_active,
@@ -2255,7 +2358,7 @@ async def admin_servers_partial_html(
         query_params["tags"] = normalized_tags
 
     # Use unified pagination function
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     base_url = f"{root_path}/admin/servers/partial"
     paginated_result = await paginate_query(
         db=db,
@@ -2285,7 +2388,7 @@ async def admin_servers_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(servers_pydantic))
     data = jsonable_encoder(servers_pydantic)
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
@@ -2302,7 +2405,7 @@ async def admin_servers_partial_html(
                 "hx_target": "#servers-table-body",
                 "hx_indicator": "#servers-loading",
                 "query_params": query_params,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -2314,7 +2417,7 @@ async def admin_servers_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -2328,7 +2431,7 @@ async def admin_servers_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "query_params": query_params,
             "current_user_email": user_email,
@@ -2399,6 +2502,9 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     Returns:
         JSONResponse: A JSON response indicating success or failure of the server creation operation.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> # Test function exists and has correct name
         >>> from mcpgateway.admin import admin_add_server
@@ -2410,16 +2516,17 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         True
     """
     form = await request.form()
-    # root_path = request.scope.get("root_path", "")
     # is_inactive_checked = form.get("is_inactive_checked", "false")
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
+    visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+
     try:
         LOGGER.debug(f"User {get_user_email(user)} is adding a new server with name: {form['name']}")
-        visibility = str(form.get("visibility", "private"))
 
         # Handle "Select All" for tools
         associated_tools_list = form.getlist("associatedTools")
@@ -2572,6 +2679,9 @@ async def admin_edit_server(
     Returns:
         JSONResponse: A JSON response indicating success or failure of the server update operation.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_edit_server)
         True
@@ -2586,6 +2696,7 @@ async def admin_edit_server(
     try:
         LOGGER.debug(f"User {get_user_email(user)} is editing server ID {server_id} with name: {form.get('name')}")
         visibility = str(form.get("visibility", "private"))
+        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
         user_email = get_user_email(user)
         team_id_raw = form.get("team_id", None)
         team_id = str(team_id_raw) if team_id_raw is not None else None
@@ -2700,6 +2811,8 @@ async def admin_edit_server(
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
+    except HTTPException:
+        raise
     except Exception as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -2754,18 +2867,10 @@ async def admin_set_server_state(
         LOGGER.error(f"Error setting server status: {e}")
         error_message = "Error setting server status. Please try again."
 
-    root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#catalog", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#catalog", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
+    root_path = _resolve_root_path(request)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "catalog", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/servers/{server_id}/delete")
@@ -2808,18 +2913,10 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         LOGGER.error(f"Error deleting server: {e}")
         error_message = "Failed to delete server. Please try again."
 
-    root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#catalog", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#catalog", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
+    root_path = _resolve_root_path(request)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "catalog", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.get("/resources", response_model=PaginatedResponse)
@@ -3028,18 +3125,10 @@ async def admin_set_gateway_state(
         LOGGER.error(f"Error setting gateway state: {e}")
         error_message = "Failed to set gateway state. Please try again."
 
-    root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#gateways", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#gateways", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
+    root_path = _resolve_root_path(request)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "gateways", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.get("/", name="admin_home", response_class=HTMLResponse)
@@ -3077,6 +3166,9 @@ async def admin_ui(
 
     Returns:
         Any: Rendered HTML template for the admin dashboard.
+
+    Raises:
+        HTTPException: 403 if a non-admin user supplies a team_id they do not belong to.
 
     Examples:
         >>> callable(admin_ui)
@@ -3141,22 +3233,34 @@ async def admin_ui(
             user_teams = []
 
     # --------------------------------------------------------------------------------
-    # Validate team_id if provided (only when email-based teams are enabled)
-    # If invalid, we currently *ignore* it and fall back to default behavior.
-    # Optionally you can raise HTTPException(403) if you prefer strict rejection.
+    # Validate team_id if provided (only when email-based teams are enabled).
+    # Platform admins with unrestricted tokens (is_admin AND token_teams is None)
+    # bypass the membership check. Team-scoped admin tokens can still view any
+    # team for governance. Non-admins get their team filter reset when they
+    # supply a team_id they do not belong to.
     # --------------------------------------------------------------------------------
     selected_team_id = team_id
     user_email = get_user_email(user)
+    is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    admin_viewing_non_member_team = False
+
     if team_id and getattr(settings, "email_auth_enabled", False):
-        # If team list failed to load for some reason, be conservative and drop selection
-        if not user_teams:
-            LOGGER.warning("team_id requested but user_teams not available; ignoring team filter")
-            selected_team_id = None
-        else:
+        _token_teams = user.get("token_teams") if isinstance(user, dict) else getattr(user, "token_teams", None)
+        if not (is_admin_user and _token_teams is None):
+            if not user_teams:
+                LOGGER.warning("team_id requested but user_teams not available; rejecting (team_id=%s)", team_id)
+                raise HTTPException(status_code=403, detail="Unable to verify team membership")
+
             valid_team_ids = {t["id"] for t in user_teams if t.get("id")}
             if str(team_id) not in valid_team_ids:
-                LOGGER.warning("Requested team_id is not in user's teams; ignoring team filter (team_id=%s)", team_id)
-                selected_team_id = None
+                if not is_admin_user:
+                    LOGGER.warning("Non-admin requested team_id not in their teams; ignoring team filter (team_id=%s)", team_id)
+                    selected_team_id = None
+                else:
+                    # Admin selected a team they don't belong to; show banner and default content to All Teams
+                    LOGGER.info("Admin viewing non-member team for governance (team_id=%s)", team_id)
+                    admin_viewing_non_member_team = True
+                    selected_team_id = None
 
     # --------------------------------------------------------------------------------
     # Helper: attempt to call a listing function with team_id if it supports it.
@@ -3503,7 +3607,9 @@ async def admin_ui(
             "is_admin": bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False)),
             "user_teams": user_teams,
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+            "allow_public_visibility": settings.allow_public_visibility,
             "selected_team_id": selected_team_id,
+            "admin_viewing_non_member_team": admin_viewing_non_member_team,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "ui_hidden_sections": ui_visibility_config["hidden_sections"],
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
@@ -3590,7 +3696,7 @@ async def admin_ui(
 
     cookie_action = ui_visibility_config.get("cookie_action")
     if cookie_action:
-        scope_root_path = request.scope.get("root_path", "") or ""
+        scope_root_path = _resolve_root_path(request)
         ui_cookie_path = f"{scope_root_path}/admin" if scope_root_path else "/admin"
         use_secure = (settings.environment == "production") or settings.secure_cookies
         samesite = settings.cookie_samesite
@@ -3653,7 +3759,7 @@ async def admin_login_page(request: Request) -> Response:
     """
     # Check if email auth is enabled
     if not getattr(settings, "email_auth_enabled", False):
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     root_path = settings.app_root_path
@@ -3724,7 +3830,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         True
     """
     if not getattr(settings, "email_auth_enabled", False):
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     try:
@@ -3735,7 +3841,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         password = password_val if isinstance(password_val, str) else None
 
         if not email or not password:
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             params = "error=missing_fields"
             if email:
                 params += f"&email={urllib.parse.quote(email)}"
@@ -3752,12 +3858,12 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
             if not user:
                 LOGGER.warning(f"Authentication failed for {email} - user is None")
-                root_path = request.scope.get("root_path", "")
+                root_path = _resolve_root_path(request)
                 return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
             if settings.sso_enabled and settings.sso_preserve_admin_auth and not bool(getattr(user, "is_admin", False)):
                 LOGGER.info("Blocking local password login for non-admin user %s because SSO_PRESERVE_ADMIN_AUTH is enabled", email)
-                root_path = request.scope.get("root_path", "")
+                root_path = _resolve_root_path(request)
                 return RedirectResponse(url=f"{root_path}/admin/login?error=sso_required&email={urllib.parse.quote(email)}", status_code=303)
 
             # Password change enforcement respects master switch and toggles
@@ -3804,14 +3910,14 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 token, _ = await create_access_token(user)
 
                 # Create redirect response to password change page
-                root_path = request.scope.get("root_path", "")
+                root_path = _resolve_root_path(request)
                 response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
 
                 # Set JWT token as secure cookie for the password change process
                 try:
                     set_auth_cookie(response, token, remember_me=False)
                 except CookieTooLargeError:
-                    root_path = request.scope.get("root_path", "")
+                    root_path = _resolve_root_path(request)
                     return RedirectResponse(
                         url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
                         status_code=303,
@@ -3824,7 +3930,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             token, _ = await create_access_token(user)  # expires_seconds not needed here
 
             # Create redirect response
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
             # Set JWT token as secure cookie
@@ -3846,12 +3952,12 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if settings.secure_cookies and settings.environment == "development":
                 LOGGER.warning("Login failed - set SECURE_COOKIES to false in config for HTTP development")
 
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Login handler error: {e}")
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin/login?error=server_error", status_code=303)
 
 
@@ -3894,7 +4000,7 @@ async def admin_forgot_password_handler(request: Request, db: Session = Depends(
     Returns:
         RedirectResponse: Redirect to login or forgot-password page with status.
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     if not getattr(settings, "email_auth_enabled", False):
         return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
     if not getattr(settings, "password_reset_enabled", True):
@@ -3974,7 +4080,7 @@ async def admin_reset_password_handler(token: str, request: Request, db: Session
     Returns:
         RedirectResponse: Redirect to login or reset page with status.
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     if not getattr(settings, "email_auth_enabled", False):
         return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
     if not getattr(settings, "password_reset_enabled", True):
@@ -4010,13 +4116,15 @@ async def _admin_logout(request: Request) -> Response:
     """
     Handle admin logout by clearing authentication cookies.
 
-    Supports both GET and POST methods:
-    - POST: User-initiated logout from the UI (redirects to login page)
-    - GET: OIDC front-channel logout from identity provider (returns 200 OK)
+    Supports three logout scenarios:
+    - POST: User-initiated logout from the UI (redirects to login page or Keycloak logout)
+    - GET with browser headers: Browser navigation to /admin/logout (redirects to login page)
+    - GET without browser headers: OIDC front-channel logout callback from IdP (returns 200 OK)
 
-    For OIDC front-channel logout, Microsoft Entra ID sends GET requests to notify
-    the application that the user has logged out from the IdP. The application
-    should clear the session and return HTTP 200.
+    For OIDC front-channel logout (per OpenID Connect Front-Channel Logout 1.0 spec),
+    identity providers like Microsoft Entra ID send GET requests to notify the application
+    that the user has logged out from the IdP. The application should clear the session
+    and return HTTP 200.
 
     Args:
         request (Request): FastAPI request object.
@@ -4156,12 +4264,29 @@ async def _admin_logout(request: Request) -> Response:
         return f"{logout_endpoint}?{urllib.parse.urlencode(query_params)}"
 
     LOGGER.info(f"Admin user logging out (method: {request.method})")
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
 
-    # For GET requests (OIDC front-channel logout), return 200 OK per OIDC spec.
+    # For GET requests, distinguish between browser navigation and OIDC front-channel logout
     if request.method == "GET":
-        response = Response(content="Logged out", status_code=200)
+        # Check if request is from a browser (Accept: text/html, HX-Request header, or admin referer)
+        # Detection must match auth_middleware.py and rbac.py patterns to ensure consistent behavior
+        # Browser navigation should redirect to login, OIDC callbacks should return 200 OK
+        accept_header = request.headers.get("accept", "")
+        is_htmx = request.headers.get("hx-request") == "true"
+        referer = request.headers.get("referer", "")
+        is_browser_request = "text/html" in accept_header or is_htmx or "/admin" in referer
+
+        if is_browser_request:
+            # Browser navigation - redirect to login (cookies cleared below)
+            response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        else:
+            # OIDC front-channel logout from IdP - return 200 OK per OIDC spec
+            # Reference: OpenID Connect Front-Channel Logout 1.0
+            # https://openid.net/specs/openid-connect-frontchannel-1_0.html
+            # The RP must clear the session and return HTTP 200 to acknowledge logout
+            response = Response(content="Logged out", status_code=200)
     else:
+        # POST requests (user-initiated) - redirect to login (cookies cleared below)
         response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
 
         auth_provider = await _extract_auth_provider_from_jwt_cookie()
@@ -4246,11 +4371,11 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
         True
     """
     if not getattr(settings, "email_auth_enabled", False):
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     # Get root path for template
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
 
     response = request.app.state.templates.TemplateResponse(
         request,
@@ -4315,7 +4440,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         True
     """
     if not getattr(settings, "email_auth_enabled", False):
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     try:
@@ -4329,11 +4454,11 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         confirm_password = confirm_password_val if isinstance(confirm_password_val, str) else None
 
         if not all([current_password, new_password, confirm_password]):
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=missing_fields", status_code=303)
 
         if new_password != confirm_password:
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=mismatch", status_code=303)
 
         # Get user from JWT token in cookie
@@ -4348,7 +4473,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
             current_user = None
 
         if not current_user:
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
 
         # Authenticate using the email auth service
@@ -4378,19 +4503,19 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                         current_user = db.query(EmailUser).filter(EmailUser.email == user_email).first()
                         if current_user is None:
                             LOGGER.error(f"User {user_email} not found after successful password change - possible race condition")
-                            root_path = request.scope.get("root_path", "")
+                            root_path = _resolve_root_path(request)
                             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
                 except Exception as e:
                     # Return early to avoid creating token with empty team claims
                     LOGGER.error(f"Failed to re-attach user {user_email} to session: {e} - password changed but token creation skipped")
-                    root_path = request.scope.get("root_path", "")
+                    root_path = _resolve_root_path(request)
                     return RedirectResponse(url=f"{root_path}/admin/login?message=password_changed", status_code=303)
 
                 # Create new JWT token
                 token, _ = await create_access_token(current_user)
 
                 # Create redirect response to admin panel
-                root_path = request.scope.get("root_path", "")
+                root_path = _resolve_root_path(request)
                 response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
                 # Update JWT token cookie
@@ -4405,24 +4530,24 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 LOGGER.info(f"User {current_user.email} successfully changed their expired password")
                 return response
 
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=change_failed", status_code=303)
 
         except AuthenticationError:
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
         except PasswordValidationError as e:
             LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password", status_code=303)
         except Exception as e:
             LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Password change handler error: {e}")
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
 
 
@@ -4643,7 +4768,8 @@ async def admin_get_all_team_ids(
 
     # Check admin
     if current_user.is_admin:
-        team_ids = await team_service.get_all_team_ids(include_inactive=include_inactive, visibility_filter=visibility, include_personal=True, search_query=q)
+        # Admin sees all non-personal teams plus their own personal team (single query)
+        team_ids = await team_service.get_all_team_ids(include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=q, personal_owner_email=user_email)
     else:
         # For non-admins, get user's teams + public teams logic?
         # get_user_teams gets all teams user is in.
@@ -4714,7 +4840,10 @@ async def admin_search_teams(
     # The CALLER (admin.py) distinguishes.
 
     if current_user.is_admin:
-        result = await team_service.list_teams(page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=True, search_query=search_query)
+        # Admin sees all non-personal teams plus their own personal team (single query)
+        result = await team_service.list_teams(
+            page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=search_query, personal_owner_email=user_email
+        )
         # Result is dict {data, pagination...} (since page provided)
         teams = result["data"]
     else:
@@ -4775,7 +4904,7 @@ async def admin_teams_partial_html(
     """
     team_service = TeamManagementService(db)
     user_email = get_user_email(user)
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
 
     # Base URL for pagination links - preserve search query and relationship filter
     base_url = f"{root_path}/admin/teams/partial"
@@ -4815,9 +4944,9 @@ async def admin_teams_partial_html(
     pending_requests = team_service.get_pending_join_requests_batch(user_email, list(public_team_ids))
 
     if current_user.is_admin and not relationship:
-        # Admin sees all teams when no relationship filter
+        # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
         paginated_result = await team_service.list_teams(
-            page=page, per_page=per_page, include_inactive=include_inactive, visibility_filter=visibility, base_url=base_url, include_personal=True, search_query=q
+            page=page, per_page=per_page, include_inactive=include_inactive, visibility_filter=visibility, base_url=base_url, include_personal=False, search_query=q, personal_owner_email=user_email
         )
         data = paginated_result["data"]
         pagination = paginated_result["pagination"]
@@ -5002,7 +5131,7 @@ async def admin_list_teams(
         if not current_user:
             return HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=200)
 
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
 
         if unified:
             # Generate unified team view
@@ -5020,7 +5149,8 @@ async def admin_list_teams(
             if q:
                 base_url += f"?q={urllib.parse.quote(q, safe='')}"
 
-            paginated_result = await team_service.list_teams(page=page, per_page=per_page, base_url=base_url, include_personal=True, search_query=q)
+            # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
+            paginated_result = await team_service.list_teams(page=page, per_page=per_page, base_url=base_url, include_personal=False, search_query=q, personal_owner_email=user_email)
             data = paginated_result["data"]
             pagination = paginated_result["pagination"]
             links = paginated_result["links"]
@@ -5083,12 +5213,19 @@ async def admin_create_team(
         response = HTMLResponse(content=error_content, status_code=403)
         return response
 
+    if not getattr(settings, "allow_team_creation", True) and not (isinstance(user, dict) and user.get("is_admin")):
+        return HTMLResponse(content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Team creation is currently disabled</div>', status_code=403)
+
     try:
         form = await request.form()
         name = form.get("name")
         slug = form.get("slug") or None
         description = form.get("description") or None
         visibility = form.get("visibility", "private")
+        max_members_val = form.get("max_members")
+        max_members: Optional[int] = None
+        if max_members_val and str(max_members_val).strip().isdigit():
+            max_members = int(str(max_members_val).strip()) or None
 
         if not name:
             response = HTMLResponse(
@@ -5103,12 +5240,13 @@ async def admin_create_team(
 
         team_service = TeamManagementService(db)
 
-        team_data = TeamCreateRequest(name=name, slug=slug, description=description, visibility=visibility)
+        team_data = TeamCreateRequest(name=name, slug=slug, description=description, visibility=visibility, max_members=max_members)
 
         # Extract user email from user dict
         user_email = get_user_email(user)
 
-        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility)
+        is_admin = isinstance(user, dict) and user.get("is_admin")
+        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, max_members=team_data.max_members, skip_limits=bool(is_admin))
 
         response = HTMLResponse(content="", status_code=201)
         return response
@@ -5184,7 +5322,7 @@ async def admin_view_team_members(
 
     try:
         # Get root_path from request
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
 
         # Get current user context for logging and authorization
         user_email = get_user_email(user)
@@ -5335,7 +5473,7 @@ async def admin_add_team_members_view(
 
     try:
         # Get root_path from request
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
 
         # Get current user context for logging and authorization
         user_email = get_user_email(user)
@@ -5469,12 +5607,16 @@ async def admin_get_team_edit(
 
     try:
         # Get root path for URL construction
-        root_path = _request.scope.get("root_path", "") if _request else ""
+        root_path = _resolve_root_path(_request) if _request else ""
         team_service = TeamManagementService(db)
 
         team = await team_service.get_team_by_id(team_id)
         if not team:
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
+
+        # Personal teams cannot be updated (service rejects all personal team updates)
+        if team.is_personal:
+            return HTMLResponse(content='<div class="text-red-500">Personal teams cannot be edited</div>', status_code=403)
 
         safe_team_name = html.escape(team.name, quote=True)
         safe_description = html.escape(team.description or "")
@@ -5507,6 +5649,12 @@ async def admin_get_team_edit(
                         <option value="private" {"selected" if team.visibility == "private" else ""}>Private</option>
                         <option value="public" {"selected" if team.visibility == "public" else ""}>Public</option>
                     </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Maximum Members</label>
+                    <input type="number" name="max_members" min="1" max="1000" value="{team.max_members if team.max_members else ''}"
+                           class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty to keep current value</p>
                 </div>
                 <div class="flex justify-end space-x-3">
                     <button type="button" onclick="hideTeamEditModal()"
@@ -5548,7 +5696,7 @@ async def admin_update_team(
         Response: Result of team update operation
     """
     # Ensure root_path is available for URL construction in all branches
-    root_path = request.scope.get("root_path", "") if request else ""
+    root_path = _resolve_root_path(request) if request else ""
 
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
@@ -5560,10 +5708,14 @@ async def admin_update_team(
         name_val = form.get("name")
         desc_val = form.get("description")
         vis_val = form.get("visibility", "private")
+        max_members_val = form.get("max_members")
         # Trim before presence check for consistent error messages
         name = name_val.strip() if isinstance(name_val, str) else None
         description = desc_val.strip() if isinstance(desc_val, str) and desc_val.strip() != "" else None
         visibility = vis_val if isinstance(vis_val, str) else "private"
+        max_members: Optional[int] = None
+        if max_members_val and str(max_members_val).strip().isdigit():
+            max_members = int(str(max_members_val).strip()) or None
 
         if not name:
             is_htmx = request.headers.get("HX-Request") == "true"
@@ -5615,7 +5767,18 @@ async def admin_update_team(
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
-        await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, updated_by=user_email)
+        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members, updated_by=user_email)
+
+        if not updated:
+            is_htmx = request.headers.get("HX-Request") == "true"
+            error_html = '<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">Team cannot be updated</div>'
+            if is_htmx:
+                response = HTMLResponse(content=error_html, status_code=400)
+                response.headers["HX-Retarget"] = "#edit-team-error"
+                response.headers["HX-Reswap"] = "innerHTML"
+                return response
+            error_msg = urllib.parse.quote("Team cannot be updated")
+            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
         # Check if this is an HTMX request
         is_htmx = request.headers.get("HX-Request") == "true"
@@ -5676,7 +5839,10 @@ async def admin_delete_team(
 
         # Delete team (get user email from JWT payload)
         user_email = get_user_email(user)
-        await team_service.delete_team(team_id, deleted_by=user_email)
+        deleted = await team_service.delete_team(team_id, deleted_by=user_email)
+
+        if not deleted:
+            return HTMLResponse(content='<div class="text-red-500">Team cannot be deleted</div>', status_code=400)
 
         # Return success message with script to refresh teams list
         safe_team_name = html.escape(team_name)
@@ -6166,6 +6332,9 @@ async def admin_create_join_request(
     if not getattr(settings, "email_auth_enabled", False):
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
+    if not getattr(settings, "allow_team_join_requests", True):
+        return HTMLResponse(content='<div class="text-red-500">Team join requests are currently disabled</div>', status_code=403)
+
     try:
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
@@ -6279,7 +6448,7 @@ async def admin_cancel_join_request(
 @require_permission("teams.manage_members", allow_admin_bypass=False)
 async def admin_list_join_requests(
     team_id: str,
-    request: Request,
+    _request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
@@ -6287,7 +6456,7 @@ async def admin_list_join_requests(
 
     Args:
         team_id: ID of the team
-        request: FastAPI request object
+        _request: FastAPI request object (unused, required by route signature)
         db: Database session
         user: Authenticated user
 
@@ -6300,8 +6469,6 @@ async def admin_list_join_requests(
     try:
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
-        request.scope.get("root_path", "")
-
         # Get team and verify ownership
         team = await team_service.get_team_by_id(team_id)
         if not team:
@@ -6495,8 +6662,8 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
 
     is_current_user = user_obj.email == current_user_email
     is_last_admin = bool(user_obj.is_admin and user_obj.is_active and admin_count == 1)
+    is_locked = user_obj.is_account_locked()
     locked_until = getattr(user_obj, "locked_until", None)
-    is_locked = bool(locked_until and locked_until > utc_now())
     failed_attempts = int(getattr(user_obj, "failed_login_attempts", 0) or 0)
     lock_until_text = locked_until.strftime("%Y-%m-%d %H:%M") if locked_until else "N/A"
 
@@ -6727,9 +6894,9 @@ async def admin_users_partial_html(
                     "auth_provider": user_obj.auth_provider,
                     "created_at": user_obj.created_at,
                     "password_change_required": user_obj.password_change_required,
+                    "is_locked": user_obj.is_account_locked(),
                     "failed_login_attempts": int(getattr(user_obj, "failed_login_attempts", 0) or 0),
                     "locked_until": getattr(user_obj, "locked_until", None),
-                    "is_locked": bool(getattr(user_obj, "locked_until", None) and getattr(user_obj, "locked_until", None) > utc_now()),
                     "is_current_user": is_current_user,
                     "is_last_admin": is_last_admin,
                 }
@@ -6774,7 +6941,7 @@ async def admin_users_partial_html(
                     "request": request,
                     "data": users_data,
                     "pagination": pagination.model_dump(),
-                    "root_path": request.scope.get("root_path", ""),
+                    "root_path": _resolve_root_path(request),
                     "team_member_emails": team_member_emails,
                     "team_member_data": team_member_data,
                     "current_user_email": current_user_email,
@@ -6783,7 +6950,7 @@ async def admin_users_partial_html(
                 },
             )
         elif render == "controls":
-            base_url = f"{request.scope.get('root_path', '')}/admin/users/partial"
+            base_url = f"{_resolve_root_path(request)}/admin/users/partial"
             response = request.app.state.templates.TemplateResponse(
                 request,
                 "pagination_controls.html",
@@ -6795,7 +6962,7 @@ async def admin_users_partial_html(
                     "hx_indicator": "#users-loading",
                     "hx_swap": "outerHTML",
                     "query_params": {},
-                    "root_path": request.scope.get("root_path", ""),
+                    "root_path": _resolve_root_path(request),
                 },
             )
         else:
@@ -6807,7 +6974,7 @@ async def admin_users_partial_html(
                     "request": request,
                     "data": users_data,
                     "pagination": pagination.model_dump(),
-                    "root_path": request.scope.get("root_path", ""),
+                    "root_path": _resolve_root_path(request),
                     "current_user_email": current_user_email,
                 },
             )
@@ -6883,7 +7050,7 @@ async def admin_team_members_partial_html(
         # End the read-only transaction early
         db.commit()
 
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         search_param = f"&search={urllib.parse.quote(search_term)}" if search_term else ""
         next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}{search_param}"
         response = request.app.state.templates.TemplateResponse(
@@ -6991,7 +7158,7 @@ async def admin_team_non_members_partial_html(
         # End the read-only transaction early
         db.commit()
 
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         search_param = f"&search={urllib.parse.quote(search_term)}" if search_term else ""
         next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}{search_param}"
         response = request.app.state.templates.TemplateResponse(
@@ -7160,7 +7327,7 @@ async def admin_get_user_edit(
 
     try:
         # Get root path for URL construction
-        root_path = _request.scope.get("root_path", "") if _request else ""
+        root_path = _resolve_root_path(_request) if _request else ""
 
         # First-Party
 
@@ -7246,6 +7413,12 @@ async def admin_get_user_edit(
                     </label>
                 </div>'''}
                 <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        <input type="checkbox" name="email_verified" {"checked" if user_obj.is_email_verified() else ""}
+                               class="mr-2"> Email Verified
+                    </label>
+                </div>
+                <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">New Password (leave empty to keep current)</label>
                     <input type="password" name="password" id="password-field"
                            class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -7321,6 +7494,7 @@ async def admin_update_user(
         form = await request.form()
         full_name = form.get("full_name")
         is_admin = form.get("is_admin") == "on"
+        email_verified = form.get("email_verified") == "on"
         password = form.get("password")
         confirm_password = form.get("confirm_password")
 
@@ -7357,7 +7531,7 @@ async def admin_update_user(
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
-        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password, admin_origin_source="ui")
+        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, email_verified=email_verified, password=password, admin_origin_source="ui")
 
         # Return success message with auto-close and refresh
         success_html = """
@@ -7397,7 +7571,7 @@ async def admin_activate_user(
 
     try:
         # Get root path for URL construction
-        root_path = _request.scope.get("root_path", "") if _request else ""
+        root_path = _resolve_root_path(_request) if _request else ""
 
         # First-Party
 
@@ -7442,7 +7616,7 @@ async def admin_deactivate_user(
 
     try:
         # Get root path for URL construction
-        root_path = _request.scope.get("root_path", "") if _request else ""
+        root_path = _resolve_root_path(_request) if _request else ""
 
         # First-Party
 
@@ -7547,7 +7721,7 @@ async def admin_unlock_user(
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
-        root_path = _request.scope.get("root_path", "") if _request else ""
+        root_path = _resolve_root_path(_request) if _request else ""
         auth_service = EmailAuthService(db)
         decoded_email = urllib.parse.unquote(user_email)
         current_user_email = get_user_email(user)
@@ -7610,7 +7784,7 @@ async def admin_force_password_change(
 
     try:
         # Get root path for URL construction
-        root_path = _request.scope.get("root_path", "") if _request else ""
+        root_path = _resolve_root_path(_request) if _request else ""
 
         auth_service = EmailAuthService(db)
 
@@ -7705,6 +7879,7 @@ async def admin_tools_partial_html(
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
+    include_public: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7723,6 +7898,7 @@ async def admin_tools_partial_html(
         include_inactive (bool): Whether to include inactive tools in the results.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public tools in the results.
         render (str): Render mode - 'controls' returns only pagination controls.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -7766,6 +7942,7 @@ async def admin_tools_partial_html(
 
     # Build access conditions
     # When team_id is specified, show ONLY items from that team (simpler, team-scoped view)
+    # When team_id + include_public, show team items PLUS public items from all teams
     # When team_id is NOT specified, show all accessible items (owned + team + public)
     if team_id:
         # Team-specific view: only show tools from the specified team if user is a member
@@ -7775,8 +7952,13 @@ async def admin_tools_partial_html(
                 and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
                 and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
             ]
+            if include_public:
+                # Include all globally public items from any team.
+                # Items with visibility='team' or 'private' from other teams are
+                # blocked by the other conditions (which require team_id == selected team).
+                team_access.append(DbTool.visibility == "public")
             query = query.where(or_(*team_access))
-            LOGGER.debug(f"Filtering tools by team_id: {team_id}")
+            LOGGER.debug(f"Filtering tools by team_id: {team_id}{' (include_public)' if include_public else ''}")
         else:
             # User is not a member of this team, return no results
             LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
@@ -7816,7 +7998,7 @@ async def admin_tools_partial_html(
     query = query.order_by(DbTool.url, DbTool.original_name, DbTool.id)
 
     # Use unified pagination function (offset-based for UI compatibility)
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     base_url = f"{root_path}/admin/tools/partial"
     query_params_dict = {}
     if include_inactive:
@@ -7868,7 +8050,7 @@ async def admin_tools_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert tool {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(tools_pydantic))
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
@@ -7888,7 +8070,7 @@ async def admin_tools_partial_html(
                 "hx_target": "#tools-table-body",
                 "hx_indicator": "#tools-loading",
                 "query_params": query_params_dict,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -7901,8 +8083,10 @@ async def admin_tools_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
                 "gateway_id": gateway_id,
+                "team_id": team_id,
+                "include_public": include_public,
             },
         )
 
@@ -7915,7 +8099,7 @@ async def admin_tools_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "query_params": query_params_dict,
             "current_user_email": user_email,
@@ -8004,7 +8188,7 @@ async def admin_tool_ops_partial(
         page=page,
         per_page=per_page,
         cursor=None,
-        base_url=f"{request.scope.get('root_path', '')}/admin/tool-ops/partial",
+        base_url=f"{_resolve_root_path(request)}/admin/tool-ops/partial",
         query_params={
             "include_inactive": "true" if include_inactive else "false",
             "gateway_id": gateway_id or "",
@@ -8035,7 +8219,7 @@ async def admin_tool_ops_partial(
         {
             "request": request,
             "tools": tools_pydantic,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "current_user_email": user_email,
             "is_admin": _is_admin,
             "user_team_roles": _team_roles,
@@ -8133,6 +8317,7 @@ async def admin_search_tools(
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
+    include_public: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8149,6 +8334,7 @@ async def admin_search_tools(
         limit (int): Maximum number of results to return.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public tools in the results.
         db (Session): Database session.
         user: Current user with permissions.
 
@@ -8191,6 +8377,7 @@ async def admin_search_tools(
 
     # Build access conditions
     # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # When team_id + include_public, show team items PLUS public items from all teams
     # Otherwise, show all accessible items (All Teams view)
     if team_id:
         if team_id in team_ids:
@@ -8199,8 +8386,10 @@ async def admin_search_tools(
                 and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
                 and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
             ]
+            if include_public:
+                team_access.append(DbTool.visibility == "public")
             query = query.where(or_(*team_access))
-            LOGGER.debug(f"Filtering tool search by team_id: {team_id}")
+            LOGGER.debug(f"Filtering tool search by team_id: {team_id}{' (include_public)' if include_public else ''}")
         else:
             LOGGER.warning(f"User {user_email} attempted to filter tool search by team {team_id} but is not a member")
             query = query.where(false())
@@ -8266,6 +8455,7 @@ async def admin_prompts_partial_html(
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
+    include_public: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8288,6 +8478,7 @@ async def admin_prompts_partial_html(
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public prompts in the results.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -8335,6 +8526,7 @@ async def admin_prompts_partial_html(
 
     # Build access conditions
     # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # When team_id + include_public, show team items PLUS public items from all teams
     # Otherwise, show all accessible items (All Teams view)
     if team_id:
         # Team-specific view: only show prompts from the specified team
@@ -8344,8 +8536,13 @@ async def admin_prompts_partial_html(
                 and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])),
                 and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email),
             ]
+            if include_public:
+                # Include all globally public items from any team.
+                # Items with visibility='team' or 'private' from other teams are
+                # blocked by the other conditions (which require team_id == selected team).
+                team_access.append(DbPrompt.visibility == "public")
             query = query.where(or_(*team_access))
-            LOGGER.debug(f"Filtering prompts by team_id: {team_id}")
+            LOGGER.debug(f"Filtering prompts by team_id: {team_id}{' (include_public)' if include_public else ''}")
         else:
             # User is not a member of this team, return no results using SQLAlchemy's false()
             LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
@@ -8388,7 +8585,7 @@ async def admin_prompts_partial_html(
         query_params["tags"] = normalized_tags
 
     # Use unified pagination function
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     base_url = f"{root_path}/admin/prompts/partial"
     paginated_result = await paginate_query(
         db=db,
@@ -8427,7 +8624,7 @@ async def admin_prompts_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert prompt {getattr(p, 'id', 'unknown')} ({getattr(p, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(prompts_pydantic))
 
     data = jsonable_encoder(prompts_pydantic)
 
@@ -8445,7 +8642,7 @@ async def admin_prompts_partial_html(
                 "hx_target": "#prompts-table-body",
                 "hx_indicator": "#prompts-loading",
                 "query_params": query_params,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -8457,8 +8654,10 @@ async def admin_prompts_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
                 "gateway_id": gateway_id,
+                "team_id": team_id,
+                "include_public": include_public,
             },
         )
 
@@ -8472,7 +8671,7 @@ async def admin_prompts_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "query_params": query_params,
             "current_user_email": user_email,
@@ -8493,6 +8692,7 @@ async def admin_gateways_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     team_id: Optional[str] = Depends(_validated_team_id_param),
+    include_public: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8514,6 +8714,7 @@ async def admin_gateways_partial_html(
         include_inactive (bool): If True, include inactive gateways in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public gateways in the results.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -8542,6 +8743,7 @@ async def admin_gateways_partial_html(
 
     # Build access conditions
     # When team_id is specified, show ONLY items from that team (simpler, team-scoped view)
+    # When team_id + include_public, show team items PLUS public items from all teams
     # When team_id is NOT specified, show all accessible items (owned + team + public)
     if team_id:
         # Team-specific view: only show gateways from the specified team if user is a member
@@ -8551,8 +8753,13 @@ async def admin_gateways_partial_html(
                 and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])),
                 and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email),
             ]
+            if include_public:
+                # Include all globally public items from any team.
+                # Items with visibility='team' or 'private' from other teams are
+                # blocked by the other conditions (which require team_id == selected team).
+                team_access.append(DbGateway.visibility == "public")
             query = query.where(or_(*team_access))
-            LOGGER.debug(f"Filtering gateways by team_id: {team_id}")
+            LOGGER.debug(f"Filtering gateways by team_id: {team_id}{' (include_public)' if include_public else ''}")
         else:
             # User is not a member of this team, return no results
             LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
@@ -8594,7 +8801,7 @@ async def admin_gateways_partial_html(
         query_params["tags"] = normalized_tags
 
     # Use unified pagination function
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     base_url = f"{root_path}/admin/gateways/partial"
     paginated_result = await paginate_query(
         db=db,
@@ -8622,7 +8829,7 @@ async def admin_gateways_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert gateway {getattr(g, 'id', 'unknown')} ({getattr(g, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(gateways_pydantic))
     data = jsonable_encoder(gateways_pydantic)
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
@@ -8641,7 +8848,7 @@ async def admin_gateways_partial_html(
                 "hx_target": "#gateways-table-body",
                 "hx_indicator": "#gateways-loading",
                 "query_params": query_params,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -8649,7 +8856,7 @@ async def admin_gateways_partial_html(
         return request.app.state.templates.TemplateResponse(
             request,
             "gateways_selector_items.html",
-            {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": request.scope.get("root_path", "")},
+            {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": _resolve_root_path(request), "team_id": team_id, "include_public": include_public},
         )
 
     _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
@@ -8662,7 +8869,7 @@ async def admin_gateways_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "query_params": query_params,
             "current_user_email": user_email,
@@ -8677,6 +8884,7 @@ async def admin_gateways_partial_html(
 async def admin_get_all_gateways_ids(
     include_inactive: bool = False,
     team_id: Optional[str] = Depends(_validated_team_id_param),
+    include_public: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8688,6 +8896,7 @@ async def admin_get_all_gateways_ids(
     Args:
         include_inactive (bool): When True include prompts that are inactive.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public gateways in the results.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -8706,6 +8915,7 @@ async def admin_get_all_gateways_ids(
 
     # Build access conditions
     # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # When team_id + include_public, show team items PLUS public items from all teams
     # Otherwise, show all accessible items (All Teams view)
     if team_id:
         if team_id in team_ids:
@@ -8714,8 +8924,10 @@ async def admin_get_all_gateways_ids(
                 and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])),
                 and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email),
             ]
+            if include_public:
+                team_access.append(DbGateway.visibility == "public")
             query = query.where(or_(*team_access))
-            LOGGER.debug(f"Filtering gateway IDs by team_id: {team_id}")
+            LOGGER.debug(f"Filtering gateway IDs by team_id: {team_id}{' (include_public)' if include_public else ''}")
         else:
             LOGGER.warning(f"User {user_email} attempted to filter gateway IDs by team {team_id} but is not a member")
             query = query.where(false())
@@ -8740,6 +8952,7 @@ async def admin_search_gateways(
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
+    include_public: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8755,6 +8968,7 @@ async def admin_search_gateways(
         include_inactive (bool): When True include gateways that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public gateways in the results.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -8779,6 +8993,7 @@ async def admin_search_gateways(
 
     # Build access conditions
     # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # When team_id + include_public, show team items PLUS public items from all teams
     # Otherwise, show all accessible items (All Teams view)
     if team_id:
         if team_id in team_ids:
@@ -8787,8 +9002,10 @@ async def admin_search_gateways(
                 and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])),
                 and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email),
             ]
+            if include_public:
+                team_access.append(DbGateway.visibility == "public")
             query = query.where(or_(*team_access))
-            LOGGER.debug(f"Filtering gateway search by team_id: {team_id}")
+            LOGGER.debug(f"Filtering gateway search by team_id: {team_id}{' (include_public)' if include_public else ''}")
         else:
             LOGGER.warning(f"User {user_email} attempted to filter gateway search by team {team_id} but is not a member")
             query = query.where(false())
@@ -9021,6 +9238,7 @@ async def admin_resources_partial_html(
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
+    include_public: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -9042,6 +9260,7 @@ async def admin_resources_partial_html(
             items used by infinite scroll selectors.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public resources in the results.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -9093,6 +9312,7 @@ async def admin_resources_partial_html(
 
     # Build access conditions
     # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # When team_id + include_public, show team items PLUS public items from all teams
     # Otherwise, show all accessible items (All Teams view)
     if team_id:
         # Team-specific view: only show resources from the specified team
@@ -9102,8 +9322,13 @@ async def admin_resources_partial_html(
                 and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
                 and_(DbResource.team_id == team_id, DbResource.owner_email == user_email),
             ]
+            if include_public:
+                # Include all globally public items from any team.
+                # Items with visibility='team' or 'private' from other teams are
+                # blocked by the other conditions (which require team_id == selected team).
+                team_access.append(DbResource.visibility == "public")
             query = query.where(or_(*team_access))
-            LOGGER.debug(f"Filtering resources by team_id: {team_id}")
+            LOGGER.debug(f"Filtering resources by team_id: {team_id}{' (include_public)' if include_public else ''}")
         else:
             # User is not a member of this team, return no results using SQLAlchemy's false()
             LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
@@ -9146,7 +9371,7 @@ async def admin_resources_partial_html(
         query_params["tags"] = normalized_tags
 
     # Use unified pagination function
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     base_url = f"{root_path}/admin/resources/partial"
     paginated_result = await paginate_query(
         db=db,
@@ -9184,7 +9409,7 @@ async def admin_resources_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert resource {getattr(r, 'id', 'unknown')} ({getattr(r, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(resources_pydantic))
 
     data = jsonable_encoder(resources_pydantic)
 
@@ -9202,7 +9427,7 @@ async def admin_resources_partial_html(
                 "hx_target": "#resources-table-body",
                 "hx_indicator": "#resources-loading",
                 "query_params": query_params,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -9214,8 +9439,10 @@ async def admin_resources_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
                 "gateway_id": gateway_id,
+                "team_id": team_id,
+                "include_public": include_public,
             },
         )
 
@@ -9229,7 +9456,7 @@ async def admin_resources_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "query_params": query_params,
             "current_user_email": user_email,
@@ -9408,6 +9635,7 @@ async def admin_search_resources(
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
+    include_public: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -9424,6 +9652,7 @@ async def admin_search_resources(
         limit (int): Maximum number of results to return (bounded by the query parameter).
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public resources in the results.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -9464,6 +9693,7 @@ async def admin_search_resources(
 
     # Build access conditions
     # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # When team_id + include_public, show team items PLUS public items from all teams
     # Otherwise, show all accessible items (All Teams view)
     if team_id:
         # Team-specific view: only show resources from the specified team
@@ -9473,8 +9703,10 @@ async def admin_search_resources(
                 and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
                 and_(DbResource.team_id == team_id, DbResource.owner_email == user_email),
             ]
+            if include_public:
+                team_access.append(DbResource.visibility == "public")
             query = query.where(or_(*team_access))
-            LOGGER.debug(f"Filtering resource search by team_id: {team_id}")
+            LOGGER.debug(f"Filtering resource search by team_id: {team_id}{' (include_public)' if include_public else ''}")
         else:
             # User is not a member of this team, return no results using SQLAlchemy's false()
             LOGGER.warning(f"User {user_email} attempted to filter resource search by team {team_id} but is not a member")
@@ -9528,6 +9760,7 @@ async def admin_search_prompts(
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
+    include_public: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -9544,6 +9777,7 @@ async def admin_search_prompts(
         limit (int): Maximum number of results to return (bounded by the query parameter).
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all public prompts in the results.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -9584,6 +9818,7 @@ async def admin_search_prompts(
 
     # Build access conditions
     # When team_id is specified, show ONLY items from that team (team-scoped view)
+    # When team_id + include_public, show team items PLUS public items from all teams
     # Otherwise, show all accessible items (All Teams view)
     if team_id:
         # Team-specific view: only show prompts from the specified team
@@ -9593,8 +9828,10 @@ async def admin_search_prompts(
                 and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])),
                 and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email),
             ]
+            if include_public:
+                team_access.append(DbPrompt.visibility == "public")
             query = query.where(or_(*team_access))
-            LOGGER.debug(f"Filtering prompt search by team_id: {team_id}")
+            LOGGER.debug(f"Filtering prompt search by team_id: {team_id}{' (include_public)' if include_public else ''}")
         else:
             # User is not a member of this team, return no results using SQLAlchemy's false()
             LOGGER.warning(f"User {user_email} attempted to filter prompt search by team {team_id} but is not a member")
@@ -9751,7 +9988,7 @@ async def admin_tokens_partial_html(
                 "hx_target": "#tokens-table",
                 "hx_indicator": "#tokens-loading",
                 "query_params": query_params,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -9809,7 +10046,7 @@ async def admin_tokens_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "team_id": team_id,
         },
@@ -10015,7 +10252,7 @@ async def admin_a2a_partial_html(
         query_params["tags"] = normalized_tags
 
     # Use unified pagination function
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     base_url = f"{root_path}/admin/a2a/partial"
     paginated_result = await paginate_query(
         db=db,
@@ -10054,7 +10291,7 @@ async def admin_a2a_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert a2a agent {getattr(a, 'id', 'unknown')} ({getattr(a, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(a2a_agents_pydantic))
     data = jsonable_encoder(a2a_agents_pydantic)
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
@@ -10071,7 +10308,7 @@ async def admin_a2a_partial_html(
                 "hx_target": "#agents-table-body",
                 "hx_indicator": "#agents-loading",
                 "query_params": query_params,
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
             },
         )
 
@@ -10083,7 +10320,7 @@ async def admin_a2a_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
-                "root_path": request.scope.get("root_path", ""),
+                "root_path": _resolve_root_path(request),
                 "gateway_id": gateway_id,
             },
         )
@@ -10098,7 +10335,7 @@ async def admin_a2a_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
             "include_inactive": include_inactive,
             "query_params": query_params,
             "current_user_email": user_email,
@@ -10344,7 +10581,7 @@ async def admin_unified_search(
         if not can_search_users:
             selected_entity_types = [entity_type for entity_type in selected_entity_types if entity_type != "users"]
             if users_explicitly_requested and not selected_entity_types:
-                raise HTTPException(status_code=403, detail="Insufficient permissions. Required: admin.user_management")
+                raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
 
     if not selected_entity_types:
         raise HTTPException(status_code=400, detail="No valid entity_types requested")
@@ -10579,6 +10816,53 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         raise e  # Re-raise for now, or return a 500 JSONResponse if preferred for API consistency
 
 
+def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
+    """Parse auth fields from a form and return a serialized auth object, or None.
+
+    Args:
+        form: Multipart form data containing auth_type and credential fields.
+
+    Returns:
+        A dict with auth_type and encrypted auth_value, or None if no valid auth provided.
+    """
+    auth_headers_json = form.get("auth_headers") or ""
+    auth_headers: list[dict[str, Any]] = []
+    if auth_headers_json:
+        try:
+            auth_headers = orjson.loads(auth_headers_json)
+        except (orjson.JSONDecodeError, ValueError):
+            auth_headers = []
+
+    auth_type = form.get("auth_type", "")
+    auth_obj: Optional[dict[str, Any]] = None
+    if auth_type:
+        if auth_type == "basic":
+            username = form.get("auth_username", "")
+            password = form.get("auth_password", "")
+            if username and password:
+                creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
+                auth_value = encode_auth({"Authorization": f"Basic {creds}"})
+                auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+        elif auth_type == "bearer":
+            token = form.get("auth_token", "")
+            if token:
+                auth_value = encode_auth({"Authorization": f"Bearer {token}"})
+                auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+        elif auth_type == "authheaders":
+            if auth_headers:
+                header_dict = {h.get("key"): h.get("value", "") for h in auth_headers if h.get("key")}
+                if header_dict:
+                    auth_value = encode_auth(header_dict)
+                    auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+            else:
+                header_key = form.get("auth_header_key", "")
+                header_value = form.get("auth_header_value", "")
+                if header_key and header_value:
+                    auth_value = encode_auth({header_key: header_value})
+                    auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+    return auth_obj
+
+
 @admin_router.post("/tools/")
 @admin_router.post("/tools")
 @require_permission("tools.create", allow_admin_bypass=False)
@@ -10617,6 +10901,9 @@ async def admin_add_tool(
     Returns:
         JSONResponse: a JSON response with `{"message": ..., "success": ...}` and an appropriate HTTP status code.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_add_tool)
         True
@@ -10629,6 +10916,7 @@ async def admin_add_tool(
     integration_type = form.get("integrationType", "REST")
     request_type = form.get("requestType")
     visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
     if request_type is None:
         if integration_type == "REST":
@@ -10646,6 +10934,10 @@ async def admin_add_tool(
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
+    # Build auth object from form fields
+    auth_obj = _build_auth_obj_from_form(form)
+
     # Safely parse potential JSON strings from form
     headers_raw = form.get("headers")
     input_schema_raw = form.get("input_schema")
@@ -10663,12 +10955,7 @@ async def admin_add_tool(
         "output_schema": (orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None),
         "annotations": orjson.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}"),
         "jsonpath_filter": form.get("jsonpath_filter", ""),
-        "auth_type": form.get("auth_type", ""),
-        "auth_username": form.get("auth_username", ""),
-        "auth_password": form.get("auth_password", ""),
-        "auth_token": form.get("auth_token", ""),
-        "auth_header_key": form.get("auth_header_key", ""),
-        "auth_header_value": form.get("auth_header_value", ""),
+        "auth": auth_obj,
         "tags": tags,
         "visibility": visibility,
         "team_id": team_id,
@@ -10764,6 +11051,9 @@ async def admin_edit_tool(
             dashboard with a status code of 303 (See Other), or a JSON response with
             an error message if the update fails.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_edit_tool)
         True
@@ -10775,7 +11065,12 @@ async def admin_edit_tool(
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
+    # Build auth object from form fields
+    auth_obj = _build_auth_obj_from_form(form)
+
     visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
     user_email = get_user_email(user)
     # Determine personal team for default assignment
@@ -10800,12 +11095,7 @@ async def admin_edit_tool(
         "output_schema": (orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None),
         "annotations": orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}"),
         "jsonpath_filter": form.get("jsonpathFilter", ""),
-        "auth_type": form.get("auth_type", ""),
-        "auth_username": form.get("auth_username", ""),
-        "auth_password": form.get("auth_password", ""),
-        "auth_token": form.get("auth_token", ""),
-        "auth_header_key": form.get("auth_header_key", ""),
-        "auth_header_value": form.get("auth_header_value", ""),
+        "auth": auth_obj,
         "tags": tags,
         "visibility": visibility,
         "owner_email": user_email,
@@ -10904,18 +11194,10 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
         LOGGER.error(f"Error deleting tool: {e}")
         error_message = "Failed to delete tool. Please try again."
 
-    root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#tools", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#tools", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
+    root_path = _resolve_root_path(request)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "tools", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/tools/{tool_id}/state")
@@ -10968,18 +11250,10 @@ async def admin_set_tool_state(
         LOGGER.error(f"Error setting tool state: {e}")
         error_message = "Failed to set tool state. Please try again."
 
-    root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#tools", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#tools", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
+    root_path = _resolve_root_path(request)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "tools", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
@@ -11035,6 +11309,9 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     Returns:
         A redirect response to the admin dashboard.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_add_gateway)
         True
@@ -11043,13 +11320,15 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     """
     LOGGER.debug(f"User {get_user_email(user)} is adding a new gateway")
     form = await request.form()
+    visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
     try:
         # Parse tags from comma-separated string
         tags_str = str(form.get("tags", ""))
         tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         # Parse auth_headers JSON if present
-        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers_json = form.get("auth_headers") or ""
         auth_headers: list[dict[str, Any]] = []
         if auth_headers_json:
             try:
@@ -11124,8 +11403,6 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
                 LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
-
-        visibility = str(form.get("visibility", "private"))
 
         # Handle passthrough_headers
         passthrough_headers = str(form.get("passthrough_headers"))
@@ -11295,6 +11572,9 @@ async def admin_edit_gateway(
     Returns:
         A redirect response to the admin dashboard.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_edit_gateway)
         True
@@ -11309,9 +11589,10 @@ async def admin_edit_gateway(
         tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         visibility = str(form.get("visibility", "private"))
+        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
         # Parse auth_headers JSON if present
-        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers_json = form.get("auth_headers") or ""
         auth_headers = []
         if auth_headers_json:
             try:
@@ -11453,6 +11734,8 @@ async def admin_edit_gateway(
             content={"message": str(e), "success": False},
             status_code=403,
         )
+    except HTTPException:
+        raise
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
@@ -11508,18 +11791,10 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
-    root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#gateways", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#gateways", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
+    root_path = _resolve_root_path(request)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "gateways", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.get("/resources/test/{resource_uri:path}")
@@ -11627,6 +11902,9 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     Returns:
         A redirect response to the admin dashboard.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_add_resource)
         True
@@ -11640,6 +11918,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     visibility = str(form.get("visibility", "public"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
@@ -11742,6 +12021,9 @@ async def admin_edit_resource(
     Returns:
         JSONResponse: A JSON response indicating success or failure of the resource update operation.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_edit_resource)
         True
@@ -11752,6 +12034,7 @@ async def admin_edit_resource(
     form = await request.form()
     LOGGER.info(f"Form data received for resource edit: {form}")
     visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
@@ -11847,18 +12130,10 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     except Exception as e:
         LOGGER.error(f"Error deleting resource: {e}")
         error_message = "Failed to delete resource. Please try again."
-    root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#resources", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#resources", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
+    root_path = _resolve_root_path(request)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "resources", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/resources/{resource_id}/state")
@@ -11908,18 +12183,10 @@ async def admin_set_resource_state(
         LOGGER.error(f"Error setting resource state: {e}")
         error_message = "Failed to set resource state. Please try again."
 
-    root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#resources", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#resources", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
+    root_path = _resolve_root_path(request)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "resources", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.get("/prompts/{prompt_id}")
@@ -11976,6 +12243,9 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     Returns:
         A redirect response to the admin dashboard.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_add_prompt)
         True
@@ -11985,6 +12255,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     LOGGER.debug(f"User {get_user_email(user)} is adding a new prompt")
     form = await request.form()
     visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
@@ -12072,6 +12343,9 @@ async def admin_edit_prompt(
     Returns:
         JSONResponse: A JSON response indicating success or failure of the server update operation.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_edit_prompt)
         True
@@ -12082,6 +12356,7 @@ async def admin_edit_prompt(
     form = await request.form()
 
     visibility = str(form.get("visibility", "private"))
+    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
@@ -12180,18 +12455,10 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
     except Exception as e:
         LOGGER.error(f"Error deleting prompt: {e}")
         error_message = "Failed to delete prompt. Please try again."
-    root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#prompts", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#prompts", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
+    root_path = _resolve_root_path(request)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "prompts", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/prompts/{prompt_id}/state")
@@ -12241,18 +12508,10 @@ async def admin_set_prompt_state(
         LOGGER.error(f"Error setting prompt state: {e}")
         error_message = "Failed to set prompt state. Please try again."
 
-    root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#prompts", status_code=303)
-        return RedirectResponse(f"{root_path}/admin/{error_param}#prompts", status_code=303)
-
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
+    root_path = _resolve_root_path(request)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "prompts", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.get("/roots/export")
@@ -12404,14 +12663,10 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         LOGGER.error(f"Error adding root: {e}")
         error_message = "Failed to add root. Please try again."
 
-    root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        return RedirectResponse(f"{root_path}/admin{error_param}#roots", status_code=303)
-
-    return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+    root_path = _resolve_root_path(request)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "roots", error=error_message, team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/roots/{uri:path}/update")
@@ -12457,12 +12712,11 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
 
         await root_service.update_root(uri, name)
 
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
-
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#roots", status_code=303)
-        return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+        team_id = str(form.get("team_id", "") or "")
+        redirect_url = _build_admin_redirect(root_path, "roots", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+        return RedirectResponse(redirect_url, status_code=303)
 
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -12500,11 +12754,11 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
     LOGGER.debug(f"User {get_user_email(user)} is deleting root URI {uri}")
     await root_service.remove_root(uri)
     form = await request.form()
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#roots", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+    team_id = str(form.get("team_id", "") or "")
+    redirect_url = _build_admin_redirect(root_path, "roots", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 # Metrics
@@ -12667,7 +12921,7 @@ async def admin_metrics_partial_html(
             "entity_type": entity_type,
             "data": data,
             "pagination": pagination.model_dump(),
-            "root_path": request.scope.get("root_path", ""),
+            "root_path": _resolve_root_path(request),
         },
     )
 
@@ -12737,9 +12991,15 @@ async def admin_test_gateway(
     LOGGER.debug(f"User {get_user_email(user)} testing server at {validated_base_url}.")
     headers = request.headers or {}
 
-    # Attempt to find a registered gateway matching this URL and team
+    # Attempt to find a registered gateway matching this URL and team.
+    # Query the raw DB object directly so we get the unmasked auth_value
+    # (get_first_gateway_by_url returns a masked GatewayRead where
+    # auth_value="*****", which cannot be decoded).
     try:
-        gateway = gateway_service.get_first_gateway_by_url(db, validated_base_url, team_id=team_id)
+        query = select(DbGateway).where(DbGateway.url == validated_base_url, DbGateway.enabled)
+        if team_id:
+            query = query.where(DbGateway.team_id == team_id)
+        gateway = db.execute(query).scalars().first()
     except Exception:
         gateway = None
 
@@ -12785,8 +13045,11 @@ async def admin_test_gateway(
                 except Exception as e:
                     LOGGER.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
                     response_body = {"error": f"OAuth token retrieval failed for gateway: {str(e)}"}
-        else:
-            headers: dict = decode_auth(gateway.auth_value if gateway else None)
+        elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
+            if isinstance(gateway.auth_value, dict):
+                headers.update(gateway.auth_value)
+            elif isinstance(gateway.auth_value, str):
+                headers.update(decode_auth(gateway.auth_value))
 
         # Prepare request based on content type
         content_type = getattr(request, "content_type", "application/json")
@@ -13569,7 +13832,7 @@ async def admin_get_log_file(
             file_path = file_path.resolve()
             log_dir_resolved = log_dir.resolve()
             if not str(file_path).startswith(str(log_dir_resolved)):
-                raise HTTPException(403, "Access denied")
+                raise HTTPException(403, _ACCESS_DENIED_MSG)
         except Exception:
             raise HTTPException(400, "Invalid file path")
 
@@ -14250,6 +14513,8 @@ async def admin_add_a2a_agent(
     try:
         LOGGER.info(f"A2A agent creation form data: {dict(form)}")
 
+        _check_public_visibility_allowed(str(form.get("visibility", "private")), team_id=str(form.get("team_id", "")) or None)
+
         user_email = get_user_email(user)
         # Determine personal team for default assignment
         team_id = form.get("team_id", None)
@@ -14262,7 +14527,7 @@ async def admin_add_a2a_agent(
         tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         # Parse auth_headers JSON if present
-        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers_json = form.get("auth_headers") or ""
         auth_headers: list[dict[str, Any]] = []
         if auth_headers_json:
             try:
@@ -14417,6 +14682,8 @@ async def admin_add_a2a_agent(
             content=ErrorFormatter.format_database_error(ex),
             status_code=409,
         )
+    except HTTPException:
+        raise
     except Exception as ex:
         LOGGER.error(f"Error creating A2A agent: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
@@ -14461,6 +14728,9 @@ async def admin_edit_a2a_agent(
     Returns:
         JSONResponse: A JSON response indicating success or failure.
 
+    Raises:
+        HTTPException: 422 when public visibility is disabled and request is team-scoped.
+
     Examples:
         >>> callable(admin_edit_a2a_agent)
         True
@@ -14477,6 +14747,7 @@ async def admin_edit_a2a_agent(
 
         # Visibility
         visibility = str(form.get("visibility", "private"))
+        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
         # Agent Type
         agent_type = str(form.get("agent_type", "generic"))
@@ -14500,7 +14771,7 @@ async def admin_edit_a2a_agent(
                 config = {}
 
         # Parse auth_headers JSON if present
-        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers_json = form.get("auth_headers") or ""
         auth_headers = []
         if auth_headers_json:
             try:
@@ -14635,6 +14906,8 @@ async def admin_edit_a2a_agent(
         return ORJSONResponse({"message": str(ve), "success": False}, status_code=422)
     except IntegrityError as ie:
         return ORJSONResponse({"message": str(ie), "success": False}, status_code=409)
+    except HTTPException:
+        raise
     except Exception as e:
         return ORJSONResponse({"message": str(e), "success": False}, status_code=500)
 
@@ -14662,15 +14935,19 @@ async def admin_set_a2a_agent_state(
         HTTPException: If A2A features are disabled
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     user_email = get_user_email(user)
     error_message = None
+    is_inactive_checked = "false"
+    team_id = ""
     try:
         form = await request.form()
         act_val = form.get("activate", "false")
         activate = act_val.lower() == "true" if isinstance(act_val, str) else False
+        is_inactive_checked = str(form.get("is_inactive_checked", "false"))
+        team_id = str(form.get("team_id", "") or "")
 
         await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
 
@@ -14679,21 +14956,14 @@ async def admin_set_a2a_agent_state(
         error_message = str(e)
     except A2AAgentNotFoundError as e:
         LOGGER.error(f"A2A agent state change failed - not found: {e}")
-        root_path = request.scope.get("root_path", "")
         error_message = "A2A agent not found."
     except Exception as e:
         LOGGER.error(f"Error setting A2A agent state: {e}")
-        root_path = request.scope.get("root_path", "")
         error_message = "Failed to set state of A2A agent. Please try again."
 
-    root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        return RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
-
-    return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+    root_path = _resolve_root_path(request)
+    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/a2a/{agent_id}/delete")
@@ -14719,13 +14989,17 @@ async def admin_delete_a2a_agent(
         HTTPException: If A2A features are disabled
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
-    form = await request.form()
-    purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
     error_message = None
+    is_inactive_checked = "false"
+    team_id = ""
     try:
+        form = await request.form()
+        purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
+        is_inactive_checked = str(form.get("is_inactive_checked", "false"))
+        team_id = str(form.get("team_id", "") or "")
         user_email = get_user_email(user)
         await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
@@ -14738,14 +15012,9 @@ async def admin_delete_a2a_agent(
         LOGGER.error(f"Error deleting A2A agent: {e}")
         error_message = "Failed to delete A2A agent. Please try again."
 
-    root_path = request.scope.get("root_path", "")
-
-    # Build redirect URL with error message if present
-    if error_message:
-        error_param = f"?error={urllib.parse.quote(error_message)}"
-        return RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
-
-    return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+    root_path = _resolve_root_path(request)
+    redirect_url = _build_admin_redirect(root_path, "a2a-agents", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/a2a/{agent_id}/test")
@@ -14908,6 +15177,7 @@ async def admin_create_grpc_service(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
+        _check_public_visibility_allowed(service.visibility or "", team_id=getattr(service, "team_id", None))
         metadata = MetadataCapture.extract_creation_metadata(request, user)
         user_email = get_user_email(user)
         result = await grpc_service_mgr.register_service(db, service, user_email, metadata)
@@ -14977,6 +15247,7 @@ async def admin_update_grpc_service(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
+        _check_public_visibility_allowed(service.visibility or "", team_id=getattr(service, "team_id", None))
         metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         user_email = get_user_email(user)
         result = await grpc_service_mgr.update_service(db, service_id, service, user_email, metadata)
@@ -15397,7 +15668,7 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         stats = await plugin_service.get_plugin_statistics()
 
         # Prepare context for template
-        context = {"request": request, "plugins": plugins, "stats": stats, "plugins_enabled": plugin_manager is not None, "root_path": request.scope.get("root_path", "")}
+        context = {"request": request, "plugins": plugins, "stats": stats, "plugins_enabled": plugin_manager is not None, "root_path": _resolve_root_path(request)}
 
         # Render the partial template
         return request.app.state.templates.TemplateResponse(request, "plugins_partial.html", context)
@@ -15880,7 +16151,7 @@ async def catalog_partial(
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
 
     # Calculate pagination
     page_size = settings.mcpgateway_catalog_page_size
@@ -16000,7 +16271,7 @@ async def get_system_stats(
                 {
                     "request": request,
                     "stats": stats,
-                    "root_path": request.scope.get("root_path", ""),
+                    "root_path": _resolve_root_path(request),
                     "db_metrics_recording_enabled": settings.db_metrics_recording_enabled,
                 },
             )
@@ -16126,7 +16397,7 @@ async def get_maintenance_partial(
     Raises:
         HTTPException: 403 if user is not a platform admin
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
 
     # Build payload with settings for the template
     payload = {
@@ -16162,7 +16433,7 @@ async def get_observability_partial(request: Request, _user=Depends(get_current_
     Returns:
         HTMLResponse: Rendered observability dashboard template
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     return request.app.state.templates.TemplateResponse(request, "observability_partial.html", {"request": request, "root_path": root_path})
 
 
@@ -16179,7 +16450,7 @@ async def get_observability_metrics_partial(request: Request, _user=Depends(get_
     Returns:
         HTMLResponse: Rendered metrics dashboard template
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     return request.app.state.templates.TemplateResponse(request, "observability_metrics.html", {"request": request, "root_path": root_path})
 
 
@@ -16319,7 +16590,7 @@ async def get_observability_traces(
         # Get traces ordered by most recent
         traces = query.order_by(ObservabilityTrace.start_time.desc()).limit(limit).all()
 
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return request.app.state.templates.TemplateResponse(request, "observability_traces_list.html", {"request": request, "traces": traces, "root_path": root_path})
     finally:
         # Ensure close() always runs even if commit() fails
@@ -16353,7 +16624,7 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
         if not trace:
             raise HTTPException(status_code=404, detail="Trace not found")
 
-        root_path = request.scope.get("root_path", "")
+        root_path = _resolve_root_path(request)
         return request.app.state.templates.TemplateResponse(request, "observability_trace_detail.html", {"request": request, "trace": trace, "root_path": root_path})
     finally:
         # Ensure close() always runs even if commit() fails
@@ -17705,7 +17976,7 @@ async def get_tools_partial(
     Returns:
         HTMLResponse: Rendered tool metrics dashboard partial
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     return request.app.state.templates.TemplateResponse(
         request,
         "observability_tools.html",
@@ -17927,7 +18198,7 @@ async def get_prompts_partial(
     Returns:
         HTMLResponse: Rendered prompt metrics dashboard partial
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     return request.app.state.templates.TemplateResponse(
         request,
         "observability_prompts.html",
@@ -18149,7 +18420,7 @@ async def get_resources_partial(
     Returns:
         HTMLResponse: Rendered resource metrics dashboard partial
     """
-    root_path = request.scope.get("root_path", "")
+    root_path = _resolve_root_path(request)
     return request.app.state.templates.TemplateResponse(
         request,
         "observability_resources.html",
@@ -18210,7 +18481,7 @@ async def get_performance_stats(
                 worker["create_time"] = worker["create_time"].isoformat()
 
         if request.headers.get("hx-request"):
-            root_path = request.scope.get("root_path", "")
+            root_path = _resolve_root_path(request)
             return request.app.state.templates.TemplateResponse(
                 request,
                 "performance_partial.html",

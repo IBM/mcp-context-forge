@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/plugins/framework/models.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor, Mihai Criveti
+Authors: Teryl Taylor, Mihai Criveti, Fred Araujo
 
 Pydantic models for plugins.
 This module implements the pydantic models associated with
@@ -14,18 +14,43 @@ from enum import Enum
 import logging
 import os
 from pathlib import Path
-from typing import Any, Generic, Optional, Self, TypeAlias, TypeVar, Union
+from typing import Any, Generic, Optional, Self, TypeVar, Union
 
 # Third-Party
-from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
 
 # First-Party
-from mcpgateway.common.models import TransportType
-from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.plugins.framework.constants import CMD, CWD, ENV, EXTERNAL_PLUGIN_TYPE, IGNORE_CONFIG_EXTERNAL, PYTHON_SUFFIX, SCRIPT, UDS, URL
-from mcpgateway.plugins.framework.settings import settings
+from mcpgateway.plugins.framework.settings import get_client_mtls_settings, get_grpc_client_mtls_settings, get_grpc_server_settings, get_mcp_server_settings, get_transport_settings
+from mcpgateway.plugins.framework.validators import validate_plugin_url
 
 T = TypeVar("T")
+
+
+class TransportType(str, Enum):
+    """Supported transport mechanisms for MCP plugin communication.
+
+    Attributes:
+        SSE: Server-Sent Events transport.
+        HTTP: Standard HTTP-based transport.
+        STDIO: Standard input/output transport.
+        STREAMABLEHTTP: HTTP transport with streaming.
+        GRPC: gRPC transport for external plugins.
+
+    Examples:
+        >>> TransportType.SSE
+        <TransportType.SSE: 'SSE'>
+        >>> TransportType.STDIO.value
+        'STDIO'
+        >>> TransportType('STREAMABLEHTTP')
+        <TransportType.STREAMABLEHTTP: 'STREAMABLEHTTP'>
+    """
+
+    SSE = "SSE"
+    HTTP = "HTTP"
+    STDIO = "STDIO"
+    STREAMABLEHTTP = "STREAMABLEHTTP"
+    GRPC = "GRPC"
 
 
 class PluginMode(str, Enum):
@@ -291,7 +316,7 @@ class MCPClientTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             MCPClientTLSConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_client_mtls_settings()
         data: dict[str, Any] = {}
 
         if s.client_mtls_certfile:
@@ -329,7 +354,7 @@ class MCPServerTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             MCPServerTLSConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_mcp_server_settings()
         data: dict[str, Any] = {}
 
         if s.server_ssl_keyfile:
@@ -426,7 +451,7 @@ class MCPServerConfig(BaseModel):
         Returns:
             MCPServerConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_mcp_server_settings()
         data: dict[str, Any] = {}
 
         if s.server_host:
@@ -486,7 +511,7 @@ class MCPClientConfig(BaseModel):
             The validated URL or None if none is set.
         """
         if url:
-            result = SecurityValidator.validate_url(url)
+            result = validate_plugin_url(url)
             return result
         return url
 
@@ -676,7 +701,7 @@ class GRPCClientTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             GRPCClientTLSConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_grpc_client_mtls_settings()
         data: dict[str, Any] = {}
 
         if s.grpc_client_mtls_certfile:
@@ -731,7 +756,7 @@ class GRPCServerTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             GRPCServerTLSConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_grpc_server_settings()
         data: dict[str, Any] = {}
 
         if s.grpc_server_ssl_keyfile:
@@ -965,7 +990,7 @@ class GRPCServerConfig(BaseModel):
         Returns:
             GRPCServerConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_grpc_server_settings()
         data: dict[str, Any] = {}
 
         if s.grpc_server_host:
@@ -1051,7 +1076,7 @@ class UnixSocketServerConfig(BaseModel):
         Returns:
             UnixSocketServerConfig instance or None if no environment variables are set.
         """
-        s = settings
+        s = get_transport_settings()
         data: dict[str, Any] = {}
 
         if s.unix_socket_path:
@@ -1206,6 +1231,8 @@ class PluginViolation(BaseModel):
         details: (dict[str, Any]): additional violation details.
         _plugin_name (str): the plugin name, private attribute set by the plugin manager.
         mcp_error_code(Optional[int]): A valid mcp error code which will be sent back to the client if plugin enabled.
+        http_status_code (Optional[int]): HTTP status code to return (e.g., 429 for rate limiting).
+        http_headers (Optional[dict[str, str]]): HTTP headers to include in the response.
 
     Examples:
         >>> violation = PluginViolation(
@@ -1229,6 +1256,8 @@ class PluginViolation(BaseModel):
     details: Optional[dict[str, Any]] = Field(default_factory=dict)
     _plugin_name: str = PrivateAttr(default="")
     mcp_error_code: Optional[int] = None
+    http_status_code: Optional[int] = None
+    http_headers: Optional[dict[str, str]] = None
 
     @property
     def plugin_name(self) -> str:
@@ -1302,6 +1331,7 @@ class PluginResult(BaseModel, Generic[T]):
             modified_payload (Optional[Any]): The modified payload if the plugin is a transformer.
             violation (Optional[PluginViolation]): violation object.
             metadata (Optional[dict[str, Any]]): additional metadata.
+            http_headers (Optional[dict[str, str]]): HTTP headers to include in successful responses.
 
      Examples:
         >>> result = PluginResult()
@@ -1330,6 +1360,7 @@ class PluginResult(BaseModel, Generic[T]):
     modified_payload: Optional[T] = None
     violation: Optional[PluginViolation] = None
     metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
+    http_headers: Optional[dict[str, str]] = None
 
 
 class GlobalContext(BaseModel):
@@ -1430,4 +1461,21 @@ class PluginContext(BaseModel):
 
 PluginContextTable = dict[str, PluginContext]
 
-PluginPayload: TypeAlias = BaseModel
+
+class PluginPayload(BaseModel):
+    """Base class for all hook payloads. Immutable by design.
+
+    Frozen payloads prevent in-place mutations by plugins -- attributes
+    cannot be set directly on the object.  Plugins must use
+    ``model_copy(update=...)`` to create modified payloads and return
+    modifications via ``PluginResult.modified_payload``.
+
+    Examples:
+        >>> class TestPayload(PluginPayload):
+        ...     name: str
+        >>> p = TestPayload(name="test")
+        >>> p.name
+        'test'
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)

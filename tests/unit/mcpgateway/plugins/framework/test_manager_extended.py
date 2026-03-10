@@ -9,15 +9,19 @@ Extended tests for plugin manager to achieve 100% coverage.
 
 # Standard
 import asyncio
+import importlib.util
+from pathlib import Path
+import sys
 from unittest.mock import patch
 import re
+import uuid
 
 # Third-Party
 import pytest
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
-from mcpgateway.plugins.framework.base import HookRef, Plugin
+from mcpgateway.plugins.framework.base import HookRef
 from mcpgateway.plugins.framework.models import Config
 from mcpgateway.plugins.framework import (
     GlobalContext,
@@ -39,6 +43,26 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
 )
 from mcpgateway.plugins.framework.registry import PluginRef
+
+
+def test_manager_module_import_does_not_parse_plugin_settings(monkeypatch):
+    """Importing manager.py must not eagerly parse full PluginsSettings.
+
+    With PLUGINS_SERVER_PORT set to a non-integer, any attempt to
+    instantiate the full PluginsSettings model would raise a
+    ValidationError.  If exec_module succeeds, settings were deferred.
+    """
+    monkeypatch.setenv("PLUGINS_SERVER_PORT", "abc")
+
+    module_name = f"mcpgateway._plugin_manager_test_{uuid.uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(module_name, Path("mcpgateway/plugins/framework/manager.py"))
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, module_name, module)
+    # If this raises ValidationError, settings are being eagerly parsed at import time
+    spec.loader.exec_module(module)
+
+    assert hasattr(module, "PluginManager")
 
 
 @pytest.mark.asyncio
@@ -558,7 +582,7 @@ async def test_manager_plugin_blocking():
     plugin = BlockingPlugin(config)
 
     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH,  PluginRef(plugin))
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(plugin))
         mock_get.return_value = [hook_ref]
 
         prompt = PromptPrehookPayload(prompt_id="test", args={"text": "bad content"})
@@ -759,7 +783,6 @@ async def test_base_plugin_coverage():
         PluginContext,
         PluginMode,
         PromptHookType,
-        ToolHookType,
         PromptPosthookPayload,
         PromptPrehookPayload,
         ToolPostInvokePayload,

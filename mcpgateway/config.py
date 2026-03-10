@@ -55,7 +55,7 @@ import os
 from pathlib import Path
 import re
 import sys
-from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TYPE_CHECKING, TypedDict
+from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
 from urllib.parse import urlparse
 
 # Third-Party
@@ -64,10 +64,6 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 import orjson
 from pydantic import Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
-
-if TYPE_CHECKING:
-    # First-Party
-    from mcpgateway.plugins.framework.settings import PluginsSettings
 
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
@@ -506,6 +502,10 @@ class Settings(BaseSettings):
         default=False,
         description="Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",
     )
+    allow_public_visibility: bool = Field(
+        default=True,
+        description="When false, creating or updating any entity with public visibility is blocked in team scope.",
+    )
     protect_all_admins: bool = Field(
         default=True,
         description="When true (default), prevent any admin from being demoted, deactivated, or locked out via API/UI. When false, only the last active admin is protected.",
@@ -566,11 +566,16 @@ class Settings(BaseSettings):
 
     # Personal Teams Configuration
     auto_create_personal_teams: bool = Field(default=True, description="Enable automatic personal team creation for new users")
-    personal_team_prefix: str = Field(default="personal", description="Personal team naming prefix")
+    personal_team_prefix: str = Field(default="", description="Personal team naming prefix")
     max_teams_per_user: int = Field(default=50, description="Maximum number of teams a user can belong to")
     max_members_per_team: int = Field(default=100, description="Maximum number of members per team")
     invitation_expiry_days: int = Field(default=7, description="Number of days before team invitations expire")
     require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations")
+
+    # Team Governance
+    allow_team_creation: bool = Field(default=True, description="Allow users to create organizational teams. Admins can always create teams.")
+    allow_team_join_requests: bool = Field(default=True, description="Allow users to request to join public teams")
+    allow_team_invitations: bool = Field(default=True, description="Allow team owners to send invitations")
 
     # Default Role Configuration
     default_admin_role: str = Field(default="platform_admin", description="Global role assigned to admin users")
@@ -724,7 +729,15 @@ class Settings(BaseSettings):
     require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 1.0.0
 
     llmchat_enabled: bool = Field(default=True, description="Enable LLM Chat feature")
+    mcpgateway_stdio_transport_enabled: bool = Field(
+        default=False,
+        description=("Enable stdio transport for MCP chat client configuration. Disabled by default; " "set true only in trusted environments that intentionally need stdio process execution."),
+    )
     toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
+    plugins_can_override_rbac: bool = Field(
+        default=False,
+        description=("Allow HTTP_AUTH_CHECK_PERMISSION plugins to short-circuit built-in RBAC grants. " "Disabled by default so plugin grant decisions are audit-only unless explicitly enabled."),
+    )
 
     # database-backed polling settings for session message delivery
     poll_interval: float = Field(default=1.0, description="Initial polling interval in seconds for checking new session messages")
@@ -1010,7 +1023,8 @@ class Settings(BaseSettings):
         security_score = max(0, 100 - 10 * len(self.get_security_warnings()))
 
         return {
-            "secure_secrets": self.jwt_secret_key != "my-test-key",  # nosec B105 - checking for default value
+            "secure_secrets": (self.jwt_secret_key.get_secret_value() if isinstance(self.jwt_secret_key, SecretStr) else self.jwt_secret_key)
+            != "my-test-key",  # nosec B105 - checking for default value
             "auth_enabled": self.auth_required,
             "ssl_verification": not self.skip_ssl_verify,
             "debug_disabled": not self.debug,
@@ -2113,7 +2127,7 @@ Disallow: /
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
 
     # Character validation patterns
-    validation_name_pattern: str = r"^[a-zA-Z0-9_.\-\s]+$"  # Allow spaces for names
+    validation_name_pattern: str = r"^[a-zA-Z0-9_.\- ]+$"  # Allow spaces for names (literal space, not \s to reject control chars)
     validation_identifier_pattern: str = r"^[a-zA-Z0-9_\-\.]+$"  # No spaces for IDs
     validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
     validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
@@ -2373,7 +2387,7 @@ Disallow: /
         summary = self.model_dump(exclude={"database_url", "memcached_url"})
         logger.info(f"Application settings summary: {summary}")
 
-    ENABLE_METRICS: bool = Field(True, description="Enable Prometheus metrics instrumentation")
+    ENABLE_METRICS: bool = Field(False, description="Enable Prometheus metrics endpoint at /metrics/prometheus (requires authentication)")
     METRICS_EXCLUDED_HANDLERS: str = Field("", description="Comma-separated regex patterns for paths to exclude from metrics")
     METRICS_NAMESPACE: str = Field("default", description="Prometheus metrics namespace")
     METRICS_SUBSYSTEM: str = Field("", description="Prometheus metrics subsystem")
@@ -2428,16 +2442,20 @@ class LazySettingsWrapper:
     """Lazily initialize settings singleton on getattr"""
 
     @property
-    def plugins(self) -> "PluginsSettings":
+    def plugins(self) -> Any:
         """Access plugin framework settings via ``settings.plugins``.
 
+        Returns a ``LazySettingsWrapper`` from the plugin framework that
+        provides lightweight ``@property`` accessors for startup-critical
+        fields and a ``__getattr__`` fallback to the full ``PluginsSettings``.
+
         Returns:
-            PluginsSettings: The plugin framework settings instance.
+            The plugin framework settings wrapper.
         """
         # First-Party
-        from mcpgateway.plugins.framework.settings import get_settings as _get_plugin_settings  # pylint: disable=import-outside-toplevel
+        from mcpgateway.plugins.framework.settings import settings as _plugin_settings  # pylint: disable=import-outside-toplevel
 
-        return _get_plugin_settings()
+        return _plugin_settings
 
     def __getattr__(self, key: str) -> Any:
         """Get the real settings object and forward to it

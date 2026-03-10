@@ -176,7 +176,7 @@ class OPAPluginFilter(Plugin):
                 logger.error(f"OPA POST HTTP error (attempt {attempt + 1}, status {e.response.status_code}): {e.response.text[:200]}")
                 raise
 
-    async def _evaluate_opa_policy(self, url: str, input: OPAInput, policy_input_data_map: dict) -> tuple[bool, Any]:
+    async def _evaluate_opa_policy(self, url: str, opa_input: OPAInput, policy_input_data_map: dict) -> tuple[bool, Any]:
         """Function to evaluate OPA policy. Makes a request to opa server with url and input.
 
         Args:
@@ -204,7 +204,7 @@ class OPAPluginFilter(Plugin):
 
             return f"{k}.{m}" if k.split(".")[0] == "context" else k
 
-        payload = {"input": {m: self._get_nested_value(input.model_dump()["input"], _key(k, m)) for k, m in policy_input_data_map.items()}} if policy_input_data_map else input.model_dump()
+        payload = {"input": {m: self._get_nested_value(opa_input.model_dump()["input"], _key(k, m)) for k, m in policy_input_data_map.items()}} if policy_input_data_map else opa_input.model_dump()
         logger.info(f"OPA url {url}, OPA payload {payload}")
         rsp = None
         try:
@@ -378,7 +378,7 @@ class OPAPluginFilter(Plugin):
             if opa_pre_prompt_input["policy_apply"]:
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=payload.model_dump(), context=opa_pre_prompt_input["policy_context"], request_ip="none", headers={}, mode="input")
                 decision, decision_context = await self._evaluate_opa_policy(
-                    url=opa_pre_prompt_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_prompt_input["policy_input_data_map"]
+                    url=opa_pre_prompt_input["opa_server_url"], opa_input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_prompt_input["policy_input_data_map"]
                 )
                 if not decision:
                     violation = PluginViolation(
@@ -423,7 +423,7 @@ class OPAPluginFilter(Plugin):
 
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_prompt_input["policy_context"], request_ip="none", headers={}, mode="output")
                 decision, decision_context = await self._evaluate_opa_policy(
-                    url=opa_post_prompt_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_prompt_input["policy_input_data_map"]
+                    url=opa_post_prompt_input["opa_server_url"], opa_input=OPAInput(input=opa_input), policy_input_data_map=opa_post_prompt_input["policy_input_data_map"]
                 )
                 if not decision:
                     violation = PluginViolation(
@@ -461,7 +461,7 @@ class OPAPluginFilter(Plugin):
             if opa_pre_tool_input["policy_apply"]:
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=payload.model_dump(), context=opa_pre_tool_input["policy_context"], request_ip="none", headers={}, mode="input")
                 decision, decision_context = await self._evaluate_opa_policy(
-                    url=opa_pre_tool_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_tool_input["policy_input_data_map"]
+                    url=opa_pre_tool_input["opa_server_url"], opa_input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_tool_input["policy_input_data_map"]
                 )
                 if not decision:
                     violation = PluginViolation(
@@ -505,7 +505,7 @@ class OPAPluginFilter(Plugin):
 
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_tool_input["policy_context"], request_ip="none", headers={}, mode="output")
                 decision, decision_context = await self._evaluate_opa_policy(
-                    url=opa_post_tool_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_tool_input["policy_input_data_map"]
+                    url=opa_post_tool_input["opa_server_url"], opa_input=OPAInput(input=opa_input), policy_input_data_map=opa_post_tool_input["policy_input_data_map"]
                 )
                 if not decision:
                     violation = PluginViolation(
@@ -553,7 +553,7 @@ class OPAPluginFilter(Plugin):
             if opa_pre_resource_input["policy_apply"]:
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=payload.model_dump(), context=opa_pre_resource_input["policy_context"], request_ip="none", headers={}, mode="input")
                 decision, decision_context = await self._evaluate_opa_policy(
-                    url=opa_pre_resource_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_resource_input["policy_input_data_map"]
+                    url=opa_pre_resource_input["opa_server_url"], opa_input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_resource_input["policy_input_data_map"]
                 )
                 if not decision:
                     violation = PluginViolation(
@@ -595,7 +595,7 @@ class OPAPluginFilter(Plugin):
 
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_resource_input["policy_context"], request_ip="none", headers={}, mode="output")
                 decision, decision_context = await self._evaluate_opa_policy(
-                    url=opa_post_resource_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_resource_input["policy_input_data_map"]
+                    url=opa_post_resource_input["opa_server_url"], opa_input=OPAInput(input=opa_input), policy_input_data_map=opa_post_resource_input["policy_input_data_map"]
                 )
                 if not decision:
                     violation = PluginViolation(

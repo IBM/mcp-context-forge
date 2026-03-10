@@ -97,7 +97,7 @@ def _build_app(monkeypatch: pytest.MonkeyPatch, auth_ok: bool = True) -> FastAPI
 
     app = FastAPI()
     app.include_router(ver_mod.router)
-    app.dependency_overrides[ver_mod.require_auth] = _allow if auth_ok else _deny
+    app.dependency_overrides[ver_mod.require_admin_auth] = _allow if auth_ok else _deny
     return app
 
 
@@ -142,7 +142,8 @@ def test_version_html_all_sections(client: TestClient) -> None:
 # --------------------------------------------------------------------------- #
 # Authentication                                                              #
 # --------------------------------------------------------------------------- #
-def test_version_requires_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_version_requires_admin_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Non-admin users must be denied access to /version diagnostics."""
     unauth_client = TestClient(_build_app(monkeypatch, auth_ok=False))
     rsp = unauth_client.get("/version")
     assert rsp.status_code == 401
@@ -155,10 +156,21 @@ def test_is_secret_and_public_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # First-Party
     from mcpgateway import version as ver_mod
 
-    monkeypatch.setenv("PLAIN", "1")
+    monkeypatch.setenv("MCPGATEWAY_TEST_VAR", "visible")
+    monkeypatch.setenv("MCP_ANOTHER_VAR", "also_visible")
+    monkeypatch.setenv("PORT", "8080")
+    monkeypatch.setenv("HOME", "/home/user")
     monkeypatch.setenv("X_SECRET", "bad")
-    assert "PLAIN" in ver_mod._public_env()
-    assert "X_SECRET" not in ver_mod._public_env()
+    env = ver_mod._public_env()
+    # App-prefixed vars included
+    assert "MCPGATEWAY_TEST_VAR" in env
+    assert "MCP_ANOTHER_VAR" in env
+    # Allowlisted vars included
+    assert "PORT" in env
+    # System vars excluded (not in prefix or allowlist)
+    assert "HOME" not in env
+    # Secrets still excluded
+    assert "X_SECRET" not in env
 
 
 def test_sanitize_url() -> None:
