@@ -17472,58 +17472,66 @@ class TestAdjustPaginationForConversionFailures:
 
     def test_decrements_total_items_by_failed_count(self):
         pagination = self._make_pagination(total_items=100)
-        _adjust_pagination_for_conversion_failures(pagination, failed_count=3)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=3, rendered_count=17)
         assert pagination.total_items == 97
         assert pagination.total_pages == 5
         assert pagination.has_next is True
         assert pagination.has_prev is False
+        assert pagination.page_items == 17
 
     def test_zero_failures_leaves_total_unchanged(self):
         pagination = self._make_pagination(total_items=50)
-        _adjust_pagination_for_conversion_failures(pagination, failed_count=0)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=0, rendered_count=20)
         assert pagination.total_items == 50
+        assert pagination.page_items == 20
 
     def test_floors_at_zero_when_failures_exceed_total(self):
         pagination = self._make_pagination(total_items=2)
-        _adjust_pagination_for_conversion_failures(pagination, failed_count=5)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=5, rendered_count=0)
         assert pagination.total_items == 0
         assert pagination.total_pages == 0
         assert pagination.has_next is False
         assert pagination.has_prev is False
+        assert pagination.page_items == 0
 
     def test_exact_match_results_in_zero(self):
         pagination = self._make_pagination(total_items=10)
-        _adjust_pagination_for_conversion_failures(pagination, failed_count=10)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=10, rendered_count=0)
         assert pagination.total_items == 0
         assert pagination.total_pages == 0
+        assert pagination.page_items == 0
 
     def test_total_items_already_zero(self):
         pagination = self._make_pagination(total_items=0)
-        _adjust_pagination_for_conversion_failures(pagination, failed_count=3)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=3, rendered_count=0)
         assert pagination.total_items == 0
+        assert pagination.page_items == 0
 
     def test_single_failure(self):
         pagination = self._make_pagination(total_items=1)
-        _adjust_pagination_for_conversion_failures(pagination, failed_count=1)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=1, rendered_count=0)
         assert pagination.total_items == 0
         assert pagination.total_pages == 0
+        assert pagination.page_items == 0
 
     def test_recomputes_has_next_on_boundary(self):
         """When failures reduce total_pages, has_next should become False."""
         pagination = self._make_pagination(total_items=21, page=1, per_page=20)
         assert pagination.has_next is True
-        _adjust_pagination_for_conversion_failures(pagination, failed_count=2)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=2, rendered_count=18)
         assert pagination.total_items == 19
         assert pagination.total_pages == 1
         assert pagination.has_next is False
+        assert pagination.page_items == 18
 
     def test_page_not_clamped_when_total_pages_shrinks(self):
         """Page is NOT clamped because data was already fetched for this page."""
         pagination = self._make_pagination(total_items=41, page=3, per_page=20)
-        _adjust_pagination_for_conversion_failures(pagination, failed_count=2)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=2, rendered_count=18)
         assert pagination.total_items == 39
         assert pagination.total_pages == 2
         assert pagination.page == 3  # stays at queried page, not clamped
+        assert pagination.page_items == 18
         assert pagination.has_next is False
         assert pagination.has_prev is True
 

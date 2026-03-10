@@ -21,6 +21,7 @@
   totalPages: {{ pagination.total_pages }},
   hasNext: {{ 'true' if pagination.has_next else 'false' }},
   hasPrev: {{ 'true' if pagination.has_prev else 'false' }},
+  pageItems: {{ pagination.page_items if pagination.page_items is not none else 'null' }},
   targetSelector: '{{ hx_target|default('#tools-table') }}',
   swapStyle: '{{ hx_swap|default('innerHTML') }}',
   tableName: '{{ table_name|default('') }}',
@@ -185,7 +186,7 @@
   <!-- Page Info -->
   <div class="text-sm text-gray-700 dark:text-gray-300">
     <span
-      x-text="totalItems === 0 ? 'No items found' : `Showing ${Math.min((currentPage - 1) * perPage + 1, totalItems)} - ${Math.min(currentPage * perPage, totalItems)} of ${totalItems.toLocaleString()} items`"
+      x-text="totalItems === 0 ? 'No items found' : `Showing ${Math.min((currentPage - 1) * perPage + 1, totalItems)} - ${pageItems !== null ? Math.min((currentPage - 1) * perPage + pageItems, totalItems) : Math.min(currentPage * perPage, totalItems)} of ${totalItems.toLocaleString()} items`"
     ></span>
   </div>
 
