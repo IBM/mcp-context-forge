@@ -109,7 +109,11 @@ def _wait_for_passive_scan(zap: ZAPv2, timeout: int = 120) -> None:
     """Block until passive scan queue is empty or timeout is reached."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        remaining = int(zap.pscan.records_to_scan)
+        try:
+            remaining = int(zap.pscan.records_to_scan)
+        except (ConnectionError, Timeout, RequestException):
+            logger.warning("ZAP unreachable while polling passive scan; giving up")
+            return
         if remaining == 0:
             return
         logger.debug("Passive scan records remaining: %d", remaining)
@@ -131,13 +135,27 @@ def _filter_a01_alerts(alerts: list[dict]) -> list[dict]:
     return results
 
 
+def _reports_dir() -> Path:
+    """Return the reports/ directory path, creating it if necessary."""
+    d = Path(__file__).parent.parent.parent.parent / "reports"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def _write_report(alerts: list[dict], name: str) -> Path:
     """Write a JSON alert report to reports/ directory and return its path."""
-    reports_dir = Path(__file__).parent.parent.parent.parent / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    report_path = reports_dir / f"zap_a01_{name}_{int(time.time())}.json"
+    report_path = _reports_dir() / f"zap_a01_{name}_{int(time.time())}.json"
     report_path.write_text(json.dumps(alerts, indent=2))
     logger.info("ZAP report written to %s", report_path)
+    return report_path
+
+
+def _write_html_report(zap: ZAPv2, name: str) -> Path:
+    """Fetch ZAP's built-in HTML report and write it to reports/."""
+    html = zap.core.htmlreport()
+    report_path = _reports_dir() / f"zap_a01_{name}_{int(time.time())}.html"
+    report_path.write_text(html)
+    logger.info("ZAP HTML report written to %s", report_path)
     return report_path
 
 
@@ -230,18 +248,45 @@ class TestZAPAccessControlScan:
     """ZAP DAST scan tests for OWASP A01:2021 – Broken Access Control."""
 
     def test_zap_spider_discovers_protected_endpoints(self, zap: ZAPv2, zap_context: dict) -> None:
-        """Seed ZAP's site tree with known protected paths, then confirm they are present.
+        """Seed ZAP's site tree with protected API paths, then spider for HTML/UI paths.
 
         ZAP's traditional spider follows HTML hyperlinks and cannot discover REST
-        API endpoints on its own.  We use zap.core.access_url() to directly fetch
-        each protected path — ZAP records the response in its site tree, which the
-        passive and active scans then operate on.  No add-ons required.
+        API endpoints on its own.  We seed the site tree by directly accessing
+        each protected path via ``zap.core.access_url()`` — ZAP records the
+        response and then the passive/active scans operate on them.
+
+        Note: ZAP's ``openapi.import_url()`` can import the full OpenAPI spec but
+        consistently OOMs with the default 2 GB memory limit (344 paths triggers
+        immediate fetching).  Manual seeding is more reliable.
         """
-        protected_paths = ["/servers", "/teams/", "/tokens", "/rbac", "/auth/email/admin"]
+        # Key protected paths covering the main security-sensitive surface area.
+        # Grouped by domain: auth, RBAC, resources, admin, observability.
+        protected_paths = [
+            # Auth & user management
+            "/auth/email/admin/users",
+            "/auth/email/login",
+            "/auth/email/signup",
+            # RBAC
+            "/rbac/roles",
+            "/rbac/permissions",
+            # Resources
+            "/servers",
+            "/tools",
+            "/gateways",
+            "/resources",
+            "/prompts",
+            "/teams/",
+            # Tokens
+            "/tokens",
+            "/tokens/admin/all",
+            # Observability & admin
+            "/api/logs/audit-trails",
+            "/health",
+            "/health/security",
+            "/metrics/prometheus",
+        ]
 
         # --- 1. Seed the site tree by directly accessing each protected path ---
-        # ZAP records every URL it touches (including auth-gated ones whose
-        # responses it receives via the Replacer-injected Bearer header).
         for path in protected_paths:
             url = f"{ZAP_TARGET_URL}{path}"
             try:
@@ -254,7 +299,7 @@ class TestZAPAccessControlScan:
             except Exception as exc:
                 logger.warning("access_url failed for %s: %s", url, exc)
 
-        # --- 2. Also run the traditional spider (picks up any linked HTML paths) ---
+        # --- 2. Run the traditional spider (picks up any linked HTML/UI paths) ---
         scan_id = zap.spider.scan(ZAP_TARGET_URL, contextname=zap_context["ctx_name"])
         logger.info("ZAP spider started with scan_id=%s targeting %s", scan_id, ZAP_TARGET_URL)
 
@@ -268,7 +313,7 @@ class TestZAPAccessControlScan:
         else:
             pytest.fail("ZAP spider did not complete within 5 minutes")
 
-        # --- 3. Check the full site tree (seeded paths + spider combined) ---
+        # --- 3. Verify the site tree has real API coverage ---
         urls = zap.core.urls(baseurl=ZAP_TARGET_URL)
         discovered = [u for path in protected_paths for u in urls if path in u]
         assert discovered, (
@@ -353,7 +398,7 @@ class TestZAPAccessControlScan:
             pytest.fail(f"ZAP active scan found {len(critical_a01)} CRITICAL A01 alert(s):\n{summary}")
 
     def test_zap_generates_a01_report_artifact(self, zap: ZAPv2) -> None:
-        """Write a full A01 alert JSON report to reports/ for artifact collection."""
+        """Write full A01 alert JSON and HTML reports to reports/ for artifact collection."""
         try:
             all_alerts = zap.core.alerts()
         except (ConnectionError, Timeout, RequestException) as exc:
@@ -361,6 +406,15 @@ class TestZAPAccessControlScan:
         except json.JSONDecodeError as exc:
             pytest.skip(f"ZAP returned malformed response during report generation: {exc}")
         a01_alerts = _filter_a01_alerts(all_alerts)
-        report_path = _write_report(a01_alerts, "full_report")
-        assert report_path.exists(), f"Report file was not created at {report_path}"
-        logger.info("A01 DAST report written: %s (%d alerts)", report_path, len(a01_alerts))
+        json_path = _write_report(a01_alerts, "full_report")
+        assert json_path.exists(), f"JSON report was not created at {json_path}"
+        logger.info("A01 DAST JSON report: %s (%d alerts)", json_path, len(a01_alerts))
+
+        try:
+            html_path = _write_html_report(zap, "full_report")
+            assert html_path.exists(), f"HTML report was not created at {html_path}"
+            logger.info("A01 DAST HTML report: %s", html_path)
+        except (ConnectionError, Timeout, RequestException) as exc:
+            logger.warning("Could not generate HTML report: %s", exc)
+        except json.JSONDecodeError as exc:
+            logger.warning("ZAP returned malformed response for HTML report: %s", exc)

@@ -172,13 +172,17 @@ def two_teams_setup(owasp_admin_api: APIRequestContext, playwright: Playwright):
 
 @pytest.fixture
 def private_server_owned_by_user_a(owasp_admin_api: APIRequestContext, owasp_user_a_api: dict):
-    """Create a private server as User A and return its ID. Cleans up after test."""
-    ctx_a: APIRequestContext = owasp_user_a_api["ctx"]
+    """Create a private server via admin on behalf of User A and return its ID. Cleans up after test."""
     server_id: str | None = None
     try:
-        resp = ctx_a.post(
+        resp = owasp_admin_api.post(
             "/servers",
-            data={"server": {"name": f"owasp-priv-{uuid.uuid4().hex[:8]}", "description": "User A private server"}, "team_id": None, "visibility": "private"},
+            data={
+                "server": {"name": f"owasp-priv-{uuid.uuid4().hex[:8]}", "description": "User A private server"},
+                "team_id": None,
+                "visibility": "private",
+                "owner_email": owasp_user_a_api["email"],
+            },
         )
         assert resp.status in (200, 201), f"Failed creating private server: {resp.status} {resp.text()}"
         server_id = resp.json()["id"]
@@ -186,5 +190,4 @@ def private_server_owned_by_user_a(owasp_admin_api: APIRequestContext, owasp_use
     finally:
         if server_id:
             with suppress(Exception):
-                # Admin cleanup in case user can't delete
                 owasp_admin_api.delete(f"/servers/{server_id}")

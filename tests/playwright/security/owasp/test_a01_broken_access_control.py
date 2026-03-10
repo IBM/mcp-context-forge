@@ -145,7 +145,35 @@ class TestUnauthenticatedForceBrowsing:
 
 
 # ---------------------------------------------------------------------------
-# A01-2: IDOR – Cross-Tenant Object Access
+# A01-2a: IDOR – Cross-User Object Access
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.owasp_a01
+class TestIDORCrossUserObjects:
+    """CWE-639 – User B must not read, update, or delete User A's private server."""
+
+    def test_user_b_cannot_read_user_a_private_server(self, owasp_user_b_api: dict, private_server_owned_by_user_a: str) -> None:
+        ctx_b: APIRequestContext = owasp_user_b_api["ctx"]
+        resp = ctx_b.get(f"/servers/{private_server_owned_by_user_a}")
+        assert resp.status in (403, 404), f"User B should not read User A's private server, got {resp.status}: {resp.text()}"
+
+    def test_user_b_cannot_update_user_a_private_server(self, owasp_user_b_api: dict, private_server_owned_by_user_a: str) -> None:
+        ctx_b: APIRequestContext = owasp_user_b_api["ctx"]
+        resp = ctx_b.put(
+            f"/servers/{private_server_owned_by_user_a}",
+            data={"server": {"name": "idor-takeover"}, "visibility": "public"},
+        )
+        assert resp.status in (403, 404), f"User B should not update User A's private server, got {resp.status}: {resp.text()}"
+
+    def test_user_b_cannot_delete_user_a_private_server(self, owasp_user_b_api: dict, private_server_owned_by_user_a: str) -> None:
+        ctx_b: APIRequestContext = owasp_user_b_api["ctx"]
+        resp = ctx_b.delete(f"/servers/{private_server_owned_by_user_a}")
+        assert resp.status in (403, 404), f"User B should not delete User A's private server, got {resp.status}: {resp.text()}"
+
+
+# ---------------------------------------------------------------------------
+# A01-2b: IDOR – Cross-Tenant Object Access
 # ---------------------------------------------------------------------------
 
 
