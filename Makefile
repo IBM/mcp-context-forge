@@ -223,12 +223,13 @@ check-env-dev:
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
 # help: dev                  - Run fast-reload dev server (uvicorn)
 # help: dev-echo             - Run dev server with SQL query logging (N+1 debugging)
+# help: dev-remote           - Run dev server with remote debugging (debugpy on port 5678)
 # help: stop                 - Stop all mcpgateway server processes
 # help: stop-dev             - Stop uvicorn dev server (port 8000)
 # help: stop-serve           - Stop gunicorn production server (port 4444)
 # help: run                  - Execute helper script ./run.sh
 
-.PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev stop stop-dev stop-serve run \
+.PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev dev-remote stop stop-dev stop-serve run \
         certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check
 
 ## --- Primary servers ---------------------------------------------------------
@@ -256,12 +257,9 @@ dev-echo:                        ## Run dev server with SQL query logging enable
 	@echo "   Docs: docs/docs/development/db-performance.md"
 	@SQLALCHEMY_ECHO=true TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
-# help: dev-remote           - Run dev server with remote debugging (debugpy on port 5678, remote: make dev-remote DEBUG_IP=0.0.0.0 DEBUG_WAIT=)
-PHONY: dev-remote
 dev-remote: DEBUG_IP = 127.0.0.1
 dev-remote: DEBUG_WAIT = --wait-for-client
 dev-remote:                      ## Run dev server with remote debugging (debugpy on port 5678, remote: make dev-remote DEBUG_IP=0.0.0.0 DEBUG_WAIT=)
-	# for remote debugging and in k8s use: make dev-remote DEBUG_IP=0.0.0.0 DEBUG_WAIT=
 	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/python -m debugpy \
 		--listen $(DEBUG_IP):5678 \
 		$(DEBUG_WAIT) \
