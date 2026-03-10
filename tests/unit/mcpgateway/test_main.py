@@ -1183,12 +1183,41 @@ class TestResourceEndpoints:
     @patch("mcpgateway.main.resource_service.subscribe_events")
     def test_subscribe_resource_events(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to resource change events via SSE."""
-        mock_subscribe.return_value = iter(["data: test\n\n"])
-        resource_id = MOCK_RESOURCE_READ["id"]
+
+        async def mock_generator():
+            yield {"type": "resource_updated", "data": {"id": "1", "uri": "file:///test"}}
+
+        mock_subscribe.return_value = mock_generator()
         response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
         mock_subscribe.assert_called_once_with(user_email=None, token_teams=None)
+
+    @patch("mcpgateway.main.resource_service.subscribe_events")
+    def test_subscribe_resource_events_sse_format(self, mock_subscribe, test_client, auth_headers):
+        """Test that SSE endpoint yields properly formatted 'data: {...}\\n\\n' strings, not raw dicts."""
+
+        async def mock_generator():
+            yield {"type": "resource_updated", "data": {"id": "1", "uri": "file:///config/settings.json"}}
+            yield {"type": "resource_deleted", "data": {"id": "2", "uri": "file:///old"}}
+
+        mock_subscribe.return_value = mock_generator()
+        response = test_client.post("/resources/subscribe", headers=auth_headers)
+        assert response.status_code == 200
+
+        # Collect the streamed body
+        body = response.text
+        lines = [line for line in body.split("\n") if line.startswith("data: ")]
+        assert len(lines) == 2
+
+        # Verify each line is valid SSE with JSON payload
+        import orjson
+
+        for line in lines:
+            assert line.startswith("data: ")
+            payload = orjson.loads(line[len("data: "):])
+            assert "type" in payload
+            assert "data" in payload
 
 
 # ----------------------------------------------------- #
