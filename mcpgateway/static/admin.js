@@ -14307,7 +14307,7 @@ async function runToolTest() {
                     value = formData.get(key);
                     if (value === null || value === undefined || value === "") {
                         if (schema.required?.includes(key)) {
-                           throw new Error(`Field "${key}" is required`);
+                            throw new Error(`Field "${key}" is required`);
                         }
                         continue;
                     }
