@@ -6266,7 +6266,7 @@ async def handle_internal_mcp_rpc(request: Request):
         if db.is_active and db.in_transaction() is not None:
             db.commit()
         return response
-    except Exception:
+    except Exception as exc:
         try:
             db.rollback()
         except Exception:
@@ -6274,7 +6274,7 @@ async def handle_internal_mcp_rpc(request: Request):
                 db.invalidate()
             except Exception:
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
     finally:
         db.close()
 
@@ -6544,7 +6544,7 @@ async def handle_internal_mcp_tools_list(request: Request):
         return ORJSONResponse(content={"tools": tools})
     except JSONRPCError as exc:
         return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
-    except Exception:
+    except Exception as exc:
         try:
             db.rollback()
         except Exception:
@@ -6552,7 +6552,7 @@ async def handle_internal_mcp_tools_list(request: Request):
                 db.invalidate()
             except Exception:
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
     finally:
         db.close()
 
@@ -6639,7 +6639,7 @@ async def handle_internal_mcp_resources_list(request: Request):
         return ORJSONResponse(content=payload)
     except JSONRPCError as exc:
         return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
-    except Exception:
+    except Exception as exc:
         try:
             db.rollback()
         except Exception:
@@ -6647,7 +6647,7 @@ async def handle_internal_mcp_resources_list(request: Request):
                 db.invalidate()
             except Exception:
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
     finally:
         db.close()
 
@@ -6754,7 +6754,7 @@ async def handle_internal_mcp_resources_read(request: Request):
     except JSONRPCError as exc:
         status_code = 403 if exc.code == -32003 else 400
         return ORJSONResponse(status_code=status_code, content=exc.to_dict()["error"])
-    except Exception:
+    except Exception as exc:
         try:
             db.rollback()
         except Exception:
@@ -6762,7 +6762,181 @@ async def handle_internal_mcp_resources_read(request: Request):
                 db.invalidate()
             except Exception:
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/mcp/resources/subscribe/")
+@utility_router.post("/_internal/mcp/resources/subscribe")
+async def handle_internal_mcp_resources_subscribe(request: Request):
+    """Handle trusted resources/subscribe requests forwarded from the Rust runtime."""
+    db = SessionLocal()
+    req_id = None
+    try:
+        user = _build_internal_mcp_forwarded_user(request)
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or body.get("method") != "resources/subscribe":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        if server_id:
+            _enforce_internal_mcp_server_scope(request, server_id)
+
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission="resources.read",
+            method="resources/subscribe",
+            server_id=server_id,
+        )
+
+        uri = params.get("uri")
+        if not uri:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "code": -32602,
+                    "message": "Missing resource URI in parameters",
+                    "data": params,
+                },
+            )
+
+        access_user_email, access_token_teams = _get_scoped_resource_access_context(request, user)
+        user_email = get_user_email(user)
+        subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
+        await resource_service.subscribe_resource(
+            db,
+            subscription,
+            user_email=access_user_email,
+            token_teams=access_token_teams,
+        )
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return ORJSONResponse(content={})
+    except ResourceNotFoundError as exc:
+        return ORJSONResponse(
+            status_code=404,
+            content={"code": -32002, "message": str(exc), "data": None},
+        )
+    except PermissionError:
+        return ORJSONResponse(
+            status_code=403,
+            content={"code": -32003, "message": _ACCESS_DENIED_MSG, "data": {"method": "resources/subscribe"}},
+        )
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/mcp/resources/unsubscribe/")
+@utility_router.post("/_internal/mcp/resources/unsubscribe")
+async def handle_internal_mcp_resources_unsubscribe(request: Request):
+    """Handle trusted resources/unsubscribe requests forwarded from the Rust runtime."""
+    db = SessionLocal()
+    req_id = None
+    try:
+        user = _build_internal_mcp_forwarded_user(request)
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or body.get("method") != "resources/unsubscribe":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        if server_id:
+            _enforce_internal_mcp_server_scope(request, server_id)
+
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission="resources.read",
+            method="resources/unsubscribe",
+            server_id=server_id,
+        )
+
+        uri = params.get("uri")
+        if not uri:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "code": -32602,
+                    "message": "Missing resource URI in parameters",
+                    "data": params,
+                },
+            )
+
+        user_email = get_user_email(user)
+        subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
+        await resource_service.unsubscribe_resource(db, subscription)
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return ORJSONResponse(content={})
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
     finally:
         db.close()
 
@@ -6844,6 +7018,266 @@ async def handle_internal_mcp_resource_templates_list(request: Request):
             except Exception:
                 pass  # nosec B110 - Best effort cleanup on connection failure
         raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/mcp/roots/list/")
+@utility_router.post("/_internal/mcp/roots/list")
+async def handle_internal_mcp_roots_list(request: Request):
+    """Handle trusted roots/list requests forwarded from the Rust runtime."""
+    db = SessionLocal()
+    req_id = None
+    try:
+        user = _build_internal_mcp_forwarded_user(request)
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or body.get("method") != "roots/list":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission="admin.system_config",
+            method="roots/list",
+            server_id=None,
+        )
+        roots = await root_service.list_roots()
+        payload = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return ORJSONResponse(content=payload)
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/mcp/completion/complete/")
+@utility_router.post("/_internal/mcp/completion/complete")
+async def handle_internal_mcp_completion_complete(request: Request):
+    """Handle trusted completion/complete requests forwarded from the Rust runtime."""
+    db = SessionLocal()
+    req_id = None
+    try:
+        user = _build_internal_mcp_forwarded_user(request)
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or body.get("method") != "completion/complete":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        if server_id:
+            _enforce_internal_mcp_server_scope(request, server_id)
+        else:
+            server_id = params.get("server_id")
+
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission="tools.read",
+            method="completion/complete",
+            server_id=server_id,
+        )
+
+        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        if is_admin and token_teams is None:
+            user_email = None
+            token_teams = None
+        elif token_teams is None:
+            token_teams = []
+
+        payload = await completion_service.handle_completion(
+            db,
+            params,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return ORJSONResponse(content=payload)
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/mcp/sampling/createMessage/")
+@utility_router.post("/_internal/mcp/sampling/createMessage")
+async def handle_internal_mcp_sampling_create_message(request: Request):
+    """Handle trusted sampling/createMessage requests forwarded from the Rust runtime."""
+    db = SessionLocal()
+    req_id = None
+    try:
+        _build_internal_mcp_forwarded_user(request)
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or body.get("method") != "sampling/createMessage":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        if request.headers.get("x-contextforge-mcp-runtime") == "rust":
+            server_id = request.headers.get("x-contextforge-server-id")
+            if server_id:
+                _enforce_internal_mcp_server_scope(request, server_id)
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        payload = await sampling_handler.create_message(db, params)
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return ORJSONResponse(content=payload)
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/mcp/logging/setLevel/")
+@utility_router.post("/_internal/mcp/logging/setLevel")
+async def handle_internal_mcp_logging_set_level(request: Request):
+    """Handle trusted logging/setLevel requests forwarded from the Rust runtime."""
+    db = SessionLocal()
+    req_id = None
+    try:
+        _build_internal_mcp_forwarded_user(request)
+        try:
+            body = orjson.loads(await request.body())
+        except orjson.JSONDecodeError:
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"},
+                    "id": None,
+                },
+            )
+
+        req_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or body.get("method") != "logging/setLevel":
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                    "id": req_id,
+                },
+            )
+
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission="admin.system_config",
+            method="logging/setLevel",
+            server_id=None,
+        )
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+
+        level = LogLevel(params.get("level"))
+        await logging_service.set_level(level)
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return ORJSONResponse(content={})
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
     finally:
         db.close()
 

@@ -4,6 +4,61 @@ Last updated: March 10, 2026
 
 Status focus in this update:
 
+- `resources/subscribe`, `resources/unsubscribe`, and `roots/list` are no
+  longer routed through the generic Python `/_internal/mcp/rpc` switch
+- dedicated trusted internal Python routes now handle:
+  - `/_internal/mcp/resources/subscribe`
+  - `/_internal/mcp/resources/unsubscribe`
+  - `/_internal/mcp/roots/list`
+- `completion/complete`, `sampling/createMessage`, and `logging/setLevel` are
+  now routed through dedicated trusted internal Python routes instead of the
+  generic `/_internal/mcp/rpc` switch
+- dedicated trusted internal Python routes now handle:
+  - `/_internal/mcp/completion/complete`
+  - `/_internal/mcp/sampling/createMessage`
+  - `/_internal/mcp/logging/setLevel`
+- unexpected backend failures on those specialized internal routes now return
+  JSON payloads instead of plain 500 responses, so Rust preserves the actual
+  MCP application error rather than masking it as a decode-failure `502`
+- unsupported MCP catch-all methods are now handled locally in Rust without a
+  Python dispatcher round trip:
+  - `notifications/*` except the explicitly implemented notification methods
+  - `sampling/*` except `sampling/createMessage`
+  - `completion/*` except `completion/complete`
+  - `logging/*` except `logging/setLevel`
+  - `elicitation/*` except `elicitation/create`
+- live proof on the rebuilt Rust-enabled stack:
+  - `resources/subscribe` -> `200` with `x-contextforge-mcp-runtime: rust`
+  - `resources/unsubscribe` -> `200` with `x-contextforge-mcp-runtime: rust`
+  - `roots/list` -> `200` with `x-contextforge-mcp-runtime: rust`
+  - `logging/setLevel` -> `200` with `x-contextforge-mcp-runtime: rust`
+  - `sampling/createMessage` -> `500` with `x-contextforge-mcp-runtime: rust`
+    and a structured JSON-RPC error payload instead of a Rust-side `502`
+  - `completion/complete` -> `500` with `x-contextforge-mcp-runtime: rust`
+    and a structured JSON-RPC error payload instead of a Rust-side `502`
+  - `notifications/unknown` -> `202` with `x-contextforge-mcp-runtime: rust`
+  - `sampling/unknown` -> `200` with JSON-RPC `result: {}`
+  - `completion/unknown` -> `200` with JSON-RPC `result: {}`
+  - `logging/other` -> `200` with JSON-RPC `result: {}`
+  - `elicitation/other` -> `200` with JSON-RPC `result: {}`
+- focused Python unit coverage now includes internal error-shape regression
+  tests for the new `completion/complete` and `sampling/createMessage` routes
+- `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
+  now passes with `32` runtime tests
+- targeted internal-handler Python coverage passed for:
+  - `handle_internal_mcp_resources_subscribe`
+  - `handle_internal_mcp_resources_unsubscribe`
+  - `handle_internal_mcp_roots_list`
+  - `handle_internal_mcp_completion_complete`
+  - `handle_internal_mcp_sampling_create_message`
+  - `handle_internal_mcp_logging_set_level`
+- rebuilt-stack validation passed again:
+  - `make test-mcp-cli`: `23 passed`
+  - `make test-mcp-rbac`: `40 passed`
+- note on test execution: `test-mcp-cli` and `test-mcp-rbac` should be run
+  sequentially against the same live compose stack; when I ran them in parallel,
+  one RBAC API test flaked with a transient `401`, and the isolated plus
+  sequential reruns were clean
 - explicit operator-facing runtime visibility for Rust vs Python MCP mounting
 - `docker-entrypoint.sh` now prints `MCP runtime mode: ...` on startup
 - `/health` and `/ready` now expose `mcp_runtime` status plus runtime-mode headers
@@ -100,6 +155,52 @@ Status focus in this update:
 - clean server-scoped `MCPToolCallerUser` benchmark results for the real hot path
 - direct Rust handling of upstream MCP SSE-framed responses for `initialize` and `tools/call`
 - verified `>1000 RPS` on the pinned tools-only benchmark after the SSE fix
+
+## Latest Narrowing Update
+
+The current validated MCP JSON-RPC boundary on the live Rust-enabled stack is:
+
+- Rust-fronted and specialized through dedicated Python internal routes:
+  - `initialize`
+  - `notifications/initialized`
+  - `notifications/message`
+  - `notifications/cancelled`
+  - `tools/list`
+  - `tools/call`
+  - `resources/list`
+  - `resources/read`
+  - `resources/subscribe`
+  - `resources/unsubscribe`
+  - `resources/templates/list`
+  - `prompts/list`
+  - `prompts/get`
+  - `roots/list`
+  - `completion/complete`
+  - `sampling/createMessage`
+  - `logging/setLevel`
+- Rust-local catch-all handling:
+  - unsupported `notifications/*`
+  - unsupported `sampling/*`
+  - unsupported `completion/*`
+  - unsupported `logging/*`
+  - unsupported `elicitation/*` other than `elicitation/create`
+
+This means the generic Python `/_internal/mcp/rpc` dispatcher is now mostly a
+fallback for:
+
+- `elicitation/create`
+- long-tail legacy compatibility methods such as `list_tools`, `list_gateways`,
+  and `list_roots`
+- backward-compatible direct tool invocation where `method=<tool_name>`
+- any remaining non-specialized compatibility branches
+
+The big remaining MCP-core gap is not ordinary JSON-RPC method dispatch
+anymore. It is the transport/session subsystem behind:
+
+- `/_internal/mcp/transport`
+- `mcpgateway/transports/streamablehttp_transport.py`
+- `mcpgateway/cache/session_registry.py`
+- `mcpgateway/transports/redis_event_store.py`
 
 ## Latest Load-Test Harness Update
 
