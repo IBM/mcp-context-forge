@@ -44,5 +44,6 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0039  | Adopt Fully Independent Plugin Crates Architecture | Accepted | Architecture | 2026-02-13 |
 | 0040  | Flexible Admin UI Section Visibility | Accepted | User Interface | 2026-02-16 |
 | 0041  | Top-Level Rust Workspace (Cargo.toml at Repository Root) | Accepted | Architecture | 2026-02-26 |
+| 0042  | Enforce Rust in the Build Process                    | Proposed | Build         | 2026-02-26 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.
