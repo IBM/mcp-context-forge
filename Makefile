@@ -5506,6 +5506,22 @@ compose-scale:
 		echo "Usage: make compose-scale SERVICE=worker SCALE=3"; exit 1; }
 	$(COMPOSE) up -d --scale $(SERVICE)=$(SCALE)
 
+
+# help: compose-cache-clear  - Clear nginx cache (requires running nginx container)
+.PHONY: compose-cache-clear
+compose-cache-clear:						## 🧹 Clear nginx cache
+	@echo "🧹 Clearing nginx cache..."
+	@if docker ps --format '{{.Names}}' | grep -q nginx; then \
+		echo "   Clearing cache files..."; \
+		$(COMPOSE) exec nginx sh -c "rm -rf /var/cache/nginx/*"; \
+		echo "   Reloading nginx..."; \
+		$(COMPOSE) exec nginx nginx -s reload; \
+	else \
+		echo "   ⚠️  Nginx is not running. Cache is ephemeral and will be fresh on next start."; \
+		echo "   Start the stack with: make compose-up"; \
+	fi
+	@echo "✅ Done"
+
 # Compose with validation and health check
 .PHONY: compose-up-safe
 compose-up-safe: compose-validate compose-up
@@ -8229,6 +8245,10 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
+
+.PHONY: conc-02-gateways
+conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)
+	@/bin/bash tests/manual/concurrency/run_conc_02_gateways.sh
 
 # -----------------------------------------------------------------------------
 # 🦀 Rust Gateway Workspace (gateway_rs maturin crates only)
