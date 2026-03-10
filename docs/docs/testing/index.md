@@ -12,6 +12,7 @@ This section covers the testing strategy and tools for ContextForge.
 | **Integration tests** | pytest | `tests/integration/` | Implemented |
 | **End-to-end tests** | pytest | `tests/e2e/` | Implemented |
 | **UI automation** | Playwright | `tests/playwright/` | Implemented |
+| **Security / DAST** | Playwright + OWASP ZAP | `tests/playwright/security/` | Implemented |
 | **Load testing** | Locust | `tests/loadtest/` | Implemented |
 | **Concurrency tests** | Manual (asyncio) | `tests/manual/concurrency/` | Implemented |
 | **JS unit tests** | - | - | Not yet implemented |
@@ -106,6 +107,21 @@ make eslint        # lint JavaScript
 make lint-web      # ESLint + HTMLHint + Stylelint
 make format-web    # Prettier formatting
 ```
+
+---
+
+## 🔒 Security Testing (OWASP & DAST)
+
+Two-layer coverage for OWASP A01:2021 – Broken Access Control:
+
+```bash
+make test-owasp   # Layer 1: direct Playwright access-control tests (no ZAP needed)
+make test-zap     # Layer 2: ZAP DAST scan (requires make testing-zap-up)
+```
+
+See [Security Testing](security.md) for the full guide including environment
+variables, authentication setup, ZAP target URL configuration, and report
+locations.
 
 ---
 
