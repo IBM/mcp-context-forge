@@ -116,7 +116,7 @@ Two-layer coverage for OWASP A01:2021 – Broken Access Control:
 
 ```bash
 make test-owasp   # Layer 1: direct Playwright access-control tests (no ZAP needed)
-make test-zap     # Layer 2: ZAP DAST scan (requires make testing-up)
+make test-zap     # Layer 2: ZAP DAST scan (requires make testing-zap-up)
 ```
 
 See [Security Testing](security.md) for the full guide including environment

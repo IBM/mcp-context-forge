@@ -66,13 +66,15 @@ ZAP acts as an active scanner.  The test suite:
 
 ### Prerequisites
 
-Start the full testing stack (gateway + nginx + ZAP + Locust):
+Start the testing stack and the ZAP DAST daemon:
 
 ```bash
-make testing-up
+make testing-up        # gateway + nginx + Locust + test servers
+make testing-zap-up    # OWASP ZAP daemon (separate profile)
 ```
 
-ZAP is included in the `testing` profile and starts automatically.
+ZAP runs in its own `dast` Docker Compose profile to avoid pulling the
+heavyweight image and reserving memory during normal test runs.
 Wait for it to become healthy — ZAP's JVM takes 30–45 seconds to start.
 
 ### Running Layer 2

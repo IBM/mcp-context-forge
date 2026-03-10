@@ -1255,7 +1255,8 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "Fast Test Server     http://localhost:8880         MCP benchmark target"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
 	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
-	@echo "OWASP ZAP            http://localhost:8090         DAST daemon (default ZAP_TARGET_URL=http://nginx:80)"
+	@echo ""
+	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
 	@echo ""
 	@echo "   📝 Auto-registered:"
 	@echo "      • MCP gateway: fast_test (from fast_test_server)"
@@ -1267,13 +1268,13 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 .PHONY: testing-down
 testing-down:                              ## Stop testing stack
 	@echo "🧪 Stopping testing stack..."
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector down --remove-orphans
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile dast down --remove-orphans
 	@echo "✅ Testing stack stopped."
 
 .PHONY: testing-status
 testing-status:                            ## Show status of testing services
 	@echo "🧪 Testing stack status:"
-	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_test|a2a_echo_agent|locust|mcp_inspector|zap)" || \
+	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_test|a2a_echo_agent|locust|mcp_inspector)" || \
 		echo "   No testing services running. Start with 'make testing-up'"
 	@WORKERS=$$($(COMPOSE_CMD_MONITOR) ps | grep -c "locust_worker" || true); \
 		echo "   🦗 Locust workers: $$WORKERS"
@@ -1281,6 +1282,24 @@ testing-status:                            ## Show status of testing services
 .PHONY: testing-logs
 testing-logs:                              ## Show testing stack logs
 	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector logs -f --tail=100
+
+.PHONY: testing-zap-up
+testing-zap-up:                            ## Start OWASP ZAP DAST daemon (requires testing stack)
+	@echo "🔒 Starting OWASP ZAP DAST daemon..."
+	$(COMPOSE_CMD_MONITOR) --profile dast up -d
+	@echo ""
+	@echo "✅ ZAP DAST daemon started!"
+	@echo ""
+	@echo "   OWASP ZAP API:    http://localhost:8090"
+	@echo "   OWASP ZAP Web UI: http://localhost:8091"
+	@echo ""
+	@echo "   Run security tests: make test-zap"
+
+.PHONY: testing-zap-down
+testing-zap-down:                          ## Stop OWASP ZAP DAST daemon
+	@echo "🔒 Stopping ZAP DAST daemon..."
+	$(COMPOSE_CMD_MONITOR) --profile dast down --remove-orphans
+	@echo "✅ ZAP stopped."
 
 # =============================================================================
 # help: 🔍 MCP INSPECTOR (Interactive MCP Client)

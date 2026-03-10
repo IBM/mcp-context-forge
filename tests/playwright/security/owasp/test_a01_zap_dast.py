@@ -283,7 +283,12 @@ class TestZAPAccessControlScan:
     def test_zap_passive_scan_finds_no_high_severity_a01_alerts(self, zap: ZAPv2) -> None:
         """After spidering, passive scan must not flag HIGH/CRITICAL A01 alerts."""
         _wait_for_passive_scan(zap, timeout=120)
-        all_alerts = zap.core.alerts()
+        try:
+            all_alerts = zap.core.alerts()
+        except (ConnectionError, Timeout, RequestException) as exc:
+            pytest.skip(f"ZAP unreachable during passive scan alert retrieval: {exc}")
+        except json.JSONDecodeError as exc:
+            pytest.skip(f"ZAP returned malformed response during passive scan: {exc}")
         a01_alerts = _filter_a01_alerts(all_alerts)
 
         if a01_alerts:
@@ -349,7 +354,12 @@ class TestZAPAccessControlScan:
 
     def test_zap_generates_a01_report_artifact(self, zap: ZAPv2) -> None:
         """Write a full A01 alert JSON report to reports/ for artifact collection."""
-        all_alerts = zap.core.alerts()
+        try:
+            all_alerts = zap.core.alerts()
+        except (ConnectionError, Timeout, RequestException) as exc:
+            pytest.skip(f"ZAP unreachable during report generation: {exc}")
+        except json.JSONDecodeError as exc:
+            pytest.skip(f"ZAP returned malformed response during report generation: {exc}")
         a01_alerts = _filter_a01_alerts(all_alerts)
         report_path = _write_report(a01_alerts, "full_report")
         assert report_path.exists(), f"Report file was not created at {report_path}"

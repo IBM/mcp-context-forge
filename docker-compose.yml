@@ -2445,4 +2445,4 @@ services:
         reservations:
           cpus: '0.5'
           memory: 1G
-    profiles: ["testing"]
+    profiles: ["dast"]
