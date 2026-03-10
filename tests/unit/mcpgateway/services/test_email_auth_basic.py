@@ -2367,6 +2367,21 @@ class TestEmailAuthServiceUserUpdates:
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
+    async def test_update_user_demote_admin_without_requesting_user_email(self, service, mock_db):
+        """Test update_user raises error when demoting admin without requesting_user_email."""
+        admin_user = MagicMock(spec=EmailUser)
+        admin_user.email = "admin@example.com"
+        admin_user.is_admin = True
+        admin_user.is_active = True
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = admin_user
+        mock_db.execute.return_value = mock_result
+
+        with pytest.raises(ValueError, match="requesting_user_email is required"):
+            await service.update_user(email="admin@example.com", is_admin=False)
+
+    @pytest.mark.asyncio
     async def test_update_user_blocks_demote_last_active_admin(self, service, mock_db, monkeypatch):
         """Test update_user blocks demoting/deactivating the last active admin when protection is off."""
         # First-Party
