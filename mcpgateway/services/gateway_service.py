@@ -4003,32 +4003,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return GatewayRead.model_validate(gateway_dict).masked()
 
-    def _prepare_gateway_for_read(self, gateway: DbGateway) -> DbGateway:
-        """DEPRECATED: Use convert_gateway_to_read instead.
-
-        Prepare a gateway object for GatewayRead validation.
-
-        Ensures auth_value is in the correct format (encoded string) for the schema.
-        Converts legacy List[str] tags to List[Dict[str, str]] format for GatewayRead schema.
-
-        Args:
-            gateway: Gateway database object
-
-        Returns:
-            Gateway object with properly formatted auth_value and tags
-        """
-        # If auth_value is a dict, encode it to string for GatewayRead schema
-        if isinstance(gateway.auth_value, dict):
-            gateway.auth_value = encode_auth(gateway.auth_value)
-
-        # Handle legacy List[str] tags - convert to List[Dict[str, str]] for GatewayRead schema
-        if gateway.tags:
-            if isinstance(gateway.tags[0], str):
-                # Legacy format: convert to dict format
-                gateway.tags = validate_tags_field(gateway.tags)
-
-        return gateway
-
     def _create_db_tool(
         self,
         tool: ToolCreate,
