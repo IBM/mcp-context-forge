@@ -50,9 +50,11 @@ fn test_runtime_config() -> RuntimeConfig {
         use_rmcp_upstream_client: false,
         session_core_enabled: false,
         event_store_enabled: false,
+        resume_core_enabled: false,
         session_ttl_seconds: 3_600,
         event_store_max_events_per_stream: 100,
         event_store_ttl_seconds: 3_600,
+        event_store_poll_interval_ms: 250,
         cache_prefix: "mcpgw:".to_string(),
         database_url: None,
         redis_url: None,
@@ -198,6 +200,7 @@ async fn health_alias_is_available_for_gateway_style_probes() {
     assert_eq!(body["status"], "ok");
     assert_eq!(body["session_core_enabled"], json!(false));
     assert_eq!(body["event_store_enabled"], json!(false));
+    assert_eq!(body["resume_core_enabled"], json!(false));
     assert_eq!(body["active_sessions"], json!(0));
     assert!(
         body["supported_protocol_versions"]
@@ -777,6 +780,256 @@ async fn rust_event_store_replays_events_across_runtime_instances() {
     assert_eq!(replay_body["events"][0]["message"], json!({"id": 2}));
 
     cleanup_redis_prefix(redis_url, &cache_prefix).await;
+}
+
+#[tokio::test]
+async fn resume_core_replays_public_get_from_rust_event_store() {
+    let redis_url = "redis://127.0.0.1:6379/0";
+    if !redis_is_available(redis_url).await {
+        return;
+    }
+
+    let cache_prefix = format!("mcpgw:rust-resume-itest:{}:", Uuid::new_v4());
+    cleanup_redis_prefix(redis_url, &cache_prefix).await;
+
+    let transport_calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let backend = {
+        let post_transport_calls = transport_calls.clone();
+        let get_transport_calls = transport_calls.clone();
+        Router::new().route(
+            "/_internal/mcp/transport",
+            post(move |headers: HeaderMap, Json(_body): Json<Value>| {
+                let transport_calls = post_transport_calls.clone();
+                async move {
+                    transport_calls
+                        .lock()
+                        .expect("lock")
+                        .push("POST".to_string());
+                    let mut response = Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {},
+                            "serverInfo": {"name": "ContextForge", "version": "0.1.0"}
+                        }
+                    }))
+                    .into_response();
+                    response.headers_mut().insert(
+                        "mcp-session-id",
+                        headers
+                            .get("mcp-session-id")
+                            .cloned()
+                            .unwrap_or_else(|| HeaderValue::from_static("resume-session-1")),
+                    );
+                    response
+                }
+            })
+            .get(move || {
+                let transport_calls = get_transport_calls.clone();
+                async move {
+                    transport_calls
+                        .lock()
+                        .expect("lock")
+                        .push("GET".to_string());
+                    (
+                        StatusCode::OK,
+                        [( "content-type", "text/event-stream")],
+                        "data: backend-fallback\n\n",
+                    )
+                }
+            }),
+        )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = build_router(
+        AppState::new(&RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            session_core_enabled: true,
+            event_store_enabled: true,
+            resume_core_enabled: true,
+            redis_url: Some(redis_url.to_string()),
+            cache_prefix: cache_prefix.clone(),
+            ..test_runtime_config()
+        })
+        .expect("state"),
+    );
+    let runtime_url = spawn_router(runtime).await;
+
+    let auth_context = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "email": "resume@example.com",
+            "teams": ["team-a"],
+            "is_admin": false
+        }))
+        .expect("auth context json"),
+    );
+    let client = reqwest::Client::new();
+
+    let initialize_response = client
+        .post(format!("{runtime_url}/mcp"))
+        .header("x-contextforge-auth-context", auth_context.clone())
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"initialize",
+            "params":{"protocolVersion":"2025-11-25","capabilities":{}}
+        }))
+        .send()
+        .await
+        .expect("initialize response");
+    assert_eq!(initialize_response.status(), StatusCode::OK);
+    let session_id = initialize_response
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|value| value.to_str().ok())
+        .expect("session id")
+        .to_string();
+
+    let store_1 = client
+        .post(format!("{runtime_url}/_internal/event-store/store"))
+        .json(&json!({
+            "streamId": "resume-stream-1",
+            "message": {"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info","data":"first"}},
+            "keyPrefix": "eventstore"
+        }))
+        .send()
+        .await
+        .expect("store event 1");
+    assert_eq!(store_1.status(), StatusCode::OK);
+    let first_event_id = store_1
+        .json::<Value>()
+        .await
+        .expect("store 1 json")["eventId"]
+        .as_str()
+        .expect("event id")
+        .to_string();
+
+    let store_2 = client
+        .post(format!("{runtime_url}/_internal/event-store/store"))
+        .json(&json!({
+            "streamId": "resume-stream-1",
+            "message": {"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info","data":"second"}},
+            "keyPrefix": "eventstore"
+        }))
+        .send()
+        .await
+        .expect("store event 2");
+    assert_eq!(store_2.status(), StatusCode::OK);
+    let second_event_id = store_2
+        .json::<Value>()
+        .await
+        .expect("store 2 json")["eventId"]
+        .as_str()
+        .expect("event id")
+        .to_string();
+
+    let mut resume_response = client
+        .get(format!("{runtime_url}/mcp?session_id={session_id}"))
+        .header("x-contextforge-auth-context", auth_context)
+        .header("accept", "text/event-stream")
+        .header("mcp-protocol-version", "2025-11-25")
+        .header("last-event-id", first_event_id)
+        .send()
+        .await
+        .expect("resume response");
+    assert_eq!(resume_response.status(), StatusCode::OK);
+    assert_eq!(
+        resume_response
+            .headers()
+            .get("x-contextforge-mcp-resume-core")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
+
+    let replay_chunk = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let mut collected = Vec::new();
+        loop {
+            let Some(chunk) = resume_response.chunk().await.expect("resume chunk") else {
+                break;
+            };
+            collected.extend_from_slice(&chunk);
+            if collected.windows(second_event_id.len()).any(|window| window == second_event_id.as_bytes()) {
+                break;
+            }
+        }
+        collected
+    })
+    .await
+    .expect("resume timeout");
+    let replay_text = String::from_utf8_lossy(&replay_chunk);
+    assert!(replay_text.contains("event: message"));
+    assert!(replay_text.contains(&format!("id: {second_event_id}")));
+    assert!(replay_text.contains("\"data\":\"second\""));
+
+    let calls = transport_calls.lock().expect("lock");
+    assert_eq!(calls.as_slice(), &["POST".to_string()]);
+
+    cleanup_redis_prefix(redis_url, &cache_prefix).await;
+}
+
+#[tokio::test]
+async fn resume_core_disabled_falls_back_to_python_transport_get() {
+    let transport_calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let backend = {
+        let transport_calls = transport_calls.clone();
+        Router::new().route(
+            "/_internal/mcp/transport",
+            get(move || {
+                let transport_calls = transport_calls.clone();
+                async move {
+                    transport_calls
+                        .lock()
+                        .expect("lock")
+                        .push("GET".to_string());
+                    (
+                        StatusCode::OK,
+                        [
+                            ("content-type", "text/event-stream"),
+                            ("mcp-session-id", "fallback-session-1"),
+                        ],
+                        "data: backend-fallback\n\n",
+                    )
+                }
+            }),
+        )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = build_router(
+        AppState::new(&RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            session_core_enabled: true,
+            event_store_enabled: true,
+            resume_core_enabled: false,
+            ..test_runtime_config()
+        })
+        .expect("state"),
+    );
+    let runtime_url = spawn_router(runtime).await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .get(format!("{runtime_url}/mcp?session_id=fallback-session-1"))
+        .header("accept", "text/event-stream")
+        .header("last-event-id", "event-123")
+        .send()
+        .await
+        .expect("get response");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-contextforge-mcp-resume-core")
+            .and_then(|value| value.to_str().ok()),
+        Some("python")
+    );
+    assert_eq!(response.text().await.expect("body"), "data: backend-fallback\n\n");
+
+    let calls = transport_calls.lock().expect("lock");
+    assert_eq!(calls.as_slice(), &["GET".to_string()]);
 }
 
 #[tokio::test]

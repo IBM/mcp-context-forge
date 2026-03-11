@@ -894,6 +894,18 @@ def _current_mcp_event_store_mode() -> str:
     return "python"
 
 
+def _current_mcp_resume_core_mode() -> str:
+    """Return which runtime currently owns public MCP replay/resume behavior."""
+    if (
+        settings.experimental_rust_mcp_runtime_enabled
+        and settings.experimental_rust_mcp_session_core_enabled
+        and settings.experimental_rust_mcp_event_store_enabled
+        and settings.experimental_rust_mcp_resume_core_enabled
+    ):
+        return "rust"
+    return "python"
+
+
 def _mcp_runtime_status_payload() -> Dict[str, Any]:
     """Return MCP runtime diagnostics for health/readiness endpoints."""
     payload: Dict[str, Any] = {
@@ -903,6 +915,7 @@ def _mcp_runtime_status_payload() -> Dict[str, Any]:
         "rust_runtime_enabled": settings.experimental_rust_mcp_runtime_enabled,
         "session_core_mode": _current_mcp_session_core_mode(),
         "event_store_mode": _current_mcp_event_store_mode(),
+        "resume_core_mode": _current_mcp_resume_core_mode(),
         "rust_session_core_enabled": bool(
             settings.experimental_rust_mcp_runtime_enabled
             and settings.experimental_rust_mcp_session_core_enabled
@@ -910,6 +923,12 @@ def _mcp_runtime_status_payload() -> Dict[str, Any]:
         "rust_event_store_enabled": bool(
             settings.experimental_rust_mcp_runtime_enabled
             and settings.experimental_rust_mcp_event_store_enabled
+        ),
+        "rust_resume_core_enabled": bool(
+            settings.experimental_rust_mcp_runtime_enabled
+            and settings.experimental_rust_mcp_session_core_enabled
+            and settings.experimental_rust_mcp_event_store_enabled
+            and settings.experimental_rust_mcp_resume_core_enabled
         ),
     }
 
@@ -932,6 +951,7 @@ def _apply_runtime_mode_headers(response: Response) -> None:
     response.headers["x-contextforge-rust-build-included"] = "true" if _rust_build_included() else "false"
     response.headers["x-contextforge-mcp-session-core-mode"] = _current_mcp_session_core_mode()
     response.headers["x-contextforge-mcp-event-store-mode"] = _current_mcp_event_store_mode()
+    response.headers["x-contextforge-mcp-resume-core-mode"] = _current_mcp_resume_core_mode()
 
 
 @lru_cache(maxsize=512)
@@ -9766,6 +9786,14 @@ class MCPRuntimeHeaderTransportWrapper:
                     for item in headers
                 ):
                     headers.append((b"x-contextforge-mcp-session-core", _current_mcp_session_core_mode().encode("ascii")))
+                if not any(
+                    isinstance(item, (tuple, list))
+                    and len(item) == 2
+                    and isinstance(item[0], (bytes, bytearray))
+                    and item[0].lower() == b"x-contextforge-mcp-resume-core"
+                    for item in headers
+                ):
+                    headers.append((b"x-contextforge-mcp-resume-core", _current_mcp_resume_core_mode().encode("ascii")))
                 message = dict(message)
                 message["headers"] = headers
             await send(message)
@@ -9777,10 +9805,11 @@ def _build_mcp_transport_app():
     """Choose the MCP transport app for the mounted /mcp path."""
     if settings.experimental_rust_mcp_runtime_enabled:
         logger.warning(
-            "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s.",
+            "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s.",
             _current_mcp_runtime_mode(),
             settings.experimental_rust_mcp_runtime_uds or settings.experimental_rust_mcp_runtime_url,
             _current_mcp_session_core_mode(),
+            _current_mcp_resume_core_mode(),
         )
         return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
 

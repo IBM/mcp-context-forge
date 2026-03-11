@@ -13,6 +13,13 @@ Status focus in this update:
   - `EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED=true`
   - `MCP_RUST_EVENT_STORE_ENABLED=true`
   - `MCP_RUST_REDIS_URL=redis://redis:6379/0`
+- Rust now owns the public replay/resume branch for `GET /mcp` when all of the
+  following are enabled:
+  - `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`
+  - `EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED=true`
+  - `EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED=true`
+  - `EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED=true`
+  - `MCP_RUST_RESUME_CORE_ENABLED=true`
 - the Rust runtime now exposes internal event-store endpoints:
   - `POST /_internal/event-store/store`
   - `POST /_internal/event-store/replay`
@@ -36,11 +43,25 @@ Status focus in this update:
     - `x-contextforge-mcp-runtime-mode: rust-managed`
     - `x-contextforge-mcp-session-core-mode: rust`
     - `x-contextforge-mcp-event-store-mode: rust`
+    - `x-contextforge-mcp-resume-core-mode: rust`
   - raw `POST /servers/<id>/mcp initialize` returns:
     - `x-contextforge-mcp-runtime: rust`
     - `x-contextforge-mcp-session-core: rust`
+  - raw public resumable `GET /mcp?session_id=<id>` with `Last-Event-ID`
+    returns:
+    - `x-contextforge-mcp-runtime: rust`
+    - `x-contextforge-mcp-session-core: rust`
+    - `x-contextforge-mcp-event-store: rust`
+    - `x-contextforge-mcp-resume-core: rust`
   - Redis contains Rust session metadata keys at:
     - `mcpgw:rust:mcp:session:<session-id>`
+  - live replay proof on the rebuilt stack:
+    - public `POST /mcp/` initialize returned `mcp-session-id`
+    - two events were inserted directly into the Rust sidecar event-store over
+      the managed UDS socket
+    - public `GET /mcp/?session_id=<id>` with `Last-Event-ID=<first-event-id>`
+      replayed the later event as SSE from Rust without going back through the
+      Python transport bridge
 - the live delete/teardown gap is fixed:
   - previously, server-scoped `DELETE /servers/<id>/mcp` still returned `405`
     because Rust was proxying delete through the generic Python transport path
@@ -70,30 +91,38 @@ Status focus in this update:
   - replayed through the Rust sidecar inside `gateway-2`
   - response returned the later event from the shared Redis-backed stream
 - important nuance on public-flow coverage:
-  - the standard `mcp-cli`, RBAC, and load-test flows still do not create
-    `mcpgw:eventstore*` keys in Redis
-  - they validate the Rust transport/session path, but not the replay/resume
-    branch
-  - replay/resume itself is currently validated by:
+  - the standard `mcp-cli`, RBAC, and load-test flows still do not exercise
+    replay/resume heavily by themselves
+  - replay/resume is now validated by all of:
     - Rust runtime tests
     - Python unit tests
     - `tests/integration/test_streamable_http_redis.py`
     - the live cross-replica container proof above
+    - the live public `GET /mcp` replay proof above
 - current compose-built performance on this rebuilt session-core/event-store image:
   - mixed MCP:
-    - `120 users` -> `979.51 RPS`, `19.91 ms` avg, `35 ms` p95, `82 ms` p99
-    - `150 users` -> `1053.20 RPS`, `38.70 ms` avg, `69 ms` p95, `120 ms` p99
+    - `120 users` -> `959.88 RPS`, `21.90 ms` avg, `37 ms` p95, `100 ms` p99
+    - `150 users` -> `1011.36 RPS`, `43.99 ms` avg, `78 ms` p95, `140 ms` p99
+    - `175 users` -> `979.83 RPS`, `74.75 ms` avg, `130 ms` p95, `210 ms` p99
   - tools-only:
-    - `125 users` -> `1146.97 RPS` overall
-    - `MCP tools/call [rapid]` -> `1090.9 RPS`
-    - `51.23 ms` avg, `67 ms` p95, `95 ms` p99
+    - `125 users` -> `1106.11 RPS` overall
+    - `MCP tools/call [rapid]` -> `1049.1 RPS`
+    - `55.04 ms` avg, `68 ms` p95, `96 ms` p99
+- important live quality note from the rebuilt image:
+  - under load, the direct Rust `tools/list` DB path still logged some transient
+    `db error` / `connection closed` warnings and fell back to the Python
+    dispatcher
+  - those fallbacks did not produce request failures in the benchmark or the
+    protocol suites, but they are a real remaining hardening item for the Rust
+    DB-backed read path
 - current boundary after this slice:
   - public MCP transport is Rust-fronted
-  - Rust owns session metadata, delete teardown orchestration, and Redis-backed
-    event store/replay primitives
-  - Python still owns the underlying `StreamableHTTPSessionManager` request
-    execution and the public replay/resume behavior that sits on top of the
-    event store
+  - Rust owns session metadata, delete teardown orchestration, Redis-backed
+    event store/replay primitives, and the public replay/resume branch for
+    resumable `GET /mcp`
+  - Python still owns the underlying `StreamableHTTPSessionManager`,
+    non-resume live stream execution, owner/affinity validation on the
+    transport bridge, and the remaining transport/session fallback behavior
 
 - the optional `rmcp` integration spike is now wired through the container
   build and compose runtime
