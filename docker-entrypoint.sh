@@ -7,10 +7,12 @@ EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED="${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED:-
 EXPERIMENTAL_RUST_MCP_RUNTIME_URL="${EXPERIMENTAL_RUST_MCP_RUNTIME_URL:-http://127.0.0.1:8787}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_UDS="${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-}"
 EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED:-false}"
+EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED="${EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED:-false}"
 CONTEXTFORGE_ENABLE_RUST_BUILD="${CONTEXTFORGE_ENABLE_RUST_BUILD:-false}"
 CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD="${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD:-false}"
 MCP_RUST_USE_RMCP_UPSTREAM_CLIENT="${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT:-false}"
 MCP_RUST_SESSION_CORE_ENABLED="${MCP_RUST_SESSION_CORE_ENABLED:-${EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED}}"
+MCP_RUST_EVENT_STORE_ENABLED="${MCP_RUST_EVENT_STORE_ENABLED:-${EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED}}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}" || {
@@ -41,6 +43,7 @@ print_mcp_runtime_mode() {
     local runtime_mode="python"
     local upstream_client_mode="native"
     local session_core_mode="python"
+    local event_store_mode="python"
 
     if [[ "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" = "true" ]]; then
         upstream_client_mode="rmcp"
@@ -48,14 +51,17 @@ print_mcp_runtime_mode() {
     if [[ "${MCP_RUST_SESSION_CORE_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
         session_core_mode="rust"
     fi
+    if [[ "${MCP_RUST_EVENT_STORE_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
+        event_store_mode="rust"
+    fi
 
     if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
         if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
             runtime_mode="rust-managed"
-            echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container, upstream client: ${upstream_client_mode}, session core: ${session_core_mode})"
+            echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode})"
         else
             runtime_mode="rust-external"
-            echo "MCP runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}}, upstream client: ${upstream_client_mode}, session core: ${session_core_mode})"
+            echo "MCP runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}}, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode})"
         fi
 
         if [[ "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" = "true" && "${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD}" != "true" ]]; then
@@ -102,6 +108,10 @@ start_managed_rust_mcp_runtime() {
     local app_root_path="${APP_ROOT_PATH:-}"
     local backend_rpc_url="${MCP_RUST_BACKEND_RPC_URL:-http://127.0.0.1:${PORT:-4444}${app_root_path}/_internal/mcp/rpc}"
     local rust_database_url="${MCP_RUST_DATABASE_URL:-}"
+    local rust_redis_url="${MCP_RUST_REDIS_URL:-${REDIS_URL:-}}"
+    local rust_cache_prefix="${MCP_RUST_CACHE_PREFIX:-${CACHE_PREFIX:-mcpgw:}}"
+    local rust_event_store_max="${MCP_RUST_EVENT_STORE_MAX_EVENTS_PER_STREAM:-${STREAMABLE_HTTP_MAX_EVENTS_PER_STREAM:-100}}"
+    local rust_event_store_ttl="${MCP_RUST_EVENT_STORE_TTL_SECONDS:-${STREAMABLE_HTTP_EVENT_TTL:-3600}}"
 
     if [[ -z "${rust_database_url}" && -n "${DATABASE_URL:-}" ]]; then
         case "${DATABASE_URL}" in
@@ -134,8 +144,15 @@ start_managed_rust_mcp_runtime() {
     fi
     export MCP_RUST_BACKEND_RPC_URL="${backend_rpc_url}"
     export MCP_RUST_SESSION_CORE_ENABLED="${MCP_RUST_SESSION_CORE_ENABLED}"
+    export MCP_RUST_EVENT_STORE_ENABLED="${MCP_RUST_EVENT_STORE_ENABLED}"
+    export MCP_RUST_CACHE_PREFIX="${rust_cache_prefix}"
+    export MCP_RUST_EVENT_STORE_MAX_EVENTS_PER_STREAM="${rust_event_store_max}"
+    export MCP_RUST_EVENT_STORE_TTL_SECONDS="${rust_event_store_ttl}"
     if [[ -n "${rust_database_url}" ]]; then
         export MCP_RUST_DATABASE_URL="${rust_database_url}"
+    fi
+    if [[ -n "${rust_redis_url}" ]]; then
+        export MCP_RUST_REDIS_URL="${rust_redis_url}"
     fi
 
     if [[ -n "${rust_listen_uds}" ]]; then

@@ -29,6 +29,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException
+import httpx
 import pytest
 from starlette.types import Scope
 
@@ -149,6 +150,69 @@ async def test_event_store_replay_events_after_multiple():
     assert len(sent) == 2
     assert sent[0].event_id == eid2
     assert sent[1].event_id == eid3
+
+
+@pytest.mark.asyncio
+async def test_rust_event_store_store_and_replay(monkeypatch):
+    """RustEventStore should proxy store/replay operations through the sidecar."""
+    captured_requests = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        async def post(self, url, json=None, timeout=None):  # noqa: A002
+            captured_requests.append((url, json, timeout.read))
+            if url.endswith("/store"):
+                return FakeResponse({"eventId": "event-123"})
+            return FakeResponse(
+                {
+                    "streamId": "stream-1",
+                    "events": [
+                        {"eventId": "event-124", "message": {"id": 2}},
+                        {"eventId": "event-125", "message": {"id": 3}},
+                    ],
+                }
+            )
+
+    monkeypatch.setattr(tr, "_get_rust_event_store_client", AsyncMock(return_value=FakeClient()))
+    monkeypatch.setattr(tr.settings, "experimental_rust_mcp_runtime_timeout_seconds", 17)
+    monkeypatch.setattr(tr.settings, "experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
+
+    store = tr.RustEventStore(max_events_per_stream=77, ttl=321, key_prefix="mcpgw:eventstore:test")
+    event_id = await store.store_event("stream-1", {"id": 1})
+
+    replayed = []
+
+    async def collector(msg):
+        replayed.append(msg)
+
+    stream_id = await store.replay_events_after(event_id, collector)
+
+    assert event_id == "event-123"
+    assert stream_id == "stream-1"
+    assert replayed == [{"id": 2}, {"id": 3}]
+    assert captured_requests[0][0] == "http://127.0.0.1:8787/_internal/event-store/store"
+    assert captured_requests[0][1] == {
+        "streamId": "stream-1",
+        "message": {"id": 1},
+        "keyPrefix": "mcpgw:eventstore:test",
+        "maxEventsPerStream": 77,
+        "ttlSeconds": 321,
+    }
+    assert captured_requests[0][2] == 17
+    assert captured_requests[1][0] == "http://127.0.0.1:8787/_internal/event-store/replay"
+    assert captured_requests[1][1] == {
+        "lastEventId": "event-123",
+        "keyPrefix": "mcpgw:eventstore:test",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -5332,6 +5396,34 @@ async def test_session_manager_wrapper_redis_event_store(monkeypatch):
     from mcpgateway.transports.redis_event_store import RedisEventStore
 
     assert isinstance(captured_config["event_store"], RedisEventStore)
+
+
+@pytest.mark.asyncio
+async def test_session_manager_wrapper_rust_event_store(monkeypatch):
+    """SessionManagerWrapper should use RustEventStore when the Rust event-store flag is enabled."""
+
+    captured_config = {}
+
+    def capture_manager(**kwargs):
+        captured_config.update(kwargs)
+        dummy = MagicMock()
+        dummy.run = MagicMock(return_value=asynccontextmanager(lambda: (yield dummy))())
+        return dummy
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.json_response_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.experimental_rust_mcp_runtime_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.experimental_rust_mcp_event_store_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.streamable_http_max_events_per_stream", 75)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.streamable_http_event_ttl", 2700)
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", capture_manager)
+
+    SessionManagerWrapper()
+
+    assert captured_config["stateless"] is False
+    assert isinstance(captured_config["event_store"], tr.RustEventStore)
+    assert captured_config["event_store"].max_events_per_stream == 75
+    assert captured_config["event_store"].ttl == 2700
 
 
 # ---------------------------------------------------------------------------
