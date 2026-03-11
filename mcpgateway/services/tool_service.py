@@ -44,6 +44,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import Gateway as PydanticGateway
 from mcpgateway.common.models import TextContent
@@ -2688,7 +2689,7 @@ class ToolService(BaseService):
             ToolNotFoundError: If gateway not found or access denied.
             ToolInvocationError: If invocation fails.
         """
-        logger.info(f"Direct proxy tool invocation: {name} via gateway {gateway_id}")
+        logger.info(f"Direct proxy tool invocation: {name} via gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
         # Look up gateway
         # Use a fresh session for this lookup
         with fresh_db_session() as db:
@@ -2746,7 +2747,7 @@ class ToolService(BaseService):
                     else:
                         tool_result = await session.call_tool(name=remote_name, arguments=arguments)
 
-                    logger.info(f"[INVOKE TOOL] Using direct_proxy mode for gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}")
+                    logger.info(f"[INVOKE TOOL] Using direct_proxy mode for gateway {SecurityValidator.sanitize_log_message(gateway.id)} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}")
                     return tool_result
         except Exception as e:
             logger.exception(f"Direct proxy tool invocation failed for {name}: {e}")
@@ -2825,7 +2826,7 @@ class ToolService(BaseService):
                 # This prevents RBAC bypass where any authenticated user could invoke tools
                 # on any gateway just by knowing the gateway ID
                 if not await check_gateway_access(db, gateway, user_email, token_teams):
-                    logger.warning(f"Access denied to gateway {gateway_id_from_header} in direct_proxy mode for user {user_email}")
+                    logger.warning(f"Access denied to gateway {gateway_id_from_header} in direct_proxy mode for user {SecurityValidator.sanitize_log_message(user_email)}")
                     raise ToolNotFoundError(f"Tool not found: {name}")
 
                 is_direct_proxy = True
