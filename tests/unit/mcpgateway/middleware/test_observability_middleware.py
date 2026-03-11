@@ -475,3 +475,28 @@ async def test_single_session_per_request_integration():
     
     # Verify response
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_dispatch_rollback_failure_logs_warning(mock_request):
+    """Test that rollback failure during exception handling logs a warning."""
+    async def failing_call_next(request):
+        raise RuntimeError("Request failed")
+
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    db_mock = MagicMock()
+    db_mock.is_active = True
+    db_mock.rollback.side_effect = Exception("rollback fail")  # Simulate rollback failure
+
+    with patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=db_mock), \
+         patch.object(middleware.service, "start_trace", return_value="trace123"), \
+         patch.object(middleware.service, "start_span", return_value="span123"), \
+         patch.object(middleware.service, "end_span"), \
+         patch.object(middleware.service, "add_event"), \
+         patch.object(middleware.service, "end_trace"), \
+         patch("mcpgateway.middleware.observability_middleware.logger.warning") as mock_warning, \
+         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
+        with pytest.raises(RuntimeError):
+            await middleware.dispatch(mock_request, failing_call_next)
+        # Verify that the rollback failure was logged
+        mock_warning.assert_any_call("Failed to rollback database session: rollback fail")
