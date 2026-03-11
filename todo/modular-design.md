@@ -17,7 +17,7 @@ My recommendation:
    - a **PyO3 module** for targeted hot paths only.
 4. After MCP is modularized, apply the same runtime/extension pattern to A2A.
 
-If the goal is “I want to replace MCP and A2A independently,” the architecture should move toward:
+If the goal is "I want to replace MCP and A2A independently," the architecture should move toward:
 
 - Python core = control plane, auth, RBAC, persistence, admin UI, config
 - Extension runtime = protocol engines
@@ -100,7 +100,7 @@ MCP is currently spread across several layers, not one module.
 
 ### Why MCP is hard to swap today
 
-The MCP subsystem is not just “protocol handling.” It is also:
+The MCP subsystem is not just "protocol handling." It is also:
 
 - FastAPI routing
 - ASGI path rewriting
@@ -302,7 +302,7 @@ These prototypes only measured protocol dispatch overhead. They did **not** incl
 - real MCP SDK compatibility
 - plugin execution
 
-So the benchmark is not “full system speed.” It is only useful for understanding **integration cost at the seam**.
+So the benchmark is not "full system speed." It is only useful for understanding **integration cost at the seam**.
 
 ## Compliance-Oriented Runtime Validation
 
@@ -646,7 +646,7 @@ Actions:
 
 Goal:
 
-- separate “protocol dispatch” from FastAPI routes
+- separate "protocol dispatch" from FastAPI routes
 
 Actions:
 
@@ -812,7 +812,7 @@ Hardening fix added during integration:
   `x-forwarded-internally` and `x-mcp-session-id` instead of forwarding them
   back into Python `/rpc`
 
-If the question is “how easy is it to rewrite MCP in Rust and then do the same for A2A?”
+If the question is "how easy is it to rewrite MCP in Rust and then do the same for A2A?"
 
 My answer is:
 

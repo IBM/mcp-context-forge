@@ -20,6 +20,15 @@ Status focus in this update:
   - `EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED=true`
   - `EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED=true`
   - `MCP_RUST_RESUME_CORE_ENABLED=true`
+- Rust now owns the public non-resume `GET /mcp` response edge when the
+  following are enabled:
+  - `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`
+  - `EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED=true`
+  - `MCP_RUST_LIVE_STREAM_CORE_ENABLED=true`
+  - this slice returns the SSE response from Rust immediately and opens the
+    trusted Python backend stream lazily inside the Rust event stream task
+  - this avoids blocking on the Python SSE handshake before Rust can send
+    public headers
 - the Rust runtime now exposes internal event-store endpoints:
   - `POST /_internal/event-store/store`
   - `POST /_internal/event-store/replay`
@@ -44,6 +53,7 @@ Status focus in this update:
     - `x-contextforge-mcp-session-core-mode: rust`
     - `x-contextforge-mcp-event-store-mode: rust`
     - `x-contextforge-mcp-resume-core-mode: rust`
+    - `x-contextforge-mcp-live-stream-core-mode: rust`
   - raw `POST /servers/<id>/mcp initialize` returns:
     - `x-contextforge-mcp-runtime: rust`
     - `x-contextforge-mcp-session-core: rust`
@@ -53,6 +63,12 @@ Status focus in this update:
     - `x-contextforge-mcp-session-core: rust`
     - `x-contextforge-mcp-event-store: rust`
     - `x-contextforge-mcp-resume-core: rust`
+  - raw public live `GET /mcp` with `mcp-session-id` now returns immediately
+    through both the direct gateway port and the compose nginx front door with:
+    - `x-contextforge-mcp-runtime: rust`
+    - `x-contextforge-mcp-live-stream-core: rust`
+    - `mcp-session-id: <session-id>`
+    - `X-Accel-Buffering: no` on the nginx path
   - Redis contains Rust session metadata keys at:
     - `mcpgw:rust:mcp:session:<session-id>`
   - live replay proof on the rebuilt stack:
@@ -75,7 +91,7 @@ Status focus in this update:
     - Rust Redis session metadata key removed immediately after delete
 - image-level validation for this milestone passed:
   - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
-    -> `35 passed`
+    -> `40 passed`
   - targeted Python unit coverage passed for:
     - internal MCP session delete handler
     - internal MCP initialize handler
@@ -118,11 +134,20 @@ Status focus in this update:
 - current boundary after this slice:
   - public MCP transport is Rust-fronted
   - Rust owns session metadata, delete teardown orchestration, Redis-backed
-    event store/replay primitives, and the public replay/resume branch for
-    resumable `GET /mcp`
+    event store/replay primitives, the public replay/resume branch for
+    resumable `GET /mcp`, and the public non-resume live `GET /mcp` response
+    edge
   - Python still owns the underlying `StreamableHTTPSessionManager`,
-    non-resume live stream execution, owner/affinity validation on the
-    transport bridge, and the remaining transport/session fallback behavior
+    upstream live stream source behind the trusted transport bridge,
+    owner/affinity validation on the transport bridge, and the remaining
+    transport/session fallback behavior
+- nginx needed one explicit MCP transport fix for this slice:
+  - `/mcp` and `/servers/<id>/mcp` now have a dedicated non-buffered nginx
+    location with `proxy_buffering off`, `proxy_request_buffering off`, and
+    `X-Accel-Buffering: no`
+  - without that, the Rust live-stream response headers were visible on the
+    direct gateway port but not on the public compose `:8080` path until the
+    first SSE body bytes arrived
 
 - the optional `rmcp` integration spike is now wired through the container
   build and compose runtime
@@ -812,7 +837,7 @@ Current recommended proof checks:
 3. Check a real MCP response for `x-contextforge-mcp-runtime: rust` or
    `x-contextforge-mcp-runtime: python`
 
-This removes the earlier “silent fallback” failure mode. The system can still
+This removes the earlier "silent fallback" failure mode. The system can still
 run on Python if the Rust runtime is not enabled, but it is now much harder to
 miss.
 
@@ -1267,7 +1292,7 @@ Relevant MCP-path components that still live in Python:
 Implication:
 
 - the UDS and internal-dispatch optimization preserves existing Redis-assisted behavior
-- moving read-only MCP list methods into Rust later will require a deliberate cache strategy instead of accidentally bypassing Python’s Redis caches
+- moving read-only MCP list methods into Rust later will require a deliberate cache strategy instead of accidentally bypassing Python's Redis caches
 
 Important current nuance for the hot path:
 
@@ -1547,7 +1572,7 @@ Immediate priorities:
   - session-lifecycle state ownership
   - resumable event-store behavior
   - multi-worker session-affinity / owner checks
-- keep the public mount shape stable while shrinking Python’s transport-specific
+- keep the public mount shape stable while shrinking Python's transport-specific
   internals behind `/_internal/mcp/transport`
 
 ### Phase 2: remove the remaining generic dispatcher coupling

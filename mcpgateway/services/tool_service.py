@@ -2835,9 +2835,7 @@ class ToolService(BaseService):
         execute the call directly for the simple streamable HTTP MCP cases that
         dominate load tests, while Python remains the authority for policy.
         """
-        if self._plugin_manager and (
-            self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) or self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)
-        ):
+        if self._plugin_manager and (self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) or self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)):
             return {"eligible": False, "fallbackReason": "plugin-hooks-configured"}
 
         if current_trace_id.get():
@@ -3056,17 +3054,13 @@ class ToolService(BaseService):
                     with fresh_db_session() as token_db:
                         token_storage = TokenStorageService(token_db)
                         if not app_user_email:
-                            raise ToolInvocationError(
-                                f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated."
-                            )
+                            raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
                         access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
 
                     if access_token:
                         headers = {"Authorization": f"Bearer {access_token}"}
                     else:
-                        raise ToolInvocationError(
-                            f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow."
-                        )
+                        raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
                 except Exception as e:
                     logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                     raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")

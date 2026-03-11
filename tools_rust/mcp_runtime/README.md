@@ -285,9 +285,13 @@ Behavior in this mode:
 - when `EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED=true` and
   `EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED=true`, Rust replays resumable
   `GET /mcp` traffic directly from the Redis-backed event store
+- when `EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED=true`, Rust terminates
+  the public non-resume `GET /mcp` SSE response itself and opens the trusted
+  Python backend stream lazily so public headers are sent immediately
 - the current Python boundary is now mostly:
   - auth and RBAC
-  - non-resume live stream/session-manager internals
+  - the underlying live stream/session-manager implementation behind the
+    trusted transport bridge
   - owner/affinity checks that still live on the trusted transport bridge
   - fallback compatibility methods
   - remaining business execution behind narrow internal routes

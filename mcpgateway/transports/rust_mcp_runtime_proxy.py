@@ -86,11 +86,7 @@ class RustMCPRuntimeProxy:
                     {
                         "type": "http.response.start",
                         "status": response.status_code,
-                        "headers": [
-                            (name, value)
-                            for name, value in response.headers.raw
-                            if name.decode("latin-1").lower() not in _RESPONSE_HOP_BY_HOP_HEADERS
-                        ],
+                        "headers": [(name, value) for name, value in response.headers.raw if name.decode("latin-1").lower() not in _RESPONSE_HOP_BY_HOP_HEADERS],
                     }
                 )
                 async for chunk in response.aiter_bytes():

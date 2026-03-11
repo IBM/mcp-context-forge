@@ -147,7 +147,7 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy
 from mcpgateway.transports.sse_transport import SSETransport
-from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, _validate_streamable_session_access, set_shared_session_registry, streamable_http_auth, user_context_var
+from mcpgateway.transports.streamablehttp_transport import _validate_streamable_session_access, SessionManagerWrapper, set_shared_session_registry, streamable_http_auth, user_context_var
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -906,6 +906,13 @@ def _current_mcp_resume_core_mode() -> str:
     return "python"
 
 
+def _current_mcp_live_stream_core_mode() -> str:
+    """Return which runtime currently owns non-resume public GET /mcp SSE behavior."""
+    if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_live_stream_core_enabled:
+        return "rust"
+    return "python"
+
+
 def _mcp_runtime_status_payload() -> Dict[str, Any]:
     """Return MCP runtime diagnostics for health/readiness endpoints."""
     payload: Dict[str, Any] = {
@@ -916,20 +923,16 @@ def _mcp_runtime_status_payload() -> Dict[str, Any]:
         "session_core_mode": _current_mcp_session_core_mode(),
         "event_store_mode": _current_mcp_event_store_mode(),
         "resume_core_mode": _current_mcp_resume_core_mode(),
-        "rust_session_core_enabled": bool(
-            settings.experimental_rust_mcp_runtime_enabled
-            and settings.experimental_rust_mcp_session_core_enabled
-        ),
-        "rust_event_store_enabled": bool(
-            settings.experimental_rust_mcp_runtime_enabled
-            and settings.experimental_rust_mcp_event_store_enabled
-        ),
+        "live_stream_core_mode": _current_mcp_live_stream_core_mode(),
+        "rust_session_core_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_core_enabled),
+        "rust_event_store_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_event_store_enabled),
         "rust_resume_core_enabled": bool(
             settings.experimental_rust_mcp_runtime_enabled
             and settings.experimental_rust_mcp_session_core_enabled
             and settings.experimental_rust_mcp_event_store_enabled
             and settings.experimental_rust_mcp_resume_core_enabled
         ),
+        "rust_live_stream_core_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_live_stream_core_enabled),
     }
 
     if settings.experimental_rust_mcp_runtime_enabled:
@@ -952,6 +955,7 @@ def _apply_runtime_mode_headers(response: Response) -> None:
     response.headers["x-contextforge-mcp-session-core-mode"] = _current_mcp_session_core_mode()
     response.headers["x-contextforge-mcp-event-store-mode"] = _current_mcp_event_store_mode()
     response.headers["x-contextforge-mcp-resume-core-mode"] = _current_mcp_resume_core_mode()
+    response.headers["x-contextforge-mcp-live-stream-core-mode"] = _current_mcp_live_stream_core_mode()
 
 
 @lru_cache(maxsize=512)
@@ -6415,6 +6419,7 @@ async def handle_internal_mcp_session_delete(request: Request):
 
     if settings.mcpgateway_session_affinity_enabled:
         try:
+            # First-Party
             from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
             pool = get_mcp_session_pool()
@@ -7685,7 +7690,8 @@ async def _execute_rpc_initialize(
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and mcp_session_id != "not-provided":
         try:
-            from mcpgateway.services.mcp_session_pool import WORKER_ID, get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            # First-Party
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
 
             pool = get_mcp_session_pool()
             await pool.register_pool_session_owner(mcp_session_id)
@@ -9768,33 +9774,22 @@ class MCPRuntimeHeaderTransportWrapper:
 
     async def handle_streamable_http(self, scope, receive, send):
         """Forward an MCP request while ensuring the runtime marker header is present."""
+
         async def _send_with_runtime_header(message):
             if message.get("type") == "http.response.start":
                 headers = list(message.get("headers") or [])
-                if not any(
-                    isinstance(item, (tuple, list))
-                    and len(item) == 2
-                    and isinstance(item[0], (bytes, bytearray))
-                    and item[0].lower() == b"x-contextforge-mcp-runtime"
-                    for item in headers
-                ):
+                if not any(isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-runtime" for item in headers):
                     headers.append((b"x-contextforge-mcp-runtime", self.runtime_name))
                 if not any(
-                    isinstance(item, (tuple, list))
-                    and len(item) == 2
-                    and isinstance(item[0], (bytes, bytearray))
-                    and item[0].lower() == b"x-contextforge-mcp-session-core"
-                    for item in headers
+                    isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-session-core" for item in headers
                 ):
                     headers.append((b"x-contextforge-mcp-session-core", _current_mcp_session_core_mode().encode("ascii")))
-                if not any(
-                    isinstance(item, (tuple, list))
-                    and len(item) == 2
-                    and isinstance(item[0], (bytes, bytearray))
-                    and item[0].lower() == b"x-contextforge-mcp-resume-core"
-                    for item in headers
-                ):
+                if not any(isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-resume-core" for item in headers):
                     headers.append((b"x-contextforge-mcp-resume-core", _current_mcp_resume_core_mode().encode("ascii")))
+                if not any(
+                    isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-live-stream-core" for item in headers
+                ):
+                    headers.append((b"x-contextforge-mcp-live-stream-core", _current_mcp_live_stream_core_mode().encode("ascii")))
                 message = dict(message)
                 message["headers"] = headers
             await send(message)
@@ -9806,11 +9801,12 @@ def _build_mcp_transport_app():
     """Choose the MCP transport app for the mounted /mcp path."""
     if settings.experimental_rust_mcp_runtime_enabled:
         logger.warning(
-            "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s.",
+            "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s.",
             _current_mcp_runtime_mode(),
             settings.experimental_rust_mcp_runtime_uds or settings.experimental_rust_mcp_runtime_url,
             _current_mcp_session_core_mode(),
             _current_mcp_resume_core_mode(),
+            _current_mcp_live_stream_core_mode(),
         )
         return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
 

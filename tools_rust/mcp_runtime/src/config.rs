@@ -105,6 +105,13 @@ pub struct RuntimeConfig {
     #[arg(long, env = "MCP_RUST_RESUME_CORE_ENABLED", default_value_t = false)]
     pub resume_core_enabled: bool,
 
+    #[arg(
+        long,
+        env = "MCP_RUST_LIVE_STREAM_CORE_ENABLED",
+        default_value_t = false
+    )]
+    pub live_stream_core_enabled: bool,
+
     #[arg(long, env = "MCP_RUST_SESSION_TTL_SECONDS", default_value_t = 3_600)]
     pub session_ttl_seconds: u64,
 
