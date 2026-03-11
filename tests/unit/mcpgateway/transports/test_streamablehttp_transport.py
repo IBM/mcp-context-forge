@@ -433,6 +433,26 @@ async def test_validate_streamable_session_access_fake_session_not_found(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_validate_streamable_session_access_skips_when_rust_already_validated(monkeypatch):
+    """Trusted Rust-validated session requests should skip duplicate Python owner checks."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    session_registry = MagicMock()
+    session_registry.get_session_owner = AsyncMock(side_effect=AssertionError("should not be called"))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: session_registry)
+
+    allowed, status, detail = await tr._validate_streamable_session_access(
+        mcp_session_id="sess-rust",
+        user_context={"email": "user@example.com", "is_admin": False, "is_authenticated": True, "_rust_session_validated": True},
+        rpc_method="tools/call",
+    )
+
+    assert allowed is True
+    assert status == 200
+    assert detail == ""
+
+
+@pytest.mark.asyncio
 async def test_list_tools_with_server_id(monkeypatch):
     """Test list_tools returns tools for a server_id."""
     # First-Party

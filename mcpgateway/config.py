@@ -269,6 +269,10 @@ class Settings(BaseSettings):
         default=False,
         description="Enable the experimental Rust-owned public MCP live GET /mcp SSE path while keeping Python as the fallback upstream stream source.",
     )
+    experimental_rust_mcp_affinity_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned MCP session-affinity forwarding path while keeping Python worker forwarding as the fallback.",
+    )
 
     # Authentication
     basic_auth_user: str = "admin"

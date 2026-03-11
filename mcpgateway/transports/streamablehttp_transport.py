@@ -809,6 +809,9 @@ async def _validate_streamable_session_access(
     if not _should_enforce_streamable_rbac(user_context):
         return True, 200, ""
 
+    if isinstance(user_context, dict) and user_context.get("_rust_session_validated") is True:
+        return True, 200, ""
+
     # Initialize establishes a new session and is authorized separately.
     if (rpc_method or "").strip() == "initialize":
         return True, 200, ""

@@ -12,6 +12,7 @@ EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_SESSION_CORE
 EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED="${EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED:-}"
 EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED:-}"
 EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED:-}"
+EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED:-}"
 CONTEXTFORGE_ENABLE_RUST_BUILD="${CONTEXTFORGE_ENABLE_RUST_BUILD:-false}"
 CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD="${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD:-false}"
 MCP_RUST_LISTEN_HTTP="${MCP_RUST_LISTEN_HTTP:-}"
@@ -22,6 +23,7 @@ MCP_RUST_SESSION_CORE_ENABLED="${MCP_RUST_SESSION_CORE_ENABLED:-}"
 MCP_RUST_EVENT_STORE_ENABLED="${MCP_RUST_EVENT_STORE_ENABLED:-}"
 MCP_RUST_RESUME_CORE_ENABLED="${MCP_RUST_RESUME_CORE_ENABLED:-}"
 MCP_RUST_LIVE_STREAM_CORE_ENABLED="${MCP_RUST_LIVE_STREAM_CORE_ENABLED:-}"
+MCP_RUST_AFFINITY_CORE_ENABLED="${MCP_RUST_AFFINITY_CORE_ENABLED:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}" || {
@@ -40,6 +42,7 @@ apply_rust_mcp_mode_defaults() {
     local event_store_default="false"
     local resume_core_default="false"
     local live_stream_core_default="false"
+    local affinity_core_default="false"
 
     case "${normalized_mode}" in
         ""|off)
@@ -53,6 +56,7 @@ apply_rust_mcp_mode_defaults() {
             event_store_default="true"
             resume_core_default="true"
             live_stream_core_default="true"
+            affinity_core_default="true"
             ;;
         *)
             echo "ERROR: Unknown RUST_MCP_MODE value: ${RUST_MCP_MODE}"
@@ -81,6 +85,9 @@ apply_rust_mcp_mode_defaults() {
     fi
     if [[ -z "${EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED}" ]]; then
         EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED="${live_stream_core_default}"
+    fi
+    if [[ -z "${EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED}" ]]; then
+        EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED="${affinity_core_default}"
     fi
     if [[ -z "${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS}" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
         EXPERIMENTAL_RUST_MCP_RUNTIME_UDS="/tmp/contextforge-mcp-rust.sock"
@@ -113,6 +120,9 @@ apply_rust_mcp_mode_defaults() {
     if [[ -z "${MCP_RUST_LIVE_STREAM_CORE_ENABLED}" ]]; then
         MCP_RUST_LIVE_STREAM_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED}"
     fi
+    if [[ -z "${MCP_RUST_AFFINITY_CORE_ENABLED}" ]]; then
+        MCP_RUST_AFFINITY_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED}"
+    fi
 
     export RUST_MCP_MODE
     export RUST_MCP_LOG
@@ -124,6 +134,7 @@ apply_rust_mcp_mode_defaults() {
     export EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED
     export EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED
     export EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED
+    export EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED
     export MCP_RUST_LISTEN_HTTP
     export MCP_RUST_LISTEN_UDS
     export MCP_RUST_LOG
@@ -132,6 +143,7 @@ apply_rust_mcp_mode_defaults() {
     export MCP_RUST_EVENT_STORE_ENABLED
     export MCP_RUST_RESUME_CORE_ENABLED
     export MCP_RUST_LIVE_STREAM_CORE_ENABLED
+    export MCP_RUST_AFFINITY_CORE_ENABLED
 }
 
 cleanup() {
@@ -157,6 +169,7 @@ print_mcp_runtime_mode() {
     local event_store_mode="python"
     local resume_core_mode="python"
     local live_stream_core_mode="python"
+    local affinity_core_mode="python"
 
     if [[ "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" = "true" ]]; then
         upstream_client_mode="rmcp"
@@ -173,14 +186,17 @@ print_mcp_runtime_mode() {
     if [[ "${MCP_RUST_LIVE_STREAM_CORE_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
         live_stream_core_mode="rust"
     fi
+    if [[ "${MCP_RUST_AFFINITY_CORE_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
+        affinity_core_mode="rust"
+    fi
 
     if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
         if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
             runtime_mode="rust-managed"
-            echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode}, resume core: ${resume_core_mode}, live stream core: ${live_stream_core_mode})"
+            echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode}, resume core: ${resume_core_mode}, live stream core: ${live_stream_core_mode}, affinity core: ${affinity_core_mode})"
         else
             runtime_mode="rust-external"
-            echo "MCP runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}}, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode}, resume core: ${resume_core_mode}, live stream core: ${live_stream_core_mode})"
+            echo "MCP runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}}, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode}, resume core: ${resume_core_mode}, live stream core: ${live_stream_core_mode}, affinity core: ${affinity_core_mode})"
         fi
 
         if [[ "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" = "true" && "${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD}" != "true" ]]; then
