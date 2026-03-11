@@ -69,10 +69,10 @@ from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, _resolve_teams_from_db, get_current_user, get_user_team_roles, normalize_token_teams
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
-from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
@@ -2870,7 +2870,9 @@ async def list_servers(
 
     # Use consolidated server listing with optional team filtering
     # For admin bypass: pass user_email=None and token_teams=None to skip all filtering
-    logger.debug(f"User: {SecurityValidator.sanitize_log_message(user_email)} requested server list with include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
+    logger.debug(
+        f"User: {SecurityValidator.sanitize_log_message(user_email)} requested server list with include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}"
+    )
     data, next_cursor = await server_service.list_servers(
         db=db,
         cursor=cursor,
@@ -4529,7 +4531,9 @@ async def list_resources(
 
     # Use unified list_resources() with token-based team filtering
     # Always apply visibility filtering based on token scope
-    logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
+    logger.debug(
+        f"User {SecurityValidator.sanitize_log_message(user_email)} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}"
+    )
     data, next_cursor = await resource_service.list_resources(
         db=db,
         cursor=cursor,
@@ -5025,7 +5029,9 @@ async def list_prompts(
 
     # Use consolidated prompt listing with token-based team filtering
     # Always apply visibility filtering based on token scope
-    logger.debug(f"User: {SecurityValidator.sanitize_log_message(user_email)} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
+    logger.debug(
+        f"User: {SecurityValidator.sanitize_log_message(user_email)} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}"
+    )
     data, next_cursor = await prompt_service.list_prompts(
         db=db,
         cursor=cursor,

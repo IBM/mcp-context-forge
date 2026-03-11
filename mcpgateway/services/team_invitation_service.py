@@ -26,8 +26,8 @@ from typing import Any, List, Optional
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.cache.auth_cache import auth_cache
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService

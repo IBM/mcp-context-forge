@@ -44,12 +44,12 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import Gateway as PydanticGateway
 from mcpgateway.common.models import TextContent
 from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.common.models import ToolResult
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import fresh_db_session
@@ -2747,7 +2747,9 @@ class ToolService(BaseService):
                     else:
                         tool_result = await session.call_tool(name=remote_name, arguments=arguments)
 
-                    logger.info(f"[INVOKE TOOL] Using direct_proxy mode for gateway {SecurityValidator.sanitize_log_message(gateway.id)} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}")
+                    logger.info(
+                        f"[INVOKE TOOL] Using direct_proxy mode for gateway {SecurityValidator.sanitize_log_message(gateway.id)} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}"
+                    )
                     return tool_result
         except Exception as e:
             logger.exception(f"Direct proxy tool invocation failed for {name}: {e}")

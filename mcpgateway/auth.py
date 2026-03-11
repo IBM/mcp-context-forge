@@ -1293,7 +1293,9 @@ async def get_current_user(
                 # Fail-secure: if the revocation check itself errors, reject the token.
                 # Allowing through on error would let revoked tokens bypass enforcement
                 # when the DB is unreachable or the table is missing.
-                logger.warning(f"Token revocation check failed for JTI {SecurityValidator.sanitize_log_message(jti)} — denying access (fail-secure): {SecurityValidator.sanitize_log_message(str(revoke_check_error))}")
+                logger.warning(
+                    f"Token revocation check failed for JTI {SecurityValidator.sanitize_log_message(jti)} — denying access (fail-secure): {SecurityValidator.sanitize_log_message(str(revoke_check_error))}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Token validation failed",

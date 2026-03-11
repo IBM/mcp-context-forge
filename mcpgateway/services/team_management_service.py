@@ -29,9 +29,9 @@ from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import selectinload, Session
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.cache.admin_stats_cache import admin_stats_cache
 from mcpgateway.cache.auth_cache import auth_cache, get_auth_cache
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
@@ -879,7 +879,9 @@ class TeamManagementService:
                             await self.role_service.revoke_role_from_user(user_email=user_email, role_id=team_member_role.id, scope="team", scope_id=team_id)
                         if team_owner_role:
                             await self.role_service.assign_role_to_user(user_email=user_email, role_id=team_owner_role.id, scope="team", scope_id=team_id, granted_by=updated_by or user_email)
-                        logger.info(f"Transitioned RBAC role from {settings.default_team_member_role} to {settings.default_team_owner_role} for {SecurityValidator.sanitize_log_message(user_email)} in team {SecurityValidator.sanitize_log_message(team_id)}")
+                        logger.info(
+                            f"Transitioned RBAC role from {settings.default_team_member_role} to {settings.default_team_owner_role} for {SecurityValidator.sanitize_log_message(user_email)} in team {SecurityValidator.sanitize_log_message(team_id)}"
+                        )
 
                     elif old_role == "owner" and new_role == "member":
                         # owner -> member: revoke owner role, assign member role
@@ -887,7 +889,9 @@ class TeamManagementService:
                             await self.role_service.revoke_role_from_user(user_email=user_email, role_id=team_owner_role.id, scope="team", scope_id=team_id)
                         if team_member_role:
                             await self.role_service.assign_role_to_user(user_email=user_email, role_id=team_member_role.id, scope="team", scope_id=team_id, granted_by=updated_by or user_email)
-                        logger.info(f"Transitioned RBAC role from {settings.default_team_owner_role} to {settings.default_team_member_role} for {SecurityValidator.sanitize_log_message(user_email)} in team {SecurityValidator.sanitize_log_message(team_id)}")
+                        logger.info(
+                            f"Transitioned RBAC role from {settings.default_team_owner_role} to {settings.default_team_member_role} for {SecurityValidator.sanitize_log_message(user_email)} in team {SecurityValidator.sanitize_log_message(team_id)}"
+                        )
 
                 except Exception as role_error:
                     logger.warning(f"Failed to update RBAC roles for {SecurityValidator.sanitize_log_message(user_email)} in team {SecurityValidator.sanitize_log_message(team_id)}: {role_error}")

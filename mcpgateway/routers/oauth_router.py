@@ -977,7 +977,9 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
         db.commit()
         db.close()
 
-        logger.info(f"Deleted registered OAuth client {SecurityValidator.sanitize_log_message(client_id)} for gateway {SecurityValidator.sanitize_log_message(gateway_id)} (issuer: {SecurityValidator.sanitize_log_message(issuer)})")
+        logger.info(
+            f"Deleted registered OAuth client {SecurityValidator.sanitize_log_message(client_id)} for gateway {SecurityValidator.sanitize_log_message(gateway_id)} (issuer: {SecurityValidator.sanitize_log_message(issuer)})"
+        )
 
         return {"success": True, "message": f"Registered OAuth client {client_id} deleted successfully", "gateway_id": gateway_id, "issuer": issuer}
 

@@ -394,7 +394,9 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                             additional_default_roles_path = Path(__file__).resolve().parent.parent / settings.mcpgateway_bootstrap_roles_in_db_file
 
                     if not additional_default_roles_path.exists():
-                        logger.warning(f"Additional roles file not found. Searched: CWD/{SecurityValidator.sanitize_log_message(settings.mcpgateway_bootstrap_roles_in_db_file)}, {SecurityValidator.sanitize_log_message(str(additional_default_roles_path))}")
+                        logger.warning(
+                            f"Additional roles file not found. Searched: CWD/{SecurityValidator.sanitize_log_message(settings.mcpgateway_bootstrap_roles_in_db_file)}, {SecurityValidator.sanitize_log_message(str(additional_default_roles_path))}"
+                        )
                     else:
                         with open(additional_default_roles_path, "r", encoding="utf-8") as f:
                             additional_default_roles_data = json.load(f)
@@ -468,9 +470,13 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         logger.info("Admin user already has platform_admin role")
 
                 except Exception as e:
-                    logger.error(f"Failed to assign platform_admin role to {SecurityValidator.sanitize_log_message(admin_user.email)}: {SecurityValidator.sanitize_log_message(str(e))}. Admin UI routes using allow_admin_bypass=False will return 403.")
+                    logger.error(
+                        f"Failed to assign platform_admin role to {SecurityValidator.sanitize_log_message(admin_user.email)}: {SecurityValidator.sanitize_log_message(str(e))}. Admin UI routes using allow_admin_bypass=False will return 403."
+                    )
             else:
-                logger.error(f"platform_admin role not found — could not assign to {SecurityValidator.sanitize_log_message(admin_user.email)}. Admin UI routes using allow_admin_bypass=False will return 403.")
+                logger.error(
+                    f"platform_admin role not found — could not assign to {SecurityValidator.sanitize_log_message(admin_user.email)}. Admin UI routes using allow_admin_bypass=False will return 403."
+                )
 
             logger.info("Default RBAC roles bootstrap completed successfully")
 

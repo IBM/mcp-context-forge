@@ -1932,5 +1932,7 @@ class SSOService:
                 try:
                     self.db.rollback()
                 except Exception as rollback_error:
-                    logger.error(f"Database rollback failed after role assignment error for {SecurityValidator.sanitize_log_message(user_email)}: {rollback_error}. Aborting remaining role assignments.")
+                    logger.error(
+                        f"Database rollback failed after role assignment error for {SecurityValidator.sanitize_log_message(user_email)}: {rollback_error}. Aborting remaining role assignments."
+                    )
                     break

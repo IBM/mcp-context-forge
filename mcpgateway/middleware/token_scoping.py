@@ -903,16 +903,22 @@ class TokenScopingMiddleware:
                 # PUBLIC-ONLY TOKEN: Can ONLY access public servers (strict public-only policy)
                 # No owner access - if user needs own resources, use a personal team-scoped token
                 if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(server_visibility)} server {SecurityValidator.sanitize_log_message(resource_id)}")
+                    logger.warning(
+                        f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(server_visibility)} server {SecurityValidator.sanitize_log_message(resource_id)}"
+                    )
                     return False
 
                 # TEAM-SCOPED SERVERS: Check if server belongs to token's teams
                 if server_visibility == "team":
                     if server.team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team server {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(server.team_id))}")
+                        logger.debug(
+                            f"Access granted: Team server {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(server.team_id))}"
+                        )
                         return True
 
-                    logger.warning(f"Access denied: Server {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(server.team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}")
+                    logger.warning(
+                        f"Access denied: Server {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(server.team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}"
+                    )
                     return False
 
                 # PRIVATE SERVERS: Owner-only access (per RBAC doc)
@@ -922,7 +928,9 @@ class TokenScopingMiddleware:
                         logger.debug(f"Access granted: Private server {SecurityValidator.sanitize_log_message(resource_id)} owned by {SecurityValidator.sanitize_log_message(_user_email)}")
                         return True
 
-                    logger.warning(f"Access denied: Server {SecurityValidator.sanitize_log_message(resource_id)} is private, owner is '{SecurityValidator.sanitize_log_message(str(server_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'")
+                    logger.warning(
+                        f"Access denied: Server {SecurityValidator.sanitize_log_message(resource_id)} is private, owner is '{SecurityValidator.sanitize_log_message(str(server_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'"
+                    )
                     return False
 
                 # Unknown visibility - deny by default
@@ -948,17 +956,23 @@ class TokenScopingMiddleware:
                 # PUBLIC-ONLY TOKEN: Can ONLY access public tools (strict public-only policy)
                 # No owner access - if user needs own resources, use a personal team-scoped token
                 if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(tool_visibility)} tool {SecurityValidator.sanitize_log_message(resource_id)}")
+                    logger.warning(
+                        f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(tool_visibility)} tool {SecurityValidator.sanitize_log_message(resource_id)}"
+                    )
                     return False
 
                 # TEAM TOOLS: Check if tool's team matches token's teams
                 if tool_visibility == "team":
                     tool_team_id = getattr(tool, "team_id", None)
                     if tool_team_id and tool_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team tool {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(tool_team_id))}")
+                        logger.debug(
+                            f"Access granted: Team tool {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(tool_team_id))}"
+                        )
                         return True
 
-                    logger.warning(f"Access denied: Tool {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(tool_team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}")
+                    logger.warning(
+                        f"Access denied: Tool {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(tool_team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}"
+                    )
                     return False
 
                 # PRIVATE TOOLS: Owner-only access (per RBAC doc)
@@ -968,7 +982,9 @@ class TokenScopingMiddleware:
                         logger.debug(f"Access granted: Private tool {SecurityValidator.sanitize_log_message(resource_id)} owned by {SecurityValidator.sanitize_log_message(_user_email)}")
                         return True
 
-                    logger.warning(f"Access denied: Tool {SecurityValidator.sanitize_log_message(resource_id)} is {SecurityValidator.sanitize_log_message(tool_visibility)}, owner is '{SecurityValidator.sanitize_log_message(str(tool_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'")
+                    logger.warning(
+                        f"Access denied: Tool {SecurityValidator.sanitize_log_message(resource_id)} is {SecurityValidator.sanitize_log_message(tool_visibility)}, owner is '{SecurityValidator.sanitize_log_message(str(tool_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'"
+                    )
                     return False
 
                 # Unknown visibility - deny by default
@@ -994,17 +1010,23 @@ class TokenScopingMiddleware:
                 # PUBLIC-ONLY TOKEN: Can ONLY access public resources (strict public-only policy)
                 # No owner access - if user needs own resources, use a personal team-scoped token
                 if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(resource_visibility)} resource {SecurityValidator.sanitize_log_message(resource_id)}")
+                    logger.warning(
+                        f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(resource_visibility)} resource {SecurityValidator.sanitize_log_message(resource_id)}"
+                    )
                     return False
 
                 # TEAM RESOURCES: Check if resource's team matches token's teams
                 if resource_visibility == "team":
                     resource_team_id = getattr(resource, "team_id", None)
                     if resource_team_id and resource_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team resource {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(resource_team_id))}")
+                        logger.debug(
+                            f"Access granted: Team resource {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(resource_team_id))}"
+                        )
                         return True
 
-                    logger.warning(f"Access denied: Resource {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(resource_team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}")
+                    logger.warning(
+                        f"Access denied: Resource {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(resource_team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}"
+                    )
                     return False
 
                 # PRIVATE RESOURCES: Owner-only access (per RBAC doc)
@@ -1014,7 +1036,9 @@ class TokenScopingMiddleware:
                         logger.debug(f"Access granted: Private resource {SecurityValidator.sanitize_log_message(resource_id)} owned by {SecurityValidator.sanitize_log_message(_user_email)}")
                         return True
 
-                    logger.warning(f"Access denied: Resource {SecurityValidator.sanitize_log_message(resource_id)} is {SecurityValidator.sanitize_log_message(resource_visibility)}, owner is '{SecurityValidator.sanitize_log_message(str(resource_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'")
+                    logger.warning(
+                        f"Access denied: Resource {SecurityValidator.sanitize_log_message(resource_id)} is {SecurityValidator.sanitize_log_message(resource_visibility)}, owner is '{SecurityValidator.sanitize_log_message(str(resource_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'"
+                    )
                     return False
 
                 # Unknown visibility - deny by default
@@ -1040,17 +1064,23 @@ class TokenScopingMiddleware:
                 # PUBLIC-ONLY TOKEN: Can ONLY access public prompts (strict public-only policy)
                 # No owner access - if user needs own resources, use a personal team-scoped token
                 if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(prompt_visibility)} prompt {SecurityValidator.sanitize_log_message(resource_id)}")
+                    logger.warning(
+                        f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(prompt_visibility)} prompt {SecurityValidator.sanitize_log_message(resource_id)}"
+                    )
                     return False
 
                 # TEAM PROMPTS: Check if prompt's team matches token's teams
                 if prompt_visibility == "team":
                     prompt_team_id = getattr(prompt, "team_id", None)
                     if prompt_team_id and prompt_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team prompt {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(prompt_team_id))}")
+                        logger.debug(
+                            f"Access granted: Team prompt {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(prompt_team_id))}"
+                        )
                         return True
 
-                    logger.warning(f"Access denied: Prompt {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(prompt_team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}")
+                    logger.warning(
+                        f"Access denied: Prompt {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(prompt_team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}"
+                    )
                     return False
 
                 # PRIVATE PROMPTS: Owner-only access (per RBAC doc)
@@ -1060,7 +1090,9 @@ class TokenScopingMiddleware:
                         logger.debug(f"Access granted: Private prompt {SecurityValidator.sanitize_log_message(resource_id)} owned by {SecurityValidator.sanitize_log_message(_user_email)}")
                         return True
 
-                    logger.warning(f"Access denied: Prompt {SecurityValidator.sanitize_log_message(resource_id)} is {SecurityValidator.sanitize_log_message(prompt_visibility)}, owner is '{SecurityValidator.sanitize_log_message(str(prompt_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'")
+                    logger.warning(
+                        f"Access denied: Prompt {SecurityValidator.sanitize_log_message(resource_id)} is {SecurityValidator.sanitize_log_message(prompt_visibility)}, owner is '{SecurityValidator.sanitize_log_message(str(prompt_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'"
+                    )
                     return False
 
                 # Unknown visibility - deny by default
@@ -1086,17 +1118,23 @@ class TokenScopingMiddleware:
                 # PUBLIC-ONLY TOKEN: Can ONLY access public gateways (strict public-only policy)
                 # No owner access - if user needs own resources, use a personal team-scoped token
                 if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(gateway_visibility)} gateway {SecurityValidator.sanitize_log_message(resource_id)}")
+                    logger.warning(
+                        f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(gateway_visibility)} gateway {SecurityValidator.sanitize_log_message(resource_id)}"
+                    )
                     return False
 
                 # TEAM GATEWAYS: Check if gateway's team matches token's teams
                 if gateway_visibility == "team":
                     gateway_team_id = getattr(gateway, "team_id", None)
                     if gateway_team_id and gateway_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team gateway {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(gateway_team_id))}")
+                        logger.debug(
+                            f"Access granted: Team gateway {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(gateway_team_id))}"
+                        )
                         return True
 
-                    logger.warning(f"Access denied: Gateway {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(gateway_team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}")
+                    logger.warning(
+                        f"Access denied: Gateway {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(gateway_team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}"
+                    )
                     return False
 
                 # PRIVATE GATEWAYS: Owner-only access (per RBAC doc)
@@ -1106,7 +1144,9 @@ class TokenScopingMiddleware:
                         logger.debug(f"Access granted: Private gateway {SecurityValidator.sanitize_log_message(resource_id)} owned by {SecurityValidator.sanitize_log_message(_user_email)}")
                         return True
 
-                    logger.warning(f"Access denied: Gateway {SecurityValidator.sanitize_log_message(resource_id)} is {SecurityValidator.sanitize_log_message(gateway_visibility)}, owner is '{SecurityValidator.sanitize_log_message(str(gateway_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'")
+                    logger.warning(
+                        f"Access denied: Gateway {SecurityValidator.sanitize_log_message(resource_id)} is {SecurityValidator.sanitize_log_message(gateway_visibility)}, owner is '{SecurityValidator.sanitize_log_message(str(gateway_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'"
+                    )
                     return False
 
                 # Unknown visibility - deny by default

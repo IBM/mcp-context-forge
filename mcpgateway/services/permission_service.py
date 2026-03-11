@@ -152,7 +152,9 @@ class PermissionService:
                     user_agent=user_agent,
                 )
 
-            logger.debug(f"Permission check: user={SecurityValidator.sanitize_log_message(user_email)}, permission={permission}, team={SecurityValidator.sanitize_log_message(team_id)}, granted={granted}")
+            logger.debug(
+                f"Permission check: user={SecurityValidator.sanitize_log_message(user_email)}, permission={permission}, team={SecurityValidator.sanitize_log_message(team_id)}, granted={granted}"
+            )
 
             return granted
 
