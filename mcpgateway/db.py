@@ -3435,49 +3435,16 @@ class Tool(Base):
     def metrics_summary(self) -> Dict[str, Any]:
         """Aggregated metrics for the tool.
 
-        When metrics are loaded: computes all values from memory in a single pass.
-        When not loaded: uses a single SQL query with aggregation for all fields.
+        Always queries both raw metrics and hourly rollups for complete historical coverage.
+        This ensures accurate metrics even after raw data cleanup (issue #3598).
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
                 - total_executions, successful_executions, failed_executions
                 - failure_rate, min/max/avg_response_time, last_execution_time
         """
-        # If metrics are loaded, compute everything in a single pass
-        if self._metrics_loaded():
-            total = 0
-            successful = 0
-            min_rt: Optional[float] = None
-            max_rt: Optional[float] = None
-            sum_rt = 0.0
-            last_time: Optional[datetime] = None
-
-            for m in self.metrics:
-                total += 1
-                if m.is_success:
-                    successful += 1
-                rt = m.response_time
-                if min_rt is None or rt < min_rt:
-                    min_rt = rt
-                if max_rt is None or rt > max_rt:
-                    max_rt = rt
-                sum_rt += rt
-                if last_time is None or m.timestamp > last_time:
-                    last_time = m.timestamp
-
-            failed = total - successful
-            return {
-                "total_executions": total,
-                "successful_executions": successful,
-                "failed_executions": failed,
-                "failure_rate": failed / total if total > 0 else 0.0,
-                "min_response_time": min_rt,
-                "max_response_time": max_rt,
-                "avg_response_time": sum_rt / total if total > 0 else None,
-                "last_execution_time": last_time,
-            }
-
-        # Query both raw metrics and hourly rollups using helper function (issue #3598 fix)
+        # Always query both raw metrics and hourly rollups using helper function (issue #3598 fix)
+        # This ensures we get complete historical data even when raw metrics are cleaned up
         # Third-Party
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
@@ -3775,48 +3742,16 @@ class Resource(Base):
     def metrics_summary(self) -> Dict[str, Any]:
         """Aggregated metrics for the resource.
 
-        When metrics are loaded: computes all values from memory in a single pass.
-        When not loaded: uses a single SQL query with aggregation for all fields.
+        Always queries both raw metrics and hourly rollups for complete historical coverage.
+        This ensures accurate metrics even after raw data cleanup (issue #3598).
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
                 - total_executions, successful_executions, failed_executions
                 - failure_rate, min/max/avg_response_time, last_execution_time
         """
-        if self._metrics_loaded():
-            total = 0
-            successful = 0
-            min_rt: Optional[float] = None
-            max_rt: Optional[float] = None
-            sum_rt = 0.0
-            last_time: Optional[datetime] = None
-
-            for m in self.metrics:
-                total += 1
-                if m.is_success:
-                    successful += 1
-                rt = m.response_time
-                if min_rt is None or rt < min_rt:
-                    min_rt = rt
-                if max_rt is None or rt > max_rt:
-                    max_rt = rt
-                sum_rt += rt
-                if last_time is None or m.timestamp > last_time:
-                    last_time = m.timestamp
-
-            failed = total - successful
-            return {
-                "total_executions": total,
-                "successful_executions": successful,
-                "failed_executions": failed,
-                "failure_rate": failed / total if total > 0 else 0.0,
-                "min_response_time": min_rt,
-                "max_response_time": max_rt,
-                "avg_response_time": sum_rt / total if total > 0 else None,
-                "last_execution_time": last_time,
-            }
-
-        # Query both raw metrics and hourly rollups using helper function (issue #3598 fix)
+        # Always query both raw metrics and hourly rollups using helper function (issue #3598 fix)
+        # This ensures we get complete historical data even when raw metrics are cleaned up
         # Third-Party
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
@@ -4154,48 +4089,16 @@ class Prompt(Base):
     def metrics_summary(self) -> Dict[str, Any]:
         """Aggregated metrics for the prompt.
 
-        When metrics are loaded: computes all values from memory in a single pass.
-        When not loaded: uses a single SQL query with aggregation for all fields.
+        Always queries both raw metrics and hourly rollups for complete historical coverage.
+        This ensures accurate metrics even after raw data cleanup (issue #3598).
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
                 - total_executions, successful_executions, failed_executions
                 - failure_rate, min/max/avg_response_time, last_execution_time
         """
-        if self._metrics_loaded():
-            total = 0
-            successful = 0
-            min_rt: Optional[float] = None
-            max_rt: Optional[float] = None
-            sum_rt = 0.0
-            last_time: Optional[datetime] = None
-
-            for m in self.metrics:
-                total += 1
-                if m.is_success:
-                    successful += 1
-                rt = m.response_time
-                if min_rt is None or rt < min_rt:
-                    min_rt = rt
-                if max_rt is None or rt > max_rt:
-                    max_rt = rt
-                sum_rt += rt
-                if last_time is None or m.timestamp > last_time:
-                    last_time = m.timestamp
-
-            failed = total - successful
-            return {
-                "total_executions": total,
-                "successful_executions": successful,
-                "failed_executions": failed,
-                "failure_rate": failed / total if total > 0 else 0.0,
-                "min_response_time": min_rt,
-                "max_response_time": max_rt,
-                "avg_response_time": sum_rt / total if total > 0 else None,
-                "last_execution_time": last_time,
-            }
-
-        # Query both raw metrics and hourly rollups using helper function (issue #3598 fix)
+        # Always query both raw metrics and hourly rollups using helper function (issue #3598 fix)
+        # This ensures we get complete historical data even when raw metrics are cleaned up
         # Third-Party
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
@@ -4427,48 +4330,16 @@ class Server(Base):
     def metrics_summary(self) -> Dict[str, Any]:
         """Aggregated metrics for the server.
 
-        When metrics are loaded: computes all values from memory in a single pass.
-        When not loaded: uses a single SQL query with aggregation for all fields.
+        Always queries both raw metrics and hourly rollups for complete historical coverage.
+        This ensures accurate metrics even after raw data cleanup (issue #3598).
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
                 - total_executions, successful_executions, failed_executions
                 - failure_rate, min/max/avg_response_time, last_execution_time
         """
-        if self._metrics_loaded():
-            total = 0
-            successful = 0
-            min_rt: Optional[float] = None
-            max_rt: Optional[float] = None
-            sum_rt = 0.0
-            last_time: Optional[datetime] = None
-
-            for m in self.metrics:
-                total += 1
-                if m.is_success:
-                    successful += 1
-                rt = m.response_time
-                if min_rt is None or rt < min_rt:
-                    min_rt = rt
-                if max_rt is None or rt > max_rt:
-                    max_rt = rt
-                sum_rt += rt
-                if last_time is None or m.timestamp > last_time:
-                    last_time = m.timestamp
-
-            failed = total - successful
-            return {
-                "total_executions": total,
-                "successful_executions": successful,
-                "failed_executions": failed,
-                "failure_rate": failed / total if total > 0 else 0.0,
-                "min_response_time": min_rt,
-                "max_response_time": max_rt,
-                "avg_response_time": sum_rt / total if total > 0 else None,
-                "last_execution_time": last_time,
-            }
-
-        # Query both raw metrics and hourly rollups using helper function (issue #3598 fix)
+        # Always query both raw metrics and hourly rollups using helper function (issue #3598 fix)
+        # This ensures we get complete historical data even when raw metrics are cleaned up
         # Third-Party
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
