@@ -1554,7 +1554,7 @@ class TestGatewayServiceExtended:
         existing_tool.description = "Test Tool"
         existing_tool.original_description = "Test Tool"
         existing_tool.visibility = "private"
-        
+
         tool_from_server = MagicMock()
         tool_from_server.name = "test_tool"
         tool_from_server.description = "Test Tool"
@@ -1629,4 +1629,3 @@ class TestGatewayServiceExtended:
         ]
         service._update_or_create_prompts(mock_db, [prompt_from_server], mock_gateway, "update")
         assert existing_prompt.visibility == "public"
-
