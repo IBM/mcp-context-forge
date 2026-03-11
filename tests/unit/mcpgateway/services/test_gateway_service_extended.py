@@ -1629,3 +1629,28 @@ class TestGatewayServiceExtended:
         ]
         service._update_or_create_prompts(mock_db, [prompt_from_server], mock_gateway, "update")
         assert existing_prompt.visibility == "public"
+
+    def test_create_db_tool_inherits_gateway_visibility(self):
+        """New tools created via _create_db_tool inherit visibility from the gateway, not hardcoded 'public'."""
+        service = GatewayService()
+        tool = MagicMock()
+        tool.name = "new_tool"
+        tool.description = "A tool"
+        tool.request_type = "POST"
+        tool.headers = {}
+        tool.input_schema = {}
+        tool.annotations = {}
+        tool.jsonpath_filter = None
+
+        for vis in ("private", "team", "public"):
+            gateway = MagicMock()
+            gateway.url = "http://gw.com"
+            gateway.name = "gw"
+            gateway.auth_type = "none"
+            gateway.auth_value = None
+            gateway.team_id = "t1"
+            gateway.owner_email = "owner@example.com"
+            gateway.visibility = vis
+
+            db_tool = service._create_db_tool(tool=tool, gateway=gateway)
+            assert db_tool.visibility == vis, f"Expected {vis}, got {db_tool.visibility}"

@@ -4051,7 +4051,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Inherit team assignment and visibility from gateway
             team_id=gateway.team_id,
             owner_email=gateway.owner_email,
-            visibility="public",  # Federated tools should be public for discovery
+            visibility=gateway.visibility,
         )
 
     def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str) -> List[DbTool]:
