@@ -10946,6 +10946,25 @@ async def admin_add_tool(
     input_schema_raw = form.get("input_schema")
     output_schema_raw = form.get("output_schema")
     annotations_raw = form.get("annotations")
+
+    # Parse JSON fields with validation
+    try:
+        headers = orjson.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}")
+        input_schema = orjson.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}")
+        output_schema = orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None
+        annotations = orjson.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}")
+        query_mapping = orjson.loads(form.get("query_mapping") or "{}")
+        header_mapping = orjson.loads(form.get("header_mapping") or "{}")
+        allowlist = orjson.loads(form.get("allowlist") or "[]")
+        plugin_chain_pre = orjson.loads(form.get("plugin_chain_pre") or "[]")
+        plugin_chain_post = orjson.loads(form.get("plugin_chain_post") or "[]")
+    except orjson.JSONDecodeError as ex:
+        LOGGER.error(f"Invalid JSON in form field: {str(ex)}")
+        return ORJSONResponse(
+            content={"message": f"Invalid JSON in form field: {str(ex)}", "success": False},
+            status_code=422,
+        )
+
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
         "displayName": form.get("displayName"),
@@ -10953,23 +10972,23 @@ async def admin_add_tool(
         "description": form.get("description"),
         "request_type": request_type,
         "integration_type": integration_type,
-        "headers": orjson.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}"),
-        "input_schema": orjson.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}"),
-        "output_schema": (orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None),
-        "annotations": orjson.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}"),
+        "headers": headers,
+        "input_schema": input_schema,
+        "output_schema": output_schema,
+        "annotations": annotations,
         "jsonpath_filter": form.get("jsonpath_filter", ""),
         "auth": auth_obj,
         "tags": tags,
         "visibility": visibility,
         "team_id": team_id,
         "owner_email": user_email,
-        "query_mapping": orjson.loads(form.get("query_mapping") or "{}"),
-        "header_mapping": orjson.loads(form.get("header_mapping") or "{}"),
+        "query_mapping": query_mapping,
+        "header_mapping": header_mapping,
         "timeout_ms": int(form.get("timeout_ms")) if form.get("timeout_ms") and form.get("timeout_ms").strip() else None,
         "expose_passthrough": form.get("expose_passthrough", "true"),
-        "allowlist": orjson.loads(form.get("allowlist") or "[]"),
-        "plugin_chain_pre": orjson.loads(form.get("plugin_chain_pre") or "[]"),
-        "plugin_chain_post": orjson.loads(form.get("plugin_chain_post") or "[]"),
+        "allowlist": allowlist,
+        "plugin_chain_pre": plugin_chain_pre,
+        "plugin_chain_post": plugin_chain_post,
     }
     LOGGER.debug(f"Tool data built: {tool_data}")
     try:
@@ -11087,16 +11106,29 @@ async def admin_edit_tool(
     output_schema_raw2 = form.get("output_schema")
     annotations_raw2 = form.get("annotations")
 
+    # Parse JSON fields with validation
+    try:
+        headers = orjson.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}")
+        input_schema = orjson.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}")
+        output_schema = orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None
+        annotations = orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}")
+    except orjson.JSONDecodeError as ex:
+        LOGGER.error(f"Invalid JSON in form field: {str(ex)}")
+        return ORJSONResponse(
+            content={"message": f"Invalid JSON in form field: {str(ex)}", "success": False},
+            status_code=422,
+        )
+
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
         "displayName": form.get("displayName"),
         "custom_name": form.get("customName"),
         "url": form.get("url"),
         "description": form.get("description"),
-        "headers": orjson.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}"),
-        "input_schema": orjson.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}"),
-        "output_schema": (orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None),
-        "annotations": orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}"),
+        "headers": headers,
+        "input_schema": input_schema,
+        "output_schema": output_schema,
+        "annotations": annotations,
         "jsonpath_filter": form.get("jsonpathFilter", ""),
         "auth": auth_obj,
         "tags": tags,
