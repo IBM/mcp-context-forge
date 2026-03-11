@@ -2535,6 +2535,147 @@ class A2AAgentMetricsHourly(Base):
 
 
 # ===================================
+# Helper Function for Metrics Aggregation (Issue #3598 Fix)
+# ===================================
+
+
+def _aggregate_metrics_from_raw_and_hourly(
+    entity_id: str,
+    session,
+    raw_metric_class,
+    hourly_metric_class,
+    foreign_key_column_name: str,
+) -> Dict[str, Any]:
+    """
+    Aggregate metrics from both raw metrics and hourly rollup tables.
+
+    This function fixes issue #3598 by querying both raw metrics (recent data)
+    and hourly rollup tables (historical data after cleanup) to provide accurate
+    total execution counts and other metrics even after raw data is cleaned up.
+
+    Args:
+        entity_id: ID of the entity (tool_id, resource_id, etc.)
+        session: SQLAlchemy session
+        raw_metric_class: Raw metric model class (ToolMetric, ResourceMetric, etc.)
+        hourly_metric_class: Hourly rollup model class (ToolMetricsHourly, etc.)
+        foreign_key_column_name: Name of the foreign key column (tool_id, resource_id, etc.)
+
+    Returns:
+        Dict containing aggregated metrics:
+            - total_executions, successful_executions, failed_executions
+            - failure_rate, min/max/avg_response_time, last_execution_time
+
+    Examples:
+        >>> # For a Tool entity
+        >>> _aggregate_metrics_from_raw_and_hourly(
+        ...     entity_id="tool-123",
+        ...     session=session,
+        ...     raw_metric_class=ToolMetric,
+        ...     hourly_metric_class=ToolMetricsHourly,
+        ...     foreign_key_column_name="tool_id"
+        ... )
+        {'total_executions': 100, 'successful_executions': 95, ...}
+    """
+    # Third-Party
+    from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+
+    if session is None:
+        return {
+            "total_executions": 0,
+            "successful_executions": 0,
+            "failed_executions": 0,
+            "failure_rate": 0.0,
+            "min_response_time": None,
+            "max_response_time": None,
+            "avg_response_time": None,
+            "last_execution_time": None,
+        }
+
+    # Get the foreign key column from the metric class
+    raw_fk = getattr(raw_metric_class, foreign_key_column_name)
+    hourly_fk = getattr(hourly_metric_class, foreign_key_column_name)
+
+    # Query raw metrics (recent data not yet rolled up/cleaned)
+    raw_result = (
+        session.query(
+            func.count(raw_metric_class.id),  # pylint: disable=not-callable
+            func.sum(case((raw_metric_class.is_success.is_(True), 1), else_=0)),
+            func.min(raw_metric_class.response_time),  # pylint: disable=not-callable
+            func.max(raw_metric_class.response_time),  # pylint: disable=not-callable
+            func.sum(raw_metric_class.response_time),  # Sum for weighted average
+            func.max(raw_metric_class.timestamp),  # pylint: disable=not-callable
+        )
+        .filter(raw_fk == entity_id)
+        .one()
+    )
+
+    # Query hourly rollups (historical data after cleanup)
+    hourly_result = (
+        session.query(
+            func.sum(hourly_metric_class.total_count),  # pylint: disable=not-callable
+            func.sum(hourly_metric_class.success_count),  # pylint: disable=not-callable
+            func.min(hourly_metric_class.min_response_time),  # pylint: disable=not-callable
+            func.max(hourly_metric_class.max_response_time),  # pylint: disable=not-callable
+            func.sum(hourly_metric_class.avg_response_time * hourly_metric_class.total_count),  # Weighted sum for avg
+            func.max(hourly_metric_class.hour_start),  # pylint: disable=not-callable
+        )
+        .filter(hourly_fk == entity_id)
+        .one()
+    )
+
+    # Aggregate results from both sources
+    raw_total = raw_result[0] or 0
+    hourly_total = hourly_result[0] or 0
+    total = raw_total + hourly_total
+
+    raw_success = raw_result[1] or 0
+    hourly_success = hourly_result[1] or 0
+    successful = raw_success + hourly_success
+
+    failed = total - successful
+
+    # Combine min/max response times
+    raw_min = raw_result[2]
+    hourly_min = hourly_result[2]
+    if raw_min is not None and hourly_min is not None:
+        min_rt = min(raw_min, hourly_min)
+    else:
+        min_rt = raw_min if raw_min is not None else hourly_min
+
+    raw_max = raw_result[3]
+    hourly_max = hourly_result[3]
+    if raw_max is not None and hourly_max is not None:
+        max_rt = max(raw_max, hourly_max)
+    else:
+        max_rt = raw_max if raw_max is not None else hourly_max
+
+    # Calculate weighted average response time
+    raw_sum = raw_result[4] or 0.0
+    hourly_sum = hourly_result[4] or 0.0
+    total_sum = raw_sum + hourly_sum
+    avg_rt = total_sum / total if total > 0 else None
+
+    # Get most recent timestamp from either source
+    raw_time = raw_result[5]
+    hourly_time = hourly_result[5]
+    if raw_time is not None and hourly_time is not None:
+        last_time = max(raw_time, hourly_time)
+    else:
+        last_time = raw_time if raw_time is not None else hourly_time
+
+    return {
+        "total_executions": total,
+        "successful_executions": successful,
+        "failed_executions": failed,
+        "failure_rate": failed / total if total > 0 else 0.0,
+        "min_response_time": min_rt,
+        "max_response_time": max_rt,
+        "avg_response_time": float(avg_rt) if avg_rt is not None else None,
+        "last_execution_time": last_time,
+    }
+
+
+# ===================================
 # Observability Models (OpenTelemetry-style traces, spans, events)
 # ===================================
 
@@ -3336,103 +3477,18 @@ class Tool(Base):
                 "last_execution_time": last_time,
             }
 
-        # Query both raw metrics and hourly rollups to fix issue #3598
-        # Raw metrics contain recent data, hourly rollups contain historical data after cleanup
+        # Query both raw metrics and hourly rollups using helper function (issue #3598 fix)
         # Third-Party
-        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
         session = object_session(self)
-        if session is None:
-            return {
-                "total_executions": 0,
-                "successful_executions": 0,
-                "failed_executions": 0,
-                "failure_rate": 0.0,
-                "min_response_time": None,
-                "max_response_time": None,
-                "avg_response_time": None,
-                "last_execution_time": None,
-            }
-
-        # Query raw metrics (recent data not yet rolled up/cleaned)
-        raw_result = (
-            session.query(
-                func.count(ToolMetric.id),  # pylint: disable=not-callable
-                func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)),
-                func.min(ToolMetric.response_time),  # pylint: disable=not-callable
-                func.max(ToolMetric.response_time),  # pylint: disable=not-callable
-                func.sum(ToolMetric.response_time),  # Sum for weighted average
-                func.max(ToolMetric.timestamp),  # pylint: disable=not-callable
-            )
-            .filter(ToolMetric.tool_id == self.id)
-            .one()
+        return _aggregate_metrics_from_raw_and_hourly(
+            entity_id=self.id,
+            session=session,
+            raw_metric_class=ToolMetric,
+            hourly_metric_class=ToolMetricsHourly,
+            foreign_key_column_name="tool_id",
         )
-
-        # Query hourly rollups (historical data after cleanup)
-        hourly_result = (
-            session.query(
-                func.sum(ToolMetricsHourly.total_count),  # pylint: disable=not-callable
-                func.sum(ToolMetricsHourly.success_count),  # pylint: disable=not-callable
-                func.min(ToolMetricsHourly.min_response_time),  # pylint: disable=not-callable
-                func.max(ToolMetricsHourly.max_response_time),  # pylint: disable=not-callable
-                func.sum(ToolMetricsHourly.avg_response_time * ToolMetricsHourly.total_count),  # Weighted sum for avg
-                func.max(ToolMetricsHourly.hour_start),  # pylint: disable=not-callable
-            )
-            .filter(ToolMetricsHourly.tool_id == self.id)
-            .one()
-        )
-
-        # Aggregate results from both sources
-        raw_total = raw_result[0] or 0
-        hourly_total = hourly_result[0] or 0
-        total = raw_total + hourly_total
-
-        raw_success = raw_result[1] or 0
-        hourly_success = hourly_result[1] or 0
-        successful = raw_success + hourly_success
-
-        failed = total - successful
-
-        # Combine min/max response times
-        raw_min = raw_result[2]
-        hourly_min = hourly_result[2]
-        if raw_min is not None and hourly_min is not None:
-            min_rt = min(raw_min, hourly_min)
-        else:
-            min_rt = raw_min if raw_min is not None else hourly_min
-
-        raw_max = raw_result[3]
-        hourly_max = hourly_result[3]
-        if raw_max is not None and hourly_max is not None:
-            max_rt = max(raw_max, hourly_max)
-        else:
-            max_rt = raw_max if raw_max is not None else hourly_max
-
-        # Calculate weighted average response time
-        raw_sum = raw_result[4] or 0.0
-        hourly_sum = hourly_result[4] or 0.0
-        total_sum = raw_sum + hourly_sum
-        avg_rt = total_sum / total if total > 0 else None
-
-        # Get most recent timestamp from either source
-        raw_time = raw_result[5]
-        hourly_time = hourly_result[5]
-        if raw_time is not None and hourly_time is not None:
-            last_time = max(raw_time, hourly_time)
-        else:
-            last_time = raw_time if raw_time is not None else hourly_time
-
-        return {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failed / total if total > 0 else 0.0,
-            "min_response_time": min_rt,
-            "max_response_time": max_rt,
-            "avg_response_time": float(avg_rt) if avg_rt is not None else None,
-            "last_execution_time": last_time,
-        }
 
 
 class Resource(Base):
@@ -3760,103 +3816,18 @@ class Resource(Base):
                 "last_execution_time": last_time,
             }
 
-        # Query both raw metrics and hourly rollups to fix issue #3598
-        # Raw metrics contain recent data, hourly rollups contain historical data after cleanup
+        # Query both raw metrics and hourly rollups using helper function (issue #3598 fix)
         # Third-Party
-        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
         session = object_session(self)
-        if session is None:
-            return {
-                "total_executions": 0,
-                "successful_executions": 0,
-                "failed_executions": 0,
-                "failure_rate": 0.0,
-                "min_response_time": None,
-                "max_response_time": None,
-                "avg_response_time": None,
-                "last_execution_time": None,
-            }
-
-        # Query raw metrics (recent data not yet rolled up/cleaned)
-        raw_result = (
-            session.query(
-                func.count(ResourceMetric.id),  # pylint: disable=not-callable
-                func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)),
-                func.min(ResourceMetric.response_time),  # pylint: disable=not-callable
-                func.max(ResourceMetric.response_time),  # pylint: disable=not-callable
-                func.sum(ResourceMetric.response_time),  # Sum for weighted average
-                func.max(ResourceMetric.timestamp),  # pylint: disable=not-callable
-            )
-            .filter(ResourceMetric.resource_id == self.id)
-            .one()
+        return _aggregate_metrics_from_raw_and_hourly(
+            entity_id=self.id,
+            session=session,
+            raw_metric_class=ResourceMetric,
+            hourly_metric_class=ResourceMetricsHourly,
+            foreign_key_column_name="resource_id",
         )
-
-        # Query hourly rollups (historical data after cleanup)
-        hourly_result = (
-            session.query(
-                func.sum(ResourceMetricsHourly.total_count),  # pylint: disable=not-callable
-                func.sum(ResourceMetricsHourly.success_count),  # pylint: disable=not-callable
-                func.min(ResourceMetricsHourly.min_response_time),  # pylint: disable=not-callable
-                func.max(ResourceMetricsHourly.max_response_time),  # pylint: disable=not-callable
-                func.sum(ResourceMetricsHourly.avg_response_time * ResourceMetricsHourly.total_count),  # Weighted sum for avg
-                func.max(ResourceMetricsHourly.hour_start),  # pylint: disable=not-callable
-            )
-            .filter(ResourceMetricsHourly.resource_id == self.id)
-            .one()
-        )
-
-        # Aggregate results from both sources
-        raw_total = raw_result[0] or 0
-        hourly_total = hourly_result[0] or 0
-        total = raw_total + hourly_total
-
-        raw_success = raw_result[1] or 0
-        hourly_success = hourly_result[1] or 0
-        successful = raw_success + hourly_success
-
-        failed = total - successful
-
-        # Combine min/max response times
-        raw_min = raw_result[2]
-        hourly_min = hourly_result[2]
-        if raw_min is not None and hourly_min is not None:
-            min_rt = min(raw_min, hourly_min)
-        else:
-            min_rt = raw_min if raw_min is not None else hourly_min
-
-        raw_max = raw_result[3]
-        hourly_max = hourly_result[3]
-        if raw_max is not None and hourly_max is not None:
-            max_rt = max(raw_max, hourly_max)
-        else:
-            max_rt = raw_max if raw_max is not None else hourly_max
-
-        # Calculate weighted average response time
-        raw_sum = raw_result[4] or 0.0
-        hourly_sum = hourly_result[4] or 0.0
-        total_sum = raw_sum + hourly_sum
-        avg_rt = total_sum / total if total > 0 else None
-
-        # Get most recent timestamp from either source
-        raw_time = raw_result[5]
-        hourly_time = hourly_result[5]
-        if raw_time is not None and hourly_time is not None:
-            last_time = max(raw_time, hourly_time)
-        else:
-            last_time = raw_time if raw_time is not None else hourly_time
-
-        return {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failed / total if total > 0 else 0.0,
-            "min_response_time": min_rt,
-            "max_response_time": max_rt,
-            "avg_response_time": float(avg_rt) if avg_rt is not None else None,
-            "last_execution_time": last_time,
-        }
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
@@ -4224,103 +4195,18 @@ class Prompt(Base):
                 "last_execution_time": last_time,
             }
 
-        # Query both raw metrics and hourly rollups to fix issue #3598
-        # Raw metrics contain recent data, hourly rollups contain historical data after cleanup
+        # Query both raw metrics and hourly rollups using helper function (issue #3598 fix)
         # Third-Party
-        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
         session = object_session(self)
-        if session is None:
-            return {
-                "total_executions": 0,
-                "successful_executions": 0,
-                "failed_executions": 0,
-                "failure_rate": 0.0,
-                "min_response_time": None,
-                "max_response_time": None,
-                "avg_response_time": None,
-                "last_execution_time": None,
-            }
-
-        # Query raw metrics (recent data not yet rolled up/cleaned)
-        raw_result = (
-            session.query(
-                func.count(PromptMetric.id),  # pylint: disable=not-callable
-                func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)),
-                func.min(PromptMetric.response_time),  # pylint: disable=not-callable
-                func.max(PromptMetric.response_time),  # pylint: disable=not-callable
-                func.sum(PromptMetric.response_time),  # Sum for weighted average
-                func.max(PromptMetric.timestamp),  # pylint: disable=not-callable
-            )
-            .filter(PromptMetric.prompt_id == self.id)
-            .one()
+        return _aggregate_metrics_from_raw_and_hourly(
+            entity_id=self.id,
+            session=session,
+            raw_metric_class=PromptMetric,
+            hourly_metric_class=PromptMetricsHourly,
+            foreign_key_column_name="prompt_id",
         )
-
-        # Query hourly rollups (historical data after cleanup)
-        hourly_result = (
-            session.query(
-                func.sum(PromptMetricsHourly.total_count),  # pylint: disable=not-callable
-                func.sum(PromptMetricsHourly.success_count),  # pylint: disable=not-callable
-                func.min(PromptMetricsHourly.min_response_time),  # pylint: disable=not-callable
-                func.max(PromptMetricsHourly.max_response_time),  # pylint: disable=not-callable
-                func.sum(PromptMetricsHourly.avg_response_time * PromptMetricsHourly.total_count),  # Weighted sum for avg
-                func.max(PromptMetricsHourly.hour_start),  # pylint: disable=not-callable
-            )
-            .filter(PromptMetricsHourly.prompt_id == self.id)
-            .one()
-        )
-
-        # Aggregate results from both sources
-        raw_total = raw_result[0] or 0
-        hourly_total = hourly_result[0] or 0
-        total = raw_total + hourly_total
-
-        raw_success = raw_result[1] or 0
-        hourly_success = hourly_result[1] or 0
-        successful = raw_success + hourly_success
-
-        failed = total - successful
-
-        # Combine min/max response times
-        raw_min = raw_result[2]
-        hourly_min = hourly_result[2]
-        if raw_min is not None and hourly_min is not None:
-            min_rt = min(raw_min, hourly_min)
-        else:
-            min_rt = raw_min if raw_min is not None else hourly_min
-
-        raw_max = raw_result[3]
-        hourly_max = hourly_result[3]
-        if raw_max is not None and hourly_max is not None:
-            max_rt = max(raw_max, hourly_max)
-        else:
-            max_rt = raw_max if raw_max is not None else hourly_max
-
-        # Calculate weighted average response time
-        raw_sum = raw_result[4] or 0.0
-        hourly_sum = hourly_result[4] or 0.0
-        total_sum = raw_sum + hourly_sum
-        avg_rt = total_sum / total if total > 0 else None
-
-        # Get most recent timestamp from either source
-        raw_time = raw_result[5]
-        hourly_time = hourly_result[5]
-        if raw_time is not None and hourly_time is not None:
-            last_time = max(raw_time, hourly_time)
-        else:
-            last_time = raw_time if raw_time is not None else hourly_time
-
-        return {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failed / total if total > 0 else 0.0,
-            "min_response_time": min_rt,
-            "max_response_time": max_rt,
-            "avg_response_time": float(avg_rt) if avg_rt is not None else None,
-            "last_execution_time": last_time,
-        }
 
 
 class Server(Base):
@@ -4582,103 +4468,18 @@ class Server(Base):
                 "last_execution_time": last_time,
             }
 
-        # Query both raw metrics and hourly rollups to fix issue #3598
-        # Raw metrics contain recent data, hourly rollups contain historical data after cleanup
+        # Query both raw metrics and hourly rollups using helper function (issue #3598 fix)
         # Third-Party
-        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
         session = object_session(self)
-        if session is None:
-            return {
-                "total_executions": 0,
-                "successful_executions": 0,
-                "failed_executions": 0,
-                "failure_rate": 0.0,
-                "min_response_time": None,
-                "max_response_time": None,
-                "avg_response_time": None,
-                "last_execution_time": None,
-            }
-
-        # Query raw metrics (recent data not yet rolled up/cleaned)
-        raw_result = (
-            session.query(
-                func.count(ServerMetric.id),  # pylint: disable=not-callable
-                func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)),
-                func.min(ServerMetric.response_time),  # pylint: disable=not-callable
-                func.max(ServerMetric.response_time),  # pylint: disable=not-callable
-                func.sum(ServerMetric.response_time),  # Sum for weighted average
-                func.max(ServerMetric.timestamp),  # pylint: disable=not-callable
-            )
-            .filter(ServerMetric.server_id == self.id)
-            .one()
+        return _aggregate_metrics_from_raw_and_hourly(
+            entity_id=self.id,
+            session=session,
+            raw_metric_class=ServerMetric,
+            hourly_metric_class=ServerMetricsHourly,
+            foreign_key_column_name="server_id",
         )
-
-        # Query hourly rollups (historical data after cleanup)
-        hourly_result = (
-            session.query(
-                func.sum(ServerMetricsHourly.total_count),  # pylint: disable=not-callable
-                func.sum(ServerMetricsHourly.success_count),  # pylint: disable=not-callable
-                func.min(ServerMetricsHourly.min_response_time),  # pylint: disable=not-callable
-                func.max(ServerMetricsHourly.max_response_time),  # pylint: disable=not-callable
-                func.sum(ServerMetricsHourly.avg_response_time * ServerMetricsHourly.total_count),  # Weighted sum for avg
-                func.max(ServerMetricsHourly.hour_start),  # pylint: disable=not-callable
-            )
-            .filter(ServerMetricsHourly.server_id == self.id)
-            .one()
-        )
-
-        # Aggregate results from both sources
-        raw_total = raw_result[0] or 0
-        hourly_total = hourly_result[0] or 0
-        total = raw_total + hourly_total
-
-        raw_success = raw_result[1] or 0
-        hourly_success = hourly_result[1] or 0
-        successful = raw_success + hourly_success
-
-        failed = total - successful
-
-        # Combine min/max response times
-        raw_min = raw_result[2]
-        hourly_min = hourly_result[2]
-        if raw_min is not None and hourly_min is not None:
-            min_rt = min(raw_min, hourly_min)
-        else:
-            min_rt = raw_min if raw_min is not None else hourly_min
-
-        raw_max = raw_result[3]
-        hourly_max = hourly_result[3]
-        if raw_max is not None and hourly_max is not None:
-            max_rt = max(raw_max, hourly_max)
-        else:
-            max_rt = raw_max if raw_max is not None else hourly_max
-
-        # Calculate weighted average response time
-        raw_sum = raw_result[4] or 0.0
-        hourly_sum = hourly_result[4] or 0.0
-        total_sum = raw_sum + hourly_sum
-        avg_rt = total_sum / total if total > 0 else None
-
-        # Get most recent timestamp from either source
-        raw_time = raw_result[5]
-        hourly_time = hourly_result[5]
-        if raw_time is not None and hourly_time is not None:
-            last_time = max(raw_time, hourly_time)
-        else:
-            last_time = raw_time if raw_time is not None else hourly_time
-
-        return {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failed / total if total > 0 else 0.0,
-            "min_response_time": min_rt,
-            "max_response_time": max_rt,
-            "avg_response_time": float(avg_rt) if avg_rt is not None else None,
-            "last_execution_time": last_time,
-        }
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
