@@ -1220,7 +1220,7 @@ class TestAdminToolRoutes:
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_invalid_json(self, mock_register_tool, mock_request, mock_db):
-        """Test adding tool with invalid JSON in form fields."""
+        """Test adding tool with invalid JSON in form fields returns 422."""
         # Override form with invalid JSON
         form_data = FakeForm(
             {
@@ -1232,9 +1232,69 @@ class TestAdminToolRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        # Should handle JSON decode error
-        with pytest.raises(json.JSONDecodeError):
-            await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        # Should return 422 for JSON decode error
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        response_body = json.loads(result.body)
+        assert "success" in response_body
+        assert response_body["success"] is False
+        assert "Invalid JSON" in response_body["message"]
+
+    @patch.object(ToolService, "register_tool")
+    async def test_admin_add_tool_with_invalid_query_mapping_json(self, mock_register_tool, mock_request, mock_db):
+        """Test adding tool with invalid JSON in query_mapping field returns 422."""
+        # Override form with invalid query_mapping JSON
+        form_data = FakeForm(
+            {
+                "name": "test_tool_invalid_query",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "query_mapping": "{theMessage: message}",  # Invalid JSON - missing quotes
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        response_body = json.loads(result.body)
+        assert "success" in response_body
+        assert response_body["success"] is False
+        assert "Invalid JSON" in response_body["message"]
+
+    @patch.object(ToolService, "register_tool")
+    async def test_admin_add_tool_with_invalid_header_mapping_json(self, mock_register_tool, mock_request, mock_db):
+        """Test adding tool with invalid JSON in header_mapping field returns 422."""
+        # Override form with invalid header_mapping JSON
+        form_data = FakeForm(
+            {
+                "name": "test_tool_invalid_header",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "header_mapping": "{Authorization: token}",  # Invalid JSON - missing quotes
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        response_body = json.loads(result.body)
+        assert "success" in response_body
+        assert response_body["success"] is False
+        assert "Invalid JSON" in response_body["message"]
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_tool_error(self, mock_register_tool, mock_request, mock_db):
@@ -1548,6 +1608,58 @@ class TestAdminToolRoutes:
         assert call_tool.auth is not None
         assert call_tool.auth.auth_type == "authheaders"
         assert call_tool.auth.auth_value is not None
+
+    @patch.object(ToolService, "update_tool")
+    async def test_admin_edit_tool_with_invalid_headers_json(self, mock_update_tool, mock_request, mock_db):
+        """Test editing tool with invalid JSON in headers field returns 422."""
+        form_data = FakeForm(
+            {
+                "name": "test_tool_edit",
+                "customName": "test_tool_edit",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{invalid: json}",  # Invalid JSON - missing quotes
+                "input_schema": "{}",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        response_body = json.loads(result.body)
+        assert "success" in response_body
+        assert response_body["success"] is False
+        assert "Invalid JSON" in response_body["message"]
+
+    @patch.object(ToolService, "update_tool")
+    async def test_admin_edit_tool_with_invalid_input_schema_json(self, mock_update_tool, mock_request, mock_db):
+        """Test editing tool with invalid JSON in input_schema field returns 422."""
+        form_data = FakeForm(
+            {
+                "name": "test_tool_edit",
+                "customName": "test_tool_edit",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{broken json",  # Invalid JSON
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        response_body = json.loads(result.body)
+        assert "success" in response_body
+        assert response_body["success"] is False
+        assert "Invalid JSON" in response_body["message"]
 
     @patch.object(ToolService, "update_tool")
     async def test_admin_edit_tool_with_basic_auth(self, mock_update_tool, mock_request, mock_db):
