@@ -1,3 +1,4 @@
+# pylint: disable=no-member
 # -*- coding: utf-8 -*-
 """fix_a2a_agents_auth_value
 
@@ -24,7 +25,6 @@ from typing import Sequence, Union
 # Third-Party
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy import column, table
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
@@ -32,9 +32,6 @@ revision: str = "a3c38b6c2437"
 down_revision: Union[str, Sequence[str], None] = "e1f2a3b4c5d6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
-
-# Lightweight table reference used for parameterized DML (avoids raw SQL)
-_a2a_agents = table("a2a_agents", column("auth_value", sa.Text()))
 
 
 def upgrade() -> None:
@@ -70,7 +67,7 @@ def upgrade() -> None:
         # converting the column type so the USING clause does not fail on them.
         # PostgreSQL-specific cast is required here; parameterized DML cannot
         # express the ::text cast needed to compare a JSON column to a string.
-        op.execute(sa.text("UPDATE a2a_agents SET auth_value = NULL" " WHERE auth_value::text IN ('\"\"', 'null')"))
+        op.execute(sa.text("UPDATE a2a_agents SET auth_value = NULL WHERE auth_value::text IN ('\"\"', 'null')"))
         op.alter_column(
             "a2a_agents",
             "auth_value",

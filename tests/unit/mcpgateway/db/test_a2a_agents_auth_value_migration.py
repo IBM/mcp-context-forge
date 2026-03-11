@@ -314,12 +314,7 @@ def _drop_pg_table(conn) -> None:
 
 def _pg_auth_value_sql_type(conn) -> str:
     """Return the SQL data_type of auth_value from information_schema."""
-    row = conn.execute(
-        sa.text(
-            "SELECT data_type FROM information_schema.columns"
-            " WHERE table_name = 'a2a_agents' AND column_name = 'auth_value'"
-        )
-    ).fetchone()
+    row = conn.execute(sa.text("SELECT data_type FROM information_schema.columns" " WHERE table_name = 'a2a_agents' AND column_name = 'auth_value'")).fetchone()
     return row[0] if row else None
 
 
@@ -580,14 +575,7 @@ class TestPostgreSQLRoundtrip:
         try:
             with engine.connect() as conn:
                 _setup_pg_table(conn, "JSON")
-                conn.execute(
-                    sa.text(
-                        "INSERT INTO a2a_agents (id, name, auth_value) VALUES "
-                        "('1', 'agent1', '\"bearer-abc\"'), "
-                        "('2', 'agent2', '\"api-key-xyz\"'), "
-                        "('3', 'agent3', NULL)"
-                    )
-                )
+                conn.execute(sa.text("INSERT INTO a2a_agents (id, name, auth_value) VALUES " "('1', 'agent1', '\"bearer-abc\"'), " "('2', 'agent2', '\"api-key-xyz\"'), " "('3', 'agent3', NULL)"))
                 conn.commit()
 
                 module = importlib.import_module(MODULE_NAME)

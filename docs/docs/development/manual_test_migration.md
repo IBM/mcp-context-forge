@@ -67,7 +67,7 @@ CREATE DATABASE mcp;
 Update `DATABASE_URL` in your `.env` to point to the PostgreSQL database:
 
 ```bash
-DATABASE_URL=postgresql+psycopg://root:mysecretpassword@localhost:5432/mcp
+DATABASE_URL=postgresql+psycopg://postgres:mysecretpassword@localhost:5432/mcp
 ```
 
 ---
@@ -113,8 +113,6 @@ Check if the values your migration affects are populated in the DB.
 
 ---
 
----
-
 ## 🧹 Cleanup
 
 Stop and remove the container when done:
@@ -137,7 +135,7 @@ Ensure the Docker container is running and the database is empty (or drop and re
 
 ```bash
 # Drop and recreate the mcp database to start fresh
-docker exec -it mcp-postgres psql -U root -c "DROP DATABASE IF EXISTS mcp; CREATE DATABASE mcp;"
+docker exec -it mcp-postgres psql -U postgres -c "DROP DATABASE IF EXISTS mcp; CREATE DATABASE mcp;"
 ```
 
 **2. Checkout `main` and start the gateway**
