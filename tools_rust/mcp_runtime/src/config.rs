@@ -102,6 +102,9 @@ pub struct RuntimeConfig {
     #[arg(long, env = "MCP_RUST_EVENT_STORE_ENABLED", default_value_t = false)]
     pub event_store_enabled: bool,
 
+    #[arg(long, env = "MCP_RUST_RESUME_CORE_ENABLED", default_value_t = false)]
+    pub resume_core_enabled: bool,
+
     #[arg(long, env = "MCP_RUST_SESSION_TTL_SECONDS", default_value_t = 3_600)]
     pub session_ttl_seconds: u64,
 
@@ -118,6 +121,13 @@ pub struct RuntimeConfig {
         default_value_t = 3_600
     )]
     pub event_store_ttl_seconds: u64,
+
+    #[arg(
+        long,
+        env = "MCP_RUST_EVENT_STORE_POLL_INTERVAL_MS",
+        default_value_t = 250
+    )]
+    pub event_store_poll_interval_ms: u64,
 
     #[arg(long, env = "MCP_RUST_CACHE_PREFIX", default_value = "mcpgw:")]
     pub cache_prefix: String,

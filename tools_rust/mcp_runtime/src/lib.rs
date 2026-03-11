@@ -5,7 +5,10 @@ use axum::{
     body::{Body, Bytes},
     extract::State,
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::CONTENT_TYPE},
-    response::{IntoResponse, Response},
+    response::{
+        IntoResponse, Response,
+        sse::{Event, KeepAlive, Sse},
+    },
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -17,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap, hash_map::DefaultHasher},
+    convert::Infallible,
     hash::{Hash, Hasher},
     path::Path,
     str::{self, FromStr},
@@ -53,6 +57,7 @@ const UPSTREAM_CLIENT_HEADER: &str = "x-contextforge-mcp-upstream-client";
 const MCP_PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
 const SESSION_CORE_HEADER: &str = "x-contextforge-mcp-session-core";
 const EVENT_STORE_HEADER: &str = "x-contextforge-mcp-event-store";
+const RESUME_CORE_HEADER: &str = "x-contextforge-mcp-resume-core";
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -101,9 +106,11 @@ pub struct AppState {
     use_rmcp_upstream_client: bool,
     session_core_enabled: bool,
     event_store_enabled: bool,
+    resume_core_enabled: bool,
     cache_prefix: Arc<str>,
     event_store_max_events_per_stream: usize,
     event_store_ttl: Duration,
+    event_store_poll_interval: Duration,
     db_pool: Option<Pool>,
     runtime_sessions: Arc<Mutex<HashMap<String, RuntimeSessionRecord>>>,
     upstream_tool_sessions: Arc<Mutex<HashMap<String, UpstreamToolSession>>>,
@@ -135,6 +142,7 @@ pub struct HealthResponse {
     pub server_name: String,
     pub session_core_enabled: bool,
     pub event_store_enabled: bool,
+    pub resume_core_enabled: bool,
     pub active_sessions: usize,
 }
 
@@ -393,9 +401,11 @@ impl AppState {
             use_rmcp_upstream_client: config.use_rmcp_upstream_client,
             session_core_enabled: config.session_core_enabled,
             event_store_enabled: config.event_store_enabled,
+            resume_core_enabled: config.resume_core_enabled,
             cache_prefix: Arc::from(config.cache_prefix.clone()),
             event_store_max_events_per_stream: config.event_store_max_events_per_stream,
             event_store_ttl: Duration::from_secs(config.event_store_ttl_seconds),
+            event_store_poll_interval: Duration::from_millis(config.event_store_poll_interval_ms),
             db_pool,
             runtime_sessions: Arc::new(Mutex::new(HashMap::new())),
             upstream_tool_sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -550,6 +560,10 @@ impl AppState {
         self.event_store_enabled
     }
 
+    pub fn resume_core_enabled(&self) -> bool {
+        self.resume_core_enabled
+    }
+
     fn cache_prefix(&self) -> &str {
         &self.cache_prefix
     }
@@ -560,6 +574,10 @@ impl AppState {
 
     fn event_store_ttl(&self) -> Duration {
         self.event_store_ttl
+    }
+
+    fn event_store_poll_interval(&self) -> Duration {
+        self.event_store_poll_interval
     }
 
     pub fn db_pool(&self) -> Option<&Pool> {
@@ -652,6 +670,7 @@ async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
         server_name: state.server_name().to_string(),
         session_core_enabled: state.session_core_enabled(),
         event_store_enabled: state.event_store_enabled(),
+        resume_core_enabled: state.resume_core_enabled(),
         active_sessions,
     })
 }
@@ -1743,6 +1762,24 @@ async fn handle_initialize_with_session_core(
             .headers_mut()
             .insert(HeaderName::from_static(SESSION_CORE_HEADER), value);
     }
+    if let Ok(value) = HeaderValue::from_str(if state.event_store_enabled() {
+        "rust"
+    } else {
+        "python"
+    }) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static(EVENT_STORE_HEADER), value);
+    }
+    if let Ok(value) = HeaderValue::from_str(if state.resume_core_enabled() {
+        "rust"
+    } else {
+        "python"
+    }) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static(RESUME_CORE_HEADER), value);
+    }
     response
 }
 
@@ -2209,6 +2246,171 @@ fn query_param(uri: &axum::http::Uri, key: &str) -> Option<String> {
     })
 }
 
+fn accepts_sse(headers: &HeaderMap) -> bool {
+    headers
+        .get("accept")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            value.split(',').any(|part| {
+                let normalized = part.trim().to_ascii_lowercase();
+                normalized == "text/event-stream"
+                    || normalized.starts_with("text/event-stream;")
+                    || normalized == "*/*"
+            })
+        })
+        .unwrap_or(false)
+}
+
+async fn handle_resume_transport_request(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    _uri: axum::http::Uri,
+    session_id: Option<&str>,
+) -> Response {
+    let Some(last_event_id) = incoming_headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+    else {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            json!({"detail": "Last-Event-ID header is required for resumable GET /mcp"}),
+        );
+    };
+
+    let initial_replay = match replay_events_from_rust_event_store(
+        state,
+        EventStoreReplayRequest {
+            last_event_id: last_event_id.clone(),
+            key_prefix: None,
+        },
+    )
+    .await
+    {
+        Ok(replay) => replay,
+        Err(response) => return response,
+    };
+    let protocol_version = incoming_headers
+        .get(MCP_PROTOCOL_VERSION_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or(state.protocol_version())
+        .to_string();
+
+    let keep_alive = KeepAlive::new()
+        .interval(Duration::from_secs(15))
+        .text("");
+    let poll_interval = state.event_store_poll_interval();
+    let session_id = session_id.map(str::to_string);
+    let stream_session_id = session_id.clone();
+    let state_cloned = state.clone();
+    let mut replay_cursor = last_event_id.clone();
+    let mut initial_events = initial_replay.events;
+    let stream_id = initial_replay.stream_id;
+
+    let event_stream = async_stream::stream! {
+        for event in initial_events.drain(..) {
+            replay_cursor = event.event_id.clone();
+            yield Ok::<Event, Infallible>(build_sse_event(&event.event_id, &event.message));
+        }
+
+        if let Some(stream_id_value) = stream_id {
+            if protocol_version.as_str() >= "2025-11-25" {
+                if let Ok(priming_event_id) = store_event_in_rust_event_store(
+                    &state_cloned,
+                    EventStoreStoreRequest {
+                        stream_id: stream_id_value.clone(),
+                        message: None,
+                        key_prefix: None,
+                        max_events_per_stream: None,
+                        ttl_seconds: None,
+                    },
+                ).await {
+                    replay_cursor = priming_event_id.clone();
+                    yield Ok::<Event, Infallible>(Event::default().id(priming_event_id).data(""));
+                }
+            }
+
+            loop {
+                if let Some(session_id_value) = stream_session_id.as_deref() {
+                    if get_runtime_session(&state_cloned, session_id_value).await.is_none() {
+                        break;
+                    }
+                }
+
+                match replay_events_from_rust_event_store(
+                    &state_cloned,
+                    EventStoreReplayRequest {
+                        last_event_id: replay_cursor.clone(),
+                        key_prefix: None,
+                    },
+                )
+                .await {
+                    Ok(replay) => {
+                        if replay.events.is_empty() {
+                            tokio::time::sleep(poll_interval).await;
+                            continue;
+                        }
+                        for event in replay.events {
+                            replay_cursor = event.event_id.clone();
+                            yield Ok::<Event, Infallible>(build_sse_event(&event.event_id, &event.message));
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    };
+
+    let mut response = Sse::new(event_stream).keep_alive(keep_alive).into_response();
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/event-stream"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("cache-control"),
+        HeaderValue::from_static("no-cache, no-transform"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("connection"),
+        HeaderValue::from_static("keep-alive"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(RUNTIME_HEADER),
+        HeaderValue::from_static(RUNTIME_NAME),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(SESSION_CORE_HEADER),
+        HeaderValue::from_static("rust"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(EVENT_STORE_HEADER),
+        HeaderValue::from_static("rust"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(RESUME_CORE_HEADER),
+        HeaderValue::from_static("rust"),
+    );
+    if let Some(session_id_value) = session_id.as_deref() {
+        if let Ok(value) = HeaderValue::from_str(session_id_value) {
+            response
+                .headers_mut()
+                .insert(HeaderName::from_static("mcp-session-id"), value);
+        }
+    }
+    response
+}
+
+fn build_sse_event(event_id: &str, message: &Value) -> Event {
+    let event = Event::default().id(event_id.to_string());
+    if message.is_null() {
+        return event.data("");
+    }
+
+    event
+        .event("message")
+        .data(serde_json::to_string(message).unwrap_or_else(|_| "null".to_string()))
+}
+
 async fn send_to_backend(
     state: &AppState,
     incoming_headers: HeaderMap,
@@ -2280,6 +2482,61 @@ async fn forward_transport_request(
         None
     };
 
+    if method == reqwest::Method::GET
+        && state.resume_core_enabled()
+        && state.session_core_enabled()
+        && state.event_store_enabled()
+        && accepts_sse(&incoming_headers)
+        && incoming_headers.contains_key("last-event-id")
+    {
+        if let Some(session_id_value) = session_id.as_deref() {
+            let Some(record) = get_runtime_session(state, session_id_value).await else {
+                return json_response(
+                    StatusCode::NOT_FOUND,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": "server-error",
+                        "error": {
+                            "code": -32600,
+                            "message": "Session not found",
+                        }
+                    }),
+                );
+            };
+
+            let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+            if !runtime_session_allows_access(&record, auth_context.as_ref()) {
+                return json_response(
+                    StatusCode::FORBIDDEN,
+                    json!({
+                        "detail": "Session access denied",
+                    }),
+                );
+            }
+            inject_session_header(&mut incoming_headers, session_id_value);
+            if let Some(server_id) = record.server_id.as_deref() {
+                if !incoming_headers.contains_key("x-contextforge-server-id") {
+                    inject_server_id_header(&mut incoming_headers, server_id.to_string());
+                }
+            }
+        } else {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                json!({
+                    "detail": "mcp-session-id header or session_id query parameter is required for resumable GET /mcp",
+                }),
+            );
+        }
+
+        return handle_resume_transport_request(
+            state,
+            incoming_headers,
+            uri,
+            session_id.as_deref(),
+        )
+        .await;
+    }
+
     if state.session_core_enabled() && method == reqwest::Method::DELETE && session_id.is_some() {
         let backend_response = match send_session_delete_to_backend(state, &incoming_headers).await
         {
@@ -2303,6 +2560,24 @@ async fn forward_transport_request(
             response
                 .headers_mut()
                 .insert(HeaderName::from_static(SESSION_CORE_HEADER), value);
+        }
+        if let Ok(value) = HeaderValue::from_str(if state.event_store_enabled() {
+            "rust"
+        } else {
+            "python"
+        }) {
+            response
+                .headers_mut()
+                .insert(HeaderName::from_static(EVENT_STORE_HEADER), value);
+        }
+        if let Ok(value) = HeaderValue::from_str(if state.resume_core_enabled() {
+            "rust"
+        } else {
+            "python"
+        }) {
+            response
+                .headers_mut()
+                .insert(HeaderName::from_static(RESUME_CORE_HEADER), value);
         }
         return response;
     }
@@ -2334,6 +2609,24 @@ async fn forward_transport_request(
         response
             .headers_mut()
             .insert(HeaderName::from_static(SESSION_CORE_HEADER), value);
+    }
+    if let Ok(value) = HeaderValue::from_str(if state.event_store_enabled() {
+        "rust"
+    } else {
+        "python"
+    }) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static(EVENT_STORE_HEADER), value);
+    }
+    if let Ok(value) = HeaderValue::from_str(if state.resume_core_enabled() {
+        "rust"
+    } else {
+        "python"
+    }) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static(RESUME_CORE_HEADER), value);
     }
     response
 }

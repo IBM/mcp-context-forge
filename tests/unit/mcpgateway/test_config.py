@@ -1056,6 +1056,7 @@ def test_experimental_rust_mcp_runtime_defaults():
     assert s.experimental_rust_mcp_runtime_timeout_seconds == 30
     assert s.experimental_rust_mcp_session_core_enabled is False
     assert s.experimental_rust_mcp_event_store_enabled is False
+    assert s.experimental_rust_mcp_resume_core_enabled is False
 
 
 def test_experimental_rust_mcp_runtime_uds_accepts_absolute_path(tmp_path: Path):

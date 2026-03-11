@@ -8,11 +8,13 @@ EXPERIMENTAL_RUST_MCP_RUNTIME_URL="${EXPERIMENTAL_RUST_MCP_RUNTIME_URL:-http://1
 EXPERIMENTAL_RUST_MCP_RUNTIME_UDS="${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-}"
 EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED:-false}"
 EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED="${EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED:-false}"
+EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED:-false}"
 CONTEXTFORGE_ENABLE_RUST_BUILD="${CONTEXTFORGE_ENABLE_RUST_BUILD:-false}"
 CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD="${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD:-false}"
 MCP_RUST_USE_RMCP_UPSTREAM_CLIENT="${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT:-false}"
 MCP_RUST_SESSION_CORE_ENABLED="${MCP_RUST_SESSION_CORE_ENABLED:-${EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED}}"
 MCP_RUST_EVENT_STORE_ENABLED="${MCP_RUST_EVENT_STORE_ENABLED:-${EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED}}"
+MCP_RUST_RESUME_CORE_ENABLED="${MCP_RUST_RESUME_CORE_ENABLED:-${EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED}}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}" || {
@@ -44,6 +46,7 @@ print_mcp_runtime_mode() {
     local upstream_client_mode="native"
     local session_core_mode="python"
     local event_store_mode="python"
+    local resume_core_mode="python"
 
     if [[ "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" = "true" ]]; then
         upstream_client_mode="rmcp"
@@ -54,14 +57,17 @@ print_mcp_runtime_mode() {
     if [[ "${MCP_RUST_EVENT_STORE_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
         event_store_mode="rust"
     fi
+    if [[ "${MCP_RUST_RESUME_CORE_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
+        resume_core_mode="rust"
+    fi
 
     if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
         if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
             runtime_mode="rust-managed"
-            echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode})"
+            echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode}, resume core: ${resume_core_mode})"
         else
             runtime_mode="rust-external"
-            echo "MCP runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}}, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode})"
+            echo "MCP runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}}, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode}, resume core: ${resume_core_mode})"
         fi
 
         if [[ "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" = "true" && "${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD}" != "true" ]]; then
@@ -145,6 +151,7 @@ start_managed_rust_mcp_runtime() {
     export MCP_RUST_BACKEND_RPC_URL="${backend_rpc_url}"
     export MCP_RUST_SESSION_CORE_ENABLED="${MCP_RUST_SESSION_CORE_ENABLED}"
     export MCP_RUST_EVENT_STORE_ENABLED="${MCP_RUST_EVENT_STORE_ENABLED}"
+    export MCP_RUST_RESUME_CORE_ENABLED="${MCP_RUST_RESUME_CORE_ENABLED}"
     export MCP_RUST_CACHE_PREFIX="${rust_cache_prefix}"
     export MCP_RUST_EVENT_STORE_MAX_EVENTS_PER_STREAM="${rust_event_store_max}"
     export MCP_RUST_EVENT_STORE_TTL_SECONDS="${rust_event_store_ttl}"

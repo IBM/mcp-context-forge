@@ -262,6 +262,7 @@ class TestInternalTrustedMcpTransportBridge:
         start = next(message for message in sent if message["type"] == "http.response.start")
         assert (b"x-contextforge-mcp-runtime", b"python") in start["headers"]
         assert (b"x-contextforge-mcp-session-core", b"python") in start["headers"]
+        assert (b"x-contextforge-mcp-resume-core", b"python") in start["headers"]
 
     @pytest.mark.asyncio
     async def test_bridge_sets_scope_and_forwarded_auth_context(self):
@@ -6911,11 +6912,13 @@ class TestRemainingCoverageGaps:
         assert result["mcp_runtime"]["rust_build_included"] is True
         assert result["mcp_runtime"]["session_core_mode"] == "python"
         assert result["mcp_runtime"]["event_store_mode"] == "python"
+        assert result["mcp_runtime"]["resume_core_mode"] == "python"
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "python-rust-built-disabled"
         assert response.headers["x-contextforge-mcp-transport-mounted"] == "python"
         assert response.headers["x-contextforge-rust-build-included"] == "true"
         assert response.headers["x-contextforge-mcp-session-core-mode"] == "python"
         assert response.headers["x-contextforge-mcp-event-store-mode"] == "python"
+        assert response.headers["x-contextforge-mcp-resume-core-mode"] == "python"
 
     async def test_readiness_check_invalidate_failure_is_best_effort(self, monkeypatch):
         import mcpgateway.main as main_mod
@@ -6973,6 +6976,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_uds", "/tmp/contextforge-mcp-rust.sock")
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_session_core_enabled", True)
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_event_store_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_resume_core_enabled", True)
 
         response = await main_mod.readiness_check()
         payload = json.loads(response.body.decode())
@@ -6984,11 +6988,13 @@ class TestRemainingCoverageGaps:
         assert payload["mcp_runtime"]["sidecar_transport"] == "uds"
         assert payload["mcp_runtime"]["session_core_mode"] == "rust"
         assert payload["mcp_runtime"]["event_store_mode"] == "rust"
+        assert payload["mcp_runtime"]["resume_core_mode"] == "rust"
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
         assert response.headers["x-contextforge-mcp-transport-mounted"] == "rust"
         assert response.headers["x-contextforge-rust-build-included"] == "true"
         assert response.headers["x-contextforge-mcp-session-core-mode"] == "rust"
         assert response.headers["x-contextforge-mcp-event-store-mode"] == "rust"
+        assert response.headers["x-contextforge-mcp-resume-core-mode"] == "rust"
 
     async def test_sse_endpoint_cookie_auth_and_disconnect_cleanup(self, monkeypatch):
         import mcpgateway.main as main_mod

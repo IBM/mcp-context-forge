@@ -10,6 +10,7 @@ default = []
 rmcp-upstream-client = ["dep:rmcp"]
 
 [dependencies]
+async-stream = "0.3.6"
 axum = "0.8.8"
 base64 = "0.22.1"
 clap = { version = "4.5.60", features = ["derive", "env"] }
