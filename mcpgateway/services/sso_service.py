@@ -32,6 +32,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import PendingUserApproval, SSOAuthSession, SSOProvider, utc_now
 from mcpgateway.services.email_auth_service import EmailAuthService
@@ -1522,7 +1523,7 @@ class SSOService:
                 if should_be_admin:
                     # Grant admin access
                     if not current_is_admin:
-                        logger.info(f"Upgrading is_admin to True for {email} based on SSO admin groups")
+                        logger.info(f"Upgrading is_admin to True for {SecurityValidator.sanitize_log_message(email)} based on SSO admin groups")
                         user.is_admin = True
                         # Track that admin was granted via SSO (only set on initial grant)
                         user.admin_origin = "sso"
@@ -1530,7 +1531,7 @@ class SSOService:
                     # Do NOT change admin_origin if already admin - preserve manual/API grants
                 elif current_is_admin and current_admin_origin == "sso":
                     # User was SSO admin but no longer in admin groups - revoke access
-                    logger.info(f"Revoking is_admin for {email} - removed from SSO admin groups")
+                    logger.info(f"Revoking is_admin for {SecurityValidator.sanitize_log_message(email)} - removed from SSO admin groups")
                     user.is_admin = False
                     user.admin_origin = None
                     current_is_admin = False
@@ -1589,7 +1590,7 @@ class SSOService:
                             pending.rejection_reason = None
                             pending.admin_notes = None
                             self.db.commit()
-                            logger.info(f"Refreshed expired pending approval request for SSO user: {email}")
+                            logger.info(f"Refreshed expired pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
                             return None
                         return None  # Still waiting for approval
                     if pending.status == "rejected":
@@ -1610,12 +1611,12 @@ class SSOService:
                         pending.rejection_reason = None
                         pending.admin_notes = None
                         self.db.commit()
-                        logger.info(f"Renewed expired pending approval request for SSO user: {email}")
+                        logger.info(f"Renewed expired pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
                         return None
                     elif pending.status in {"completed"}:
                         return None
                     elif pending.status != "approved":
-                        logger.warning(f"Unknown SSO pending approval status '{pending.status}' for user {email}. Denying by default.")
+                        logger.warning(f"Unknown SSO pending approval status '{pending.status}' for user {SecurityValidator.sanitize_log_message(email)}. Denying by default.")
                         return None
                 else:
                     # Create pending approval request
@@ -1628,7 +1629,7 @@ class SSOService:
                     )
                     self.db.add(pending)
                     self.db.commit()
-                    logger.info(f"Created pending approval request for SSO user: {email}")
+                    logger.info(f"Created pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
                     return None  # No token until approved
 
             # Create new user (either no approval required, or approval already granted)
@@ -1805,9 +1806,9 @@ class SSOService:
                 personal_team = await PersonalTeamService(self.db).get_personal_team(user_email)
                 personal_team_id = personal_team.id if personal_team else None
                 if not personal_team_id:
-                    logger.warning(f"Could not resolve personal team for {user_email}; skipping team-scoped SSO role mapping")
+                    logger.warning(f"Could not resolve personal team for {SecurityValidator.sanitize_log_message(user_email)}; skipping team-scoped SSO role mapping")
             except Exception as e:
-                logger.error(f"Failed to resolve personal team for {user_email}: {e}. All team-scoped SSO role assignments will be skipped for this login.")
+                logger.error(f"Failed to resolve personal team for {SecurityValidator.sanitize_log_message(user_email)}: {e}. All team-scoped SSO role assignments will be skipped for this login.")
                 personal_team_id = None
 
             return personal_team_id
@@ -1818,7 +1819,7 @@ class SSOService:
             for group in user_groups:
                 if group.lower() in admin_groups_lower:
                     role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped EntraID admin group to {settings.default_admin_role} role for {user_email}")
+                    logger.debug(f"Mapped EntraID admin group to {settings.default_admin_role} role for {SecurityValidator.sanitize_log_message(user_email)}")
                     break  # Only need one admin assignment
 
         # Batch role lookups: collect all role names that need to be looked up
@@ -1851,7 +1852,7 @@ class SSOService:
                 # Special case for "admin" shorthand or configured admin role name
                 if role_name in ["admin", settings.default_admin_role]:
                     role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped group to {settings.default_admin_role} role for {user_email}")
+                    logger.debug(f"Mapped group to {settings.default_admin_role} role for {SecurityValidator.sanitize_log_message(user_email)}")
                     continue
 
                 # Use pre-fetched role from cache
@@ -1863,7 +1864,7 @@ class SSOService:
                     # Avoid duplicate assignments
                     if not any(r["role_name"] == role.name and r["scope"] == role.scope and r.get("scope_id") == scope_id for r in role_assignments):
                         role_assignments.append({"role_name": role.name, "scope": role.scope, "scope_id": scope_id})
-                        logger.debug(f"Mapped group to role '{role.name}' for {user_email}")
+                        logger.debug(f"Mapped group to role '{role.name}' for {SecurityValidator.sanitize_log_message(user_email)}")
                 else:
                     logger.warning(f"Role '{role_name}' not found for group mapping")
 
@@ -1875,7 +1876,7 @@ class SSOService:
                 if default_role.scope == "team" and resolve_team_scope_to_personal_team and not scope_id:
                     return role_assignments
                 role_assignments.append({"role_name": default_role.name, "scope": default_role.scope, "scope_id": scope_id})
-                logger.info(f"Assigned default role '{default_role.name}' to {user_email}")
+                logger.info(f"Assigned default role '{default_role.name}' to {SecurityValidator.sanitize_log_message(user_email)}")
 
         return role_assignments
 
@@ -1905,7 +1906,7 @@ class SSOService:
             role_tuple = (user_role.role.name, user_role.scope, user_role.scope_id)
             if role_tuple not in desired_roles:
                 await role_service.revoke_role_from_user(user_email=user_email, role_id=user_role.role_id, scope=user_role.scope, scope_id=user_role.scope_id)
-                logger.info(f"Revoked SSO role '{user_role.role.name}' from {user_email} (no longer in groups)")
+                logger.info(f"Revoked SSO role '{user_role.role.name}' from {SecurityValidator.sanitize_log_message(user_email)} (no longer in groups)")
 
         # Assign new roles
         for assignment in role_assignments:
@@ -1913,7 +1914,7 @@ class SSOService:
                 # Get role by name
                 role = await role_service.get_role_by_name(assignment["role_name"], scope=assignment["scope"])
                 if not role:
-                    logger.warning(f"Role '{assignment['role_name']}' not found, skipping assignment for {user_email}")
+                    logger.warning(f"Role '{assignment['role_name']}' not found, skipping assignment for {SecurityValidator.sanitize_log_message(user_email)}")
                     continue
 
                 # Check if assignment already exists
@@ -1924,12 +1925,14 @@ class SSOService:
                     await role_service.assign_role_to_user(
                         user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id"), granted_by=user_email, grant_source="sso"
                     )
-                    logger.info(f"Assigned SSO role '{role.name}' to {user_email}")
+                    logger.info(f"Assigned SSO role '{role.name}' to {SecurityValidator.sanitize_log_message(user_email)}")
 
             except Exception as e:
-                logger.warning(f"Failed to assign role '{assignment['role_name']}' to {user_email}: {e}", exc_info=True)
+                logger.warning(f"Failed to assign role '{assignment['role_name']}' to {SecurityValidator.sanitize_log_message(user_email)}: {e}", exc_info=True)
                 try:
                     self.db.rollback()
                 except Exception as rollback_error:
-                    logger.error(f"Database rollback failed after role assignment error for {user_email}: {rollback_error}. Aborting remaining role assignments.")
+                    logger.error(
+                        f"Database rollback failed after role assignment error for {SecurityValidator.sanitize_log_message(user_email)}: {rollback_error}. Aborting remaining role assignments."
+                    )
                     break

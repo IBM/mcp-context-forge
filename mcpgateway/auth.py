@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
@@ -1018,7 +1019,7 @@ async def get_current_user(
 
     except PluginViolationError as e:
         # Plugin explicitly denied authentication with custom message
-        logger.warning(f"Authentication denied by plugin: {e.message}")
+        logger.warning(f"Authentication denied by plugin: {SecurityValidator.sanitize_log_message(e.message)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=e.message,  # Use plugin's custom error message
@@ -1029,7 +1030,7 @@ async def get_current_user(
         raise
     except Exception as e:
         # Log but don't fail on plugin errors - fall back to standard auth
-        logger.warning(f"HTTP_AUTH_RESOLVE_USER hook failed, falling back to standard auth: {e}")
+        logger.warning(f"HTTP_AUTH_RESOLVE_USER hook failed, falling back to standard auth: {SecurityValidator.sanitize_log_message(str(e))}")
 
     # EXISTING: Standard authentication (JWT, API tokens)
     if not credentials:
@@ -1292,7 +1293,9 @@ async def get_current_user(
                 # Fail-secure: if the revocation check itself errors, reject the token.
                 # Allowing through on error would let revoked tokens bypass enforcement
                 # when the DB is unreachable or the table is missing.
-                logger.warning(f"Token revocation check failed for JTI {jti} — denying access (fail-secure): {revoke_check_error}")
+                logger.warning(
+                    f"Token revocation check failed for JTI {SecurityValidator.sanitize_log_message(jti)} — denying access (fail-secure): {SecurityValidator.sanitize_log_message(str(revoke_check_error))}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Token validation failed",
@@ -1381,7 +1384,7 @@ async def get_current_user(
             raise
         except Exception as e:
             # Neither JWT nor API token validation worked
-            logger.debug(f"Database API token validation failed with exception: {e}")
+            logger.debug(f"Database API token validation failed with exception: {SecurityValidator.sanitize_log_message(str(e))}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authentication credentials",

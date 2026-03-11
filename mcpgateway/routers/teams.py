@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_permission
@@ -336,7 +337,7 @@ async def get_team(team_id: str, current_user: dict = Depends(get_current_user_w
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting team {team_id}: {e}")
+        logger.error(f"Error getting team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get team")
 
 
@@ -400,7 +401,7 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
         logger.error(f"Team update failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error updating team {team_id}: {e}")
+        logger.error(f"Error updating team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update team")
 
 
@@ -438,7 +439,7 @@ async def delete_team(team_id: str, current_user: dict = Depends(get_current_use
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting team {team_id}: {e}")
+        logger.error(f"Error deleting team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete team")
 
 
@@ -521,7 +522,7 @@ async def list_team_members(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error listing team members for team {team_id}: {e}")
+        logger.error(f"Error listing team members for team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list team members")
 
 
@@ -573,7 +574,7 @@ async def add_team_member(team_id: str, request: TeamMemberAddRequest, current_u
     except TeamManagementError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error adding team member {request.email} to team {team_id}: {e}")
+        logger.error(f"Error adding team member {SecurityValidator.sanitize_log_message(request.email)} to team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to add team member")
 
 
@@ -623,7 +624,7 @@ async def update_team_member(
         logger.error(f"Member update failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error updating team member {user_email} in team {team_id}: {e}")
+        logger.error(f"Error updating team member {SecurityValidator.sanitize_log_message(user_email)} in team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update team member")
 
 
@@ -662,7 +663,7 @@ async def remove_team_member(team_id: str, user_email: str, current_user: dict =
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error removing team member {user_email} from team {team_id}: {e}")
+        logger.error(f"Error removing team member {SecurityValidator.sanitize_log_message(user_email)} from team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to remove team member")
 
 
@@ -729,7 +730,7 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         logger.error(f"Team invitation failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error creating team invitation for team {team_id}: {e}")
+        logger.error(f"Error creating team invitation for team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create invitation")
 
 
@@ -788,7 +789,7 @@ async def list_team_invitations(team_id: str, current_user: dict = Depends(get_c
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error listing team invitations for team {team_id}: {e}")
+        logger.error(f"Error listing team invitations for team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list invitations")
 
 
@@ -937,7 +938,7 @@ async def request_to_join_team(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error creating join request for team {team_id}: {e}")
+        logger.error(f"Error creating join request for team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create join request")
 
 
@@ -992,7 +993,7 @@ async def leave_team(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error leaving team {team_id}: {e}")
+        logger.error(f"Error leaving team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to leave team")
 
 
@@ -1052,7 +1053,7 @@ async def list_team_join_requests(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error listing join requests for team {team_id}: {e}")
+        logger.error(f"Error listing join requests for team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list join requests")
 
 

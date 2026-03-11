@@ -882,6 +882,75 @@ class SecurityValidator:
         return value
 
     @classmethod
+    def sanitize_log_message(cls, message: Optional[Any], max_length: int = 10000) -> str:
+        """Sanitize log message to prevent log injection attacks.
+
+        Removes newlines, carriage returns, ANSI escapes, and control characters
+        to prevent log forging and injection attacks (CWE-117).
+
+        Args:
+            message: Log message to sanitize
+            max_length: Maximum length (default: 10000)
+
+        Returns:
+            Sanitized message safe for logging
+
+        Examples:
+            Basic newline removal:
+
+            >>> SecurityValidator.sanitize_log_message("User\\nFake: admin")
+            'User Fake: admin'
+            >>> SecurityValidator.sanitize_log_message("Test\\rInjection")
+            'Test Injection'
+
+            ANSI escape removal:
+
+            >>> SecurityValidator.sanitize_log_message("User: \\x1B[31madmin\\x1B[0m")
+            'User: admin'
+
+            Control character removal:
+
+            >>> result = SecurityValidator.sanitize_log_message("User\\x00\\x01\\x02")
+            >>> "\\x00" not in result and "\\x01" not in result
+            True
+
+            Length truncation:
+
+            >>> long_msg = "A" * 15000
+            >>> result = SecurityValidator.sanitize_log_message(long_msg, max_length=10000)
+            >>> len(result) <= 10020
+            True
+            >>> result.endswith("[truncated]")
+            True
+
+            Empty input handling:
+
+            >>> SecurityValidator.sanitize_log_message("")
+            ''
+            >>> SecurityValidator.sanitize_log_message(None)
+            ''
+        """
+        if not message:
+            return ""
+
+        text = str(message)
+
+        # Remove newlines and carriage returns (primary log injection vectors)
+        text = text.replace("\n", " ").replace("\r", " ")
+
+        # Remove ANSI escape sequences
+        text = _ANSI_ESCAPE_RE.sub("", text)
+
+        # Remove control characters
+        text = _CONTROL_CHARS_RE.sub("", text)
+
+        # Truncate to prevent log flooding
+        if len(text) > max_length:
+            text = text[:max_length] + "...[truncated]"
+
+        return text
+
+    @classmethod
     def validate_url(cls, value: str, field_name: str = "URL") -> str:
         """Validate URLs for allowed schemes and safe display
 

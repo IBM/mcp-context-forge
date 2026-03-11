@@ -48,6 +48,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.services.logging_service import LoggingService
@@ -174,11 +175,11 @@ async def bootstrap_admin_user(conn: Connection) -> None:
             # Check if admin user already exists
             existing_user = await auth_service.get_user_by_email(settings.platform_admin_email)
             if existing_user:
-                logger.info(f"Admin user {settings.platform_admin_email} already exists - skipping creation")
+                logger.info(f"Admin user {SecurityValidator.sanitize_log_message(settings.platform_admin_email)} already exists - skipping creation")
                 return
 
             # Create admin user
-            logger.info(f"Creating platform admin user: {settings.platform_admin_email}")
+            logger.info(f"Creating platform admin user: {SecurityValidator.sanitize_log_message(settings.platform_admin_email)}")
             admin_user = await auth_service.create_platform_admin(
                 email=settings.platform_admin_email,
                 password=settings.platform_admin_password.get_secret_value(),
@@ -204,7 +205,7 @@ async def bootstrap_admin_user(conn: Connection) -> None:
                 logger.info("Personal team automatically created for admin user")
 
             db.commit()
-            logger.info(f"Platform admin user created successfully: {settings.platform_admin_email}")
+            logger.info(f"Platform admin user created successfully: {SecurityValidator.sanitize_log_message(settings.platform_admin_email)}")
 
     except Exception as e:
         logger.error(f"Failed to bootstrap admin user: {e}")
@@ -393,7 +394,9 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                             additional_default_roles_path = Path(__file__).resolve().parent.parent / settings.mcpgateway_bootstrap_roles_in_db_file
 
                     if not additional_default_roles_path.exists():
-                        logger.warning(f"Additional roles file not found. Searched: CWD/{settings.mcpgateway_bootstrap_roles_in_db_file}, {additional_default_roles_path}")
+                        logger.warning(
+                            f"Additional roles file not found. Searched: CWD/{SecurityValidator.sanitize_log_message(settings.mcpgateway_bootstrap_roles_in_db_file)}, {SecurityValidator.sanitize_log_message(str(additional_default_roles_path))}"
+                        )
                     else:
                         with open(additional_default_roles_path, "r", encoding="utf-8") as f:
                             additional_default_roles_data = json.load(f)
@@ -411,7 +414,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                                 missing_keys = required_keys - set(role.keys())
                                 if missing_keys:
                                     role_name = role.get("name", f"<index {idx}>")
-                                    logger.warning(f"Skipping role '{role_name}': missing required keys {missing_keys}")
+                                    logger.warning(f"Skipping role '{SecurityValidator.sanitize_log_message(str(role_name))}': missing required keys {missing_keys}")
                                     continue
                                 valid_roles.append(role)
 
@@ -430,7 +433,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     # Check if role already exists
                     existing_role = await role_service.get_role_by_name(str(role_def["name"]), str(role_def["scope"]))
                     if existing_role:
-                        logger.info(f"System role {role_def['name']} already exists - skipping")
+                        logger.info(f"System role {SecurityValidator.sanitize_log_message(str(role_def['name']))} already exists - skipping")
                         created_roles.append(existing_role)
                         continue
 
@@ -447,7 +450,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     logger.info(f"Created system role: {role.name}")
 
                 except Exception as e:
-                    logger.error(f"Failed to create role {role_def['name']}: {e}")
+                    logger.error(f"Failed to create role {SecurityValidator.sanitize_log_message(str(role_def['name']))}: {SecurityValidator.sanitize_log_message(str(e))}")
                     continue
 
             # Assign platform_admin role to admin user
@@ -462,14 +465,18 @@ async def bootstrap_default_roles(conn: Connection) -> None:
 
                     if not existing_assignment or not existing_assignment.is_active:
                         await role_service.assign_role_to_user(user_email=admin_user.email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=admin_user.email)
-                        logger.info(f"Assigned platform_admin role to {admin_user.email}")
+                        logger.info(f"Assigned platform_admin role to {SecurityValidator.sanitize_log_message(admin_user.email)}")
                     else:
                         logger.info("Admin user already has platform_admin role")
 
                 except Exception as e:
-                    logger.error(f"Failed to assign platform_admin role to {admin_user.email}: {e}. Admin UI routes using allow_admin_bypass=False will return 403.")
+                    logger.error(
+                        f"Failed to assign platform_admin role to {SecurityValidator.sanitize_log_message(admin_user.email)}: {SecurityValidator.sanitize_log_message(str(e))}. Admin UI routes using allow_admin_bypass=False will return 403."
+                    )
             else:
-                logger.error(f"platform_admin role not found — could not assign to {admin_user.email}. Admin UI routes using allow_admin_bypass=False will return 403.")
+                logger.error(
+                    f"platform_admin role not found — could not assign to {SecurityValidator.sanitize_log_message(admin_user.email)}. Admin UI routes using allow_admin_bypass=False will return 403."
+                )
 
             logger.info("Default RBAC roles bootstrap completed successfully")
 
@@ -538,7 +545,7 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                 logger.warning("Admin personal team not found - skipping resource assignment")
                 return
 
-            logger.info(f"Assigning orphaned resources to admin team: {personal_team.name}")
+            logger.info(f"Assigning orphaned resources to admin team: {SecurityValidator.sanitize_log_message(personal_team.name)}")
 
             # Resource types to process
             resource_types = [("servers", Server), ("tools", Tool), ("resources", Resource), ("prompts", Prompt), ("gateways", Gateway), ("a2a_agents", A2AAgent)]
@@ -564,7 +571,7 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                         total_assigned += len(unassigned)
 
                 except Exception as e:
-                    logger.error(f"Failed to assign {resource_name}: {e}")
+                    logger.error(f"Failed to assign {SecurityValidator.sanitize_log_message(resource_name)}: {SecurityValidator.sanitize_log_message(str(e))}")
                     continue
 
             if total_assigned > 0:
