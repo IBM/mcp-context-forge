@@ -257,6 +257,10 @@ class Settings(BaseSettings):
         default=False,
         description="Enable the experimental Rust-owned MCP session metadata core while keeping Python as the fallback transport backend.",
     )
+    experimental_rust_mcp_event_store_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned resumable MCP event-store backend for Streamable HTTP sessions.",
+    )
 
     # Authentication
     basic_auth_user: str = "admin"

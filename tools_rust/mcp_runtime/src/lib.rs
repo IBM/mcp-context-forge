@@ -11,6 +11,7 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use futures_util::TryStreamExt;
+use redis::{AsyncCommands, Script, aio::ConnectionManager as RedisConnectionManager};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -50,6 +51,8 @@ const RUNTIME_HEADER: &str = "x-contextforge-mcp-runtime";
 const RUNTIME_NAME: &str = "rust";
 const UPSTREAM_CLIENT_HEADER: &str = "x-contextforge-mcp-upstream-client";
 const MCP_PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
+const SESSION_CORE_HEADER: &str = "x-contextforge-mcp-session-core";
+const EVENT_STORE_HEADER: &str = "x-contextforge-mcp-event-store";
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -63,7 +66,7 @@ pub enum RuntimeError {
     Io(#[from] std::io::Error),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppState {
     backend_rpc_url: Arc<str>,
     backend_initialize_url: Arc<str>,
@@ -87,6 +90,8 @@ pub struct AppState {
     backend_tools_call_url: Arc<str>,
     backend_tools_call_resolve_url: Arc<str>,
     client: Client,
+    redis_client: Option<redis::Client>,
+    redis_manager: Arc<Mutex<Option<RedisConnectionManager>>>,
     protocol_version: Arc<str>,
     supported_protocol_versions: Arc<Vec<String>>,
     server_name: Arc<str>,
@@ -95,6 +100,10 @@ pub struct AppState {
     #[cfg(feature = "rmcp-upstream-client")]
     use_rmcp_upstream_client: bool,
     session_core_enabled: bool,
+    event_store_enabled: bool,
+    cache_prefix: Arc<str>,
+    event_store_max_events_per_stream: usize,
+    event_store_ttl: Duration,
     db_pool: Option<Pool>,
     runtime_sessions: Arc<Mutex<HashMap<String, RuntimeSessionRecord>>>,
     upstream_tool_sessions: Arc<Mutex<HashMap<String, UpstreamToolSession>>>,
@@ -125,6 +134,7 @@ pub struct HealthResponse {
     pub supported_protocol_versions: Vec<String>,
     pub server_name: String,
     pub session_core_enabled: bool,
+    pub event_store_enabled: bool,
     pub active_sessions: usize,
 }
 
@@ -190,6 +200,86 @@ struct CachedResolvedToolCallPlan {
     cached_at: Instant,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredRuntimeSessionRecord {
+    owner_email: Option<String>,
+    server_id: Option<String>,
+    protocol_version: Option<String>,
+    client_capabilities: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EventStoreStoreRequest {
+    stream_id: String,
+    #[serde(default)]
+    message: Option<Value>,
+    #[serde(default)]
+    key_prefix: Option<String>,
+    #[serde(default)]
+    max_events_per_stream: Option<usize>,
+    #[serde(default)]
+    ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EventStoreStoreResponse {
+    event_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EventStoreReplayRequest {
+    last_event_id: String,
+    #[serde(default)]
+    key_prefix: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EventStoreReplayResponse {
+    stream_id: Option<String>,
+    events: Vec<EventStoreReplayEvent>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EventStoreReplayEvent {
+    event_id: String,
+    message: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct EventIndexRecord {
+    stream_id: String,
+    seq_num: i64,
+}
+
+impl From<&RuntimeSessionRecord> for StoredRuntimeSessionRecord {
+    fn from(value: &RuntimeSessionRecord) -> Self {
+        Self {
+            owner_email: value.owner_email.clone(),
+            server_id: value.server_id.clone(),
+            protocol_version: value.protocol_version.clone(),
+            client_capabilities: value.client_capabilities.clone(),
+        }
+    }
+}
+
+impl From<StoredRuntimeSessionRecord> for RuntimeSessionRecord {
+    fn from(value: StoredRuntimeSessionRecord) -> Self {
+        Self {
+            owner_email: value.owner_email,
+            server_id: value.server_id,
+            protocol_version: value.protocol_version,
+            client_capabilities: value.client_capabilities,
+            created_at: Instant::now(),
+            last_used: Instant::now(),
+        }
+    }
+}
+
 #[derive(Debug)]
 enum ResolveToolsCallError {
     Fallback(String),
@@ -229,6 +319,7 @@ impl AppState {
             .timeout(Duration::from_millis(config.request_timeout_ms))
             .build()?;
         let db_pool = build_db_pool(config)?;
+        let redis_client = build_redis_client(config)?;
 
         Ok(Self {
             backend_rpc_url: Arc::from(config.backend_rpc_url.clone()),
@@ -291,6 +382,8 @@ impl AppState {
                 &config.backend_rpc_url,
             )),
             client,
+            redis_client,
+            redis_manager: Arc::new(Mutex::new(None)),
             protocol_version: Arc::from(config.protocol_version.clone()),
             supported_protocol_versions: Arc::new(config.effective_supported_protocol_versions()),
             server_name: Arc::from(config.server_name.clone()),
@@ -299,6 +392,10 @@ impl AppState {
             #[cfg(feature = "rmcp-upstream-client")]
             use_rmcp_upstream_client: config.use_rmcp_upstream_client,
             session_core_enabled: config.session_core_enabled,
+            event_store_enabled: config.event_store_enabled,
+            cache_prefix: Arc::from(config.cache_prefix.clone()),
+            event_store_max_events_per_stream: config.event_store_max_events_per_stream,
+            event_store_ttl: Duration::from_secs(config.event_store_ttl_seconds),
             db_pool,
             runtime_sessions: Arc::new(Mutex::new(HashMap::new())),
             upstream_tool_sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -399,6 +496,25 @@ impl AppState {
         &self.protocol_version
     }
 
+    async fn redis(&self) -> Option<RedisConnectionManager> {
+        if let Some(manager) = self.redis_manager.lock().await.clone() {
+            return Some(manager);
+        }
+
+        let client = self.redis_client.clone()?;
+        let manager = match RedisConnectionManager::new(client).await {
+            Ok(manager) => manager,
+            Err(err) => {
+                warn!("Rust MCP Redis manager initialization failed: {err}");
+                return None;
+            }
+        };
+
+        let mut slot = self.redis_manager.lock().await;
+        *slot = Some(manager.clone());
+        Some(manager)
+    }
+
     pub fn supported_protocol_versions(&self) -> &[String] {
         self.supported_protocol_versions.as_slice()
     }
@@ -428,6 +544,22 @@ impl AppState {
 
     pub fn session_core_enabled(&self) -> bool {
         self.session_core_enabled
+    }
+
+    pub fn event_store_enabled(&self) -> bool {
+        self.event_store_enabled
+    }
+
+    fn cache_prefix(&self) -> &str {
+        &self.cache_prefix
+    }
+
+    fn event_store_max_events_per_stream(&self) -> usize {
+        self.event_store_max_events_per_stream
+    }
+
+    fn event_store_ttl(&self) -> Duration {
+        self.event_store_ttl
     }
 
     pub fn db_pool(&self) -> Option<&Pool> {
@@ -468,6 +600,11 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(healthz))
         .route("/healthz", get(healthz))
+        .route("/_internal/event-store/store", post(store_event_endpoint))
+        .route(
+            "/_internal/event-store/replay",
+            post(replay_events_endpoint),
+        )
         .route("/rpc", post(rpc))
         .route("/rpc/", post(rpc))
         .route(
@@ -514,6 +651,7 @@ async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
         supported_protocol_versions: state.supported_protocol_versions().to_vec(),
         server_name: state.server_name().to_string(),
         session_core_enabled: state.session_core_enabled(),
+        event_store_enabled: state.event_store_enabled(),
         active_sessions,
     })
 }
@@ -532,6 +670,62 @@ async fn transport_delete(
     uri: axum::http::Uri,
 ) -> Response {
     forward_transport_request(&state, reqwest::Method::DELETE, headers, uri).await
+}
+
+async fn store_event_endpoint(
+    State(state): State<AppState>,
+    Json(request): Json<EventStoreStoreRequest>,
+) -> Response {
+    if !state.event_store_enabled() {
+        return json_response(
+            StatusCode::NOT_IMPLEMENTED,
+            json!({"detail": "Rust event store is disabled"}),
+        );
+    }
+
+    let event_id = match store_event_in_rust_event_store(&state, request).await {
+        Ok(event_id) => event_id,
+        Err(response) => return response,
+    };
+
+    let mut response = Json(EventStoreStoreResponse { event_id }).into_response();
+    response.headers_mut().insert(
+        HeaderName::from_static(RUNTIME_HEADER),
+        HeaderValue::from_static(RUNTIME_NAME),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(EVENT_STORE_HEADER),
+        HeaderValue::from_static("rust"),
+    );
+    response
+}
+
+async fn replay_events_endpoint(
+    State(state): State<AppState>,
+    Json(request): Json<EventStoreReplayRequest>,
+) -> Response {
+    if !state.event_store_enabled() {
+        return json_response(
+            StatusCode::NOT_IMPLEMENTED,
+            json!({"detail": "Rust event store is disabled"}),
+        );
+    }
+
+    let replay = match replay_events_from_rust_event_store(&state, request).await {
+        Ok(replay) => replay,
+        Err(response) => return response,
+    };
+
+    let mut response = Json(replay).into_response();
+    response.headers_mut().insert(
+        HeaderName::from_static(RUNTIME_HEADER),
+        HeaderValue::from_static(RUNTIME_NAME),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(EVENT_STORE_HEADER),
+        HeaderValue::from_static("rust"),
+    );
+    response
 }
 
 async fn rpc(
@@ -587,12 +781,17 @@ async fn rpc(
 
     if state.session_core_enabled() {
         if specialized_initialize {
-            return handle_initialize_with_session_core(&state, effective_headers, uri, body, &request)
-                .await;
+            return handle_initialize_with_session_core(
+                &state,
+                effective_headers,
+                uri,
+                body,
+                &request,
+            )
+            .await;
         }
 
-        apply_session_core_request_context(&state, &mut effective_headers, &uri)
-            .await;
+        apply_session_core_request_context(&state, &mut effective_headers, &uri).await;
     }
 
     let mode = if request.method == "ping" {
@@ -661,18 +860,33 @@ async fn rpc(
     }
 
     if specialized_resources_list {
-        return forward_resources_list_to_backend(&state, effective_headers, body, request.id.clone())
-            .await;
+        return forward_resources_list_to_backend(
+            &state,
+            effective_headers,
+            body,
+            request.id.clone(),
+        )
+        .await;
     }
 
     if specialized_resources_read {
-        return forward_resources_read_to_backend(&state, effective_headers, body, request.id.clone())
-            .await;
+        return forward_resources_read_to_backend(
+            &state,
+            effective_headers,
+            body,
+            request.id.clone(),
+        )
+        .await;
     }
 
     if specialized_resources_subscribe {
-        return forward_resources_subscribe_to_backend(&state, effective_headers, body, request.id.clone())
-            .await;
+        return forward_resources_subscribe_to_backend(
+            &state,
+            effective_headers,
+            body,
+            request.id.clone(),
+        )
+        .await;
     }
 
     if specialized_resources_unsubscribe {
@@ -682,7 +896,7 @@ async fn rpc(
             body,
             request.id.clone(),
         )
-            .await;
+        .await;
     }
 
     if specialized_resource_templates_list {
@@ -696,8 +910,13 @@ async fn rpc(
     }
 
     if specialized_prompts_list {
-        return forward_prompts_list_to_backend(&state, effective_headers, body, request.id.clone())
-            .await;
+        return forward_prompts_list_to_backend(
+            &state,
+            effective_headers,
+            body,
+            request.id.clone(),
+        )
+        .await;
     }
 
     if specialized_prompts_get {
@@ -717,7 +936,7 @@ async fn rpc(
             body,
             request.id.clone(),
         )
-            .await;
+        .await;
     }
 
     if specialized_sampling_create_message {
@@ -737,7 +956,7 @@ async fn rpc(
             body,
             request.id.clone(),
         )
-            .await;
+        .await;
     }
 
     if catch_all_notifications {
@@ -797,7 +1016,8 @@ async fn rpc(
     }
 
     if server_scoped_tools_list {
-        return forward_server_tools_list_to_backend(&state, effective_headers, request.id.clone()).await;
+        return forward_server_tools_list_to_backend(&state, effective_headers, request.id.clone())
+            .await;
     }
 
     if specialized_tools_call {
@@ -1073,6 +1293,25 @@ fn derive_backend_transport_url(backend_rpc_url: &str) -> String {
     )
 }
 
+fn derive_backend_session_delete_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/session");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/session");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/session");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/session");
+    }
+    format!(
+        "{}/_internal/mcp/session",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
 fn derive_backend_notifications_initialized_url(backend_rpc_url: &str) -> String {
     if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
         return format!("{prefix}/_internal/mcp/notifications/initialized");
@@ -1214,6 +1453,17 @@ fn build_db_pool(config: &RuntimeConfig) -> Result<Option<Pool>, RuntimeError> {
         .map_err(|err| RuntimeError::Config(format!("failed to build Rust MCP DB pool: {err}")))?;
 
     Ok(Some(pool))
+}
+
+fn build_redis_client(config: &RuntimeConfig) -> Result<Option<redis::Client>, RuntimeError> {
+    let Some(redis_url) = config.redis_url.as_deref() else {
+        return Ok(None);
+    };
+
+    let client = redis::Client::open(redis_url).map_err(|err| {
+        RuntimeError::Config(format!("invalid MCP_RUST_REDIS_URL '{}': {err}", redis_url))
+    })?;
+    Ok(Some(client))
 }
 
 fn is_server_scoped_tools_list(headers: &HeaderMap) -> bool {
@@ -1466,7 +1716,9 @@ async fn handle_initialize_with_session_core(
 
     if status.is_success() {
         let record = RuntimeSessionRecord {
-            owner_email: auth_context.as_ref().and_then(|context| context.email.clone()),
+            owner_email: auth_context
+                .as_ref()
+                .and_then(|context| context.email.clone()),
             server_id: extract_server_id_header(&incoming_headers),
             protocol_version: requested_protocol_version(request),
             client_capabilities: extract_client_capabilities(request),
@@ -1478,13 +1730,18 @@ async fn handle_initialize_with_session_core(
         remove_runtime_session(state, &response_session_id).await;
     }
 
-    let mut response =
-        response_from_backend_with_session_hint(backend_response, Some(response_session_id.as_str()));
-    if let Ok(value) = HeaderValue::from_str(if state.session_core_enabled() { "rust" } else { "python" }) {
-        response.headers_mut().insert(
-            HeaderName::from_static("x-contextforge-mcp-session-core"),
-            value,
-        );
+    let mut response = response_from_backend_with_session_hint(
+        backend_response,
+        Some(response_session_id.as_str()),
+    );
+    if let Ok(value) = HeaderValue::from_str(if state.session_core_enabled() {
+        "rust"
+    } else {
+        "python"
+    }) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static(SESSION_CORE_HEADER), value);
     }
     response
 }
@@ -1494,25 +1751,56 @@ async fn active_runtime_session_count(state: &AppState) -> usize {
     let ttl = state.session_ttl();
     let mut sessions = state.runtime_sessions().lock().await;
     sessions.retain(|_, record| now.duration_since(record.last_used) <= ttl);
-    sessions.len()
+    let local_count = sessions.len();
+    drop(sessions);
+
+    if state.redis().await.is_some() {
+        if let Some(redis_count) = count_runtime_sessions_in_redis(state).await {
+            return redis_count;
+        }
+    }
+
+    local_count
 }
 
 async fn get_runtime_session(state: &AppState, session_id: &str) -> Option<RuntimeSessionRecord> {
     let now = Instant::now();
     let ttl = state.session_ttl();
-    let mut sessions = state.runtime_sessions().lock().await;
-    let Some(record) = sessions.get_mut(session_id) else {
-        return None;
-    };
-    if now.duration_since(record.last_used) > ttl {
-        sessions.remove(session_id);
-        return None;
+    {
+        let mut sessions = state.runtime_sessions().lock().await;
+        if let Some(record) = sessions.get_mut(session_id) {
+            if now.duration_since(record.last_used) > ttl {
+                sessions.remove(session_id);
+            } else {
+                record.last_used = now;
+                return Some(record.clone());
+            }
+        }
     }
-    record.last_used = now;
-    Some(record.clone())
+
+    let record = get_runtime_session_from_redis(state, session_id).await?;
+    cache_runtime_session_locally(state, session_id.to_string(), record.clone()).await;
+    Some(record)
 }
 
 async fn upsert_runtime_session(
+    state: &AppState,
+    session_id: String,
+    mut record: RuntimeSessionRecord,
+) {
+    record.last_used = Instant::now();
+    cache_runtime_session_locally(state, session_id.clone(), record.clone()).await;
+    upsert_runtime_session_in_redis(state, &session_id, &record).await;
+}
+
+async fn remove_runtime_session(state: &AppState, session_id: &str) {
+    let mut sessions = state.runtime_sessions().lock().await;
+    sessions.remove(session_id);
+    drop(sessions);
+    remove_runtime_session_from_redis(state, session_id).await;
+}
+
+async fn cache_runtime_session_locally(
     state: &AppState,
     session_id: String,
     mut record: RuntimeSessionRecord,
@@ -1522,9 +1810,294 @@ async fn upsert_runtime_session(
     sessions.insert(session_id, record);
 }
 
-async fn remove_runtime_session(state: &AppState, session_id: &str) {
-    let mut sessions = state.runtime_sessions().lock().await;
-    sessions.remove(session_id);
+async fn count_runtime_sessions_in_redis(state: &AppState) -> Option<usize> {
+    let mut redis = state.redis().await?;
+    let pattern = format!("{}rust:mcp:session:*", state.cache_prefix());
+    match redis.keys::<_, Vec<String>>(pattern).await {
+        Ok(keys) => Some(keys.len()),
+        Err(err) => {
+            warn!("Rust MCP session count Redis lookup failed: {err}");
+            None
+        }
+    }
+}
+
+async fn get_runtime_session_from_redis(
+    state: &AppState,
+    session_id: &str,
+) -> Option<RuntimeSessionRecord> {
+    let mut redis = state.redis().await?;
+    let key = runtime_session_key(state, session_id);
+    match redis.get::<_, Option<String>>(&key).await {
+        Ok(Some(payload)) => {
+            let _ = redis
+                .expire::<_, bool>(&key, state.session_ttl().as_secs() as i64)
+                .await;
+            match serde_json::from_str::<StoredRuntimeSessionRecord>(&payload) {
+                Ok(record) => Some(record.into()),
+                Err(err) => {
+                    warn!("Rust MCP session decode failed for {session_id}: {err}");
+                    None
+                }
+            }
+        }
+        Ok(None) => None,
+        Err(err) => {
+            warn!("Rust MCP session Redis lookup failed for {session_id}: {err}");
+            None
+        }
+    }
+}
+
+async fn upsert_runtime_session_in_redis(
+    state: &AppState,
+    session_id: &str,
+    record: &RuntimeSessionRecord,
+) {
+    let Some(mut redis) = state.redis().await else {
+        return;
+    };
+    let payload = match serde_json::to_string(&StoredRuntimeSessionRecord::from(record)) {
+        Ok(payload) => payload,
+        Err(err) => {
+            warn!("Rust MCP session serialization failed for {session_id}: {err}");
+            return;
+        }
+    };
+    let key = runtime_session_key(state, session_id);
+    if let Err(err) = redis
+        .set_ex::<_, _, ()>(&key, payload, state.session_ttl().as_secs())
+        .await
+    {
+        warn!("Rust MCP session Redis write failed for {session_id}: {err}");
+    }
+}
+
+async fn remove_runtime_session_from_redis(state: &AppState, session_id: &str) {
+    let Some(mut redis) = state.redis().await else {
+        return;
+    };
+    let key = runtime_session_key(state, session_id);
+    if let Err(err) = redis.del::<_, ()>(&key).await {
+        warn!("Rust MCP session Redis delete failed for {session_id}: {err}");
+    }
+}
+
+fn runtime_session_key(state: &AppState, session_id: &str) -> String {
+    format!("{}rust:mcp:session:{session_id}", state.cache_prefix())
+}
+
+const STORE_EVENT_LUA: &str = r#"
+local meta_key = KEYS[1]
+local events_key = KEYS[2]
+local messages_key = KEYS[3]
+
+local event_id = ARGV[1]
+local message_json = ARGV[2]
+local ttl = tonumber(ARGV[3])
+local max_events = tonumber(ARGV[4])
+local index_prefix = ARGV[5]
+local stream_id = ARGV[6]
+
+local seq_num = redis.call('HINCRBY', meta_key, 'next_seq', 1)
+local count = redis.call('HINCRBY', meta_key, 'count', 1)
+if count == 1 then
+  redis.call('HSET', meta_key, 'start_seq', seq_num)
+end
+
+redis.call('ZADD', events_key, seq_num, event_id)
+redis.call('HSET', messages_key, event_id, message_json)
+
+local index_key = index_prefix .. event_id
+redis.call('SET', index_key, cjson.encode({stream_id=stream_id, seq_num=seq_num}), 'EX', ttl)
+
+if count > max_events then
+  local to_evict = count - max_events
+  local evicted_ids = redis.call('ZRANGE', events_key, 0, to_evict - 1)
+  redis.call('ZREMRANGEBYRANK', events_key, 0, to_evict - 1)
+
+  if #evicted_ids > 0 then
+    redis.call('HDEL', messages_key, unpack(evicted_ids))
+    for _, ev_id in ipairs(evicted_ids) do
+      redis.call('DEL', index_prefix .. ev_id)
+    end
+  end
+
+  redis.call('HSET', meta_key, 'count', max_events)
+  local first = redis.call('ZRANGE', events_key, 0, 0, 'WITHSCORES')
+  if #first >= 2 then
+    redis.call('HSET', meta_key, 'start_seq', tonumber(first[2]))
+  else
+    redis.call('HSET', meta_key, 'start_seq', seq_num)
+  end
+end
+
+redis.call('EXPIRE', meta_key, ttl)
+redis.call('EXPIRE', events_key, ttl)
+redis.call('EXPIRE', messages_key, ttl)
+
+return seq_num
+"#;
+
+async fn store_event_in_rust_event_store(
+    state: &AppState,
+    request: EventStoreStoreRequest,
+) -> Result<String, Response> {
+    let Some(mut redis) = state.redis().await else {
+        return Err(json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"detail": "Rust Redis event store is unavailable"}),
+        ));
+    };
+
+    let event_id = Uuid::new_v4().to_string();
+    let key_prefix = event_store_key_prefix(state, request.key_prefix.as_deref());
+    let message_json = serde_json::to_string(&request.message).map_err(|err| {
+        json_response(
+            StatusCode::BAD_REQUEST,
+            json!({"detail": format!("Invalid event payload: {err}")}),
+        )
+    })?;
+    let ttl = request
+        .ttl_seconds
+        .unwrap_or(state.event_store_ttl().as_secs());
+    let max_events = request
+        .max_events_per_stream
+        .unwrap_or(state.event_store_max_events_per_stream());
+
+    let meta_key = format!("{key_prefix}:{}:meta", request.stream_id);
+    let events_key = format!("{key_prefix}:{}:events", request.stream_id);
+    let messages_key = format!("{key_prefix}:{}:messages", request.stream_id);
+    let index_prefix = format!("{key_prefix}:event_index:");
+
+    Script::new(STORE_EVENT_LUA)
+        .key(meta_key)
+        .key(events_key)
+        .key(messages_key)
+        .arg(event_id.clone())
+        .arg(message_json)
+        .arg(ttl as i64)
+        .arg(max_events as i64)
+        .arg(index_prefix)
+        .arg(request.stream_id)
+        .invoke_async::<i64>(&mut redis)
+        .await
+        .map_err(|err| {
+            error!("Rust event store write failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({"detail": format!("Rust event store write failed: {err}")}),
+            )
+        })?;
+
+    Ok(event_id)
+}
+
+async fn replay_events_from_rust_event_store(
+    state: &AppState,
+    request: EventStoreReplayRequest,
+) -> Result<EventStoreReplayResponse, Response> {
+    let Some(mut redis) = state.redis().await else {
+        return Err(json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"detail": "Rust Redis event store is unavailable"}),
+        ));
+    };
+
+    let key_prefix = event_store_key_prefix(state, request.key_prefix.as_deref());
+    let index_key = format!("{key_prefix}:event_index:{}", request.last_event_id);
+    let Some(index_payload) = redis
+        .get::<_, Option<String>>(&index_key)
+        .await
+        .map_err(|err| {
+            error!("Rust event store replay lookup failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({"detail": format!("Rust event store replay lookup failed: {err}")}),
+            )
+        })?
+    else {
+        return Ok(EventStoreReplayResponse {
+            stream_id: None,
+            events: Vec::new(),
+        });
+    };
+
+    let index_record: EventIndexRecord = serde_json::from_str(&index_payload).map_err(|err| {
+        json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({"detail": format!("Rust event store index decode failed: {err}")}),
+        )
+    })?;
+    let meta_key = format!("{key_prefix}:{}:meta", index_record.stream_id);
+    let events_key = format!("{key_prefix}:{}:events", index_record.stream_id);
+    let messages_key = format!("{key_prefix}:{}:messages", index_record.stream_id);
+
+    if let Some(start_seq) = redis
+        .hget::<_, _, Option<i64>>(&meta_key, "start_seq")
+        .await
+        .map_err(|err| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({"detail": format!("Rust event store meta lookup failed: {err}")}),
+            )
+        })?
+    {
+        if index_record.seq_num < start_seq {
+            return Ok(EventStoreReplayResponse {
+                stream_id: None,
+                events: Vec::new(),
+            });
+        }
+    }
+
+    let event_ids = redis::cmd("ZRANGEBYSCORE")
+        .arg(&events_key)
+        .arg(index_record.seq_num + 1)
+        .arg("+inf")
+        .query_async::<Vec<String>>(&mut redis)
+        .await
+        .map_err(|err| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({"detail": format!("Rust event store replay scan failed: {err}")}),
+            )
+        })?;
+
+    let mut events = Vec::with_capacity(event_ids.len());
+    for event_id in event_ids {
+        let Some(message_json) = redis
+            .hget::<_, _, Option<String>>(&messages_key, &event_id)
+            .await
+            .map_err(|err| {
+                json_response(
+                    StatusCode::BAD_GATEWAY,
+                    json!({"detail": format!("Rust event store replay fetch failed: {err}")}),
+                )
+            })?
+        else {
+            continue;
+        };
+
+        let message = serde_json::from_str::<Value>(&message_json).unwrap_or(Value::Null);
+        events.push(EventStoreReplayEvent { event_id, message });
+    }
+
+    Ok(EventStoreReplayResponse {
+        stream_id: Some(index_record.stream_id),
+        events,
+    })
+}
+
+fn event_store_key_prefix(state: &AppState, override_prefix: Option<&str>) -> String {
+    let prefix = override_prefix
+        .unwrap_or("eventstore")
+        .trim_end_matches(':');
+    if prefix.contains(':') {
+        prefix.to_string()
+    } else {
+        format!("{}{}", state.cache_prefix(), prefix)
+    }
 }
 
 async fn apply_session_core_request_context(
@@ -1707,8 +2280,36 @@ async fn forward_transport_request(
         None
     };
 
+    if state.session_core_enabled() && method == reqwest::Method::DELETE && session_id.is_some() {
+        let backend_response = match send_session_delete_to_backend(state, &incoming_headers).await
+        {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
+
+        if backend_response.status().is_success() {
+            if let Some(session_id_value) = session_id.as_deref() {
+                remove_runtime_session(state, session_id_value).await;
+            }
+        }
+
+        let mut response =
+            response_from_backend_with_session_hint(backend_response, session_id.as_deref());
+        if let Ok(value) = HeaderValue::from_str(if state.session_core_enabled() {
+            "rust"
+        } else {
+            "python"
+        }) {
+            response
+                .headers_mut()
+                .insert(HeaderName::from_static(SESSION_CORE_HEADER), value);
+        }
+        return response;
+    }
+
     let backend_response =
-        match send_transport_to_backend(state, method.clone(), &incoming_headers, &uri, None).await {
+        match send_transport_to_backend(state, method.clone(), &incoming_headers, &uri, None).await
+        {
             Ok(response) => response,
             Err(response) => return response,
         };
@@ -1723,12 +2324,16 @@ async fn forward_transport_request(
         }
     }
 
-    let mut response = response_from_backend_with_session_hint(backend_response, session_id.as_deref());
-    if let Ok(value) = HeaderValue::from_str(if state.session_core_enabled() { "rust" } else { "python" }) {
-        response.headers_mut().insert(
-            HeaderName::from_static("x-contextforge-mcp-session-core"),
-            value,
-        );
+    let mut response =
+        response_from_backend_with_session_hint(backend_response, session_id.as_deref());
+    if let Ok(value) = HeaderValue::from_str(if state.session_core_enabled() {
+        "rust"
+    } else {
+        "python"
+    }) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static(SESSION_CORE_HEADER), value);
     }
     response
 }
@@ -2624,16 +3229,35 @@ async fn send_transport_to_backend(
     if let Some(body) = body {
         request = request.body(body);
     }
-    request
+    request.send().await.map_err(|err| {
+        error!("backend MCP transport dispatch failed: {err}");
+        json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "error": "Bad Gateway",
+                "message": "Backend MCP transport dispatch failed",
+                "data": err.to_string(),
+            }),
+        )
+    })
+}
+
+async fn send_session_delete_to_backend(
+    state: &AppState,
+    incoming_headers: &HeaderMap,
+) -> Result<reqwest::Response, Response> {
+    state
+        .client
+        .delete(derive_backend_session_delete_url(state.backend_rpc_url()))
+        .headers(build_forwarded_headers(incoming_headers))
         .send()
         .await
         .map_err(|err| {
-            error!("backend MCP transport dispatch failed: {err}");
+            error!("backend MCP session delete dispatch failed: {err}");
             json_response(
                 StatusCode::BAD_GATEWAY,
                 json!({
-                    "error": "Bad Gateway",
-                    "message": "Backend MCP transport dispatch failed",
+                    "detail": "Backend MCP session delete dispatch failed",
                     "data": err.to_string(),
                 }),
             )

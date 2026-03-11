@@ -147,7 +147,7 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy
 from mcpgateway.transports.sse_transport import SSETransport
-from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, set_shared_session_registry, streamable_http_auth, user_context_var
+from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, _validate_streamable_session_access, set_shared_session_registry, streamable_http_auth, user_context_var
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -887,6 +887,13 @@ def _current_mcp_session_core_mode() -> str:
     return "python"
 
 
+def _current_mcp_event_store_mode() -> str:
+    """Return which runtime currently owns MCP resumable event-store semantics."""
+    if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_event_store_enabled:
+        return "rust"
+    return "python"
+
+
 def _mcp_runtime_status_payload() -> Dict[str, Any]:
     """Return MCP runtime diagnostics for health/readiness endpoints."""
     payload: Dict[str, Any] = {
@@ -895,9 +902,14 @@ def _mcp_runtime_status_payload() -> Dict[str, Any]:
         "rust_build_included": _rust_build_included(),
         "rust_runtime_enabled": settings.experimental_rust_mcp_runtime_enabled,
         "session_core_mode": _current_mcp_session_core_mode(),
+        "event_store_mode": _current_mcp_event_store_mode(),
         "rust_session_core_enabled": bool(
             settings.experimental_rust_mcp_runtime_enabled
             and settings.experimental_rust_mcp_session_core_enabled
+        ),
+        "rust_event_store_enabled": bool(
+            settings.experimental_rust_mcp_runtime_enabled
+            and settings.experimental_rust_mcp_event_store_enabled
         ),
     }
 
@@ -919,6 +931,7 @@ def _apply_runtime_mode_headers(response: Response) -> None:
     response.headers["x-contextforge-mcp-transport-mounted"] = _current_mcp_transport_mount()
     response.headers["x-contextforge-rust-build-included"] = "true" if _rust_build_included() else "false"
     response.headers["x-contextforge-mcp-session-core-mode"] = _current_mcp_session_core_mode()
+    response.headers["x-contextforge-mcp-event-store-mode"] = _current_mcp_event_store_mode()
 
 
 @lru_cache(maxsize=512)
@@ -6355,6 +6368,41 @@ async def handle_internal_mcp_initialize(request: Request):
                 "id": req_id,
             }
         )
+
+
+@utility_router.delete("/_internal/mcp/session/")
+@utility_router.delete("/_internal/mcp/session")
+async def handle_internal_mcp_session_delete(request: Request):
+    """Handle trusted MCP session teardown forwarded from the local Rust runtime."""
+    _build_internal_mcp_forwarded_user(request)
+    auth_context = _get_internal_mcp_auth_context(request) or {}
+    mcp_session_id = request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id")
+    if not mcp_session_id:
+        return ORJSONResponse(status_code=400, content={"detail": "mcp-session-id header is required"})
+
+    session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
+        mcp_session_id=mcp_session_id,
+        user_context=auth_context,
+    )
+    if not session_allowed:
+        return ORJSONResponse(status_code=deny_status, content={"detail": deny_detail})
+
+    server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
+    if server_id:
+        _enforce_internal_mcp_server_scope(request, server_id)
+
+    await session_registry.remove_session(mcp_session_id)
+
+    if settings.mcpgateway_session_affinity_enabled:
+        try:
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+            pool = get_mcp_session_pool()
+            await pool.cleanup_streamable_http_session_owner(mcp_session_id)
+        except RuntimeError:
+            pass
+
+    return Response(status_code=204)
 
 
 @utility_router.post("/_internal/mcp/notifications/initialized/")

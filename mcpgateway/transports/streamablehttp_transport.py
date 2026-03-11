@@ -38,6 +38,7 @@ import contextvars
 from dataclasses import dataclass
 import re
 from typing import Any, AsyncGenerator, Dict, List, Optional, Pattern, Tuple, Union
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 # Third-Party
@@ -69,6 +70,7 @@ from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, 
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
+from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
@@ -98,6 +100,9 @@ request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.Contex
 user_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("user_context", default={})
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
 _shared_session_registry: Optional[Any] = None
+_rust_event_store_client: Optional[httpx.AsyncClient] = None
+_rust_event_store_client_lock = asyncio.Lock()
+_RUST_EVENT_STORE_DEFAULT_KEY_PREFIX = "mcpgw:eventstore"
 
 # ------------------------------ Event store ------------------------------
 
@@ -394,6 +399,87 @@ class InMemoryEventStore(EventStore):
             await send_callback(EventMessage(entry.message, entry.event_id))
 
         return last_event.stream_id
+
+
+class RustEventStore(EventStore):
+    """Rust-backed event store that delegates resumable stream state to the sidecar."""
+
+    def __init__(self, max_events_per_stream: int = 100, ttl: int = 3600, key_prefix: str = _RUST_EVENT_STORE_DEFAULT_KEY_PREFIX):
+        self.max_events_per_stream = max_events_per_stream
+        self.ttl = ttl
+        self.key_prefix = key_prefix.rstrip(":")
+
+    async def store_event(self, stream_id: StreamId, message: JSONRPCMessage | None) -> EventId:
+        client = await _get_rust_event_store_client()
+        message_dict = None if message is None else (message.model_dump() if hasattr(message, "model_dump") else dict(message))
+        response = await client.post(
+            _build_rust_runtime_internal_url("/_internal/event-store/store"),
+            json={
+                "streamId": stream_id,
+                "message": message_dict,
+                "keyPrefix": self.key_prefix,
+                "maxEventsPerStream": self.max_events_per_stream,
+                "ttlSeconds": self.ttl,
+            },
+            timeout=httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds),
+        )
+        response.raise_for_status()
+        payload = response.json()
+        event_id = payload.get("eventId")
+        if not isinstance(event_id, str) or not event_id:
+            raise RuntimeError("Rust event store returned an invalid eventId")
+        return event_id
+
+    async def replay_events_after(self, last_event_id: EventId, send_callback: EventCallback) -> Union[StreamId, None]:
+        client = await _get_rust_event_store_client()
+        response = await client.post(
+            _build_rust_runtime_internal_url("/_internal/event-store/replay"),
+            json={
+                "lastEventId": last_event_id,
+                "keyPrefix": self.key_prefix,
+            },
+            timeout=httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds),
+        )
+        response.raise_for_status()
+        payload = response.json()
+        stream_id = payload.get("streamId")
+        if not isinstance(stream_id, str) or not stream_id:
+            return None
+        for event in payload.get("events", []):
+            if not isinstance(event, dict):
+                continue
+            await send_callback(event.get("message"))
+        return stream_id
+
+
+async def _get_rust_event_store_client() -> httpx.AsyncClient:
+    """Return the HTTP client used for Python -> Rust event-store calls."""
+    global _rust_event_store_client  # pylint: disable=global-statement
+
+    uds_path = settings.experimental_rust_mcp_runtime_uds
+    if not uds_path:
+        return await get_http_client()
+
+    if _rust_event_store_client is not None:
+        return _rust_event_store_client
+
+    async with _rust_event_store_client_lock:
+        if _rust_event_store_client is None:
+            _rust_event_store_client = httpx.AsyncClient(
+                transport=httpx.AsyncHTTPTransport(uds=uds_path),
+                limits=get_http_limits(),
+                timeout=httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds),
+                follow_redirects=True,
+            )
+        return _rust_event_store_client
+
+
+def _build_rust_runtime_internal_url(path: str) -> str:
+    """Build a Rust sidecar internal URL for UDS or loopback HTTP transport."""
+    base = urlsplit(settings.experimental_rust_mcp_runtime_url)
+    base_path = base.path.rstrip("/")
+    target_path = f"{base_path}{path}" if base_path else path
+    return urlunsplit((base.scheme, base.netloc, target_path, "", ""))
 
 
 # ------------------------------ Streamable HTTP Transport ------------------------------
@@ -2229,8 +2315,14 @@ class SessionManagerWrapper:
         """
 
         if settings.use_stateful_sessions:
+            if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_event_store_enabled:
+                event_store = RustEventStore(
+                    max_events_per_stream=settings.streamable_http_max_events_per_stream,
+                    ttl=settings.streamable_http_event_ttl,
+                )
+                logger.debug("Using RustEventStore for stateful sessions")
             # Use Redis event store for single-worker stateful deployments
-            if settings.cache_type == "redis" and settings.redis_url:
+            elif settings.cache_type == "redis" and settings.redis_url:
                 event_store = RedisEventStore(max_events_per_stream=settings.streamable_http_max_events_per_stream, ttl=settings.streamable_http_event_ttl)
                 logger.debug("Using RedisEventStore for stateful sessions (single-worker)")
             else:

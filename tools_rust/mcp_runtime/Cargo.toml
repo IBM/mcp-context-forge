@@ -15,6 +15,7 @@ base64 = "0.22.1"
 clap = { version = "4.5.60", features = ["derive", "env"] }
 deadpool-postgres = "0.14.1"
 futures-util = "0.3.31"
+redis = { version = "0.32.7", features = ["aio", "tokio-comp", "connection-manager"] }
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "stream", "http2", "rustls-tls-native-roots"] }
 rmcp = { version = "1.1.1", optional = true, default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
 serde = { version = "1.0.228", features = ["derive"] }

@@ -2,13 +2,15 @@ use axum::{
     Json, Router,
     http::{HeaderMap, StatusCode, Uri},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use contextforge_mcp_runtime::{AppState, build_router, config::RuntimeConfig};
+use redis::AsyncCommands;
 use reqwest::header::HeaderValue;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 
 #[derive(Clone, Default)]
 struct BackendObservation {
@@ -47,10 +49,46 @@ fn test_runtime_config() -> RuntimeConfig {
         upstream_session_ttl_seconds: 300,
         use_rmcp_upstream_client: false,
         session_core_enabled: false,
+        event_store_enabled: false,
         session_ttl_seconds: 3_600,
+        event_store_max_events_per_stream: 100,
+        event_store_ttl_seconds: 3_600,
+        cache_prefix: "mcpgw:".to_string(),
         database_url: None,
+        redis_url: None,
         db_pool_max_size: 20,
         log_filter: "error".to_string(),
+    }
+}
+
+async fn redis_is_available(redis_url: &str) -> bool {
+    let Ok(client) = redis::Client::open(redis_url) else {
+        return false;
+    };
+    let Ok(mut conn) = client.get_multiplexed_async_connection().await else {
+        return false;
+    };
+    redis::cmd("PING")
+        .query_async::<String>(&mut conn)
+        .await
+        .is_ok()
+}
+
+async fn cleanup_redis_prefix(redis_url: &str, prefix: &str) {
+    let Ok(client) = redis::Client::open(redis_url) else {
+        return;
+    };
+    let Ok(mut conn) = client.get_multiplexed_async_connection().await else {
+        return;
+    };
+    let pattern = format!("{prefix}*");
+    let keys = redis::cmd("KEYS")
+        .arg(pattern)
+        .query_async::<Vec<String>>(&mut conn)
+        .await
+        .unwrap_or_default();
+    if !keys.is_empty() {
+        let _ = conn.del::<_, ()>(keys).await;
     }
 }
 
@@ -159,6 +197,7 @@ async fn health_alias_is_available_for_gateway_style_probes() {
     let body: Value = response.json().await.expect("json body");
     assert_eq!(body["status"], "ok");
     assert_eq!(body["session_core_enabled"], json!(false));
+    assert_eq!(body["event_store_enabled"], json!(false));
     assert_eq!(body["active_sessions"], json!(0));
     assert!(
         body["supported_protocol_versions"]
@@ -310,87 +349,94 @@ async fn get_and_delete_mcp_routes_forward_to_internal_transport_bridge() {
 
 #[tokio::test]
 async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_transport_requests() {
-    let transport_calls = Arc::new(Mutex::new(
-        Vec::<(String, Option<String>, Option<String>, Option<String>)>::new(),
-    ));
+    let transport_calls = Arc::new(Mutex::new(Vec::<(
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )>::new()));
     let backend = {
         let post_calls = transport_calls.clone();
         let get_calls = transport_calls.clone();
         let delete_calls = transport_calls.clone();
-        Router::new().route(
-            "/_internal/mcp/transport",
-            post(move |headers: HeaderMap, uri: Uri, Json(body): Json<Value>| {
-                let transport_calls = post_calls.clone();
-                async move {
-                    transport_calls.lock().expect("lock").push((
-                        "POST".to_string(),
-                        headers
-                            .get("mcp-session-id")
-                            .and_then(|value| value.to_str().ok())
-                            .map(str::to_string),
-                        headers
-                            .get("x-contextforge-server-id")
-                            .and_then(|value| value.to_str().ok())
-                            .map(str::to_string),
-                        uri.query().map(str::to_string),
-                    ));
-                    let mut response_headers = HeaderMap::new();
-                    response_headers.insert(
-                        "mcp-session-id",
-                        HeaderValue::from_static("transport-session-1"),
-                    );
-                    (
-                        StatusCode::OK,
-                        response_headers,
-                        Json(json!({
-                            "jsonrpc":"2.0",
-                            "id": body["id"],
-                            "result": {"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"ContextForge","version":"0.1.0"}}
-                        })),
-                    )
-                }
-            })
-            .get(move |headers: HeaderMap, uri: Uri| {
-                let transport_calls = get_calls.clone();
-                async move {
-                    transport_calls.lock().expect("lock").push((
-                        "GET".to_string(),
-                        headers
-                            .get("mcp-session-id")
-                            .and_then(|value| value.to_str().ok())
-                            .map(str::to_string),
-                        headers
-                            .get("x-contextforge-server-id")
-                            .and_then(|value| value.to_str().ok())
-                            .map(str::to_string),
-                        uri.query().map(str::to_string),
-                    ));
-                    (
-                        StatusCode::OK,
-                        [("content-type", HeaderValue::from_static("text/event-stream"))],
-                        "data: ping\n\n",
-                    )
-                }
-            })
-            .delete(move |headers: HeaderMap, uri: Uri| {
-                let transport_calls = delete_calls.clone();
-                async move {
-                    transport_calls.lock().expect("lock").push((
-                        "DELETE".to_string(),
-                        headers
-                            .get("mcp-session-id")
-                            .and_then(|value| value.to_str().ok())
-                            .map(str::to_string),
-                        headers
-                            .get("x-contextforge-server-id")
-                            .and_then(|value| value.to_str().ok())
-                            .map(str::to_string),
-                        uri.query().map(str::to_string),
-                    ));
-                    StatusCode::NO_CONTENT
-                }
-            }),
-        )
+        Router::new()
+            .route(
+                "/_internal/mcp/transport",
+                post(move |headers: HeaderMap, uri: Uri, Json(body): Json<Value>| {
+                    let transport_calls = post_calls.clone();
+                    async move {
+                        transport_calls.lock().expect("lock").push((
+                            "POST".to_string(),
+                            headers
+                                .get("mcp-session-id")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
+                            headers
+                                .get("x-contextforge-server-id")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
+                            uri.query().map(str::to_string),
+                        ));
+                        let mut response_headers = HeaderMap::new();
+                        response_headers.insert(
+                            "mcp-session-id",
+                            HeaderValue::from_static("transport-session-1"),
+                        );
+                        (
+                            StatusCode::OK,
+                            response_headers,
+                            Json(json!({
+                                "jsonrpc":"2.0",
+                                "id": body["id"],
+                                "result": {"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"ContextForge","version":"0.1.0"}}
+                            })),
+                        )
+                    }
+                })
+                .get(move |headers: HeaderMap, uri: Uri| {
+                    let transport_calls = get_calls.clone();
+                    async move {
+                        transport_calls.lock().expect("lock").push((
+                            "GET".to_string(),
+                            headers
+                                .get("mcp-session-id")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
+                            headers
+                                .get("x-contextforge-server-id")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
+                            uri.query().map(str::to_string),
+                        ));
+                        (
+                            StatusCode::OK,
+                            [("content-type", HeaderValue::from_static("text/event-stream"))],
+                            "data: ping\n\n",
+                        )
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/session",
+                delete(move |headers: HeaderMap| {
+                    let transport_calls = delete_calls.clone();
+                    async move {
+                        transport_calls.lock().expect("lock").push((
+                            "SESSION_DELETE".to_string(),
+                            headers
+                                .get("mcp-session-id")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
+                            headers
+                                .get("x-contextforge-server-id")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
+                            None,
+                        ));
+                        StatusCode::NO_CONTENT
+                    }
+                }),
+            )
     };
     let backend_url = spawn_router(backend).await;
 
@@ -486,12 +532,251 @@ async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_tran
     assert_eq!(
         calls[2],
         (
-            "DELETE".to_string(),
+            "SESSION_DELETE".to_string(),
             Some("transport-session-1".to_string()),
             Some("server-123".to_string()),
-            Some("session_id=transport-session-1".to_string()),
+            None,
         )
     );
+}
+
+#[tokio::test]
+async fn session_core_redis_shares_sessions_across_runtime_instances() {
+    let redis_url = "redis://127.0.0.1:6379/0";
+    if !redis_is_available(redis_url).await {
+        return;
+    }
+
+    let cache_prefix = format!("mcpgw:rust-session-itest:{}:", Uuid::new_v4());
+    cleanup_redis_prefix(redis_url, &cache_prefix).await;
+
+    let transport_calls = Arc::new(Mutex::new(Vec::<(
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )>::new()));
+    let backend = {
+        let post_calls = transport_calls.clone();
+        let get_calls = transport_calls.clone();
+        Router::new().route(
+            "/_internal/mcp/transport",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let transport_calls = post_calls.clone();
+                async move {
+                    transport_calls.lock().expect("lock").push((
+                        "POST".to_string(),
+                        headers
+                            .get("mcp-session-id")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        headers
+                            .get("x-contextforge-server-id")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        None,
+                    ));
+                    let mut response_headers = HeaderMap::new();
+                    response_headers.insert(
+                        "mcp-session-id",
+                        HeaderValue::from_static("redis-session-1"),
+                    );
+                    (
+                        StatusCode::OK,
+                        response_headers,
+                        Json(json!({
+                            "jsonrpc":"2.0",
+                            "id": body["id"],
+                            "result": {"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"ContextForge","version":"0.1.0"}}
+                        })),
+                    )
+                }
+            })
+            .get(move |headers: HeaderMap, uri: Uri| {
+                let transport_calls = get_calls.clone();
+                async move {
+                    transport_calls.lock().expect("lock").push((
+                        "GET".to_string(),
+                        headers
+                            .get("mcp-session-id")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        headers
+                            .get("x-contextforge-server-id")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        uri.query().map(str::to_string),
+                    ));
+                    (
+                        StatusCode::OK,
+                        [("content-type", HeaderValue::from_static("text/event-stream"))],
+                        "data: ok\n\n",
+                    )
+                }
+            }),
+        )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime_1 = build_router(
+        AppState::new(&RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            session_core_enabled: true,
+            redis_url: Some(redis_url.to_string()),
+            cache_prefix: cache_prefix.clone(),
+            ..test_runtime_config()
+        })
+        .expect("state 1"),
+    );
+    let runtime_2 = build_router(
+        AppState::new(&RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            session_core_enabled: true,
+            redis_url: Some(redis_url.to_string()),
+            cache_prefix: cache_prefix.clone(),
+            ..test_runtime_config()
+        })
+        .expect("state 2"),
+    );
+    let runtime_1_url = spawn_router(runtime_1).await;
+    let runtime_2_url = spawn_router(runtime_2).await;
+
+    let auth_context = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_admin": false
+        }))
+        .expect("auth context json"),
+    );
+    let client = reqwest::Client::new();
+
+    let initialize_response = client
+        .post(format!("{runtime_1_url}/mcp"))
+        .header("x-contextforge-auth-context", auth_context.clone())
+        .header("x-contextforge-server-id", "server-redis")
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"initialize",
+            "params":{"protocolVersion":"2025-11-25","capabilities":{}}
+        }))
+        .send()
+        .await
+        .expect("initialize response");
+    assert_eq!(initialize_response.status(), StatusCode::OK);
+    assert_eq!(
+        initialize_response
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok()),
+        Some("redis-session-1")
+    );
+
+    let get_response = client
+        .get(format!("{runtime_2_url}/mcp?session_id=redis-session-1"))
+        .header("x-contextforge-auth-context", auth_context)
+        .send()
+        .await
+        .expect("get response");
+    assert_eq!(get_response.status(), StatusCode::OK);
+
+    let calls = transport_calls.lock().expect("lock");
+    assert_eq!(calls[0].0, "POST");
+    assert_eq!(calls[0].2.as_deref(), Some("server-redis"));
+    assert_eq!(
+        calls[1],
+        (
+            "GET".to_string(),
+            Some("redis-session-1".to_string()),
+            Some("server-redis".to_string()),
+            Some("session_id=redis-session-1".to_string()),
+        )
+    );
+
+    cleanup_redis_prefix(redis_url, &cache_prefix).await;
+}
+
+#[tokio::test]
+async fn rust_event_store_replays_events_across_runtime_instances() {
+    let redis_url = "redis://127.0.0.1:6379/0";
+    if !redis_is_available(redis_url).await {
+        return;
+    }
+
+    let cache_prefix = format!("mcpgw:rust-eventstore-itest:{}:", Uuid::new_v4());
+    cleanup_redis_prefix(redis_url, &cache_prefix).await;
+
+    let runtime_1 = build_router(
+        AppState::new(&RuntimeConfig {
+            redis_url: Some(redis_url.to_string()),
+            event_store_enabled: true,
+            cache_prefix: cache_prefix.clone(),
+            ..test_runtime_config()
+        })
+        .expect("state 1"),
+    );
+    let runtime_2 = build_router(
+        AppState::new(&RuntimeConfig {
+            redis_url: Some(redis_url.to_string()),
+            event_store_enabled: true,
+            cache_prefix: cache_prefix.clone(),
+            ..test_runtime_config()
+        })
+        .expect("state 2"),
+    );
+    let runtime_1_url = spawn_router(runtime_1).await;
+    let runtime_2_url = spawn_router(runtime_2).await;
+    let client = reqwest::Client::new();
+
+    let first = client
+        .post(format!("{runtime_1_url}/_internal/event-store/store"))
+        .json(&json!({
+            "streamId": "stream-1",
+            "message": {"id": 1},
+        }))
+        .send()
+        .await
+        .expect("store first");
+    let first_body: Value = first.json().await.expect("first json");
+    let first_event_id = first_body["eventId"]
+        .as_str()
+        .expect("first event id")
+        .to_string();
+
+    let second = client
+        .post(format!("{runtime_1_url}/_internal/event-store/store"))
+        .json(&json!({
+            "streamId": "stream-1",
+            "message": {"id": 2},
+        }))
+        .send()
+        .await
+        .expect("store second");
+    assert_eq!(second.status(), StatusCode::OK);
+
+    let replay = client
+        .post(format!("{runtime_2_url}/_internal/event-store/replay"))
+        .json(&json!({
+            "lastEventId": first_event_id,
+        }))
+        .send()
+        .await
+        .expect("replay response");
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(
+        replay
+            .headers()
+            .get("x-contextforge-mcp-event-store")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
+    let replay_body: Value = replay.json().await.expect("replay json");
+    assert_eq!(replay_body["streamId"], "stream-1");
+    assert_eq!(replay_body["events"][0]["message"], json!({"id": 2}));
+
+    cleanup_redis_prefix(redis_url, &cache_prefix).await;
 }
 
 #[tokio::test]

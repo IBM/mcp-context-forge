@@ -1,38 +1,99 @@
 # Rust MCP Runtime Status
 
-Last updated: March 10, 2026
+Last updated: March 11, 2026
 
 Status focus in this update:
 
-- first transport/session-core increment behind a separate runtime flag:
+- Rust session-core is now running on the compose-built image with a real
+  Redis-backed session metadata store:
   - `EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED=true`
   - `MCP_RUST_SESSION_CORE_ENABLED=true`
-- when that flag is enabled:
-  - Rust routes `initialize` through the trusted internal transport bridge
-    instead of the direct Python `/_internal/mcp/initialize` handler
-  - Rust creates and tracks MCP session metadata locally
-  - Rust reuses stored session scope on follow-up `GET /mcp`, `DELETE /mcp`,
-    and MCP POSTs carrying the same session id
-  - Rust tears down its local session metadata on successful `DELETE /mcp`
-- Python still owns the underlying `StreamableHTTPSessionManager`,
-  resumable event store, and Redis/database-backed durable session backend
-- current validation for this slice is local/runtime-level:
+- Rust resumable event-store semantics are now implemented in the sidecar and
+  wired into the Python `SessionManagerWrapper` behind separate flags:
+  - `EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED=true`
+  - `MCP_RUST_EVENT_STORE_ENABLED=true`
+  - `MCP_RUST_REDIS_URL=redis://redis:6379/0`
+- the Rust runtime now exposes internal event-store endpoints:
+  - `POST /_internal/event-store/store`
+  - `POST /_internal/event-store/replay`
+- Rust session metadata is shared across runtime instances through Redis, and
+  Rust event replay works across runtime instances through Redis
+- live compose validation is now complete for this slice:
+  - rebuilt image with:
+    - `ENABLE_RUST_BUILD=true`
+    - `ENABLE_RUST_MCP_RMCP_BUILD=true`
+  - running stack with:
+    - `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`
+    - `EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true`
+    - `EXPERIMENTAL_RUST_MCP_RUNTIME_UDS=/tmp/contextforge-mcp-rust.sock`
+    - `MCP_RUST_LISTEN_UDS=/tmp/contextforge-mcp-rust.sock`
+    - `MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=true`
+    - `USE_STATEFUL_SESSIONS=true`
+    - `MCP_RUST_LOG=warn`
+    - `GUNICORN_WORKERS=32`
+- live runtime proof on the rebuilt stack:
+  - `/health` returns:
+    - `x-contextforge-mcp-runtime-mode: rust-managed`
+    - `x-contextforge-mcp-session-core-mode: rust`
+    - `x-contextforge-mcp-event-store-mode: rust`
+  - raw `POST /servers/<id>/mcp initialize` returns:
+    - `x-contextforge-mcp-runtime: rust`
+    - `x-contextforge-mcp-session-core: rust`
+  - Redis contains Rust session metadata keys at:
+    - `mcpgw:rust:mcp:session:<session-id>`
+- the live delete/teardown gap is fixed:
+  - previously, server-scoped `DELETE /servers/<id>/mcp` still returned `405`
+    because Rust was proxying delete through the generic Python transport path
+  - Rust now uses a dedicated trusted Python cleanup route:
+    - `DELETE /_internal/mcp/session`
+  - that route removes session-registry state and cleans session-affinity owner
+    state when enabled
+  - verified live on the rebuilt stack:
+    - `DELETE /servers/<id>/mcp` -> `204 No Content`
+    - `x-contextforge-mcp-runtime: rust`
+    - Rust Redis session metadata key removed immediately after delete
+- image-level validation for this milestone passed:
   - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
-    -> `33 passed`
-  - targeted Python tests passed for:
-    - MCP runtime health/runtime headers
-    - Rust -> Python internal transport bridge `POST` support
-    - Rust runtime config defaults for the new session-core flag
-- compose and entrypoint env wiring was added for the new flag:
-  - `docker-entrypoint.sh`
-  - `docker-compose.yml`
-  - `.env.example`
-- note on packaged-image validation for this exact slice:
-  - the compose gateway rebuild was started with the new flag wiring, but the
-    host stalled in the normal image assembly path during the asset/download
-    layer before I completed a fresh live-stack rerun for this slice
-  - the Rust/session-core code path itself is locally validated and the live
-    compose stack from the previous slice remains the last full-stack baseline
+    -> `35 passed`
+  - targeted Python unit coverage passed for:
+    - internal MCP session delete handler
+    - internal MCP initialize handler
+    - Rust event-store transport wrapper selection
+    - runtime config defaults
+  - `make test-mcp-cli` -> `23 passed`
+  - `make test-mcp-rbac` -> `40 passed`
+  - `uv run pytest -q --with-integration tests/integration/test_streamable_http_redis.py`
+    -> `7 passed`
+- live container-level proof that the Rust event-store works across gateway
+  replicas:
+  - event stored through the Rust sidecar inside `gateway-1`
+  - replayed through the Rust sidecar inside `gateway-2`
+  - response returned the later event from the shared Redis-backed stream
+- important nuance on public-flow coverage:
+  - the standard `mcp-cli`, RBAC, and load-test flows still do not create
+    `mcpgw:eventstore*` keys in Redis
+  - they validate the Rust transport/session path, but not the replay/resume
+    branch
+  - replay/resume itself is currently validated by:
+    - Rust runtime tests
+    - Python unit tests
+    - `tests/integration/test_streamable_http_redis.py`
+    - the live cross-replica container proof above
+- current compose-built performance on this rebuilt session-core/event-store image:
+  - mixed MCP:
+    - `120 users` -> `979.51 RPS`, `19.91 ms` avg, `35 ms` p95, `82 ms` p99
+    - `150 users` -> `1053.20 RPS`, `38.70 ms` avg, `69 ms` p95, `120 ms` p99
+  - tools-only:
+    - `125 users` -> `1146.97 RPS` overall
+    - `MCP tools/call [rapid]` -> `1090.9 RPS`
+    - `51.23 ms` avg, `67 ms` p95, `95 ms` p99
+- current boundary after this slice:
+  - public MCP transport is Rust-fronted
+  - Rust owns session metadata, delete teardown orchestration, and Redis-backed
+    event store/replay primitives
+  - Python still owns the underlying `StreamableHTTPSessionManager` request
+    execution and the public replay/resume behavior that sits on top of the
+    event store
 
 - the optional `rmcp` integration spike is now wired through the container
   build and compose runtime

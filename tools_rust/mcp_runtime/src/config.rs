@@ -96,22 +96,37 @@ pub struct RuntimeConfig {
     )]
     pub use_rmcp_upstream_client: bool,
 
-    #[arg(
-        long,
-        env = "MCP_RUST_SESSION_CORE_ENABLED",
-        default_value_t = false
-    )]
+    #[arg(long, env = "MCP_RUST_SESSION_CORE_ENABLED", default_value_t = false)]
     pub session_core_enabled: bool,
+
+    #[arg(long, env = "MCP_RUST_EVENT_STORE_ENABLED", default_value_t = false)]
+    pub event_store_enabled: bool,
+
+    #[arg(long, env = "MCP_RUST_SESSION_TTL_SECONDS", default_value_t = 3_600)]
+    pub session_ttl_seconds: u64,
 
     #[arg(
         long,
-        env = "MCP_RUST_SESSION_TTL_SECONDS",
+        env = "MCP_RUST_EVENT_STORE_MAX_EVENTS_PER_STREAM",
+        default_value_t = 100
+    )]
+    pub event_store_max_events_per_stream: usize,
+
+    #[arg(
+        long,
+        env = "MCP_RUST_EVENT_STORE_TTL_SECONDS",
         default_value_t = 3_600
     )]
-    pub session_ttl_seconds: u64,
+    pub event_store_ttl_seconds: u64,
+
+    #[arg(long, env = "MCP_RUST_CACHE_PREFIX", default_value = "mcpgw:")]
+    pub cache_prefix: String,
 
     #[arg(long, env = "MCP_RUST_DATABASE_URL")]
     pub database_url: Option<String>,
+
+    #[arg(long, env = "MCP_RUST_REDIS_URL")]
+    pub redis_url: Option<String>,
 
     #[arg(long, env = "MCP_RUST_DB_POOL_MAX_SIZE", default_value_t = 20)]
     pub db_pool_max_size: usize,

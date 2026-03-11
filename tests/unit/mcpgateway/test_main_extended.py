@@ -56,6 +56,7 @@ from mcpgateway.main import (
     handle_internal_mcp_notifications_cancelled,
     handle_internal_mcp_notifications_initialized,
     handle_internal_mcp_notifications_message,
+    handle_internal_mcp_session_delete,
     handle_internal_mcp_resources_list,
     handle_internal_mcp_resources_read,
     handle_internal_mcp_resources_subscribe,
@@ -4578,6 +4579,69 @@ class TestRpcHandling:
         }
         handle_initialize_logic.assert_not_awaited()
 
+    async def test_handle_internal_mcp_session_delete_cleans_up_session_state(self, monkeypatch):
+        request = self._make_request({})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "mcp-session-id": "sess-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "scoped_server_id": "srv-1",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        remove_session = AsyncMock()
+        cleanup_owner = AsyncMock()
+        pool = MagicMock()
+        pool.cleanup_streamable_http_session_owner = cleanup_owner
+        monkeypatch.setattr("mcpgateway.main._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
+        monkeypatch.setattr("mcpgateway.main.session_registry.remove_session", remove_session)
+        monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_session_affinity_enabled", True)
+
+        with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool):
+            response = await handle_internal_mcp_session_delete(request)
+
+        assert response.status_code == 204
+        remove_session.assert_awaited_once_with("sess-1")
+        cleanup_owner.assert_awaited_once_with("sess-1")
+
+    async def test_handle_internal_mcp_session_delete_requires_session_header(self):
+        request = self._make_request({})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        response = await handle_internal_mcp_session_delete(request)
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode()) == {"detail": "mcp-session-id header is required"}
+
     async def test_handle_internal_mcp_notifications_initialized_returns_no_content(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
         request.headers = {
@@ -6846,10 +6910,12 @@ class TestRemainingCoverageGaps:
         assert result["mcp_runtime"]["mounted"] == "python"
         assert result["mcp_runtime"]["rust_build_included"] is True
         assert result["mcp_runtime"]["session_core_mode"] == "python"
+        assert result["mcp_runtime"]["event_store_mode"] == "python"
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "python-rust-built-disabled"
         assert response.headers["x-contextforge-mcp-transport-mounted"] == "python"
         assert response.headers["x-contextforge-rust-build-included"] == "true"
         assert response.headers["x-contextforge-mcp-session-core-mode"] == "python"
+        assert response.headers["x-contextforge-mcp-event-store-mode"] == "python"
 
     async def test_readiness_check_invalidate_failure_is_best_effort(self, monkeypatch):
         import mcpgateway.main as main_mod
@@ -6906,6 +6972,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", True)
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_uds", "/tmp/contextforge-mcp-rust.sock")
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_session_core_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_event_store_enabled", True)
 
         response = await main_mod.readiness_check()
         payload = json.loads(response.body.decode())
@@ -6916,10 +6983,12 @@ class TestRemainingCoverageGaps:
         assert payload["mcp_runtime"]["mounted"] == "rust"
         assert payload["mcp_runtime"]["sidecar_transport"] == "uds"
         assert payload["mcp_runtime"]["session_core_mode"] == "rust"
+        assert payload["mcp_runtime"]["event_store_mode"] == "rust"
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
         assert response.headers["x-contextforge-mcp-transport-mounted"] == "rust"
         assert response.headers["x-contextforge-rust-build-included"] == "true"
         assert response.headers["x-contextforge-mcp-session-core-mode"] == "rust"
+        assert response.headers["x-contextforge-mcp-event-store-mode"] == "rust"
 
     async def test_sse_endpoint_cookie_auth_and_disconnect_cleanup(self, monkeypatch):
         import mcpgateway.main as main_mod
