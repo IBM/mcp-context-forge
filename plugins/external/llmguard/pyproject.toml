@@ -4,7 +4,7 @@
 #     - wheel is needed by most build front-ends
 # ----------------------------------------------------------------
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = ["setuptools>=77", "wheel>=0.46.2"]
 build-backend = "setuptools.build_meta"
 
 # ----------------------------------------------------------------
