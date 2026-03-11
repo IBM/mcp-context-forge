@@ -26,6 +26,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio_postgres::NoTls;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 #[cfg(feature = "rmcp-upstream-client")]
 use rmcp::{
@@ -93,13 +94,16 @@ pub struct AppState {
     instructions: Arc<str>,
     #[cfg(feature = "rmcp-upstream-client")]
     use_rmcp_upstream_client: bool,
+    session_core_enabled: bool,
     db_pool: Option<Pool>,
+    runtime_sessions: Arc<Mutex<HashMap<String, RuntimeSessionRecord>>>,
     upstream_tool_sessions: Arc<Mutex<HashMap<String, UpstreamToolSession>>>,
     #[cfg(feature = "rmcp-upstream-client")]
     rmcp_upstream_clients: Arc<Mutex<HashMap<String, CachedRmcpUpstreamClient>>>,
     resolved_tool_call_plans: Arc<Mutex<HashMap<String, CachedResolvedToolCallPlan>>>,
     tools_call_plan_ttl: Duration,
     upstream_session_ttl: Duration,
+    session_ttl: Duration,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -120,6 +124,8 @@ pub struct HealthResponse {
     pub protocol_version: String,
     pub supported_protocol_versions: Vec<String>,
     pub server_name: String,
+    pub session_core_enabled: bool,
+    pub active_sessions: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -157,6 +163,17 @@ struct ResolvedMcpToolCallPlan {
 #[derive(Debug, Clone)]
 struct UpstreamToolSession {
     session_id: Option<String>,
+    last_used: Instant,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct RuntimeSessionRecord {
+    owner_email: Option<String>,
+    server_id: Option<String>,
+    protocol_version: Option<String>,
+    client_capabilities: Option<Value>,
+    created_at: Instant,
     last_used: Instant,
 }
 
@@ -281,13 +298,16 @@ impl AppState {
             instructions: Arc::from(config.instructions.clone()),
             #[cfg(feature = "rmcp-upstream-client")]
             use_rmcp_upstream_client: config.use_rmcp_upstream_client,
+            session_core_enabled: config.session_core_enabled,
             db_pool,
+            runtime_sessions: Arc::new(Mutex::new(HashMap::new())),
             upstream_tool_sessions: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(feature = "rmcp-upstream-client")]
             rmcp_upstream_clients: Arc::new(Mutex::new(HashMap::new())),
             resolved_tool_call_plans: Arc::new(Mutex::new(HashMap::new())),
             tools_call_plan_ttl: Duration::from_secs(config.tools_call_plan_ttl_seconds),
             upstream_session_ttl: Duration::from_secs(config.upstream_session_ttl_seconds),
+            session_ttl: Duration::from_secs(config.session_ttl_seconds),
         })
     }
 
@@ -406,8 +426,16 @@ impl AppState {
         }
     }
 
+    pub fn session_core_enabled(&self) -> bool {
+        self.session_core_enabled
+    }
+
     pub fn db_pool(&self) -> Option<&Pool> {
         self.db_pool.as_ref()
+    }
+
+    fn runtime_sessions(&self) -> &Arc<Mutex<HashMap<String, RuntimeSessionRecord>>> {
+        &self.runtime_sessions
     }
 
     fn upstream_tool_sessions(&self) -> &Arc<Mutex<HashMap<String, UpstreamToolSession>>> {
@@ -429,6 +457,10 @@ impl AppState {
 
     fn upstream_session_ttl(&self) -> Duration {
         self.upstream_session_ttl
+    }
+
+    fn session_ttl(&self) -> Duration {
+        self.session_ttl
     }
 }
 
@@ -473,6 +505,7 @@ pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
 }
 
 async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
+    let active_sessions = active_runtime_session_count(&state).await;
     Json(HealthResponse {
         status: "ok",
         runtime: RUNTIME_NAME,
@@ -480,6 +513,8 @@ async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
         protocol_version: state.protocol_version().to_string(),
         supported_protocol_versions: state.supported_protocol_versions().to_vec(),
         server_name: state.server_name().to_string(),
+        session_core_enabled: state.session_core_enabled(),
+        active_sessions,
     })
 }
 
@@ -499,7 +534,12 @@ async fn transport_delete(
     forward_transport_request(&state, reqwest::Method::DELETE, headers, uri).await
 }
 
-async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+async fn rpc(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+    body: Bytes,
+) -> Response {
     if let Err(response) = validate_protocol_version(&state, &headers) {
         return response;
     }
@@ -543,6 +583,17 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
     let catch_all_elicitation =
         request.method.starts_with("elicitation/") && request.method != "elicitation/create";
     let specialized_tools_call = request.method == "tools/call";
+    let mut effective_headers = headers.clone();
+
+    if state.session_core_enabled() {
+        if specialized_initialize {
+            return handle_initialize_with_session_core(&state, effective_headers, uri, body, &request)
+                .await;
+        }
+
+        apply_session_core_request_context(&state, &mut effective_headers, &uri)
+            .await;
+    }
 
     let mode = if request.method == "ping" {
         "local"
@@ -598,39 +649,46 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
     info!("rust_mcp_runtime method={} mode={}", request.method, mode);
 
     if specialized_initialized_notification {
-        return forward_initialized_notification_to_backend(&state, headers, body).await;
+        return forward_initialized_notification_to_backend(&state, effective_headers, body).await;
     }
 
     if specialized_message_notification {
-        return forward_message_notification_to_backend(&state, headers, body).await;
+        return forward_message_notification_to_backend(&state, effective_headers, body).await;
     }
 
     if specialized_cancelled_notification {
-        return forward_cancelled_notification_to_backend(&state, headers, body).await;
+        return forward_cancelled_notification_to_backend(&state, effective_headers, body).await;
     }
 
     if specialized_resources_list {
-        return forward_resources_list_to_backend(&state, headers, body, request.id.clone()).await;
+        return forward_resources_list_to_backend(&state, effective_headers, body, request.id.clone())
+            .await;
     }
 
     if specialized_resources_read {
-        return forward_resources_read_to_backend(&state, headers, body, request.id.clone()).await;
+        return forward_resources_read_to_backend(&state, effective_headers, body, request.id.clone())
+            .await;
     }
 
     if specialized_resources_subscribe {
-        return forward_resources_subscribe_to_backend(&state, headers, body, request.id.clone())
+        return forward_resources_subscribe_to_backend(&state, effective_headers, body, request.id.clone())
             .await;
     }
 
     if specialized_resources_unsubscribe {
-        return forward_resources_unsubscribe_to_backend(&state, headers, body, request.id.clone())
+        return forward_resources_unsubscribe_to_backend(
+            &state,
+            effective_headers,
+            body,
+            request.id.clone(),
+        )
             .await;
     }
 
     if specialized_resource_templates_list {
         return forward_resource_templates_list_to_backend(
             &state,
-            headers,
+            effective_headers,
             body,
             request.id.clone(),
         )
@@ -638,26 +696,34 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
     }
 
     if specialized_prompts_list {
-        return forward_prompts_list_to_backend(&state, headers, body, request.id.clone()).await;
+        return forward_prompts_list_to_backend(&state, effective_headers, body, request.id.clone())
+            .await;
     }
 
     if specialized_prompts_get {
-        return forward_prompts_get_to_backend(&state, headers, body, request.id.clone()).await;
+        return forward_prompts_get_to_backend(&state, effective_headers, body, request.id.clone())
+            .await;
     }
 
     if specialized_roots_list {
-        return forward_roots_list_to_backend(&state, headers, body, request.id.clone()).await;
+        return forward_roots_list_to_backend(&state, effective_headers, body, request.id.clone())
+            .await;
     }
 
     if specialized_completion_complete {
-        return forward_completion_complete_to_backend(&state, headers, body, request.id.clone())
+        return forward_completion_complete_to_backend(
+            &state,
+            effective_headers,
+            body,
+            request.id.clone(),
+        )
             .await;
     }
 
     if specialized_sampling_create_message {
         return forward_sampling_create_message_to_backend(
             &state,
-            headers,
+            effective_headers,
             body,
             request.id.clone(),
         )
@@ -665,7 +731,12 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
     }
 
     if specialized_logging_set_level {
-        return forward_logging_set_level_to_backend(&state, headers, body, request.id.clone())
+        return forward_logging_set_level_to_backend(
+            &state,
+            effective_headers,
+            body,
+            request.id.clone(),
+        )
             .await;
     }
 
@@ -718,22 +789,22 @@ async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> 
     }
 
     if specialized_initialize {
-        return forward_initialize_to_backend(&state, headers, body).await;
+        return forward_initialize_to_backend(&state, effective_headers, body).await;
     }
 
     if rust_db_direct_tools_list {
-        return direct_server_tools_list(&state, headers, request.id.clone()).await;
+        return direct_server_tools_list(&state, effective_headers, request.id.clone()).await;
     }
 
     if server_scoped_tools_list {
-        return forward_server_tools_list_to_backend(&state, headers, request.id.clone()).await;
+        return forward_server_tools_list_to_backend(&state, effective_headers, request.id.clone()).await;
     }
 
     if specialized_tools_call {
-        return handle_tools_call(&state, headers, body, request).await;
+        return handle_tools_call(&state, effective_headers, body, request).await;
     }
 
-    forward_to_backend(&state, headers, body).await
+    forward_to_backend(&state, effective_headers, body).await
 }
 
 fn derive_backend_tools_list_url(backend_rpc_url: &str) -> String {
@@ -1339,6 +1410,232 @@ async fn forward_initialize_to_backend(
     response_from_backend(backend_response)
 }
 
+async fn handle_initialize_with_session_core(
+    state: &AppState,
+    mut incoming_headers: HeaderMap,
+    uri: axum::http::Uri,
+    body: Bytes,
+    request: &JsonRpcRequest,
+) -> Response {
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let session_id = requested_initialize_session_id(&incoming_headers, &uri, request)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    if let Some(existing) = get_runtime_session(state, &session_id).await {
+        if !runtime_session_allows_access(&existing, auth_context.as_ref()) {
+            return json_response(
+                StatusCode::OK,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request.id,
+                    "error": {
+                        "code": -32003,
+                        "message": "Access denied",
+                        "data": {"method": "initialize"},
+                    }
+                }),
+            );
+        }
+    }
+
+    inject_session_header(&mut incoming_headers, &session_id);
+    if let Some(server_id) = extract_server_id_header(&incoming_headers) {
+        inject_server_id_header(&mut incoming_headers, server_id);
+    }
+
+    let backend_response = match send_transport_to_backend(
+        state,
+        reqwest::Method::POST,
+        &incoming_headers,
+        &uri,
+        Some(body.clone()),
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
+    let status = backend_response.status();
+    let response_session_id = backend_response
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .unwrap_or_else(|| session_id.clone());
+
+    if status.is_success() {
+        let record = RuntimeSessionRecord {
+            owner_email: auth_context.as_ref().and_then(|context| context.email.clone()),
+            server_id: extract_server_id_header(&incoming_headers),
+            protocol_version: requested_protocol_version(request),
+            client_capabilities: extract_client_capabilities(request),
+            created_at: Instant::now(),
+            last_used: Instant::now(),
+        };
+        upsert_runtime_session(state, response_session_id.clone(), record).await;
+    } else {
+        remove_runtime_session(state, &response_session_id).await;
+    }
+
+    let mut response =
+        response_from_backend_with_session_hint(backend_response, Some(response_session_id.as_str()));
+    if let Ok(value) = HeaderValue::from_str(if state.session_core_enabled() { "rust" } else { "python" }) {
+        response.headers_mut().insert(
+            HeaderName::from_static("x-contextforge-mcp-session-core"),
+            value,
+        );
+    }
+    response
+}
+
+async fn active_runtime_session_count(state: &AppState) -> usize {
+    let now = Instant::now();
+    let ttl = state.session_ttl();
+    let mut sessions = state.runtime_sessions().lock().await;
+    sessions.retain(|_, record| now.duration_since(record.last_used) <= ttl);
+    sessions.len()
+}
+
+async fn get_runtime_session(state: &AppState, session_id: &str) -> Option<RuntimeSessionRecord> {
+    let now = Instant::now();
+    let ttl = state.session_ttl();
+    let mut sessions = state.runtime_sessions().lock().await;
+    let Some(record) = sessions.get_mut(session_id) else {
+        return None;
+    };
+    if now.duration_since(record.last_used) > ttl {
+        sessions.remove(session_id);
+        return None;
+    }
+    record.last_used = now;
+    Some(record.clone())
+}
+
+async fn upsert_runtime_session(
+    state: &AppState,
+    session_id: String,
+    mut record: RuntimeSessionRecord,
+) {
+    record.last_used = Instant::now();
+    let mut sessions = state.runtime_sessions().lock().await;
+    sessions.insert(session_id, record);
+}
+
+async fn remove_runtime_session(state: &AppState, session_id: &str) {
+    let mut sessions = state.runtime_sessions().lock().await;
+    sessions.remove(session_id);
+}
+
+async fn apply_session_core_request_context(
+    state: &AppState,
+    incoming_headers: &mut HeaderMap,
+    uri: &axum::http::Uri,
+) {
+    let Some(session_id) = runtime_session_id_from_request(incoming_headers, uri) else {
+        return;
+    };
+    let Some(record) = get_runtime_session(state, &session_id).await else {
+        return;
+    };
+    if !runtime_session_allows_access(
+        &record,
+        decode_internal_auth_context_from_headers_optional(incoming_headers).as_ref(),
+    ) {
+        return;
+    }
+    inject_session_header(incoming_headers, &session_id);
+    if let Some(server_id) = record.server_id.as_deref() {
+        if !incoming_headers.contains_key("x-contextforge-server-id") {
+            inject_server_id_header(incoming_headers, server_id.to_string());
+        }
+    }
+}
+
+fn runtime_session_allows_access(
+    record: &RuntimeSessionRecord,
+    auth_context: Option<&InternalAuthContext>,
+) -> bool {
+    let Some(owner_email) = record.owner_email.as_deref() else {
+        return true;
+    };
+    let Some(auth_context) = auth_context else {
+        return false;
+    };
+    auth_context.is_admin || auth_context.email.as_deref() == Some(owner_email)
+}
+
+fn requested_initialize_session_id(
+    incoming_headers: &HeaderMap,
+    uri: &axum::http::Uri,
+    request: &JsonRpcRequest,
+) -> Option<String> {
+    runtime_session_id_from_request(incoming_headers, uri).or_else(|| {
+        request
+            .params
+            .get("session_id")
+            .or_else(|| request.params.get("sessionId"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    })
+}
+
+fn runtime_session_id_from_request(
+    incoming_headers: &HeaderMap,
+    uri: &axum::http::Uri,
+) -> Option<String> {
+    incoming_headers
+        .get("mcp-session-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| query_param(uri, "session_id"))
+}
+
+fn requested_protocol_version(request: &JsonRpcRequest) -> Option<String> {
+    request
+        .params
+        .get("protocolVersion")
+        .or_else(|| request.params.get("protocol_version"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn extract_client_capabilities(request: &JsonRpcRequest) -> Option<Value> {
+    request.params.get("capabilities").cloned()
+}
+
+fn extract_server_id_header(incoming_headers: &HeaderMap) -> Option<String> {
+    incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+}
+
+fn inject_session_header(incoming_headers: &mut HeaderMap, session_id: &str) {
+    if let Ok(value) = HeaderValue::from_str(session_id) {
+        incoming_headers.insert(HeaderName::from_static("mcp-session-id"), value);
+    }
+}
+
+fn inject_server_id_header(incoming_headers: &mut HeaderMap, server_id: String) {
+    if let Ok(value) = HeaderValue::from_str(&server_id) {
+        incoming_headers.insert(HeaderName::from_static("x-contextforge-server-id"), value);
+    }
+}
+
+fn query_param(uri: &axum::http::Uri, key: &str) -> Option<String> {
+    uri.query().and_then(|query| {
+        query.split('&').find_map(|pair| {
+            let (name, value) = pair.split_once('=')?;
+            if name == key {
+                Some(value.to_string())
+            } else {
+                None
+            }
+        })
+    })
+}
+
 async fn send_to_backend(
     state: &AppState,
     incoming_headers: HeaderMap,
@@ -1380,16 +1677,60 @@ async fn send_to_backend_url(
 async fn forward_transport_request(
     state: &AppState,
     method: reqwest::Method,
-    incoming_headers: HeaderMap,
+    mut incoming_headers: HeaderMap,
     uri: axum::http::Uri,
 ) -> Response {
+    let session_id = if state.session_core_enabled() {
+        let session_id = runtime_session_id_from_request(&incoming_headers, &uri);
+        if let Some(ref session_id_value) = session_id {
+            if let Some(record) = get_runtime_session(state, session_id_value).await {
+                let auth_context =
+                    decode_internal_auth_context_from_headers_optional(&incoming_headers);
+                if !runtime_session_allows_access(&record, auth_context.as_ref()) {
+                    return json_response(
+                        StatusCode::FORBIDDEN,
+                        json!({
+                            "detail": "Session access denied",
+                        }),
+                    );
+                }
+                inject_session_header(&mut incoming_headers, session_id_value);
+                if let Some(server_id) = record.server_id.as_deref() {
+                    if !incoming_headers.contains_key("x-contextforge-server-id") {
+                        inject_server_id_header(&mut incoming_headers, server_id.to_string());
+                    }
+                }
+            }
+        }
+        session_id
+    } else {
+        None
+    };
+
     let backend_response =
-        match send_transport_to_backend(state, method, &incoming_headers, &uri).await {
+        match send_transport_to_backend(state, method.clone(), &incoming_headers, &uri, None).await {
             Ok(response) => response,
             Err(response) => return response,
         };
 
-    response_from_backend(backend_response)
+    if state.session_core_enabled()
+        && method == reqwest::Method::DELETE
+        && backend_response.status().is_success()
+        && session_id.is_some()
+    {
+        if let Some(session_id_value) = session_id.as_deref() {
+            remove_runtime_session(state, session_id_value).await;
+        }
+    }
+
+    let mut response = response_from_backend_with_session_hint(backend_response, session_id.as_deref());
+    if let Ok(value) = HeaderValue::from_str(if state.session_core_enabled() { "rust" } else { "python" }) {
+        response.headers_mut().insert(
+            HeaderName::from_static("x-contextforge-mcp-session-core"),
+            value,
+        );
+    }
+    response
 }
 
 async fn forward_server_tools_list_to_backend(
@@ -1624,6 +1965,12 @@ fn decode_internal_auth_context_from_headers(
         .map_err(|err| format!("invalid auth context encoding: {err}"))?;
     serde_json::from_slice::<InternalAuthContext>(&decoded)
         .map_err(|err| format!("invalid auth context payload: {err}"))
+}
+
+fn decode_internal_auth_context_from_headers_optional(
+    incoming_headers: &HeaderMap,
+) -> Option<InternalAuthContext> {
+    decode_internal_auth_context_from_headers(incoming_headers).ok()
 }
 
 async fn forward_notification_to_backend(
@@ -2267,12 +2614,17 @@ async fn send_transport_to_backend(
     method: reqwest::Method,
     incoming_headers: &HeaderMap,
     uri: &axum::http::Uri,
+    body: Option<Bytes>,
 ) -> Result<reqwest::Response, Response> {
     let target_url = build_backend_transport_url(state.backend_transport_url(), uri);
-    state
+    let mut request = state
         .client
         .request(method, target_url)
-        .headers(build_forwarded_headers(incoming_headers))
+        .headers(build_forwarded_headers(incoming_headers));
+    if let Some(body) = body {
+        request = request.body(body);
+    }
+    request
         .send()
         .await
         .map_err(|err| {
@@ -3392,6 +3744,13 @@ fn build_backend_transport_url(base_url: &str, uri: &axum::http::Uri) -> String 
 }
 
 fn response_from_backend(backend_response: reqwest::Response) -> Response {
+    response_from_backend_with_session_hint(backend_response, None)
+}
+
+fn response_from_backend_with_session_hint(
+    backend_response: reqwest::Response,
+    session_hint: Option<&str>,
+) -> Response {
     let status = backend_response.status();
     let headers = backend_response.headers().clone();
     let body = Body::from_stream(backend_response.bytes_stream().map_err(|err| {
@@ -3417,6 +3776,12 @@ fn response_from_backend(backend_response: reqwest::Response) -> Response {
     ] {
         if let Some(value) = headers.get(header_name) {
             builder = builder.header(header_name, value.clone());
+        }
+    }
+
+    if headers.get("mcp-session-id").is_none() {
+        if let Some(session_id) = session_hint {
+            builder = builder.header("mcp-session-id", session_id);
         }
     }
 

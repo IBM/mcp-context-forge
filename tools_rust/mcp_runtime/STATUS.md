@@ -4,6 +4,36 @@ Last updated: March 10, 2026
 
 Status focus in this update:
 
+- first transport/session-core increment behind a separate runtime flag:
+  - `EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED=true`
+  - `MCP_RUST_SESSION_CORE_ENABLED=true`
+- when that flag is enabled:
+  - Rust routes `initialize` through the trusted internal transport bridge
+    instead of the direct Python `/_internal/mcp/initialize` handler
+  - Rust creates and tracks MCP session metadata locally
+  - Rust reuses stored session scope on follow-up `GET /mcp`, `DELETE /mcp`,
+    and MCP POSTs carrying the same session id
+  - Rust tears down its local session metadata on successful `DELETE /mcp`
+- Python still owns the underlying `StreamableHTTPSessionManager`,
+  resumable event store, and Redis/database-backed durable session backend
+- current validation for this slice is local/runtime-level:
+  - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
+    -> `33 passed`
+  - targeted Python tests passed for:
+    - MCP runtime health/runtime headers
+    - Rust -> Python internal transport bridge `POST` support
+    - Rust runtime config defaults for the new session-core flag
+- compose and entrypoint env wiring was added for the new flag:
+  - `docker-entrypoint.sh`
+  - `docker-compose.yml`
+  - `.env.example`
+- note on packaged-image validation for this exact slice:
+  - the compose gateway rebuild was started with the new flag wiring, but the
+    host stalled in the normal image assembly path during the asset/download
+    layer before I completed a fresh live-stack rerun for this slice
+  - the Rust/session-core code path itself is locally validated and the live
+    compose stack from the previous slice remains the last full-stack baseline
+
 - the optional `rmcp` integration spike is now wired through the container
   build and compose runtime
 - compose image builds now support:

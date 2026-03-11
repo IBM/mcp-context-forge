@@ -17,12 +17,14 @@ This prototype owns:
 - forwarding of the remaining MCP methods to the existing ContextForge backend `/rpc`
 - reusable pooled backend HTTP client
 - TCP or Unix domain socket listening
+- an optional Rust-owned MCP session metadata core behind a separate runtime
+  flag
 
 This prototype deliberately does **not** yet own:
 
 - auth and RBAC decisions
 - persistence
-- session registry semantics
+- the underlying resumable session-manager/event-store implementation
 - SSE / resumable stream orchestration
 - upstream MCP client federation
 
@@ -95,6 +97,9 @@ Current limitation:
 - Rust now fronts `GET/POST/DELETE /mcp`, but the underlying resumable
   Streamable HTTP session manager, session registry, and Redis-backed event
   store are still Python-owned behind a trusted internal transport bridge
+- when `MCP_RUST_SESSION_CORE_ENABLED=true`, Rust owns the session metadata
+  layer, routes `initialize` through that bridge, and tracks session
+  lifecycle hints without taking over the underlying Python stream engine yet
 
 ### 5. UDS is preferred over loopback TCP
 
@@ -122,6 +127,7 @@ cd tools_rust/mcp_runtime
 cargo run --release -- \
   --backend-rpc-url http://127.0.0.1:4444/rpc \
   --listen-http 127.0.0.1:8787 \
+  --session-core-enabled \
   --supported-protocol-version 2025-11-25,2025-03-26
 ```
 
@@ -131,7 +137,8 @@ cargo run --release -- \
 cd tools_rust/mcp_runtime
 cargo run --release -- \
   --backend-rpc-url http://127.0.0.1:4444/rpc \
-  --listen-uds /tmp/contextforge-mcp-rust.sock
+  --listen-uds /tmp/contextforge-mcp-rust.sock \
+  --session-core-enabled
 ```
 
 ## Example requests
@@ -201,6 +208,10 @@ Implemented:
 - local `ping`
 - `202 Accepted` notification handling
 - Rust-fronted MCP transport for `GET/POST/DELETE /mcp`
+- optional Rust-owned session metadata for:
+  - `initialize`
+  - `GET /mcp`
+  - `DELETE /mcp`
 - dedicated Rust-specialized routing for:
   - `initialize`
   - `notifications/initialized`
@@ -233,6 +244,8 @@ Implemented:
   - server-scoped `/servers/<id>/mcp` requests preserve scope across the
     Python -> Rust -> Python seam
   - GET/DELETE transport requests cross a trusted internal transport bridge
+  - when enabled, session metadata and teardown hints live in Rust while the
+    current Python stream engine remains the backend
   - `tools/list` has a Rust-owned DB-backed fast path
   - `tools/call` has a Rust-owned hot path with reusable upstream sessions
     and optional `rmcp` upstream client support
@@ -253,6 +266,7 @@ The gateway now supports an integrated experimental mode:
 - `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`
 - `EXPERIMENTAL_RUST_MCP_RUNTIME_URL=http://127.0.0.1:8787`
 - `EXPERIMENTAL_RUST_MCP_RUNTIME_TIMEOUT_SECONDS=30`
+- `EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED=true|false`
 
 Behavior in this mode:
 
@@ -260,6 +274,9 @@ Behavior in this mode:
 - all public `GET/POST/DELETE /mcp` traffic hits Rust first
 - server-scoped `/servers/<id>/mcp` requests preserve semantics across the
   internal seam
+- when `EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED=true`, Rust owns the
+  session metadata layer and routes `initialize` through the internal
+  transport bridge
 - the current Python boundary is now mostly:
   - auth and RBAC
   - session manager internals
@@ -293,6 +310,7 @@ sidecar automatically:
 docker run \
   -e EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true \
   -e EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true \
+  -e EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED=true \
   -e EXPERIMENTAL_RUST_MCP_RUNTIME_UDS=/tmp/contextforge-mcp-rust.sock \
   -e MCP_RUST_LISTEN_UDS=/tmp/contextforge-mcp-rust.sock \
   -e HTTP_SERVER=gunicorn \
@@ -302,11 +320,14 @@ docker run \
 Optional launcher/runtime envs:
 
 - `EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true|false`
+- `EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED=true|false`
 - `MCP_RUST_LISTEN_HTTP=127.0.0.1:8787`
 - `MCP_RUST_LISTEN_UDS=/tmp/contextforge-mcp-rust.sock`
 - `MCP_RUST_LOG=info`
 - `MCP_RUST_BACKEND_RPC_URL=http://127.0.0.1:4444/rpc`
 - `MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=true|false`
+- `MCP_RUST_SESSION_CORE_ENABLED=true|false`
+- `MCP_RUST_SESSION_TTL_SECONDS=3600`
 
 With `MCP_RUST_LOG=info`, the runtime emits one line per handled MCP method, for example:
 
