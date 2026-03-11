@@ -328,36 +328,54 @@ def test_tool_get_metric_counts_sql_path(monkeypatch):
 
 
 def test_tool_metrics_summary_sql_path(monkeypatch):
-    """Test metrics_summary uses SQL aggregation when metrics not loaded but session exists."""
+    """Test metrics_summary uses SQL aggregation when metrics not loaded but session exists.
+
+    After fix for issue #3598, metrics_summary queries both raw metrics and hourly rollups.
+    """
     tool = db.Tool()
     tool.id = "test-tool-id"
 
-    # Mock the session and query result for full aggregation
-    # (count, sum_success, min_rt, max_rt, avg_rt, max_timestamp)
-    mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [5, 3, 1.0, 5.0, 2.5, mock_timestamp][i]
+    # Mock timestamps
+    raw_timestamp = datetime.now(timezone.utc)
+    hourly_timestamp = raw_timestamp - timedelta(hours=2)
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Mock raw metrics query result
+    # (count, sum_success, min_rt, max_rt, sum_rt, max_timestamp)
+    raw_result = MagicMock()
+    raw_result.__getitem__ = lambda self, i: [3, 2, 1.0, 3.0, 6.0, raw_timestamp][i]  # 3 metrics, avg=2.0
 
+    # Mock hourly rollups query result
+    # (sum_total_count, sum_success_count, min_rt, max_rt, sum_weighted_avg, max_hour_start)
+    hourly_result = MagicMock()
+    hourly_result.__getitem__ = lambda self, i: [2, 1, 2.0, 5.0, 6.0, hourly_timestamp][i]  # 2 metrics, weighted avg=3.0
+
+    # Create two different query mocks for raw and hourly queries
+    raw_query = MagicMock()
+    raw_query.filter.return_value = raw_query
+    raw_query.one.return_value = raw_result
+
+    hourly_query = MagicMock()
+    hourly_query.filter.return_value = hourly_query
+    hourly_query.one.return_value = hourly_result
+
+    # Mock session that returns different queries on subsequent calls
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [raw_query, hourly_query]
 
     # Patch object_session where it's imported (in sqlalchemy.orm)
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = tool.metrics_summary
 
+    # Expected results: raw (3) + hourly (2) = 5 total
     assert summary["total_executions"] == 5
-    assert summary["successful_executions"] == 3
+    assert summary["successful_executions"] == 3  # raw (2) + hourly (1)
     assert summary["failed_executions"] == 2
     assert summary["failure_rate"] == 0.4
-    assert summary["min_response_time"] == 1.0
-    assert summary["max_response_time"] == 5.0
-    assert summary["avg_response_time"] == 2.5
-    assert summary["last_execution_time"] == mock_timestamp
+    assert summary["min_response_time"] == 1.0  # min(raw=1.0, hourly=2.0)
+    assert summary["max_response_time"] == 5.0  # max(raw=3.0, hourly=5.0)
+    assert summary["avg_response_time"] == 2.4  # (raw_sum=6.0 + hourly_sum=6.0) / total=5 = 2.4
+    assert summary["last_execution_time"] == raw_timestamp  # max(raw_timestamp, hourly_timestamp)
 
 
 # --- Resource metrics properties ---
@@ -443,33 +461,47 @@ def test_resource_get_metric_counts_sql_path(monkeypatch):
 
 
 def test_resource_metrics_summary_sql_path(monkeypatch):
-    """Test metrics_summary uses SQL aggregation when metrics not loaded but session exists."""
+    """Test metrics_summary uses SQL aggregation when metrics not loaded but session exists.
+
+    After fix for issue #3598, metrics_summary queries both raw metrics and hourly rollups.
+    """
     resource = db.Resource()
     resource.id = "test-resource-id"
 
-    mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [6, 4, 0.5, 3.0, 1.5, mock_timestamp][i]
+    raw_timestamp = datetime.now(timezone.utc)
+    hourly_timestamp = raw_timestamp - timedelta(hours=2)
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Mock raw metrics: 4 total, 3 success, sum=6.0
+    raw_result = MagicMock()
+    raw_result.__getitem__ = lambda self, i: [4, 3, 0.5, 2.0, 6.0, raw_timestamp][i]
+
+    # Mock hourly rollups: 2 total, 1 success, sum=6.0
+    hourly_result = MagicMock()
+    hourly_result.__getitem__ = lambda self, i: [2, 1, 1.0, 3.0, 6.0, hourly_timestamp][i]
+
+    raw_query = MagicMock()
+    raw_query.filter.return_value = raw_query
+    raw_query.one.return_value = raw_result
+
+    hourly_query = MagicMock()
+    hourly_query.filter.return_value = hourly_query
+    hourly_query.one.return_value = hourly_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [raw_query, hourly_query]
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = resource.metrics_summary
 
-    assert summary["total_executions"] == 6
-    assert summary["successful_executions"] == 4
-    assert summary["failed_executions"] == 2
+    assert summary["total_executions"] == 6  # 4 + 2
+    assert summary["successful_executions"] == 4  # 3 + 1
+    assert summary["failed_executions"] == 2  # 6 - 4
     assert summary["failure_rate"] == pytest.approx(0.333, rel=0.01)
-    assert summary["min_response_time"] == 0.5
-    assert summary["max_response_time"] == 3.0
-    assert summary["avg_response_time"] == 1.5
-    assert summary["last_execution_time"] == mock_timestamp
+    assert summary["min_response_time"] == 0.5  # min(0.5, 1.0)
+    assert summary["max_response_time"] == 3.0  # max(2.0, 3.0)
+    assert summary["avg_response_time"] == 2.0  # (6.0 + 6.0) / 6 = 2.0
+    assert summary["last_execution_time"] == raw_timestamp
 
 
 # --- Prompt metrics properties ---
@@ -555,33 +587,47 @@ def test_prompt_get_metric_counts_sql_path(monkeypatch):
 
 
 def test_prompt_metrics_summary_sql_path(monkeypatch):
-    """Test metrics_summary uses SQL aggregation when metrics not loaded but session exists."""
+    """Test metrics_summary uses SQL aggregation when metrics not loaded but session exists.
+
+    After fix for issue #3598, metrics_summary queries both raw metrics and hourly rollups.
+    """
     prompt = db.Prompt()
     prompt.id = "test-prompt-id"
 
-    mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [10, 8, 0.2, 4.0, 2.0, mock_timestamp][i]
+    raw_timestamp = datetime.now(timezone.utc)
+    hourly_timestamp = raw_timestamp - timedelta(hours=2)
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Mock raw metrics: 6 total, 5 success, sum=12.0
+    raw_result = MagicMock()
+    raw_result.__getitem__ = lambda self, i: [6, 5, 0.2, 3.0, 12.0, raw_timestamp][i]
+
+    # Mock hourly rollups: 4 total, 3 success, sum=8.0
+    hourly_result = MagicMock()
+    hourly_result.__getitem__ = lambda self, i: [4, 3, 1.0, 4.0, 8.0, hourly_timestamp][i]
+
+    raw_query = MagicMock()
+    raw_query.filter.return_value = raw_query
+    raw_query.one.return_value = raw_result
+
+    hourly_query = MagicMock()
+    hourly_query.filter.return_value = hourly_query
+    hourly_query.one.return_value = hourly_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [raw_query, hourly_query]
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = prompt.metrics_summary
 
-    assert summary["total_executions"] == 10
-    assert summary["successful_executions"] == 8
-    assert summary["failed_executions"] == 2
+    assert summary["total_executions"] == 10  # 6 + 4
+    assert summary["successful_executions"] == 8  # 5 + 3
+    assert summary["failed_executions"] == 2  # 10 - 8
     assert summary["failure_rate"] == 0.2
-    assert summary["min_response_time"] == 0.2
-    assert summary["max_response_time"] == 4.0
-    assert summary["avg_response_time"] == 2.0
-    assert summary["last_execution_time"] == mock_timestamp
+    assert summary["min_response_time"] == 0.2  # min(0.2, 1.0)
+    assert summary["max_response_time"] == 4.0  # max(3.0, 4.0)
+    assert summary["avg_response_time"] == 2.0  # (12.0 + 8.0) / 10 = 2.0
+    assert summary["last_execution_time"] == raw_timestamp
 
 
 # --- Server metrics properties ---
@@ -667,33 +713,47 @@ def test_server_get_metric_counts_sql_path(monkeypatch):
 
 
 def test_server_metrics_summary_sql_path(monkeypatch):
-    """Test metrics_summary uses SQL aggregation when metrics not loaded but session exists."""
+    """Test metrics_summary uses SQL aggregation when metrics not loaded but session exists.
+
+    After fix for issue #3598, metrics_summary queries both raw metrics and hourly rollups.
+    """
     server = db.Server()
     server.id = "test-server-id"
 
-    mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [20, 18, 0.1, 6.0, 3.0, mock_timestamp][i]
+    raw_timestamp = datetime.now(timezone.utc)
+    hourly_timestamp = raw_timestamp - timedelta(hours=2)
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Mock raw metrics: 12 total, 11 success, sum=36.0
+    raw_result = MagicMock()
+    raw_result.__getitem__ = lambda self, i: [12, 11, 0.1, 4.0, 36.0, raw_timestamp][i]
+
+    # Mock hourly rollups: 8 total, 7 success, sum=24.0
+    hourly_result = MagicMock()
+    hourly_result.__getitem__ = lambda self, i: [8, 7, 1.0, 6.0, 24.0, hourly_timestamp][i]
+
+    raw_query = MagicMock()
+    raw_query.filter.return_value = raw_query
+    raw_query.one.return_value = raw_result
+
+    hourly_query = MagicMock()
+    hourly_query.filter.return_value = hourly_query
+    hourly_query.one.return_value = hourly_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [raw_query, hourly_query]
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = server.metrics_summary
 
-    assert summary["total_executions"] == 20
-    assert summary["successful_executions"] == 18
-    assert summary["failed_executions"] == 2
+    assert summary["total_executions"] == 20  # 12 + 8
+    assert summary["successful_executions"] == 18  # 11 + 7
+    assert summary["failed_executions"] == 2  # 20 - 18
     assert summary["failure_rate"] == 0.1
-    assert summary["min_response_time"] == 0.1
-    assert summary["max_response_time"] == 6.0
-    assert summary["avg_response_time"] == 3.0
-    assert summary["last_execution_time"] == mock_timestamp
+    assert summary["min_response_time"] == 0.1  # min(0.1, 1.0)
+    assert summary["max_response_time"] == 6.0  # max(4.0, 6.0)
+    assert summary["avg_response_time"] == 3.0  # (36.0 + 24.0) / 20 = 3.0
+    assert summary["last_execution_time"] == raw_timestamp
 
 
 # --- Resource content property ---
