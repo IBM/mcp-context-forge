@@ -214,10 +214,8 @@ class TestAuthentication:
 
         # Verify that we were redirected to the admin dashboard, not the login page
         expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
-
-        # Verify login form is not visible (handles both not-in-DOM and hidden cases)
         login_page = LoginPage(page, BASE_URL)
-        expect(login_page.email_input).not_to_be_visible(timeout=2000)
+        assert not login_page.is_on_login_page(), "Should have been redirected away from login page"
 
         # Verify we can see admin interface elements instead
         admin_ui = AdminPage(page, BASE_URL)
