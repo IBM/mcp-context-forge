@@ -10,8 +10,6 @@ prevents log injection attacks by removing newlines, carriage returns,
 ANSI escape sequences, and control characters.
 """
 
-import pytest
-
 from mcpgateway.common.validators import SecurityValidator
 
 
@@ -207,5 +205,3 @@ class TestLogInjectionIntegration:
         log_message = f"Tool {sanitized} executed"
         assert "\x1B" not in log_message
         assert "malicious_tool" in log_message
-
-# Made with Bob

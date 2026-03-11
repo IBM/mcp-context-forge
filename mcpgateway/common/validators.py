@@ -882,7 +882,7 @@ class SecurityValidator:
         return value
 
     @classmethod
-    def sanitize_log_message(cls, message: str, max_length: int = 10000) -> str:
+    def sanitize_log_message(cls, message: Optional[Any], max_length: int = 10000) -> str:
         """Sanitize log message to prevent log injection attacks.
 
         Removes newlines, carriage returns, ANSI escapes, and control characters
