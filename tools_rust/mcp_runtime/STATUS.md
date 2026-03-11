@@ -4,6 +4,29 @@ Last updated: March 11, 2026
 
 Status focus in this update:
 
+- Rust session-affinity forwarding is now implemented behind a separate
+  feature-flagged slice:
+  - `EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED=true`
+  - `MCP_RUST_AFFINITY_CORE_ENABLED=true`
+  - when enabled, Rust can forward session-bound MCP transport requests to the
+    owner worker through the existing Redis pubsub contract used by the Python
+    session pool:
+    - request channel: `mcpgw:pool_http:<owner-worker-id>`
+    - response channel: `mcpgw:pool_http_response:<request-id>`
+  - this keeps the Python fallback intact while moving the public affinity
+    decision/forwarding edge into Rust
+- full-Rust runtime visibility now includes affinity mode:
+  - `/health` returns:
+    - `x-contextforge-mcp-affinity-core-mode: rust|python`
+  - runtime status JSON returns:
+    - `affinity_core_mode`
+    - `rust_affinity_core_enabled`
+- the Rust runtime test suite now covers the owner-worker affinity forward path
+  directly:
+  - `affinity_core_forwards_session_post_to_owner_worker_channel`
+  - this validates that a session-bound MCP POST can be published to the owner
+    worker channel and reconstructed back into the public Rust response
+
 - Rust session-core is now running on the compose-built image with a real
   Redis-backed session metadata store:
   - `EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED=true`
@@ -54,6 +77,7 @@ Status focus in this update:
     - `x-contextforge-mcp-event-store-mode: rust`
     - `x-contextforge-mcp-resume-core-mode: rust`
     - `x-contextforge-mcp-live-stream-core-mode: rust`
+    - `x-contextforge-mcp-affinity-core-mode: rust`
   - raw `POST /servers/<id>/mcp initialize` returns:
     - `x-contextforge-mcp-runtime: rust`
     - `x-contextforge-mcp-session-core: rust`
@@ -91,12 +115,13 @@ Status focus in this update:
     - Rust Redis session metadata key removed immediately after delete
 - image-level validation for this milestone passed:
   - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
-    -> `40 passed`
+    -> `43 passed`
   - targeted Python unit coverage passed for:
     - internal MCP session delete handler
     - internal MCP initialize handler
     - Rust event-store transport wrapper selection
     - runtime config defaults
+    - Rust affinity proxy loop-prevention and header propagation
   - `make test-mcp-cli` -> `23 passed`
   - `make test-mcp-rbac` -> `40 passed`
   - `uv run pytest -q --with-integration tests/integration/test_streamable_http_redis.py`
@@ -115,15 +140,46 @@ Status focus in this update:
     - `tests/integration/test_streamable_http_redis.py`
     - the live cross-replica container proof above
     - the live public `GET /mcp` replay proof above
-- current compose-built performance on this rebuilt session-core/event-store image:
+- current fresh rebuilt performance on the full-Rust image from
+  `make testing-rebuild-rust-full`:
   - mixed MCP:
-    - `120 users` -> `959.88 RPS`, `21.90 ms` avg, `37 ms` p95, `100 ms` p99
-    - `150 users` -> `1011.36 RPS`, `43.99 ms` avg, `78 ms` p95, `140 ms` p99
-    - `175 users` -> `979.83 RPS`, `74.75 ms` avg, `130 ms` p95, `210 ms` p99
-  - tools-only:
-    - `125 users` -> `1106.11 RPS` overall
-    - `MCP tools/call [rapid]` -> `1049.1 RPS`
-    - `55.04 ms` avg, `68 ms` p95, `96 ms` p99
+    - `120 users` -> `929.24 RPS`, `22.54 ms` avg, `40 ms` p95, `72 ms` p99
+    - `0%` failures
+  - tools-only using explicit `MCPToolCallerUser` selection:
+    - `125 users` -> `951.19 RPS` overall
+    - `MCP tools/call [rapid]` -> `901.5 RPS`
+    - `68.64 ms` avg, `90 ms` p95, `120 ms` p99
+    - `0%` failures
+- important benchmark note for the current rebuilt image:
+  - the clean tools-only benchmark must be run with explicit user-class
+    selection:
+    - `locust ... MCPToolCallerUser`
+  - `--tags toolcall` is not a valid substitute for this locustfile because
+    Locust still instantiates the other user classes and then emits noisy
+    `No tasks defined` errors after tag filtering
+- performance regression watch:
+  - last clearly reproduced compose-built high-water mark:
+    - commit `8fb919351` (`feat: wire Rust MCP rmcp runtime into compose`)
+    - mixed MCP on `Fast Time Server`:
+      - `120 users` -> `1007.35 RPS`
+      - `150 users` -> `1033.01 RPS`
+      - `175 users` -> `1008.24 RPS`
+    - tools-only:
+      - `125 users` -> `1126.96 RPS` overall
+      - `MCP tools/call [rapid]` -> `1068.5 RPS`
+  - first later commit after that high-water mark:
+    - `8e9682508` (`feat: add Rust MCP session core slice`)
+  - current rebuilt runs on the later session/transport line no longer
+    consistently reproduce those older peaks
+  - important caveat:
+    - the regression is not yet isolated to the newest live-stream or
+      affinity-core work alone
+    - earlier A/B checks on rebuilt images showed that turning the newer
+      session/event/resume/live-stream flags back off did **not** restore the
+      older `>1000 RPS` mixed result
+    - treat the slowdown as unresolved across the broader post-`8fb919351`
+      session/transport line until a tighter commit-by-commit benchmark pass
+      proves otherwise
 - important live quality note from the rebuilt image:
   - under load, the direct Rust `tools/list` DB path still logged some transient
     `db error` / `connection closed` warnings and fell back to the Python
@@ -135,11 +191,11 @@ Status focus in this update:
   - public MCP transport is Rust-fronted
   - Rust owns session metadata, delete teardown orchestration, Redis-backed
     event store/replay primitives, the public replay/resume branch for
-    resumable `GET /mcp`, and the public non-resume live `GET /mcp` response
-    edge
+    resumable `GET /mcp`, the public non-resume live `GET /mcp` response
+    edge, and the owner-worker affinity forwarding edge
   - Python still owns the underlying `StreamableHTTPSessionManager`,
     upstream live stream source behind the trusted transport bridge,
-    owner/affinity validation on the transport bridge, and the remaining
+    session-owner registration in the Python session pool, and the remaining
     transport/session fallback behavior
 - nginx needed one explicit MCP transport fix for this slice:
   - `/mcp` and `/servers/<id>/mcp` now have a dedicated non-buffered nginx

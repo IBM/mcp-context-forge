@@ -2,10 +2,11 @@ use axum::{
     Json, Router,
     http::{HeaderMap, StatusCode, Uri},
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::{any, delete, get, post},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use contextforge_mcp_runtime::{AppState, build_router, config::RuntimeConfig};
+use futures_util::StreamExt;
 use redis::AsyncCommands;
 use reqwest::header::HeaderValue;
 use serde_json::{Value, json};
@@ -55,6 +56,7 @@ fn test_runtime_config() -> RuntimeConfig {
         event_store_enabled: false,
         resume_core_enabled: false,
         live_stream_core_enabled: false,
+        affinity_core_enabled: false,
         session_ttl_seconds: 3_600,
         event_store_max_events_per_stream: 100,
         event_store_ttl_seconds: 3_600,
@@ -96,6 +98,35 @@ async fn cleanup_redis_prefix(redis_url: &str, prefix: &str) {
     if !keys.is_empty() {
         let _ = conn.del::<_, ()>(keys).await;
     }
+}
+
+async fn initialize_runtime_session(
+    runtime_url: &str,
+    session_id: &str,
+    auth_context: Option<&str>,
+) {
+    let client = reqwest::Client::new();
+    let mut request = client
+        .post(format!("{runtime_url}/mcp"))
+        .header("mcp-protocol-version", "2025-11-25")
+        .header("mcp-session-id", session_id)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}}
+        }));
+    if let Some(auth_context) = auth_context {
+        request = request.header("x-contextforge-auth-context", auth_context);
+    }
+    let response = request.send().await.expect("initialize response");
+    let status = response.status();
+    let body = response.text().await.expect("initialize body");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "initialize session {session_id} failed: {body}"
+    );
 }
 
 #[tokio::test]
@@ -362,6 +393,7 @@ async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_tran
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
     )>::new()));
     let backend = {
         let post_calls = transport_calls.clone();
@@ -384,6 +416,10 @@ async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_tran
                                 .and_then(|value| value.to_str().ok())
                                 .map(str::to_string),
                             uri.query().map(str::to_string),
+                            headers
+                                .get("x-contextforge-session-validated")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
                         ));
                         let mut response_headers = HeaderMap::new();
                         response_headers.insert(
@@ -415,6 +451,10 @@ async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_tran
                                 .and_then(|value| value.to_str().ok())
                                 .map(str::to_string),
                             uri.query().map(str::to_string),
+                            headers
+                                .get("x-contextforge-session-validated")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
                         ));
                         (
                             StatusCode::OK,
@@ -440,6 +480,10 @@ async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_tran
                                 .and_then(|value| value.to_str().ok())
                                 .map(str::to_string),
                             None,
+                            headers
+                                .get("x-contextforge-session-validated")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
                         ));
                         StatusCode::NO_CONTENT
                     }
@@ -528,6 +572,7 @@ async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_tran
     assert!(calls[0].1.is_some());
     assert_eq!(calls[0].2.as_deref(), Some("server-123"));
     assert_eq!(calls[0].3, None);
+    assert_eq!(calls[0].4, None);
     assert_eq!(
         calls[1],
         (
@@ -535,6 +580,7 @@ async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_tran
             Some("transport-session-1".to_string()),
             Some("server-123".to_string()),
             Some("session_id=transport-session-1".to_string()),
+            Some("rust".to_string()),
         )
     );
     assert_eq!(
@@ -544,8 +590,175 @@ async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_tran
             Some("transport-session-1".to_string()),
             Some("server-123".to_string()),
             None,
+            Some("rust".to_string()),
         )
     );
+}
+
+#[tokio::test]
+async fn session_core_rejects_missing_session_before_backend_dispatch() {
+    let backend_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let backend_calls = backend_calls.clone();
+        Router::new().fallback(any(move || {
+            let backend_calls = backend_calls.clone();
+            async move {
+                *backend_calls.lock().expect("lock") += 1;
+                (StatusCode::OK, Json(json!({"unexpected": true})))
+            }
+        }))
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            session_core_enabled: true,
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+    let auth_context = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_admin": false,
+            "is_authenticated": true,
+        }))
+        .expect("auth context json"),
+    );
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("x-contextforge-auth-context", auth_context)
+        .header("mcp-session-id", "missing-session")
+        .json(&json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"tools/list",
+            "params": {}
+        }))
+        .send()
+        .await
+        .expect("missing session response");
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["detail"], json!("Session not found"));
+    assert_eq!(*backend_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
+async fn session_core_transport_denies_non_owner_before_backend_dispatch() {
+    let transport_calls = Arc::new(Mutex::new(Vec::<String>::new()));
+    let backend = {
+        let post_calls = transport_calls.clone();
+        let get_calls = transport_calls.clone();
+        Router::new().route(
+            "/_internal/mcp/transport",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let transport_calls = post_calls.clone();
+                async move {
+                    transport_calls.lock().expect("lock").push(format!(
+                        "POST:{}",
+                        headers
+                            .get("mcp-session-id")
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or("missing")
+                    ));
+                    let mut response_headers = HeaderMap::new();
+                    response_headers.insert(
+                        "mcp-session-id",
+                        HeaderValue::from_static("owned-session-1"),
+                    );
+                    (
+                        StatusCode::OK,
+                        response_headers,
+                        Json(json!({
+                            "jsonrpc":"2.0",
+                            "id": body["id"],
+                            "result": {"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"ContextForge","version":"0.1.0"}}
+                        })),
+                    )
+                }
+            })
+            .get(move || {
+                let transport_calls = get_calls.clone();
+                async move {
+                    transport_calls.lock().expect("lock").push("GET".to_string());
+                    (
+                        StatusCode::OK,
+                        [("content-type", HeaderValue::from_static("text/event-stream"))],
+                        "data: ping\n\n",
+                    )
+                }
+            }),
+        )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            session_core_enabled: true,
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+    let owner_auth = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "email": "owner@example.com",
+            "teams": ["team-a"],
+            "is_admin": false,
+            "is_authenticated": true,
+        }))
+        .expect("owner auth context json"),
+    );
+    let intruder_auth = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "email": "intruder@example.com",
+            "teams": ["team-a"],
+            "is_admin": false,
+            "is_authenticated": true,
+        }))
+        .expect("intruder auth context json"),
+    );
+    let client = reqwest::Client::new();
+
+    let initialize_response = client
+        .post(format!("{runtime_url}/mcp"))
+        .header("x-contextforge-auth-context", owner_auth)
+        .json(&json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"initialize",
+            "params":{"protocolVersion":"2025-11-25","capabilities":{}}
+        }))
+        .send()
+        .await
+        .expect("initialize response");
+    let initialize_status = initialize_response.status();
+    let initialize_body = initialize_response.text().await.expect("initialize body");
+    assert!(
+        initialize_status == StatusCode::OK,
+        "initialize status={initialize_status} body={initialize_body}"
+    );
+
+    let get_response = client
+        .get(format!("{runtime_url}/mcp?session_id=owned-session-1"))
+        .header("x-contextforge-auth-context", intruder_auth)
+        .send()
+        .await
+        .expect("get response");
+
+    assert_eq!(get_response.status(), StatusCode::FORBIDDEN);
+    let body: Value = get_response.json().await.expect("json body");
+    assert_eq!(body["detail"], json!("Session access denied"));
+    let calls = transport_calls.lock().expect("lock");
+    assert_eq!(calls.len(), 1);
+    assert!(calls[0].starts_with("POST:"));
 }
 
 #[tokio::test]
@@ -673,10 +886,15 @@ async fn session_core_redis_shares_sessions_across_runtime_instances() {
         .send()
         .await
         .expect("initialize response");
-    assert_eq!(initialize_response.status(), StatusCode::OK);
+    let initialize_status = initialize_response.status();
+    let initialize_headers = initialize_response.headers().clone();
+    let initialize_body = initialize_response.text().await.expect("initialize body");
+    assert!(
+        initialize_status == StatusCode::OK,
+        "initialize status={initialize_status} body={initialize_body}"
+    );
     assert_eq!(
-        initialize_response
-            .headers()
+        initialize_headers
             .get("mcp-session-id")
             .and_then(|value| value.to_str().ok()),
         Some("redis-session-1")
@@ -704,6 +922,205 @@ async fn session_core_redis_shares_sessions_across_runtime_instances() {
     );
 
     cleanup_redis_prefix(redis_url, &cache_prefix).await;
+}
+
+#[tokio::test]
+async fn affinity_core_forwards_session_post_to_owner_worker_channel() {
+    let redis_url = "redis://127.0.0.1:6379/0";
+    if !redis_is_available(redis_url).await {
+        eprintln!("skipping affinity-core test because Redis is unavailable at {redis_url}");
+        return;
+    }
+
+    let owner_worker_id = format!("worker-{}", Uuid::new_v4().simple());
+    let session_id = format!("affinity-session-{}", Uuid::new_v4().simple());
+    cleanup_redis_prefix(redis_url, &format!("mcpgw:pool_owner:{session_id}")).await;
+
+    let backend_calls = Arc::new(Mutex::new(Vec::<String>::new()));
+    let backend_calls_clone = backend_calls.clone();
+    let initialize_session_id = session_id.clone();
+    let backend = Router::new()
+        .route(
+            "/_internal/mcp/transport",
+            post(move || {
+                let backend_calls = backend_calls_clone.clone();
+                let initialize_session_id = initialize_session_id.clone();
+                async move {
+                    backend_calls
+                        .lock()
+                        .expect("lock")
+                        .push("initialize".to_string());
+                    (
+                        StatusCode::OK,
+                        [("mcp-session-id", initialize_session_id)],
+                        Json(json!({
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {}
+                        })),
+                    )
+                }
+            }),
+        )
+        .fallback({
+            let backend_calls = backend_calls.clone();
+            any(move || {
+                let backend_calls = backend_calls.clone();
+                async move {
+                    backend_calls
+                        .lock()
+                        .expect("lock")
+                        .push("unexpected".to_string());
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
+            })
+        });
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            session_core_enabled: true,
+            affinity_core_enabled: true,
+            redis_url: Some(redis_url.to_string()),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let redis_client = redis::Client::open(redis_url).expect("redis client");
+    let mut redis = redis_client
+        .get_multiplexed_async_connection()
+        .await
+        .expect("redis connection");
+    redis
+        .set_ex::<_, _, ()>(
+            format!("mcpgw:pool_owner:{session_id}"),
+            owner_worker_id.clone(),
+            300,
+        )
+        .await
+        .expect("set owner");
+
+    let responder = {
+        let redis_client = redis_client.clone();
+        let session_id = session_id.clone();
+        let owner_worker_id = owner_worker_id.clone();
+        tokio::spawn(async move {
+            let mut pubsub = redis_client
+                .get_async_pubsub()
+                .await
+                .expect("pubsub");
+            pubsub
+                .subscribe(format!("mcpgw:pool_http:{owner_worker_id}"))
+                .await
+                .expect("subscribe");
+            let mut stream = pubsub.on_message();
+            let message = tokio::time::timeout(Duration::from_secs(5), stream.next())
+                .await
+                .expect("timeout waiting for forwarded request")
+                .expect("forwarded request");
+            let payload_json: String = message.get_payload().expect("payload");
+            let payload: Value = serde_json::from_str(&payload_json).expect("payload json");
+            assert_eq!(payload["mcp_session_id"], session_id);
+            assert_eq!(payload["method"], "POST");
+            assert_eq!(payload["path"], "/mcp");
+            assert_eq!(payload["query_string"], "");
+
+            let response_body = serde_json::to_vec(&json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {"forwarded": true}
+            }))
+            .expect("response json");
+            let response_hex = response_body
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            let response = serde_json::to_string(&json!({
+                "status": 200,
+                "headers": {
+                    "content-type": "application/json",
+                    "mcp-session-id": session_id,
+                },
+                "body": response_hex,
+            }))
+            .expect("response payload");
+            let response_channel = payload["response_channel"]
+                .as_str()
+                .expect("response channel")
+                .to_string();
+            let mut publish_conn = redis_client
+                .get_multiplexed_async_connection()
+                .await
+                .expect("publish connection");
+            redis::cmd("PUBLISH")
+                .arg(response_channel)
+                .arg(response)
+                .query_async::<i64>(&mut publish_conn)
+                .await
+                .expect("publish response");
+        })
+    };
+
+    let auth_context = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_admin": false
+        }))
+        .expect("auth context json"),
+    );
+    let client = reqwest::Client::new();
+
+    let initialize_response = client
+        .post(format!("{runtime_url}/mcp"))
+        .header("x-contextforge-auth-context", auth_context.clone())
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"initialize",
+            "params":{"protocolVersion":"2025-11-25","capabilities":{}}
+        }))
+        .send()
+        .await
+        .expect("initialize response");
+    let initialize_status = initialize_response.status();
+    let initialize_body = initialize_response.text().await.expect("initialize body");
+    assert!(
+        initialize_status == StatusCode::OK,
+        "initialize status={initialize_status} body={initialize_body}"
+    );
+
+    let response = client
+        .post(format!("{runtime_url}/mcp"))
+        .header("x-contextforge-auth-context", auth_context)
+        .header("mcp-protocol-version", "2025-11-25")
+        .header("mcp-session-id", session_id.clone())
+        .json(&json!({
+            "jsonrpc":"2.0",
+            "id":2,
+            "method":"tools/list",
+            "params":{}
+        }))
+        .send()
+        .await
+        .expect("post response");
+    let response_headers = response.headers().clone();
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["result"]["forwarded"], json!(true));
+    assert_eq!(
+        response_headers
+            .get("x-contextforge-mcp-affinity-core")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
+
+    responder.await.expect("responder");
+    let calls = backend_calls.lock().expect("lock");
+    assert_eq!(calls.as_slice(), &["initialize".to_string()]);
+    cleanup_redis_prefix(redis_url, &format!("mcpgw:pool_owner:{session_id}")).await;
 }
 
 #[tokio::test]
@@ -979,11 +1396,33 @@ async fn resume_core_replays_public_get_from_rust_event_store() {
 async fn resume_core_disabled_falls_back_to_python_transport_get() {
     let transport_calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let backend = {
-        let transport_calls = transport_calls.clone();
+        let post_calls = transport_calls.clone();
+        let get_calls = transport_calls.clone();
         Router::new().route(
             "/_internal/mcp/transport",
-            get(move || {
-                let transport_calls = transport_calls.clone();
+            post(move || {
+                let transport_calls = post_calls.clone();
+                async move {
+                    transport_calls
+                        .lock()
+                        .expect("lock")
+                        .push("POST".to_string());
+                    (
+                        StatusCode::OK,
+                        [
+                            ("content-type", "application/json"),
+                            ("mcp-session-id", "fallback-session-1"),
+                        ],
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "result": {"protocolVersion": "2025-11-25", "capabilities": {}}
+                        })),
+                    )
+                }
+            })
+            .get(move || {
+                let transport_calls = get_calls.clone();
                 async move {
                     transport_calls
                         .lock()
@@ -1016,6 +1455,8 @@ async fn resume_core_disabled_falls_back_to_python_transport_get() {
     let runtime_url = spawn_router(runtime).await;
     let client = reqwest::Client::new();
 
+    initialize_runtime_session(&runtime_url, "fallback-session-1", None).await;
+
     let response = client
         .get(format!("{runtime_url}/mcp?session_id=fallback-session-1"))
         .header("accept", "text/event-stream")
@@ -1034,18 +1475,40 @@ async fn resume_core_disabled_falls_back_to_python_transport_get() {
     assert_eq!(response.text().await.expect("body"), "data: backend-fallback\n\n");
 
     let calls = transport_calls.lock().expect("lock");
-    assert_eq!(calls.as_slice(), &["GET".to_string()]);
+    assert_eq!(calls.as_slice(), &["POST".to_string(), "GET".to_string()]);
 }
 
 #[tokio::test]
 async fn live_stream_core_restreams_public_get_from_rust_edge() {
     let transport_calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let backend = {
-        let transport_calls = transport_calls.clone();
+        let post_calls = transport_calls.clone();
+        let get_calls = transport_calls.clone();
         Router::new().route(
             "/_internal/mcp/transport",
-            get(move || {
-                let transport_calls = transport_calls.clone();
+            post(move || {
+                let transport_calls = post_calls.clone();
+                async move {
+                    transport_calls
+                        .lock()
+                        .expect("lock")
+                        .push("POST".to_string());
+                    (
+                        StatusCode::OK,
+                        [
+                            ("content-type", "application/json"),
+                            ("mcp-session-id", "live-session-1"),
+                        ],
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "result": {"protocolVersion": "2025-11-25", "capabilities": {}}
+                        })),
+                    )
+                }
+            })
+            .get(move || {
+                let transport_calls = get_calls.clone();
                 async move {
                     transport_calls
                         .lock()
@@ -1084,6 +1547,8 @@ async fn live_stream_core_restreams_public_get_from_rust_edge() {
         .expect("auth context json"),
     );
 
+    initialize_runtime_session(&runtime_url, "live-session-1", Some(auth_context.as_str())).await;
+
     let response = reqwest::Client::new()
         .get(format!("{runtime_url}/mcp"))
         .header("x-contextforge-auth-context", auth_context)
@@ -1115,18 +1580,40 @@ async fn live_stream_core_restreams_public_get_from_rust_edge() {
     assert!(body.contains("hello-live"));
 
     let calls = transport_calls.lock().expect("lock");
-    assert_eq!(calls.as_slice(), &["GET".to_string()]);
+    assert_eq!(calls.as_slice(), &["POST".to_string(), "GET".to_string()]);
 }
 
 #[tokio::test]
 async fn live_stream_core_returns_headers_without_waiting_for_backend_sse() {
     let transport_calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let backend = {
-        let transport_calls = transport_calls.clone();
+        let post_calls = transport_calls.clone();
+        let get_calls = transport_calls.clone();
         Router::new().route(
             "/_internal/mcp/transport",
-            get(move || {
-                let transport_calls = transport_calls.clone();
+            post(move || {
+                let transport_calls = post_calls.clone();
+                async move {
+                    transport_calls
+                        .lock()
+                        .expect("lock")
+                        .push("POST".to_string());
+                    (
+                        StatusCode::OK,
+                        [
+                            ("content-type", "application/json"),
+                            ("mcp-session-id", "live-session-delayed"),
+                        ],
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "result": {"protocolVersion": "2025-11-25", "capabilities": {}}
+                        })),
+                    )
+                }
+            })
+            .get(move || {
+                let transport_calls = get_calls.clone();
                 async move {
                     transport_calls
                         .lock()
@@ -1160,6 +1647,8 @@ async fn live_stream_core_returns_headers_without_waiting_for_backend_sse() {
     let client = reqwest::Client::new();
     let started = Instant::now();
 
+    initialize_runtime_session(&runtime_url, "live-session-delayed", None).await;
+
     let response = client
         .get(format!("{runtime_url}/mcp"))
         .header("accept", "text/event-stream")
@@ -1192,7 +1681,7 @@ async fn live_stream_core_returns_headers_without_waiting_for_backend_sse() {
     assert!(body.contains("hello-delayed"));
 
     let calls = transport_calls.lock().expect("lock");
-    assert_eq!(calls.as_slice(), &["GET".to_string()]);
+    assert_eq!(calls.as_slice(), &["POST".to_string(), "GET".to_string()]);
 }
 
 #[tokio::test]

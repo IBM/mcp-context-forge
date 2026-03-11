@@ -112,6 +112,13 @@ pub struct RuntimeConfig {
     )]
     pub live_stream_core_enabled: bool,
 
+    #[arg(
+        long,
+        env = "MCP_RUST_AFFINITY_CORE_ENABLED",
+        default_value_t = false
+    )]
+    pub affinity_core_enabled: bool,
+
     #[arg(long, env = "MCP_RUST_SESSION_TTL_SECONDS", default_value_t = 3_600)]
     pub session_ttl_seconds: u64,
 

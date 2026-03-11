@@ -55,10 +55,14 @@ const RUNTIME_HEADER: &str = "x-contextforge-mcp-runtime";
 const RUNTIME_NAME: &str = "rust";
 const UPSTREAM_CLIENT_HEADER: &str = "x-contextforge-mcp-upstream-client";
 const MCP_PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
+const SESSION_VALIDATED_HEADER: &str = "x-contextforge-session-validated";
 const SESSION_CORE_HEADER: &str = "x-contextforge-mcp-session-core";
 const EVENT_STORE_HEADER: &str = "x-contextforge-mcp-event-store";
 const RESUME_CORE_HEADER: &str = "x-contextforge-mcp-resume-core";
 const LIVE_STREAM_CORE_HEADER: &str = "x-contextforge-mcp-live-stream-core";
+const AFFINITY_CORE_HEADER: &str = "x-contextforge-mcp-affinity-core";
+const INTERNAL_AFFINITY_FORWARDED_HEADER: &str = "x-contextforge-affinity-forwarded";
+const INTERNAL_AFFINITY_FORWARDED_VALUE: &str = "rust";
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -109,6 +113,7 @@ pub struct AppState {
     event_store_enabled: bool,
     resume_core_enabled: bool,
     live_stream_core_enabled: bool,
+    affinity_core_enabled: bool,
     cache_prefix: Arc<str>,
     event_store_max_events_per_stream: usize,
     event_store_ttl: Duration,
@@ -146,6 +151,7 @@ pub struct HealthResponse {
     pub event_store_enabled: bool,
     pub resume_core_enabled: bool,
     pub live_stream_core_enabled: bool,
+    pub affinity_core_enabled: bool,
     pub active_sessions: usize,
 }
 
@@ -276,6 +282,30 @@ struct EventStoreReplayResponse {
 struct EventStoreReplayEvent {
     event_id: String,
     message: Value,
+}
+
+#[derive(Debug, Serialize)]
+struct AffinityForwardRequest<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    response_channel: String,
+    mcp_session_id: &'a str,
+    method: &'a str,
+    path: &'a str,
+    query_string: &'a str,
+    headers: HashMap<String, String>,
+    body: String,
+    original_worker: &'static str,
+    timestamp: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct AffinityForwardResponse {
+    status: u16,
+    #[serde(default)]
+    headers: HashMap<String, String>,
+    #[serde(default)]
+    body: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -423,6 +453,7 @@ impl AppState {
             event_store_enabled: config.event_store_enabled,
             resume_core_enabled: config.resume_core_enabled,
             live_stream_core_enabled: config.live_stream_core_enabled,
+            affinity_core_enabled: config.affinity_core_enabled,
             cache_prefix: Arc::from(config.cache_prefix.clone()),
             event_store_max_events_per_stream: config.event_store_max_events_per_stream,
             event_store_ttl: Duration::from_secs(config.event_store_ttl_seconds),
@@ -589,6 +620,10 @@ impl AppState {
         self.live_stream_core_enabled
     }
 
+    pub fn affinity_core_enabled(&self) -> bool {
+        self.affinity_core_enabled
+    }
+
     fn cache_prefix(&self) -> &str {
         &self.cache_prefix
     }
@@ -697,6 +732,7 @@ async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
         event_store_enabled: state.event_store_enabled(),
         resume_core_enabled: state.resume_core_enabled(),
         live_stream_core_enabled: state.live_stream_core_enabled(),
+        affinity_core_enabled: state.affinity_core_enabled(),
         active_sessions,
     })
 }
@@ -836,7 +872,46 @@ async fn rpc(
             .await;
         }
 
-        apply_session_core_request_context(&state, &mut effective_headers, &uri).await;
+        if let Err(response) =
+            validate_runtime_session_request(&state, &mut effective_headers, &uri).await
+        {
+            return response;
+        }
+    }
+
+    let request_session_id = runtime_session_id_from_request(&effective_headers, &uri);
+    if state.affinity_core_enabled()
+        && state.session_core_enabled()
+        && !specialized_initialize
+        && request_session_id.is_some()
+    {
+        let affinity_response = match forward_transport_request_via_affinity_owner(
+            &state,
+            request_session_id.as_deref().unwrap_or_default(),
+            reqwest::Method::POST,
+            uri.path(),
+            uri.query().unwrap_or_default(),
+            &effective_headers,
+            &body,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
+        if let Some(response) = affinity_response {
+            let mut response = response;
+            if let Ok(value) = HeaderValue::from_str(if state.affinity_core_enabled() {
+                "rust"
+            } else {
+                "python"
+            }) {
+                response
+                    .headers_mut()
+                    .insert(HeaderName::from_static(AFFINITY_CORE_HEADER), value);
+            }
+            return response;
+        }
     }
 
     let mode = if request.method == "ping" {
@@ -1744,6 +1819,7 @@ async fn handle_initialize_with_session_core(
         &incoming_headers,
         &uri,
         Some(body.clone()),
+        false,
     )
     .await
     {
@@ -1948,6 +2024,251 @@ async fn remove_runtime_session_from_redis(state: &AppState, session_id: &str) {
 
 fn runtime_session_key(state: &AppState, session_id: &str) -> String {
     format!("{}rust:mcp:session:{session_id}", state.cache_prefix())
+}
+
+fn pool_owner_key(session_id: &str) -> String {
+    format!("mcpgw:pool_owner:{session_id}")
+}
+
+fn is_affinity_forwarded_request(headers: &HeaderMap) -> bool {
+    headers
+        .get(INTERNAL_AFFINITY_FORWARDED_HEADER)
+        .and_then(|value| value.to_str().ok())
+        == Some(INTERNAL_AFFINITY_FORWARDED_VALUE)
+}
+
+async fn get_pool_session_owner(state: &AppState, session_id: &str) -> Option<String> {
+    let mut redis = state.redis().await?;
+    match redis.get::<_, Option<String>>(pool_owner_key(session_id)).await {
+        Ok(owner) => owner,
+        Err(err) => {
+            warn!("Rust MCP affinity owner lookup failed for {session_id}: {err}");
+            None
+        }
+    }
+}
+
+async fn forward_transport_request_via_affinity_owner(
+    state: &AppState,
+    session_id: &str,
+    method: reqwest::Method,
+    path: &str,
+    query_string: &str,
+    incoming_headers: &HeaderMap,
+    body: &[u8],
+) -> Result<Option<Response>, Response> {
+    if !state.affinity_core_enabled() || is_affinity_forwarded_request(incoming_headers) {
+        return Ok(None);
+    }
+
+    let Some(owner_worker_id) = get_pool_session_owner(state, session_id).await else {
+        return Ok(None);
+    };
+
+    let Some(redis_client) = state.redis_client.clone() else {
+        return Ok(None);
+    };
+
+    let owner_channel = format!("mcpgw:pool_http:{owner_worker_id}");
+    let response_channel = format!("mcpgw:pool_http_response:{}", Uuid::new_v4().simple());
+    let mut pubsub = redis_client
+        .get_async_pubsub()
+        .await
+        .map_err(|err| affinity_forward_error_response("Pub/Sub initialization failed", err))?;
+
+    pubsub
+        .subscribe(&response_channel)
+        .await
+        .map_err(|err| affinity_forward_error_response("Pub/Sub subscribe failed", err))?;
+
+    let mut publish_conn = state
+        .redis()
+        .await
+        .ok_or_else(|| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "detail": "Rust MCP affinity forwarding requires Redis",
+                }),
+            )
+        })?;
+
+    let headers = build_affinity_forward_headers(incoming_headers);
+    let payload = AffinityForwardRequest {
+        kind: "http_forward",
+        response_channel: response_channel.clone(),
+        mcp_session_id: session_id,
+        method: method.as_str(),
+        path,
+        query_string,
+        headers,
+        body: hex_encode(body),
+        original_worker: "rust-mcp-runtime",
+        timestamp: current_unix_timestamp_seconds(),
+    };
+    let payload_json = serde_json::to_vec(&payload).map_err(|err| {
+        json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "detail": format!("Rust MCP affinity payload serialization failed: {err}"),
+            }),
+        )
+    })?;
+
+    redis::cmd("PUBLISH")
+        .arg(&owner_channel)
+        .arg(payload_json)
+        .query_async::<i64>(&mut publish_conn)
+        .await
+        .map_err(|err| affinity_forward_error_response("Affinity request publish failed", err))?;
+
+    let mut stream = pubsub.on_message();
+    let timeout = Duration::from_secs(30);
+    let message = tokio::time::timeout(timeout, stream.next())
+        .await
+        .map_err(|_| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "detail": format!("Timed out waiting for owner worker response on {response_channel}"),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "detail": "Affinity response channel closed before a response arrived",
+                }),
+            )
+        })?;
+
+    let payload_json: String = message
+        .get_payload()
+        .map_err(|err| affinity_forward_error_response("Affinity response payload decode failed", err))?;
+    let payload: AffinityForwardResponse = serde_json::from_str(&payload_json).map_err(|err| {
+        affinity_forward_error_response("Affinity response JSON decode failed", err)
+    })?;
+    Ok(Some(response_from_affinity_forward_response(
+        payload,
+        Some(session_id),
+    )))
+}
+
+fn build_affinity_forward_headers(headers: &HeaderMap) -> HashMap<String, String> {
+    let mut forwarded = HashMap::new();
+    for (name, value) in headers {
+        if matches!(
+            name.as_str(),
+            "host" | "content-length" | "connection" | "transfer-encoding" | "keep-alive"
+        ) {
+            continue;
+        }
+        if name.as_str() == INTERNAL_AFFINITY_FORWARDED_HEADER {
+            continue;
+        }
+        if let Ok(value_str) = value.to_str() {
+            forwarded.insert(name.as_str().to_string(), value_str.to_string());
+        }
+    }
+    forwarded
+}
+
+fn response_from_affinity_forward_response(
+    payload: AffinityForwardResponse,
+    session_hint: Option<&str>,
+) -> Response {
+    let status = StatusCode::from_u16(payload.status).unwrap_or(StatusCode::BAD_GATEWAY);
+    let body = hex_decode(payload.body.as_bytes()).unwrap_or_default();
+    let mut builder = Response::builder().status(status);
+    builder = builder.header(RUNTIME_HEADER, RUNTIME_NAME);
+
+    let mut has_content_type = false;
+    let mut has_session_id = false;
+    for (name, value) in payload.headers {
+        let lower = name.to_ascii_lowercase();
+        if matches!(lower.as_str(), "connection" | "transfer-encoding" | "keep-alive" | "content-length") {
+            continue;
+        }
+        if lower == "content-type" {
+            has_content_type = true;
+        }
+        if lower == "mcp-session-id" {
+            has_session_id = true;
+        }
+        if let (Ok(header_name), Ok(header_value)) = (
+            HeaderName::from_bytes(lower.as_bytes()),
+            HeaderValue::from_str(&value),
+        ) {
+            builder = builder.header(header_name, header_value);
+        }
+    }
+
+    if !has_content_type {
+        builder = builder.header(CONTENT_TYPE, "application/json");
+    }
+    if !has_session_id {
+        if let Some(session_id) = session_hint {
+            builder = builder.header("mcp-session-id", session_id);
+        }
+    }
+
+    builder
+        .body(Body::from(body))
+        .unwrap_or_else(|_| Response::new(Body::from("internal response construction error")))
+}
+
+fn affinity_forward_error_response<E>(message: &str, err: E) -> Response
+where
+    E: std::fmt::Display,
+{
+    error!("Rust MCP affinity forwarding failed: {message}: {err}");
+    json_response(
+        StatusCode::BAD_GATEWAY,
+        json!({
+            "detail": format!("{message}: {err}"),
+        }),
+    )
+}
+
+fn current_unix_timestamp_seconds() -> f64 {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs_f64(),
+        Err(_) => 0.0,
+    }
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
+}
+
+fn hex_decode(input: &[u8]) -> Option<Vec<u8>> {
+    if input.len() % 2 != 0 {
+        return None;
+    }
+
+    let mut decoded = Vec::with_capacity(input.len() / 2);
+    for chunk in input.chunks_exact(2) {
+        let high = hex_value(chunk[0])?;
+        let low = hex_value(chunk[1])?;
+        decoded.push((high << 4) | low);
+    }
+    Some(decoded)
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 const STORE_EVENT_LUA: &str = r#"
@@ -2163,29 +2484,42 @@ fn event_store_key_prefix(state: &AppState, override_prefix: Option<&str>) -> St
     }
 }
 
-async fn apply_session_core_request_context(
+async fn validate_runtime_session_request(
     state: &AppState,
     incoming_headers: &mut HeaderMap,
     uri: &axum::http::Uri,
-) {
+) -> Result<Option<String>, Response> {
     let Some(session_id) = runtime_session_id_from_request(incoming_headers, uri) else {
-        return;
+        return Ok(None);
     };
+
     let Some(record) = get_runtime_session(state, &session_id).await else {
-        return;
+        return Err(json_response(
+            StatusCode::NOT_FOUND,
+            json!({
+                "detail": "Session not found",
+            }),
+        ));
     };
-    if !runtime_session_allows_access(
-        &record,
-        decode_internal_auth_context_from_headers_optional(incoming_headers).as_ref(),
-    ) {
-        return;
+
+    let auth_context = decode_internal_auth_context_from_headers_optional(incoming_headers);
+    if !runtime_session_allows_access(&record, auth_context.as_ref()) {
+        return Err(json_response(
+            StatusCode::FORBIDDEN,
+            json!({
+                "detail": "Session access denied",
+            }),
+        ));
     }
+
     inject_session_header(incoming_headers, &session_id);
     if let Some(server_id) = record.server_id.as_deref() {
         if !incoming_headers.contains_key("x-contextforge-server-id") {
             inject_server_id_header(incoming_headers, server_id.to_string());
         }
     }
+
+    Ok(Some(session_id))
 }
 
 fn runtime_session_allows_access(
@@ -2575,6 +2909,7 @@ async fn handle_live_stream_transport_request(
             &backend_headers,
             &uri_cloned,
             None,
+            request_session_id.is_some(),
         )
         .await
         {
@@ -2763,31 +3098,14 @@ async fn forward_transport_request(
     uri: axum::http::Uri,
 ) -> Response {
     let session_id = if state.session_core_enabled() {
-        let session_id = runtime_session_id_from_request(&incoming_headers, &uri);
-        if let Some(ref session_id_value) = session_id {
-            if let Some(record) = get_runtime_session(state, session_id_value).await {
-                let auth_context =
-                    decode_internal_auth_context_from_headers_optional(&incoming_headers);
-                if !runtime_session_allows_access(&record, auth_context.as_ref()) {
-                    return json_response(
-                        StatusCode::FORBIDDEN,
-                        json!({
-                            "detail": "Session access denied",
-                        }),
-                    );
-                }
-                inject_session_header(&mut incoming_headers, session_id_value);
-                if let Some(server_id) = record.server_id.as_deref() {
-                    if !incoming_headers.contains_key("x-contextforge-server-id") {
-                        inject_server_id_header(&mut incoming_headers, server_id.to_string());
-                    }
-                }
-            }
+        match validate_runtime_session_request(state, &mut incoming_headers, &uri).await {
+            Ok(session_id) => session_id,
+            Err(response) => return response,
         }
-        session_id
     } else {
         None
     };
+    let session_validated = state.session_core_enabled() && session_id.is_some();
 
     if method == reqwest::Method::GET
         && state.resume_core_enabled()
@@ -2844,6 +3162,39 @@ async fn forward_transport_request(
         .await;
     }
 
+    if state.affinity_core_enabled()
+        && state.session_core_enabled()
+        && session_id.is_some()
+        && (method == reqwest::Method::GET || method == reqwest::Method::DELETE)
+    {
+        let affinity_response = match forward_transport_request_via_affinity_owner(
+            state,
+            session_id.as_deref().unwrap_or_default(),
+            method.clone(),
+            uri.path(),
+            uri.query().unwrap_or_default(),
+            &incoming_headers,
+            &[],
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
+        if let Some(mut response) = affinity_response {
+            if let Ok(value) = HeaderValue::from_str(if state.affinity_core_enabled() {
+                "rust"
+            } else {
+                "python"
+            }) {
+                response
+                    .headers_mut()
+                    .insert(HeaderName::from_static(AFFINITY_CORE_HEADER), value);
+            }
+            return response;
+        }
+    }
+
     if method == reqwest::Method::GET
         && state.live_stream_core_enabled()
         && accepts_sse(&incoming_headers)
@@ -2859,11 +3210,12 @@ async fn forward_transport_request(
     }
 
     if state.session_core_enabled() && method == reqwest::Method::DELETE && session_id.is_some() {
-        let backend_response = match send_session_delete_to_backend(state, &incoming_headers).await
-        {
-            Ok(response) => response,
-            Err(response) => return response,
-        };
+        let backend_response =
+            match send_session_delete_to_backend(state, &incoming_headers, session_validated).await
+            {
+                Ok(response) => response,
+                Err(response) => return response,
+            };
 
         if backend_response.status().is_success() {
             if let Some(session_id_value) = session_id.as_deref() {
@@ -2909,15 +3261,31 @@ async fn forward_transport_request(
                 .headers_mut()
                 .insert(HeaderName::from_static(LIVE_STREAM_CORE_HEADER), value);
         }
+        if let Ok(value) = HeaderValue::from_str(if state.affinity_core_enabled() {
+            "rust"
+        } else {
+            "python"
+        }) {
+            response
+                .headers_mut()
+                .insert(HeaderName::from_static(AFFINITY_CORE_HEADER), value);
+        }
         return response;
     }
 
-    let backend_response =
-        match send_transport_to_backend(state, method.clone(), &incoming_headers, &uri, None).await
-        {
-            Ok(response) => response,
-            Err(response) => return response,
-        };
+    let backend_response = match send_transport_to_backend(
+        state,
+        method.clone(),
+        &incoming_headers,
+        &uri,
+        None,
+        session_validated,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
 
     if state.session_core_enabled()
         && method == reqwest::Method::DELETE
@@ -2966,6 +3334,15 @@ async fn forward_transport_request(
         response
             .headers_mut()
             .insert(HeaderName::from_static(LIVE_STREAM_CORE_HEADER), value);
+    }
+    if let Ok(value) = HeaderValue::from_str(if state.affinity_core_enabled() {
+        "rust"
+    } else {
+        "python"
+    }) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static(AFFINITY_CORE_HEADER), value);
     }
     response
 }
@@ -3852,12 +4229,16 @@ async fn send_transport_to_backend(
     incoming_headers: &HeaderMap,
     uri: &axum::http::Uri,
     body: Option<Bytes>,
+    session_validated: bool,
 ) -> Result<reqwest::Response, Response> {
     let target_url = build_backend_transport_url(state.backend_transport_url(), uri);
     let mut request = state
         .client
         .request(method, target_url)
-        .headers(build_forwarded_headers(incoming_headers));
+        .headers(build_forwarded_headers_with_session_validation(
+            incoming_headers,
+            session_validated,
+        ));
     if let Some(body) = body {
         request = request.body(body);
     }
@@ -3877,11 +4258,15 @@ async fn send_transport_to_backend(
 async fn send_session_delete_to_backend(
     state: &AppState,
     incoming_headers: &HeaderMap,
+    session_validated: bool,
 ) -> Result<reqwest::Response, Response> {
     state
         .client
         .delete(derive_backend_session_delete_url(state.backend_rpc_url()))
-        .headers(build_forwarded_headers(incoming_headers))
+        .headers(build_forwarded_headers_with_session_validation(
+            incoming_headers,
+            session_validated,
+        ))
         .send()
         .await
         .map_err(|err| {
@@ -4977,6 +5362,13 @@ fn should_cache_plan_header(name: &HeaderName) -> bool {
 }
 
 fn build_forwarded_headers(incoming_headers: &HeaderMap) -> reqwest::header::HeaderMap {
+    build_forwarded_headers_with_session_validation(incoming_headers, false)
+}
+
+fn build_forwarded_headers_with_session_validation(
+    incoming_headers: &HeaderMap,
+    session_validated: bool,
+) -> reqwest::header::HeaderMap {
     let mut forwarded_headers = reqwest::header::HeaderMap::new();
 
     for (name, value) in incoming_headers.iter() {
@@ -4989,6 +5381,12 @@ fn build_forwarded_headers(incoming_headers: &HeaderMap) -> reqwest::header::Hea
         HeaderName::from_static(RUNTIME_HEADER),
         HeaderValue::from_static(RUNTIME_NAME),
     );
+    if session_validated {
+        forwarded_headers.insert(
+            HeaderName::from_static(SESSION_VALIDATED_HEADER),
+            HeaderValue::from_static(RUNTIME_NAME),
+        );
+    }
     forwarded_headers
 }
 
@@ -5085,6 +5483,8 @@ fn should_forward_header(name: &HeaderName) -> bool {
             | "keep-alive"
             | "x-forwarded-internally"
             | "x-mcp-session-id"
+            | INTERNAL_AFFINITY_FORWARDED_HEADER
+            | SESSION_VALIDATED_HEADER
             | RUNTIME_HEADER
     )
 }

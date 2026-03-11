@@ -303,6 +303,7 @@ def get_user_email(user):
 
 
 _INTERNAL_MCP_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
+_INTERNAL_MCP_SESSION_VALIDATED_HEADER = "x-contextforge-session-validated"
 
 
 def _get_internal_mcp_auth_context(request: Request) -> Optional[Dict[str, Any]]:
@@ -348,6 +349,9 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
 
     if "teams" in auth_context and (auth_context["teams"] is None or isinstance(auth_context["teams"], list)):
         request.state.token_teams = auth_context["teams"]
+
+    if request.headers.get(_INTERNAL_MCP_SESSION_VALIDATED_HEADER) == "rust":
+        auth_context["_rust_session_validated"] = True
 
     return {
         "email": auth_context.get("email"),
@@ -913,6 +917,13 @@ def _current_mcp_live_stream_core_mode() -> str:
     return "python"
 
 
+def _current_mcp_affinity_core_mode() -> str:
+    """Return which runtime currently owns MCP multi-worker session-affinity forwarding."""
+    if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_affinity_core_enabled:
+        return "rust"
+    return "python"
+
+
 def _mcp_runtime_status_payload() -> Dict[str, Any]:
     """Return MCP runtime diagnostics for health/readiness endpoints."""
     payload: Dict[str, Any] = {
@@ -924,6 +935,7 @@ def _mcp_runtime_status_payload() -> Dict[str, Any]:
         "event_store_mode": _current_mcp_event_store_mode(),
         "resume_core_mode": _current_mcp_resume_core_mode(),
         "live_stream_core_mode": _current_mcp_live_stream_core_mode(),
+        "affinity_core_mode": _current_mcp_affinity_core_mode(),
         "rust_session_core_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_core_enabled),
         "rust_event_store_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_event_store_enabled),
         "rust_resume_core_enabled": bool(
@@ -933,6 +945,7 @@ def _mcp_runtime_status_payload() -> Dict[str, Any]:
             and settings.experimental_rust_mcp_resume_core_enabled
         ),
         "rust_live_stream_core_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_live_stream_core_enabled),
+        "rust_affinity_core_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_affinity_core_enabled),
     }
 
     if settings.experimental_rust_mcp_runtime_enabled:
@@ -956,6 +969,7 @@ def _apply_runtime_mode_headers(response: Response) -> None:
     response.headers["x-contextforge-mcp-event-store-mode"] = _current_mcp_event_store_mode()
     response.headers["x-contextforge-mcp-resume-core-mode"] = _current_mcp_resume_core_mode()
     response.headers["x-contextforge-mcp-live-stream-core-mode"] = _current_mcp_live_stream_core_mode()
+    response.headers["x-contextforge-mcp-affinity-core-mode"] = _current_mcp_affinity_core_mode()
 
 
 @lru_cache(maxsize=512)
@@ -6404,12 +6418,13 @@ async def handle_internal_mcp_session_delete(request: Request):
     if not mcp_session_id:
         return ORJSONResponse(status_code=400, content={"detail": "mcp-session-id header is required"})
 
-    session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
-        mcp_session_id=mcp_session_id,
-        user_context=auth_context,
-    )
-    if not session_allowed:
-        return ORJSONResponse(status_code=deny_status, content={"detail": deny_detail})
+    if auth_context.get("_rust_session_validated") is not True:
+        session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
+            mcp_session_id=mcp_session_id,
+            user_context=auth_context,
+        )
+        if not session_allowed:
+            return ORJSONResponse(status_code=deny_status, content={"detail": deny_detail})
 
     server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
     if server_id:
@@ -9790,6 +9805,10 @@ class MCPRuntimeHeaderTransportWrapper:
                     isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-live-stream-core" for item in headers
                 ):
                     headers.append((b"x-contextforge-mcp-live-stream-core", _current_mcp_live_stream_core_mode().encode("ascii")))
+                if not any(
+                    isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-affinity-core" for item in headers
+                ):
+                    headers.append((b"x-contextforge-mcp-affinity-core", _current_mcp_affinity_core_mode().encode("ascii")))
                 message = dict(message)
                 message["headers"] = headers
             await send(message)
@@ -9801,12 +9820,13 @@ def _build_mcp_transport_app():
     """Choose the MCP transport app for the mounted /mcp path."""
     if settings.experimental_rust_mcp_runtime_enabled:
         logger.warning(
-            "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s.",
+            "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s.",
             _current_mcp_runtime_mode(),
             settings.experimental_rust_mcp_runtime_uds or settings.experimental_rust_mcp_runtime_url,
             _current_mcp_session_core_mode(),
             _current_mcp_resume_core_mode(),
             _current_mcp_live_stream_core_mode(),
+            _current_mcp_affinity_core_mode(),
         )
         return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
 

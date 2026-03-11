@@ -327,6 +327,60 @@ class TestInternalTrustedMcpTransportBridge:
         assert events[0]["status"] == 204
 
     @pytest.mark.asyncio
+    async def test_bridge_marks_rust_validated_sessions_in_user_context(self):
+        observed = {}
+
+        class FakeTransportApp:
+            async def handle_streamable_http(self, _scope, _receive, send):
+                observed["user_context"] = user_context_var.get()
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 204,
+                        "headers": [(b"x-contextforge-mcp-runtime", b"python")],
+                    }
+                )
+                await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+        bridge = InternalTrustedMCPTransportBridge(FakeTransportApp())
+        encoded_auth = base64.urlsafe_b64encode(
+            orjson.dumps(
+                {
+                    "email": "user@example.com",
+                    "teams": ["team-a"],
+                    "is_authenticated": True,
+                    "is_admin": False,
+                }
+            )
+        ).decode("ascii").rstrip("=")
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/_internal/mcp/transport",
+            "query_string": b"session_id=abc123",
+            "headers": [
+                (b"x-contextforge-mcp-runtime", b"rust"),
+                (b"x-contextforge-auth-context", encoded_auth.encode("ascii")),
+                (b"x-contextforge-session-validated", b"rust"),
+            ],
+            "client": ("127.0.0.1", 5000),
+        }
+
+        async def receive():
+            return {"type": "http.disconnect"}
+
+        events = []
+
+        async def send(message):
+            events.append(message)
+
+        await bridge.handle_streamable_http(scope, receive, send)
+
+        assert observed["user_context"]["_rust_session_validated"] is True
+        assert events[0]["status"] == 204
+
+    @pytest.mark.asyncio
     async def test_bridge_allows_post_transport_calls(self):
         observed = {}
 
@@ -4618,6 +4672,40 @@ class TestRpcHandling:
         assert response.status_code == 204
         remove_session.assert_awaited_once_with("sess-1")
         cleanup_owner.assert_awaited_once_with("sess-1")
+
+    async def test_handle_internal_mcp_session_delete_skips_python_validation_when_rust_validated(self, monkeypatch):
+        request = self._make_request({})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "mcp-session-id": "sess-1",
+            "x-contextforge-session-validated": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "scoped_server_id": "srv-1",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        remove_session = AsyncMock()
+        monkeypatch.setattr("mcpgateway.main._validate_streamable_session_access", AsyncMock(side_effect=AssertionError("should not be called")))
+        monkeypatch.setattr("mcpgateway.main.session_registry.remove_session", remove_session)
+        monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_session_affinity_enabled", False)
+
+        response = await handle_internal_mcp_session_delete(request)
+
+        assert response.status_code == 204
+        remove_session.assert_awaited_once_with("sess-1")
 
     async def test_handle_internal_mcp_session_delete_requires_session_header(self):
         request = self._make_request({})

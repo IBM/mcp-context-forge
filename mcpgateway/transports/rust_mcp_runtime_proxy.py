@@ -35,15 +35,18 @@ logger = logging.getLogger(__name__)
 _SERVER_ID_RE = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp/?$")
 _CONTEXTFORGE_SERVER_ID_HEADER = "x-contextforge-server-id"
 _CONTEXTFORGE_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
+_CONTEXTFORGE_AFFINITY_FORWARDED_HEADER = "x-contextforge-affinity-forwarded"
 _REQUEST_HOP_BY_HOP_HEADERS = frozenset({"host", "content-length", "connection", "transfer-encoding", "keep-alive"})
 _FORWARDED_CHAIN_HEADERS = frozenset({"forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto"})
 _INTERNAL_ONLY_REQUEST_HEADERS = frozenset(
     {
         "x-forwarded-internally",
+        "x-original-worker",
         "x-mcp-session-id",
         "x-contextforge-mcp-runtime",
         _CONTEXTFORGE_SERVER_ID_HEADER,
         _CONTEXTFORGE_AUTH_CONTEXT_HEADER,
+        _CONTEXTFORGE_AFFINITY_FORWARDED_HEADER,
     }
 )
 _RESPONSE_HOP_BY_HOP_HEADERS = frozenset({"connection", "transfer-encoding", "keep-alive"})
@@ -189,6 +192,18 @@ def _build_forward_headers(scope: Scope) -> list[tuple[str, str]]:
     auth_context = _build_forwarded_auth_context_header()
     if auth_context is not None:
         headers.append((_CONTEXTFORGE_AUTH_CONTEXT_HEADER, auth_context))
+
+    client = scope.get("client")
+    client_host = client[0] if isinstance(client, (tuple, list)) and client else None
+    from_loopback = client_host in ("127.0.0.1", "::1")
+    incoming_headers = {
+        name.decode("latin-1").lower(): value.decode("latin-1")
+        for name, value in scope.get("headers") or []
+        if isinstance(name, (bytes, bytearray)) and isinstance(value, (bytes, bytearray))
+    }
+    if from_loopback and incoming_headers.get("x-forwarded-internally") == "true":
+        headers.append((_CONTEXTFORGE_AFFINITY_FORWARDED_HEADER, "rust"))
+
     return headers
 
 
