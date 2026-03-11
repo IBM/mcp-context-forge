@@ -2,21 +2,26 @@
 set -euo pipefail
 
 HTTP_SERVER="${HTTP_SERVER:-gunicorn}"
-EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED="${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED:-false}"
-EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED="${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED:-true}"
-EXPERIMENTAL_RUST_MCP_RUNTIME_URL="${EXPERIMENTAL_RUST_MCP_RUNTIME_URL:-http://127.0.0.1:8787}"
+RUST_MCP_MODE="${RUST_MCP_MODE:-off}"
+RUST_MCP_LOG="${RUST_MCP_LOG:-warn}"
+EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED="${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED:-}"
+EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED="${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED:-}"
+EXPERIMENTAL_RUST_MCP_RUNTIME_URL="${EXPERIMENTAL_RUST_MCP_RUNTIME_URL:-}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_UDS="${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-}"
-EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED:-false}"
-EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED="${EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED:-false}"
-EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED:-false}"
-EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED:-false}"
+EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED:-}"
+EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED="${EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED:-}"
+EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED:-}"
+EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED:-}"
 CONTEXTFORGE_ENABLE_RUST_BUILD="${CONTEXTFORGE_ENABLE_RUST_BUILD:-false}"
 CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD="${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD:-false}"
-MCP_RUST_USE_RMCP_UPSTREAM_CLIENT="${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT:-false}"
-MCP_RUST_SESSION_CORE_ENABLED="${MCP_RUST_SESSION_CORE_ENABLED:-${EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED}}"
-MCP_RUST_EVENT_STORE_ENABLED="${MCP_RUST_EVENT_STORE_ENABLED:-${EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED}}"
-MCP_RUST_RESUME_CORE_ENABLED="${MCP_RUST_RESUME_CORE_ENABLED:-${EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED}}"
-MCP_RUST_LIVE_STREAM_CORE_ENABLED="${MCP_RUST_LIVE_STREAM_CORE_ENABLED:-${EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED}}"
+MCP_RUST_LISTEN_HTTP="${MCP_RUST_LISTEN_HTTP:-}"
+MCP_RUST_LISTEN_UDS="${MCP_RUST_LISTEN_UDS:-}"
+MCP_RUST_LOG="${MCP_RUST_LOG:-}"
+MCP_RUST_USE_RMCP_UPSTREAM_CLIENT="${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT:-}"
+MCP_RUST_SESSION_CORE_ENABLED="${MCP_RUST_SESSION_CORE_ENABLED:-}"
+MCP_RUST_EVENT_STORE_ENABLED="${MCP_RUST_EVENT_STORE_ENABLED:-}"
+MCP_RUST_RESUME_CORE_ENABLED="${MCP_RUST_RESUME_CORE_ENABLED:-}"
+MCP_RUST_LIVE_STREAM_CORE_ENABLED="${MCP_RUST_LIVE_STREAM_CORE_ENABLED:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}" || {
@@ -26,6 +31,108 @@ cd "${SCRIPT_DIR}" || {
 
 RUST_MCP_PID=""
 SERVER_PID=""
+
+apply_rust_mcp_mode_defaults() {
+    local normalized_mode="${RUST_MCP_MODE,,}"
+    local runtime_enabled_default="false"
+    local managed_default="true"
+    local session_core_default="false"
+    local event_store_default="false"
+    local resume_core_default="false"
+    local live_stream_core_default="false"
+
+    case "${normalized_mode}" in
+        ""|off)
+            ;;
+        edge)
+            runtime_enabled_default="true"
+            ;;
+        full)
+            runtime_enabled_default="true"
+            session_core_default="true"
+            event_store_default="true"
+            resume_core_default="true"
+            live_stream_core_default="true"
+            ;;
+        *)
+            echo "ERROR: Unknown RUST_MCP_MODE value: ${RUST_MCP_MODE}"
+            echo "Valid options: off, edge, full"
+            exit 1
+            ;;
+    esac
+
+    if [[ -z "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" ]]; then
+        EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED="${runtime_enabled_default}"
+    fi
+    if [[ -z "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" ]]; then
+        EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED="${managed_default}"
+    fi
+    if [[ -z "${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}" ]]; then
+        EXPERIMENTAL_RUST_MCP_RUNTIME_URL="http://127.0.0.1:8787"
+    fi
+    if [[ -z "${EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED}" ]]; then
+        EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED="${session_core_default}"
+    fi
+    if [[ -z "${EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED}" ]]; then
+        EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED="${event_store_default}"
+    fi
+    if [[ -z "${EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED}" ]]; then
+        EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED="${resume_core_default}"
+    fi
+    if [[ -z "${EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED}" ]]; then
+        EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED="${live_stream_core_default}"
+    fi
+    if [[ -z "${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS}" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
+        EXPERIMENTAL_RUST_MCP_RUNTIME_UDS="/tmp/contextforge-mcp-rust.sock"
+    fi
+    if [[ -z "${MCP_RUST_LISTEN_HTTP}" ]]; then
+        MCP_RUST_LISTEN_HTTP="127.0.0.1:8787"
+    fi
+    if [[ -z "${MCP_RUST_LISTEN_UDS}" && -n "${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS}" ]]; then
+        MCP_RUST_LISTEN_UDS="${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS}"
+    fi
+    if [[ -z "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" ]]; then
+        if [[ "${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD}" = "true" ]]; then
+            MCP_RUST_USE_RMCP_UPSTREAM_CLIENT="true"
+        else
+            MCP_RUST_USE_RMCP_UPSTREAM_CLIENT="false"
+        fi
+    fi
+    if [[ -z "${MCP_RUST_LOG}" ]]; then
+        MCP_RUST_LOG="${RUST_MCP_LOG}"
+    fi
+    if [[ -z "${MCP_RUST_SESSION_CORE_ENABLED}" ]]; then
+        MCP_RUST_SESSION_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED}"
+    fi
+    if [[ -z "${MCP_RUST_EVENT_STORE_ENABLED}" ]]; then
+        MCP_RUST_EVENT_STORE_ENABLED="${EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED}"
+    fi
+    if [[ -z "${MCP_RUST_RESUME_CORE_ENABLED}" ]]; then
+        MCP_RUST_RESUME_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED}"
+    fi
+    if [[ -z "${MCP_RUST_LIVE_STREAM_CORE_ENABLED}" ]]; then
+        MCP_RUST_LIVE_STREAM_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED}"
+    fi
+
+    export RUST_MCP_MODE
+    export RUST_MCP_LOG
+    export EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED
+    export EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED
+    export EXPERIMENTAL_RUST_MCP_RUNTIME_URL
+    export EXPERIMENTAL_RUST_MCP_RUNTIME_UDS
+    export EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED
+    export EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED
+    export EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED
+    export EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED
+    export MCP_RUST_LISTEN_HTTP
+    export MCP_RUST_LISTEN_UDS
+    export MCP_RUST_LOG
+    export MCP_RUST_USE_RMCP_UPSTREAM_CLIENT
+    export MCP_RUST_SESSION_CORE_ENABLED
+    export MCP_RUST_EVENT_STORE_ENABLED
+    export MCP_RUST_RESUME_CORE_ENABLED
+    export MCP_RUST_LIVE_STREAM_CORE_ENABLED
+}
 
 cleanup() {
     local pids=()
@@ -78,7 +185,7 @@ print_mcp_runtime_mode() {
 
         if [[ "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" = "true" && "${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD}" != "true" ]]; then
             echo "ERROR: MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=true but this image was built without rmcp support."
-            echo "Rebuild with --build-arg ENABLE_RUST_MCP_RMCP=true."
+            echo "Rebuild with RUST_MCP_BUILD=1 or --build-arg ENABLE_RUST_MCP_RMCP=true."
             exit 1
         fi
         return
@@ -88,7 +195,7 @@ print_mcp_runtime_mode() {
         runtime_mode="python-rust-built-disabled"
         echo "WARNING: MCP runtime mode: ${runtime_mode}"
         echo "WARNING: Rust MCP artifacts are present in this image, but EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=false so /mcp will run on the Python transport."
-        echo "WARNING: Set EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true to activate the Rust MCP runtime."
+        echo "WARNING: Set RUST_MCP_MODE=edge or RUST_MCP_MODE=full to activate the Rust MCP runtime."
         return
     fi
 
@@ -138,7 +245,7 @@ start_managed_rust_mcp_runtime() {
 
     if [[ "${CONTEXTFORGE_ENABLE_RUST_BUILD}" != "true" ]]; then
         echo "ERROR: EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true but this image was built without Rust artifacts."
-        echo "Rebuild with --build-arg ENABLE_RUST=true or set EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=false to use an external sidecar."
+        echo "Rebuild with RUST_MCP_BUILD=1 or --build-arg ENABLE_RUST=true, or set EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=false to use an external sidecar."
         exit 1
     fi
 
@@ -213,6 +320,7 @@ sys.exit(1)
 PY
 }
 
+apply_rust_mcp_mode_defaults
 build_server_command "$@"
 print_mcp_runtime_mode
 

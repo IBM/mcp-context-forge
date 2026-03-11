@@ -264,7 +264,16 @@ Not yet implemented:
 
 ## Gateway integration
 
-The gateway now supports an integrated experimental mode:
+The gateway now supports a simpler integrated experimental mode:
+
+- `RUST_MCP_BUILD=true` builds the Rust MCP runtime into the image
+- `RUST_MCP_MODE=off|edge|full`
+  - `off`: Python MCP transport
+  - `edge`: Rust MCP runtime edge with managed UDS sidecar defaults
+  - `full`: `edge` plus Rust session/event-store/resume/live-stream cores
+- `RUST_MCP_LOG=warn` controls the bundled sidecar log level for the simple path
+
+Advanced low-level env vars still exist and override the simple mode when set:
 
 - `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`
 - `EXPERIMENTAL_RUST_MCP_RUNTIME_URL=http://127.0.0.1:8787`
@@ -298,39 +307,29 @@ Behavior in this mode:
 
 ## Container integration
 
-`Containerfile.lite` now includes the runtime behind the existing build flag:
+`Containerfile.lite` now includes the runtime behind the simple build flag:
 
 ```bash
-docker build \
-  --build-arg ENABLE_RUST=true \
-  -f Containerfile.lite .
+RUST_MCP_BUILD=true make docker-prod-rust
 ```
 
-Optional `rmcp` support for the upstream `tools/call` client path is built in
-separately:
+To force a clean rebuild:
 
 ```bash
-docker build \
-  --build-arg ENABLE_RUST=true \
-  --build-arg ENABLE_RUST_MCP_RMCP=true \
-  -f Containerfile.lite .
+make docker-prod-rust-no-cache
 ```
 
-When the image contains Rust artifacts, the bundled entrypoint can supervise the
-sidecar automatically:
+The simple compose workflows are:
 
 ```bash
-docker run \
-  -e EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true \
-  -e EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true \
-  -e EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED=true \
-  -e EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED=true \
-  -e EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED=true \
-  -e EXPERIMENTAL_RUST_MCP_RUNTIME_UDS=/tmp/contextforge-mcp-rust.sock \
-  -e MCP_RUST_LISTEN_UDS=/tmp/contextforge-mcp-rust.sock \
-  -e HTTP_SERVER=gunicorn \
-  mcpgateway
+make testing-up-rust
+make testing-up-rust-full
+make testing-rebuild-rust
+make testing-rebuild-rust-full
 ```
+
+If you want the raw docker/compose equivalents, the low-level env vars below are
+still available.
 
 Optional launcher/runtime envs:
 
