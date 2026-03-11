@@ -3571,4 +3571,174 @@ class TestConvertServerToReadAssociatedToolIds:
 
         assert len(result.associated_prompts) == 1
         assert "prompt-1" in result.associated_prompts
-        assert "prompt-2" not in result.associated_prompts
+
+    @pytest.mark.asyncio
+    async def test_list_servers_filters_deactivated_entities(self, server_service, test_db):
+        """Test that list_servers filters out deactivated tools, prompts, and resources."""
+        # Standard
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        # Create mock tools - one enabled, one disabled
+        enabled_tool = SimpleNamespace(id="tool-1", name="enabled_tool", enabled=True)
+        disabled_tool = SimpleNamespace(id="tool-2", name="disabled_tool", enabled=False)
+
+        # Create mock resources - one enabled, one disabled
+        enabled_resource = SimpleNamespace(id="res-1", name="enabled_resource", enabled=True)
+        disabled_resource = SimpleNamespace(id="res-2", name="disabled_resource", enabled=False)
+
+        # Create mock prompts - one enabled, one disabled
+        enabled_prompt = SimpleNamespace(id="prompt-1", name="enabled_prompt", enabled=True)
+        disabled_prompt = SimpleNamespace(id="prompt-2", name="disabled_prompt", enabled=False)
+
+        # Create mock server with both enabled and disabled entities
+        # Due to with_loader_criteria(), only enabled entities should be loaded
+        mock_server = SimpleNamespace(
+            id="server-1",
+            name="test_server",
+            description="Test server",
+            icon=None,
+            created_at="2023-01-01T00:00:00",
+            updated_at="2023-01-01T00:00:00",
+            enabled=True,
+            team_id=None,
+            owner_email="user@example.com",
+            visibility="public",
+            created_by="user@example.com",
+            modified_by="user@example.com",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            modified_from_ip=None,
+            modified_via=None,
+            modified_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+            version=1,
+            oauth_enabled=False,
+            oauth_config=None,
+            tags=[],
+            # Only enabled entities should be loaded due to with_loader_criteria()
+            tools=[enabled_tool],
+            resources=[enabled_resource],
+            prompts=[enabled_prompt],
+            a2a_agents=[],
+            metrics=[],
+            email_team=None,
+            team=None,
+        )
+
+        # Mock unified_paginate to return our server
+        # Note: list_servers uses cursor-based pagination by default (page=None),
+        # so unified_paginate should return a tuple (servers_list, next_cursor)
+        with patch("mcpgateway.services.server_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
+            mock_paginate.return_value = ([mock_server], None)
+
+            # Call list_servers
+            servers, next_cursor = await server_service.list_servers(test_db, include_inactive=False)
+
+            # Verify that only enabled entities are in the result
+            assert len(servers) == 1
+            server_result = servers[0]
+
+            assert len(server_result.associated_tools) == 1
+            assert "enabled_tool" in server_result.associated_tools
+            assert "disabled_tool" not in server_result.associated_tools
+
+            assert len(server_result.associated_resources) == 1
+            assert "res-1" in server_result.associated_resources
+            assert "res-2" not in server_result.associated_resources
+
+            assert len(server_result.associated_prompts) == 1
+            assert "prompt-1" in server_result.associated_prompts
+            assert "prompt-2" not in server_result.associated_prompts
+
+    @pytest.mark.asyncio
+    async def test_list_servers_for_user_filters_deactivated_entities(self, server_service, test_db):
+        """Test that list_servers_for_user filters out deactivated tools, prompts, and resources."""
+        # Standard
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        # Create mock tools - one enabled, one disabled
+        enabled_tool = SimpleNamespace(id="tool-1", name="enabled_tool", enabled=True)
+        disabled_tool = SimpleNamespace(id="tool-2", name="disabled_tool", enabled=False)
+
+        # Create mock resources - one enabled, one disabled
+        enabled_resource = SimpleNamespace(id="res-1", name="enabled_resource", enabled=True)
+        disabled_resource = SimpleNamespace(id="res-2", name="disabled_resource", enabled=False)
+
+        # Create mock prompts - one enabled, one disabled
+        enabled_prompt = SimpleNamespace(id="prompt-1", name="enabled_prompt", enabled=True)
+        disabled_prompt = SimpleNamespace(id="prompt-2", name="disabled_prompt", enabled=False)
+
+        # Create mock server with both enabled and disabled entities
+        # Due to with_loader_criteria(), only enabled entities should be loaded
+        mock_server = SimpleNamespace(
+            id="server-1",
+            name="test_server",
+            description="Test server",
+            icon=None,
+            created_at="2023-01-01T00:00:00",
+            updated_at="2023-01-01T00:00:00",
+            enabled=True,
+            team_id=None,
+            owner_email="user@example.com",
+            visibility="public",
+            created_by="user@example.com",
+            modified_by="user@example.com",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            modified_from_ip=None,
+            modified_via=None,
+            modified_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+            version=1,
+            oauth_enabled=False,
+            oauth_config=None,
+            tags=[],
+            # Only enabled entities should be loaded due to with_loader_criteria()
+            tools=[enabled_tool],
+            resources=[enabled_resource],
+            prompts=[enabled_prompt],
+            a2a_agents=[],
+            metrics=[],
+            email_team=None,
+            team=None,
+        )
+
+        # Mock TeamManagementService
+        with patch("mcpgateway.services.server_service.TeamManagementService") as mock_team_service_class:
+            mock_team_service = Mock()
+            mock_team_service.get_user_teams = AsyncMock(return_value=[])
+            mock_team_service_class.return_value = mock_team_service
+
+            # Mock the database execute to return our server
+            mock_result = Mock()
+            mock_result.scalars = Mock(return_value=Mock(all=Mock(return_value=[mock_server])))
+            test_db.execute = Mock(return_value=mock_result)
+
+            # Call list_servers_for_user
+            servers = await server_service.list_servers_for_user(
+                test_db,
+                user_email="user@example.com",
+                include_inactive=False
+            )
+
+            # Verify that only enabled entities are in the result
+            assert len(servers) == 1
+            server_result = servers[0]
+
+            assert len(server_result.associated_tools) == 1
+            assert "enabled_tool" in server_result.associated_tools
+            assert "disabled_tool" not in server_result.associated_tools
+
+            assert len(server_result.associated_resources) == 1
+            assert "res-1" in server_result.associated_resources
+            assert "res-2" not in server_result.associated_resources
+
+            assert len(server_result.associated_prompts) == 1
+            assert "prompt-1" in server_result.associated_prompts
+            assert "prompt-2" not in server_result.associated_prompts

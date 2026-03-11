@@ -815,13 +815,18 @@ class ServerService(BaseService):
                 return (cached_servers, cached.get("next_cursor"))
 
         # Build base query with ordering and eager load relationships to avoid N+1
+        # Filter out deactivated tools, resources, prompts, and agents at query level
         query = (
             select(DbServer)
             .options(
                 selectinload(DbServer.tools),
+                with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
                 selectinload(DbServer.resources),
+                with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
                 selectinload(DbServer.prompts),
+                with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                 selectinload(DbServer.a2a_agents),
+                with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
                 joinedload(DbServer.email_team),
             )
             .order_by(desc(DbServer.created_at), desc(DbServer.id))
@@ -924,11 +929,16 @@ class ServerService(BaseService):
         team_ids = [team.id for team in user_teams]
 
         # Eager load relationships to avoid N+1 queries
+        # Filter out deactivated tools, resources, prompts, and agents at query level
         query = select(DbServer).options(
             selectinload(DbServer.tools),
+            with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
             selectinload(DbServer.resources),
+            with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
             selectinload(DbServer.prompts),
+            with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
             selectinload(DbServer.a2a_agents),
+            with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
             joinedload(DbServer.email_team),
         )
 
