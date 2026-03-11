@@ -477,7 +477,7 @@ async def test_admin_logout_paths():
     response = await admin._admin_logout(post_request)
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == f"/root{admin.settings.mcpgateway_ui_base_path}/login"
 
     # GET request with Accept: text/html (browser) should redirect to login
     get_browser_request = _make_request(root_path="/root")
@@ -486,7 +486,7 @@ async def test_admin_logout_paths():
     response = await admin._admin_logout(get_browser_request)
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == f"/root{admin.settings.mcpgateway_ui_base_path}/login"
 
     # GET request without Accept: text/html (OIDC front-channel) should return 200 OK
     get_oidc_request = _make_request(root_path="/root")
@@ -503,7 +503,7 @@ async def test_admin_logout_paths():
     response = await admin._admin_logout(get_htmx_request)
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == f"/root{admin.settings.mcpgateway_ui_base_path}/login"
 
     # GET request with admin referer should redirect to login
     get_referer_request = _make_request(root_path="/root")
@@ -512,7 +512,7 @@ async def test_admin_logout_paths():
     response = await admin._admin_logout(get_referer_request)
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == f"/root{admin.settings.mcpgateway_ui_base_path}/login"
 
     # GET request with */* Accept header (no text/html) should return 200 OK (OIDC)
     get_wildcard_request = _make_request(root_path="/root")
