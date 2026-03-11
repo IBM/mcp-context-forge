@@ -13,7 +13,7 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
-use futures_util::TryStreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use redis::{AsyncCommands, Script, aio::ConnectionManager as RedisConnectionManager};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -58,6 +58,7 @@ const MCP_PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
 const SESSION_CORE_HEADER: &str = "x-contextforge-mcp-session-core";
 const EVENT_STORE_HEADER: &str = "x-contextforge-mcp-event-store";
 const RESUME_CORE_HEADER: &str = "x-contextforge-mcp-resume-core";
+const LIVE_STREAM_CORE_HEADER: &str = "x-contextforge-mcp-live-stream-core";
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -107,6 +108,7 @@ pub struct AppState {
     session_core_enabled: bool,
     event_store_enabled: bool,
     resume_core_enabled: bool,
+    live_stream_core_enabled: bool,
     cache_prefix: Arc<str>,
     event_store_max_events_per_stream: usize,
     event_store_ttl: Duration,
@@ -143,7 +145,25 @@ pub struct HealthResponse {
     pub session_core_enabled: bool,
     pub event_store_enabled: bool,
     pub resume_core_enabled: bool,
+    pub live_stream_core_enabled: bool,
     pub active_sessions: usize,
+}
+
+#[derive(Debug, Default, Clone)]
+struct PendingSseFrame {
+    id: Option<String>,
+    event: Option<String>,
+    data_lines: Vec<String>,
+    retry_ms: Option<u64>,
+    saw_field: bool,
+}
+
+#[derive(Debug, Clone)]
+struct FinalizedSseFrame {
+    id: Option<String>,
+    event: Option<String>,
+    data: String,
+    retry_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -402,6 +422,7 @@ impl AppState {
             session_core_enabled: config.session_core_enabled,
             event_store_enabled: config.event_store_enabled,
             resume_core_enabled: config.resume_core_enabled,
+            live_stream_core_enabled: config.live_stream_core_enabled,
             cache_prefix: Arc::from(config.cache_prefix.clone()),
             event_store_max_events_per_stream: config.event_store_max_events_per_stream,
             event_store_ttl: Duration::from_secs(config.event_store_ttl_seconds),
@@ -564,6 +585,10 @@ impl AppState {
         self.resume_core_enabled
     }
 
+    pub fn live_stream_core_enabled(&self) -> bool {
+        self.live_stream_core_enabled
+    }
+
     fn cache_prefix(&self) -> &str {
         &self.cache_prefix
     }
@@ -671,6 +696,7 @@ async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
         session_core_enabled: state.session_core_enabled(),
         event_store_enabled: state.event_store_enabled(),
         resume_core_enabled: state.resume_core_enabled(),
+        live_stream_core_enabled: state.live_stream_core_enabled(),
         active_sessions,
     })
 }
@@ -2221,6 +2247,13 @@ fn extract_server_id_header(incoming_headers: &HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
+fn requested_protocol_version_from_headers(incoming_headers: &HeaderMap) -> Option<String> {
+    incoming_headers
+        .get(MCP_PROTOCOL_VERSION_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+}
+
 fn inject_session_header(incoming_headers: &mut HeaderMap, session_id: &str) {
     if let Ok(value) = HeaderValue::from_str(session_id) {
         incoming_headers.insert(HeaderName::from_static("mcp-session-id"), value);
@@ -2246,6 +2279,56 @@ fn query_param(uri: &axum::http::Uri, key: &str) -> Option<String> {
     })
 }
 
+async fn maybe_upsert_runtime_session_from_transport_response(
+    state: &AppState,
+    incoming_headers: &HeaderMap,
+    request_session_id: Option<&str>,
+    response_headers: &reqwest::header::HeaderMap,
+) -> Option<String> {
+    let response_session_id = response_headers
+        .get("mcp-session-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| request_session_id.map(str::to_string));
+
+    if !state.session_core_enabled() {
+        return response_session_id;
+    }
+
+    let Some(session_id) = response_session_id.clone() else {
+        return None;
+    };
+
+    let existing = get_runtime_session(state, &session_id).await;
+    let auth_context = decode_internal_auth_context_from_headers_optional(incoming_headers);
+    let now = Instant::now();
+    let record = RuntimeSessionRecord {
+        owner_email: existing
+            .as_ref()
+            .and_then(|record| record.owner_email.clone())
+            .or_else(|| auth_context.as_ref().and_then(|context| context.email.clone())),
+        server_id: existing
+            .as_ref()
+            .and_then(|record| record.server_id.clone())
+            .or_else(|| extract_server_id_header(incoming_headers)),
+        protocol_version: existing
+            .as_ref()
+            .and_then(|record| record.protocol_version.clone())
+            .or_else(|| requested_protocol_version_from_headers(incoming_headers)),
+        client_capabilities: existing
+            .as_ref()
+            .and_then(|record| record.client_capabilities.clone()),
+        created_at: existing
+            .as_ref()
+            .map(|record| record.created_at)
+            .unwrap_or(now),
+        last_used: now,
+    };
+    upsert_runtime_session(state, session_id.clone(), record).await;
+
+    Some(session_id)
+}
+
 fn accepts_sse(headers: &HeaderMap) -> bool {
     headers
         .get("accept")
@@ -2259,6 +2342,67 @@ fn accepts_sse(headers: &HeaderMap) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+fn parse_sse_line(frame: &mut PendingSseFrame, raw_line: &str) {
+    if raw_line.starts_with(':') {
+        return;
+    }
+
+    let (field, value) = raw_line
+        .split_once(':')
+        .map(|(field, value)| (field, value.trim_start()))
+        .unwrap_or((raw_line, ""));
+
+    match field {
+        "id" => {
+            frame.id = Some(value.to_string());
+            frame.saw_field = true;
+        }
+        "event" => {
+            frame.event = Some(value.to_string());
+            frame.saw_field = true;
+        }
+        "data" => {
+            frame.data_lines.push(value.to_string());
+            frame.saw_field = true;
+        }
+        "retry" => {
+            frame.retry_ms = value.parse::<u64>().ok();
+            frame.saw_field = true;
+        }
+        _ => {}
+    }
+}
+
+fn finalize_sse_frame(frame: &mut PendingSseFrame) -> Option<FinalizedSseFrame> {
+    if !frame.saw_field {
+        *frame = PendingSseFrame::default();
+        return None;
+    }
+
+    let finalized = FinalizedSseFrame {
+        id: frame.id.take(),
+        event: frame.event.take(),
+        data: frame.data_lines.join("\n"),
+        retry_ms: frame.retry_ms.take(),
+    };
+    *frame = PendingSseFrame::default();
+    Some(finalized)
+}
+
+fn build_forwarded_sse_event(frame: &FinalizedSseFrame) -> Event {
+    let mut event = Event::default();
+    if let Some(id) = frame.id.as_deref() {
+        event = event.id(id.to_string());
+    }
+    if let Some(name) = frame.event.as_deref() {
+        event = event.event(name.to_string());
+    }
+    if let Some(retry_ms) = frame.retry_ms {
+        event = event.retry(Duration::from_millis(retry_ms));
+    }
+    event.data(frame.data.clone())
 }
 
 async fn handle_resume_transport_request(
@@ -2390,7 +2534,170 @@ async fn handle_resume_transport_request(
         HeaderName::from_static(RESUME_CORE_HEADER),
         HeaderValue::from_static("rust"),
     );
+    response.headers_mut().insert(
+        HeaderName::from_static(LIVE_STREAM_CORE_HEADER),
+        HeaderValue::from_str(if state.live_stream_core_enabled() {
+            "rust"
+        } else {
+            "python"
+        })
+        .unwrap_or_else(|_| HeaderValue::from_static("python")),
+    );
     if let Some(session_id_value) = session_id.as_deref() {
+        if let Ok(value) = HeaderValue::from_str(session_id_value) {
+            response
+                .headers_mut()
+                .insert(HeaderName::from_static("mcp-session-id"), value);
+        }
+    }
+    response
+}
+
+async fn handle_live_stream_transport_request(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    uri: axum::http::Uri,
+    session_id: Option<&str>,
+) -> Response {
+    let keep_alive = KeepAlive::new()
+        .interval(Duration::from_secs(15))
+        .text("");
+    let state_cloned = state.clone();
+    let backend_headers = incoming_headers.clone();
+    let request_session_id = session_id.map(str::to_string);
+    let response_session_id = request_session_id.clone();
+    let uri_cloned = uri.clone();
+
+    let event_stream = async_stream::stream! {
+        let backend_response = match send_transport_to_backend(
+            &state_cloned,
+            reqwest::Method::GET,
+            &backend_headers,
+            &uri_cloned,
+            None,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(response) => {
+                error!(
+                    "backend MCP live stream open failed with status {}",
+                    response.status()
+                );
+                return;
+            }
+        };
+
+        let status = backend_response.status();
+        let response_headers = backend_response.headers().clone();
+        let content_type = response_headers
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        let _response_session_id = maybe_upsert_runtime_session_from_transport_response(
+            &state_cloned,
+            &backend_headers,
+            request_session_id.as_deref(),
+            &response_headers,
+        )
+        .await;
+
+        if !status.is_success() || !content_type.contains("text/event-stream") {
+            error!(
+                "backend MCP live stream returned non-stream response status={} content_type={}",
+                status,
+                content_type
+            );
+            return;
+        }
+
+        let mut upstream_stream = backend_response.bytes_stream();
+        let mut buffer: Vec<u8> = Vec::new();
+        let mut frame = PendingSseFrame::default();
+
+        loop {
+            match upstream_stream.next().await {
+                Some(Ok(chunk)) => {
+                    buffer.extend_from_slice(&chunk);
+
+                    while let Some(newline_index) = buffer.iter().position(|byte| *byte == b'\n') {
+                        let mut line_bytes: Vec<u8> = buffer.drain(..=newline_index).collect();
+                        if matches!(line_bytes.last(), Some(b'\n')) {
+                            line_bytes.pop();
+                        }
+                        if matches!(line_bytes.last(), Some(b'\r')) {
+                            line_bytes.pop();
+                        }
+
+                        let line = String::from_utf8_lossy(&line_bytes);
+                        if line.is_empty() {
+                            if let Some(finalized) = finalize_sse_frame(&mut frame) {
+                                yield Ok::<Event, Infallible>(build_forwarded_sse_event(&finalized));
+                            }
+                            continue;
+                        }
+
+                        parse_sse_line(&mut frame, &line);
+                    }
+                }
+                Some(Err(err)) => {
+                    error!("backend MCP live stream read failed: {err}");
+                    break;
+                }
+                None => {
+                    if !buffer.is_empty() {
+                        let line = String::from_utf8_lossy(&buffer);
+                        parse_sse_line(&mut frame, line.trim_end_matches(['\r', '\n']));
+                        buffer.clear();
+                    }
+                    if let Some(finalized) = finalize_sse_frame(&mut frame) {
+                        yield Ok::<Event, Infallible>(build_forwarded_sse_event(&finalized));
+                    }
+                    break;
+                }
+            }
+        }
+    };
+
+    let mut response = Sse::new(event_stream).keep_alive(keep_alive).into_response();
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/event-stream"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("cache-control"),
+        HeaderValue::from_static("no-cache, no-transform"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("connection"),
+        HeaderValue::from_static("keep-alive"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(RUNTIME_HEADER),
+        HeaderValue::from_static(RUNTIME_NAME),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(LIVE_STREAM_CORE_HEADER),
+        HeaderValue::from_static("rust"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(SESSION_CORE_HEADER),
+        HeaderValue::from_str(if state.session_core_enabled() { "rust" } else { "python" })
+            .unwrap_or_else(|_| HeaderValue::from_static("python")),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(EVENT_STORE_HEADER),
+        HeaderValue::from_str(if state.event_store_enabled() { "rust" } else { "python" })
+            .unwrap_or_else(|_| HeaderValue::from_static("python")),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(RESUME_CORE_HEADER),
+        HeaderValue::from_str(if state.resume_core_enabled() { "rust" } else { "python" })
+            .unwrap_or_else(|_| HeaderValue::from_static("python")),
+    );
+    if let Some(session_id_value) = response_session_id.as_deref() {
         if let Ok(value) = HeaderValue::from_str(session_id_value) {
             response
                 .headers_mut()
@@ -2537,6 +2844,20 @@ async fn forward_transport_request(
         .await;
     }
 
+    if method == reqwest::Method::GET
+        && state.live_stream_core_enabled()
+        && accepts_sse(&incoming_headers)
+        && !incoming_headers.contains_key("last-event-id")
+    {
+        return handle_live_stream_transport_request(
+            state,
+            incoming_headers,
+            uri,
+            session_id.as_deref(),
+        )
+        .await;
+    }
+
     if state.session_core_enabled() && method == reqwest::Method::DELETE && session_id.is_some() {
         let backend_response = match send_session_delete_to_backend(state, &incoming_headers).await
         {
@@ -2578,6 +2899,15 @@ async fn forward_transport_request(
             response
                 .headers_mut()
                 .insert(HeaderName::from_static(RESUME_CORE_HEADER), value);
+        }
+        if let Ok(value) = HeaderValue::from_str(if state.live_stream_core_enabled() {
+            "rust"
+        } else {
+            "python"
+        }) {
+            response
+                .headers_mut()
+                .insert(HeaderName::from_static(LIVE_STREAM_CORE_HEADER), value);
         }
         return response;
     }
@@ -2627,6 +2957,15 @@ async fn forward_transport_request(
         response
             .headers_mut()
             .insert(HeaderName::from_static(RESUME_CORE_HEADER), value);
+    }
+    if let Ok(value) = HeaderValue::from_str(if state.live_stream_core_enabled() {
+        "rust"
+    } else {
+        "python"
+    }) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static(LIVE_STREAM_CORE_HEADER), value);
     }
     response
 }

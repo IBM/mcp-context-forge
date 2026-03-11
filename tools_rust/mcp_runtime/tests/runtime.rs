@@ -9,7 +9,10 @@ use contextforge_mcp_runtime::{AppState, build_router, config::RuntimeConfig};
 use redis::AsyncCommands;
 use reqwest::header::HeaderValue;
 use serde_json::{Value, json};
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 use uuid::Uuid;
 
 #[derive(Clone, Default)]
@@ -51,6 +54,7 @@ fn test_runtime_config() -> RuntimeConfig {
         session_core_enabled: false,
         event_store_enabled: false,
         resume_core_enabled: false,
+        live_stream_core_enabled: false,
         session_ttl_seconds: 3_600,
         event_store_max_events_per_stream: 100,
         event_store_ttl_seconds: 3_600,
@@ -201,6 +205,7 @@ async fn health_alias_is_available_for_gateway_style_probes() {
     assert_eq!(body["session_core_enabled"], json!(false));
     assert_eq!(body["event_store_enabled"], json!(false));
     assert_eq!(body["resume_core_enabled"], json!(false));
+    assert_eq!(body["live_stream_core_enabled"], json!(false));
     assert_eq!(body["active_sessions"], json!(0));
     assert!(
         body["supported_protocol_versions"]
@@ -1027,6 +1032,224 @@ async fn resume_core_disabled_falls_back_to_python_transport_get() {
         Some("python")
     );
     assert_eq!(response.text().await.expect("body"), "data: backend-fallback\n\n");
+
+    let calls = transport_calls.lock().expect("lock");
+    assert_eq!(calls.as_slice(), &["GET".to_string()]);
+}
+
+#[tokio::test]
+async fn live_stream_core_restreams_public_get_from_rust_edge() {
+    let transport_calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let backend = {
+        let transport_calls = transport_calls.clone();
+        Router::new().route(
+            "/_internal/mcp/transport",
+            get(move || {
+                let transport_calls = transport_calls.clone();
+                async move {
+                    transport_calls
+                        .lock()
+                        .expect("lock")
+                        .push("GET".to_string());
+                    (
+                        StatusCode::OK,
+                        [
+                            ("content-type", "text/event-stream"),
+                            ("mcp-session-id", "live-session-1"),
+                        ],
+                        "id: evt-1\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{\"data\":\"hello-live\"}}\n\n",
+                    )
+                }
+            }),
+        )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = build_router(
+        AppState::new(&RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            session_core_enabled: true,
+            live_stream_core_enabled: true,
+            ..test_runtime_config()
+        })
+        .expect("state"),
+    );
+    let runtime_url = spawn_router(runtime).await;
+    let auth_context = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "email": "live@example.com",
+            "teams": ["team-a"],
+            "is_admin": false
+        }))
+        .expect("auth context json"),
+    );
+
+    let response = reqwest::Client::new()
+        .get(format!("{runtime_url}/mcp"))
+        .header("x-contextforge-auth-context", auth_context)
+        .header("accept", "text/event-stream")
+        .header("mcp-session-id", "live-session-1")
+        .header("mcp-protocol-version", "2025-03-26")
+        .send()
+        .await
+        .expect("get response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-contextforge-mcp-live-stream-core")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok()),
+        Some("live-session-1")
+    );
+    let body = response.text().await.expect("body");
+    assert!(body.contains("id: evt-1"));
+    assert!(body.contains("event: message"));
+    assert!(body.contains("hello-live"));
+
+    let calls = transport_calls.lock().expect("lock");
+    assert_eq!(calls.as_slice(), &["GET".to_string()]);
+}
+
+#[tokio::test]
+async fn live_stream_core_returns_headers_without_waiting_for_backend_sse() {
+    let transport_calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let backend = {
+        let transport_calls = transport_calls.clone();
+        Router::new().route(
+            "/_internal/mcp/transport",
+            get(move || {
+                let transport_calls = transport_calls.clone();
+                async move {
+                    transport_calls
+                        .lock()
+                        .expect("lock")
+                        .push("GET".to_string());
+                    tokio::time::sleep(Duration::from_millis(400)).await;
+                    (
+                        StatusCode::OK,
+                        [
+                            ("content-type", "text/event-stream"),
+                            ("mcp-session-id", "live-session-delayed"),
+                        ],
+                        "id: evt-delayed\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{\"data\":\"hello-delayed\"}}\n\n",
+                    )
+                }
+            }),
+        )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = build_router(
+        AppState::new(&RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            session_core_enabled: true,
+            live_stream_core_enabled: true,
+            ..test_runtime_config()
+        })
+        .expect("state"),
+    );
+    let runtime_url = spawn_router(runtime).await;
+    let client = reqwest::Client::new();
+    let started = Instant::now();
+
+    let response = client
+        .get(format!("{runtime_url}/mcp"))
+        .header("accept", "text/event-stream")
+        .header("mcp-session-id", "live-session-delayed")
+        .send()
+        .await
+        .expect("get response");
+
+    assert!(
+        started.elapsed() < Duration::from_millis(250),
+        "live stream headers should be returned before the delayed backend handshake finishes"
+    );
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-contextforge-mcp-live-stream-core")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok()),
+        Some("live-session-delayed")
+    );
+    let body = response.text().await.expect("body");
+    assert!(body.contains("id: evt-delayed"));
+    assert!(body.contains("hello-delayed"));
+
+    let calls = transport_calls.lock().expect("lock");
+    assert_eq!(calls.as_slice(), &["GET".to_string()]);
+}
+
+#[tokio::test]
+async fn live_stream_core_disabled_falls_back_to_python_transport_get() {
+    let transport_calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let backend = {
+        let transport_calls = transport_calls.clone();
+        Router::new().route(
+            "/_internal/mcp/transport",
+            get(move || {
+                let transport_calls = transport_calls.clone();
+                async move {
+                    transport_calls
+                        .lock()
+                        .expect("lock")
+                        .push("GET".to_string());
+                    (
+                        StatusCode::OK,
+                        [
+                            ("content-type", "text/event-stream"),
+                            ("mcp-session-id", "fallback-live-session-1"),
+                        ],
+                        "data: backend-live-fallback\n\n",
+                    )
+                }
+            }),
+        )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = build_router(
+        AppState::new(&RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            session_core_enabled: true,
+            live_stream_core_enabled: false,
+            ..test_runtime_config()
+        })
+        .expect("state"),
+    );
+    let runtime_url = spawn_router(runtime).await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .get(format!("{runtime_url}/mcp"))
+        .header("accept", "text/event-stream")
+        .send()
+        .await
+        .expect("get response");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-contextforge-mcp-live-stream-core")
+            .and_then(|value| value.to_str().ok()),
+        Some("python")
+    );
+    assert_eq!(response.text().await.expect("body"), "data: backend-live-fallback\n\n");
 
     let calls = transport_calls.lock().expect("lock");
     assert_eq!(calls.as_slice(), &["GET".to_string()]);

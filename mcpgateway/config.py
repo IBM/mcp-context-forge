@@ -265,6 +265,10 @@ class Settings(BaseSettings):
         default=False,
         description="Enable the experimental Rust-owned public MCP replay/resume path for GET /mcp with Last-Event-ID while keeping Python fallback available.",
     )
+    experimental_rust_mcp_live_stream_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned public MCP live GET /mcp SSE path while keeping Python as the fallback upstream stream source.",
+    )
 
     # Authentication
     basic_auth_user: str = "admin"

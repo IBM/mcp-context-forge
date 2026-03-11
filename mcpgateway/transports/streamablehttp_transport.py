@@ -65,12 +65,12 @@ from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
-from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
