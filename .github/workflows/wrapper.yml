@@ -38,32 +38,12 @@ jobs:
                       venv-${{ runner.os }}-python-3.12-
                       venv-${{ runner.os }}-
 
-            - name: Install Rust Toolchain
-              run: |
-                uv tool install rustup
-                echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-            - name: Setup Rust
-              run: |
-                rustup toolchain install stable --profile minimal
-                rustup default stable
-                echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-            - name: Check Rust version
-              run: rustc --version
-
-            - name: Cache Cargo & Rust
-              uses: actions/cache@v4
+            - uses: actions-rust-lang/setup-rust-toolchain@v1
               with:
-                path: |
-                  ~/.cargo/bin/
-                  ~/.cargo/registry/index/
-                  ~/.cargo/registry/cache/
-                  ~/.cargo/git/db/
-                  tools_rust/wrapper/target/
-                key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-                restore-keys: |
-                  ${{ runner.os }}-cargo-
+                  toolchain: stable
+                  cache: true
+                  profile: minimal
+                  cache-workspaces: "tools_rust/wrapper -> target"
 
             - name: Secrets
               run: |
@@ -233,119 +213,22 @@ jobs:
 
                   # Keep server running for wrapper test - no cleanup needed (container is ephemeral)
 
-            - name: Verify Fast Time Server Before Test
-              run: |
-                  echo "Verifying fast-time-server is still running before wrapper test..."
-                  if ! curl -s http://localhost:8080/health >/dev/null 2>&1; then
-                    echo "ERROR: fast-time-server is not running!"
-                    echo "Server log:"
-                    cat fast-time-server.log
-                    echo "PID file content: $(cat fast-time-server.pid 2>/dev/null || echo 'not found')"
-                    ps aux | grep fast-time-server || echo "No fast-time-server process found"
-                    exit 1
-                  fi
-                  echo "✓ fast-time-server is running (PID: $(cat fast-time-server.pid))"
-                  echo "Health check response:"
-                  curl -s http://localhost:8080/health | head -20
-
             - name: Test Wrapper with Fast Time Server
               run: |
-                  TOKEN="${{ steps.generate_jwt.outputs.token }}"
-                  SERVER_ID="9779b6698cbd4b4995ee04a4fab38737"
-                  PORT="4444"
-                  URL="http://localhost:${PORT}/servers/${SERVER_ID}/mcp"
-                  AUTH="Bearer $TOKEN"
-
-                  # Debug: Verify fast-time-server is accessible
-                  echo "=== Debug: Fast-time-server status ==="
-                  if ! curl -s http://localhost:8080/health >/dev/null 2>&1; then
-                    echo "ERROR: fast-time-server is not accessible!"
-                    exit 1
-                  fi
-                  echo "fast-time-server health:"
-                  curl -s http://localhost:8080/health
-                  echo ""
-
-                  # Debug: Check virtual server configuration
-                  echo "=== Debug: Virtual server configuration ==="
-                  SERVER_INFO=$(curl -s http://localhost:${PORT}/servers/${SERVER_ID} \
-                    -H "Authorization: Bearer $TOKEN")
-                  echo "Server info: $SERVER_INFO" | head -50
-
-                  # Debug: Check tools associated with server
-                  echo "=== Debug: Tools on virtual server ==="
-                  TOOLS_ON_SERVER=$(curl -s "http://localhost:${PORT}/servers/${SERVER_ID}/tools" \
-                    -H "Authorization: Bearer $TOKEN")
-                  echo "Tools on server: $TOOLS_ON_SERVER"
-
-                  # Build the Rust wrapper
                   echo "Building Rust wrapper..."
                   cd tools_rust/wrapper
                   cargo build --release
-                  WRAPPER_BIN="$(pwd)/target/release/mcp_stdio_wrapper"
-                  cd ../..
-
-                  # Define MCP messages
-                  INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0"}}}'
-                  NOTIFY='{"jsonrpc":"2.0","method":"notifications/initialized"}'
-                  LIST='{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-                  CALL='{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fast-time-get-system-time","arguments":{"timezone":"UTC"}}}'
-
-                  # Run wrapper and capture output
-                  echo "Running wrapper test..."
-                  OUTPUT=$(
-                    {
-                      echo "$INIT"
-                      sleep 0.2
-                      echo "$NOTIFY"
-                      sleep 0.2
-                      echo "$LIST"
-                      sleep 0.2
-                      echo "$CALL"
-                      sleep 0.2
-                    } | "$WRAPPER_BIN" --url "$URL" --auth "$AUTH" --log-level debug --log-file wrapper_test.log
-                  )
-
-                  echo "Wrapper output:"
-                  echo "$OUTPUT"
-
-                  # Save output for debugging
-                  echo "$OUTPUT" > wrapper_output.json
-
-                  # Verify the response contains valid tool call result
-                  echo "Verifying wrapper response..."
-
-                  # Check for successful initialize response
-                  if ! echo "$OUTPUT" | grep -q '"result".*"protocolVersion"'; then
-                    echo "ERROR: Initialize response missing or invalid"
-                    exit 1
-                  fi
-                  echo "✓ Initialize response valid"
-
-                  # Check for tools/list response with fast-time tool
-                  if ! echo "$OUTPUT" | grep -q 'fast-time-get-system-time'; then
-                    echo "ERROR: Tool fast-time-get-system-time not found in tools/list"
-                    exit 1
-                  fi
-                  echo "✓ Tool list contains fast-time-get-system-time"
-
-                  # Check for successful tool call (should have result with time, not error)
-                  if echo "$OUTPUT" | grep -q '"error"'; then
-                    echo "ERROR: Tool call returned error"
-                    cat wrapper_test.log
-                    exit 1
-                  fi
-
-
-                  # Verify tool call has a result with time data
-                  # Check if ID 3 has a result and isError is false
-                  IS_SUCCESS=$(echo "$OUTPUT" | jq -r 'select(.id==3) | .result.isError == false')
-                  if [ "$IS_SUCCESS" != "true" ]; then
-                    echo "ERROR: Tool call failed or returned an error state"
-                    exit 1
-                  fi
-                  echo "✓ Tool call returned successful result"
-
+                  cd -
+                  set -x
+                  pwd 
+                  stat ./tools_rust/wrapper/target/release/wrapper_integration
+                  TOKEN="${{ steps.generate_jwt.outputs.token }}"
+                  SERVER_ID="9779b6698cbd4b4995ee04a4fab38737"
+                  PORT="4444"
+                  URL="http://localhost:${PORT}/servers/${SERVER_ID}/mcp" 
+                  AUTH="Bearer $TOKEN" 
+                  WRAPPER_BIN="tools_rust/wrapper/target/release/mcp_stdio_wrapper"  
+                  URL="$URL" AUTH="$AUTH" WRAPPER_BIN="$WRAPPER_BIN" ./tools_rust/wrapper/target/release/wrapper_integration
                   echo "All wrapper tests passed!"
 
             - name: Upload Wrapper Test Artifacts
@@ -359,7 +242,7 @@ jobs:
                   retention-days: 7
 
             - name: Keep server running for debug - set true
-              if: false
+              if: true
               run: |
                   echo "Keeping server running for debugging..."
                   sleep 3600
