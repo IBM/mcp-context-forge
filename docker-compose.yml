@@ -78,7 +78,8 @@ services:
       gateway:
         condition: service_healthy
     volumes:
-      - nginx_cache:/var/cache/nginx    # Persistent cache storage
+      # Cache is ephemeral (not persisted) for local development - automatically cleared on restart
+      # - nginx_cache:/var/cache/nginx    # Uncomment for production to persist cache across restarts
       - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
       # - ./certs:/app/certs:ro           # Mount SSL certs for HTTPS backend verification
     # TCP kernel tuning for 3000 concurrent connections
@@ -2388,3 +2389,59 @@ services:
           cpus: '0.25'
           memory: 128M
     profiles: ["inspector", "sso"]
+
+###############################################################################
+#  OWASP ZAP DAST - Dynamic Application Security Testing daemon
+#  Usage: make testing-zap-up
+#  ZAP API + UI: http://localhost:8090  (set ZAP_BASE_URL=http://localhost:8090)
+#  ZAP API UI:   http://localhost:8090/UI
+#
+#  Run OWASP A01 ZAP tests after the stack is up:
+#    ZAP_BASE_URL=http://localhost:8090 ZAP_API_KEY=changeme \
+#      pytest tests/playwright/security/owasp/test_a01_zap_dast.py -v -m owasp_a01_zap
+#
+#  Environment variables:
+#    ZAP_API_KEY   - ZAP API key (default: changeme)
+###############################################################################
+
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "8090:8090"    # ZAP API daemon + UI (http://localhost:8090/UI)
+    command:
+      - zap.sh
+      - -daemon
+      - -port
+      - "8090"
+      - -host
+      - "0.0.0.0"
+      - -config
+      - "api.key=${ZAP_API_KEY:-changeme}"
+      - -config
+      - "api.addrs.addr.name=.*"        # Docker port-mapping arrives via bridge IP, not 127.0.0.1;
+      - -config
+      - "api.addrs.addr.regex=true"     # authentication is enforced by api.key above.
+      - -config
+      - "connection.timeoutInSecs=20"
+    environment:
+      - ZAP_API_KEY=${ZAP_API_KEY:-changeme}
+    depends_on:
+      nginx:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8090/JSON/core/view/version/?apikey=${ZAP_API_KEY:-changeme}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s    # ZAP JVM startup takes ~30-45 s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 16G
+        reservations:
+          cpus: '0.5'
+          memory: 8G
+    profiles: ["dast"]

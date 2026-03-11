@@ -697,16 +697,18 @@ def _get_user_team_roles(db: Session, user_email: str) -> Dict[str, str]:
     return get_user_team_roles(db, user_email)
 
 
-def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", failed_count: int) -> None:
+def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", failed_count: int, rendered_count: int) -> None:
     """Adjust pagination metadata to account for DB-to-Pydantic conversion failures.
 
     When items on the current page fail to convert, the "Showing X of Y" display
     would otherwise count items that aren't actually displayed. This adjusts
     total_items and recomputes derived fields (total_pages, has_next, has_prev).
+    Also sets page_items to the actual number of successfully rendered items.
 
     Args:
         pagination: The PaginationMeta object to adjust (modified in-place).
         failed_count: Number of items that failed conversion on the current page.
+        rendered_count: Number of items successfully converted and rendered on the current page.
     """
     if failed_count > 0:
         pagination.total_items = max(0, pagination.total_items - failed_count)
@@ -715,6 +717,8 @@ def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", fai
         # so the page number must match the displayed data.
         pagination.has_next = pagination.page < pagination.total_pages
         pagination.has_prev = pagination.page > 1
+    # Always set page_items to reflect actual rendered count (even if failed_count == 0)
+    pagination.page_items = rendered_count
 
 
 def _get_span_entity_performance(
@@ -2386,7 +2390,7 @@ async def admin_servers_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(servers_pydantic))
     data = jsonable_encoder(servers_pydantic)
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
@@ -4114,13 +4118,15 @@ async def _admin_logout(request: Request) -> Response:
     """
     Handle admin logout by clearing authentication cookies.
 
-    Supports both GET and POST methods:
-    - POST: User-initiated logout from the UI (redirects to login page)
-    - GET: OIDC front-channel logout from identity provider (returns 200 OK)
+    Supports three logout scenarios:
+    - POST: User-initiated logout from the UI (redirects to login page or Keycloak logout)
+    - GET with browser headers: Browser navigation to /admin/logout (redirects to login page)
+    - GET without browser headers: OIDC front-channel logout callback from IdP (returns 200 OK)
 
-    For OIDC front-channel logout, Microsoft Entra ID sends GET requests to notify
-    the application that the user has logged out from the IdP. The application
-    should clear the session and return HTTP 200.
+    For OIDC front-channel logout (per OpenID Connect Front-Channel Logout 1.0 spec),
+    identity providers like Microsoft Entra ID send GET requests to notify the application
+    that the user has logged out from the IdP. The application should clear the session
+    and return HTTP 200.
 
     Args:
         request (Request): FastAPI request object.
@@ -4262,10 +4268,27 @@ async def _admin_logout(request: Request) -> Response:
     LOGGER.info(f"Admin user logging out (method: {request.method})")
     root_path = _resolve_root_path(request)
 
-    # For GET requests (OIDC front-channel logout), return 200 OK per OIDC spec.
+    # For GET requests, distinguish between browser navigation and OIDC front-channel logout
     if request.method == "GET":
-        response = Response(content="Logged out", status_code=200)
+        # Check if request is from a browser (Accept: text/html, HX-Request header, or admin referer)
+        # Detection must match auth_middleware.py and rbac.py patterns to ensure consistent behavior
+        # Browser navigation should redirect to login, OIDC callbacks should return 200 OK
+        accept_header = request.headers.get("accept", "")
+        is_htmx = request.headers.get("hx-request") == "true"
+        referer = request.headers.get("referer", "")
+        is_browser_request = "text/html" in accept_header or is_htmx or "/admin" in referer
+
+        if is_browser_request:
+            # Browser navigation - redirect to login (cookies cleared below)
+            response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        else:
+            # OIDC front-channel logout from IdP - return 200 OK per OIDC spec
+            # Reference: OpenID Connect Front-Channel Logout 1.0
+            # https://openid.net/specs/openid-connect-frontchannel-1_0.html
+            # The RP must clear the session and return HTTP 200 to acknowledge logout
+            response = Response(content="Logged out", status_code=200)
     else:
+        # POST requests (user-initiated) - redirect to login (cookies cleared below)
         response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
 
         auth_provider = await _extract_auth_provider_from_jwt_cookie()
@@ -5201,6 +5224,10 @@ async def admin_create_team(
         slug = form.get("slug") or None
         description = form.get("description") or None
         visibility = form.get("visibility", "private")
+        max_members_val = form.get("max_members")
+        max_members: Optional[int] = None
+        if max_members_val and str(max_members_val).strip().isdigit():
+            max_members = int(str(max_members_val).strip()) or None
 
         if not name:
             response = HTMLResponse(
@@ -5215,13 +5242,13 @@ async def admin_create_team(
 
         team_service = TeamManagementService(db)
 
-        team_data = TeamCreateRequest(name=name, slug=slug, description=description, visibility=visibility)
+        team_data = TeamCreateRequest(name=name, slug=slug, description=description, visibility=visibility, max_members=max_members)
 
         # Extract user email from user dict
         user_email = get_user_email(user)
 
         is_admin = isinstance(user, dict) and user.get("is_admin")
-        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, skip_limits=bool(is_admin))
+        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, max_members=team_data.max_members, skip_limits=bool(is_admin))
 
         response = HTMLResponse(content="", status_code=201)
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
@@ -5625,6 +5652,12 @@ async def admin_get_team_edit(
                         <option value="public" {"selected" if team.visibility == "public" else ""}>Public</option>
                     </select>
                 </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Maximum Members</label>
+                    <input type="number" name="max_members" min="1" max="1000" value="{team.max_members if team.max_members else ''}"
+                           class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty to keep current value</p>
+                </div>
                 <div class="flex justify-end space-x-3">
                     <button type="button" onclick="hideTeamEditModal()"
                             class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
@@ -5682,10 +5715,14 @@ async def admin_update_team(
         name_val = form.get("name")
         desc_val = form.get("description")
         vis_val = form.get("visibility", "private")
+        max_members_val = form.get("max_members")
         # Trim before presence check for consistent error messages
         name = name_val.strip() if isinstance(name_val, str) else None
         description = desc_val.strip() if isinstance(desc_val, str) and desc_val.strip() != "" else None
         visibility = vis_val if isinstance(vis_val, str) else "private"
+        max_members: Optional[int] = None
+        if max_members_val and str(max_members_val).strip().isdigit():
+            max_members = int(str(max_members_val).strip()) or None
 
         if not name:
             is_htmx = request.headers.get("HX-Request") == "true"
@@ -5737,7 +5774,7 @@ async def admin_update_team(
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
-        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, updated_by=user_email)
+        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members, updated_by=user_email)
 
         if not updated:
             is_htmx = request.headers.get("HX-Request") == "true"
@@ -8013,7 +8050,7 @@ async def admin_tools_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert tool {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(tools_pydantic))
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
@@ -8587,7 +8624,7 @@ async def admin_prompts_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert prompt {getattr(p, 'id', 'unknown')} ({getattr(p, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(prompts_pydantic))
 
     data = jsonable_encoder(prompts_pydantic)
 
@@ -8792,7 +8829,7 @@ async def admin_gateways_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert gateway {getattr(g, 'id', 'unknown')} ({getattr(g, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(gateways_pydantic))
     data = jsonable_encoder(gateways_pydantic)
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
@@ -9372,7 +9409,7 @@ async def admin_resources_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert resource {getattr(r, 'id', 'unknown')} ({getattr(r, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(resources_pydantic))
 
     data = jsonable_encoder(resources_pydantic)
 
@@ -10254,7 +10291,7 @@ async def admin_a2a_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert a2a agent {getattr(a, 'id', 'unknown')} ({getattr(a, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(a2a_agents_pydantic))
     data = jsonable_encoder(a2a_agents_pydantic)
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.

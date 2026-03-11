@@ -178,8 +178,12 @@ Front-channel logout enables automatic session clearing when users log out from 
    - Production: `https://gateway.yourcompany.com/admin/logout`
    - Development: `http://localhost:8000/admin/logout`
 
-2. When users log out from Microsoft, Entra ID sends a GET request to this URL
-3. ContextForge clears the session cookie and returns HTTP 200
+2. **How it works**: The `/admin/logout` endpoint supports three scenarios:
+   - **OIDC front-channel logout**: When users log out from Microsoft Entra ID, it sends a GET request without browser headers. ContextForge clears the session and returns HTTP 200 (per OpenID Connect Front-Channel Logout 1.0 spec).
+   - **Browser navigation**: If a user navigates directly to `/admin/logout` in their browser (GET with `Accept: text/html` header), they are redirected to the login page.
+   - **User-initiated logout**: POST requests from the Admin UI logout button redirect to the login page after clearing the session.
+
+3. All three scenarios properly clear authentication cookies and SSO session state.
 
 ## Step 5: Configure ContextForge Environment
 
