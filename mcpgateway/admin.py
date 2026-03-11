@@ -4307,7 +4307,7 @@ async def _admin_logout(request: Request) -> Response:
 
         if is_browser_request:
             # Browser navigation - redirect to login (cookies cleared below)
-            response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+            response = RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login", status_code=303)
         else:
             # OIDC front-channel logout from IdP - return 200 OK per OIDC spec
             # Reference: OpenID Connect Front-Channel Logout 1.0
@@ -4315,6 +4315,8 @@ async def _admin_logout(request: Request) -> Response:
             # The RP must clear the session and return HTTP 200 to acknowledge logout
             response = Response(content="Logged out", status_code=200)
     else:
+        # For non-GET (POST) logout requests initiated from the admin UI,
+        # redirect to the configured UI login page.
         response = RedirectResponse(url=f"{root_path}{settings.mcpgateway_ui_base_path}/login", status_code=303)
 
         auth_provider = await _extract_auth_provider_from_jwt_cookie()
