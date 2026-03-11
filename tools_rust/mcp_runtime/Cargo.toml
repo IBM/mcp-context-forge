@@ -24,6 +24,7 @@ tokio = { version = "1.50.0", features = ["full"] }
 tokio-postgres = { version = "0.7.15", features = ["with-serde_json-1"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+uuid = { version = "1.18.1", features = ["v4"] }
 
 [dev-dependencies]
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "stream", "http2", "rustls-tls-native-roots"] }

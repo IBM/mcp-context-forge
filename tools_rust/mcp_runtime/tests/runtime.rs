@@ -46,6 +46,8 @@ fn test_runtime_config() -> RuntimeConfig {
         tools_call_plan_ttl_seconds: 30,
         upstream_session_ttl_seconds: 300,
         use_rmcp_upstream_client: false,
+        session_core_enabled: false,
+        session_ttl_seconds: 3_600,
         database_url: None,
         db_pool_max_size: 20,
         log_filter: "error".to_string(),
@@ -156,6 +158,8 @@ async fn health_alias_is_available_for_gateway_style_probes() {
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value = response.json().await.expect("json body");
     assert_eq!(body["status"], "ok");
+    assert_eq!(body["session_core_enabled"], json!(false));
+    assert_eq!(body["active_sessions"], json!(0));
     assert!(
         body["supported_protocol_versions"]
             .as_array()
@@ -300,6 +304,192 @@ async fn get_and_delete_mcp_routes_forward_to_internal_transport_bridge() {
             Some("Bearer test-token".to_string()),
             Some("client-session-1".to_string()),
             Some("session_id=session-42".to_string())
+        )
+    );
+}
+
+#[tokio::test]
+async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_transport_requests() {
+    let transport_calls = Arc::new(Mutex::new(
+        Vec::<(String, Option<String>, Option<String>, Option<String>)>::new(),
+    ));
+    let backend = {
+        let post_calls = transport_calls.clone();
+        let get_calls = transport_calls.clone();
+        let delete_calls = transport_calls.clone();
+        Router::new().route(
+            "/_internal/mcp/transport",
+            post(move |headers: HeaderMap, uri: Uri, Json(body): Json<Value>| {
+                let transport_calls = post_calls.clone();
+                async move {
+                    transport_calls.lock().expect("lock").push((
+                        "POST".to_string(),
+                        headers
+                            .get("mcp-session-id")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        headers
+                            .get("x-contextforge-server-id")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        uri.query().map(str::to_string),
+                    ));
+                    let mut response_headers = HeaderMap::new();
+                    response_headers.insert(
+                        "mcp-session-id",
+                        HeaderValue::from_static("transport-session-1"),
+                    );
+                    (
+                        StatusCode::OK,
+                        response_headers,
+                        Json(json!({
+                            "jsonrpc":"2.0",
+                            "id": body["id"],
+                            "result": {"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"ContextForge","version":"0.1.0"}}
+                        })),
+                    )
+                }
+            })
+            .get(move |headers: HeaderMap, uri: Uri| {
+                let transport_calls = get_calls.clone();
+                async move {
+                    transport_calls.lock().expect("lock").push((
+                        "GET".to_string(),
+                        headers
+                            .get("mcp-session-id")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        headers
+                            .get("x-contextforge-server-id")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        uri.query().map(str::to_string),
+                    ));
+                    (
+                        StatusCode::OK,
+                        [("content-type", HeaderValue::from_static("text/event-stream"))],
+                        "data: ping\n\n",
+                    )
+                }
+            })
+            .delete(move |headers: HeaderMap, uri: Uri| {
+                let transport_calls = delete_calls.clone();
+                async move {
+                    transport_calls.lock().expect("lock").push((
+                        "DELETE".to_string(),
+                        headers
+                            .get("mcp-session-id")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        headers
+                            .get("x-contextforge-server-id")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        uri.query().map(str::to_string),
+                    ));
+                    StatusCode::NO_CONTENT
+                }
+            }),
+        )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            session_core_enabled: true,
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+    let auth_context = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_admin": false
+        }))
+        .expect("auth context json"),
+    );
+    let client = reqwest::Client::new();
+
+    let initialize_response = client
+        .post(format!("{runtime_url}/mcp"))
+        .header("x-contextforge-auth-context", auth_context.clone())
+        .header("x-contextforge-server-id", "server-123")
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"initialize",
+            "params":{"protocolVersion":"2025-11-25","capabilities":{"elicitation":{}}}
+        }))
+        .send()
+        .await
+        .expect("initialize response");
+
+    assert_eq!(initialize_response.status(), StatusCode::OK);
+    assert_eq!(
+        initialize_response
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok()),
+        Some("transport-session-1")
+    );
+    assert_eq!(
+        initialize_response
+            .headers()
+            .get("x-contextforge-mcp-session-core")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
+
+    let get_response = client
+        .get(format!("{runtime_url}/mcp?session_id=transport-session-1"))
+        .header("x-contextforge-auth-context", auth_context.clone())
+        .send()
+        .await
+        .expect("get response");
+    assert_eq!(get_response.status(), StatusCode::OK);
+
+    let delete_response = client
+        .delete(format!("{runtime_url}/mcp?session_id=transport-session-1"))
+        .header("x-contextforge-auth-context", auth_context)
+        .send()
+        .await
+        .expect("delete response");
+    assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+    let health_response = client
+        .get(format!("{runtime_url}/health"))
+        .send()
+        .await
+        .expect("health response");
+    let health_body: Value = health_response.json().await.expect("health json");
+    assert_eq!(health_body["session_core_enabled"], json!(true));
+    assert_eq!(health_body["active_sessions"], json!(0));
+
+    let calls = transport_calls.lock().expect("lock");
+    assert_eq!(calls[0].0, "POST".to_string());
+    assert!(calls[0].1.is_some());
+    assert_eq!(calls[0].2.as_deref(), Some("server-123"));
+    assert_eq!(calls[0].3, None);
+    assert_eq!(
+        calls[1],
+        (
+            "GET".to_string(),
+            Some("transport-session-1".to_string()),
+            Some("server-123".to_string()),
+            Some("session_id=transport-session-1".to_string()),
+        )
+    );
+    assert_eq!(
+        calls[2],
+        (
+            "DELETE".to_string(),
+            Some("transport-session-1".to_string()),
+            Some("server-123".to_string()),
+            Some("session_id=transport-session-1".to_string()),
         )
     );
 }

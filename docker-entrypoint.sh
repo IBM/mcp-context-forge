@@ -6,9 +6,11 @@ EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED="${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED:-
 EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED="${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED:-true}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_URL="${EXPERIMENTAL_RUST_MCP_RUNTIME_URL:-http://127.0.0.1:8787}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_UDS="${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-}"
+EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED:-false}"
 CONTEXTFORGE_ENABLE_RUST_BUILD="${CONTEXTFORGE_ENABLE_RUST_BUILD:-false}"
 CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD="${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD:-false}"
 MCP_RUST_USE_RMCP_UPSTREAM_CLIENT="${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT:-false}"
+MCP_RUST_SESSION_CORE_ENABLED="${MCP_RUST_SESSION_CORE_ENABLED:-${EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED}}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}" || {
@@ -38,18 +40,22 @@ cleanup() {
 print_mcp_runtime_mode() {
     local runtime_mode="python"
     local upstream_client_mode="native"
+    local session_core_mode="python"
 
     if [[ "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" = "true" ]]; then
         upstream_client_mode="rmcp"
+    fi
+    if [[ "${MCP_RUST_SESSION_CORE_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
+        session_core_mode="rust"
     fi
 
     if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
         if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
             runtime_mode="rust-managed"
-            echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container, upstream client: ${upstream_client_mode})"
+            echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container, upstream client: ${upstream_client_mode}, session core: ${session_core_mode})"
         else
             runtime_mode="rust-external"
-            echo "MCP runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}}, upstream client: ${upstream_client_mode})"
+            echo "MCP runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}}, upstream client: ${upstream_client_mode}, session core: ${session_core_mode})"
         fi
 
         if [[ "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" = "true" && "${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD}" != "true" ]]; then
@@ -127,6 +133,7 @@ start_managed_rust_mcp_runtime() {
         unset EXPERIMENTAL_RUST_MCP_RUNTIME_UDS || true
     fi
     export MCP_RUST_BACKEND_RPC_URL="${backend_rpc_url}"
+    export MCP_RUST_SESSION_CORE_ENABLED="${MCP_RUST_SESSION_CORE_ENABLED}"
     if [[ -n "${rust_database_url}" ]]; then
         export MCP_RUST_DATABASE_URL="${rust_database_url}"
     fi

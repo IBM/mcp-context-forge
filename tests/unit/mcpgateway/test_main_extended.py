@@ -260,6 +260,7 @@ class TestInternalTrustedMcpTransportBridge:
 
         start = next(message for message in sent if message["type"] == "http.response.start")
         assert (b"x-contextforge-mcp-runtime", b"python") in start["headers"]
+        assert (b"x-contextforge-mcp-session-core", b"python") in start["headers"]
 
     @pytest.mark.asyncio
     async def test_bridge_sets_scope_and_forwarded_auth_context(self):
@@ -321,6 +322,64 @@ class TestInternalTrustedMcpTransportBridge:
         assert observed["user_context"]["email"] == "user@example.com"
         assert observed["user_context"]["teams"] == ["team-a"]
         assert events[0]["status"] == 204
+
+    @pytest.mark.asyncio
+    async def test_bridge_allows_post_transport_calls(self):
+        observed = {}
+
+        class FakeTransportApp:
+            async def handle_streamable_http(self, scope, receive, send):
+                observed["method"] = scope["method"]
+                observed["modified_path"] = scope["modified_path"]
+                observed["body"] = await receive()
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 200,
+                        "headers": [(b"x-contextforge-mcp-runtime", b"python")],
+                    }
+                )
+                await send({"type": "http.response.body", "body": b"{}", "more_body": False})
+
+        bridge = InternalTrustedMCPTransportBridge(FakeTransportApp())
+        encoded_auth = base64.urlsafe_b64encode(
+            orjson.dumps(
+                {
+                    "email": "user@example.com",
+                    "teams": ["team-a"],
+                    "is_authenticated": True,
+                    "is_admin": False,
+                }
+            )
+        ).decode("ascii").rstrip("=")
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/_internal/mcp/transport",
+            "query_string": b"",
+            "headers": [
+                (b"x-contextforge-mcp-runtime", b"rust"),
+                (b"x-contextforge-auth-context", encoded_auth.encode("ascii")),
+                (b"x-contextforge-server-id", b"server-1"),
+            ],
+            "client": ("127.0.0.1", 5000),
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b'{"jsonrpc":"2.0","id":1}', "more_body": False}
+
+        events = []
+
+        async def send(message):
+            events.append(message)
+
+        await bridge.handle_streamable_http(scope, receive, send)
+
+        assert observed["method"] == "POST"
+        assert observed["modified_path"] == "/servers/server-1/mcp"
+        assert observed["body"]["body"] == b'{"jsonrpc":"2.0","id":1}'
+        assert events[0]["status"] == 200
 
     @pytest.mark.asyncio
     async def test_bridge_rejects_missing_internal_auth_context(self):
@@ -6786,9 +6845,11 @@ class TestRemainingCoverageGaps:
         assert result["mcp_runtime"]["mode"] == "python-rust-built-disabled"
         assert result["mcp_runtime"]["mounted"] == "python"
         assert result["mcp_runtime"]["rust_build_included"] is True
+        assert result["mcp_runtime"]["session_core_mode"] == "python"
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "python-rust-built-disabled"
         assert response.headers["x-contextforge-mcp-transport-mounted"] == "python"
         assert response.headers["x-contextforge-rust-build-included"] == "true"
+        assert response.headers["x-contextforge-mcp-session-core-mode"] == "python"
 
     async def test_readiness_check_invalidate_failure_is_best_effort(self, monkeypatch):
         import mcpgateway.main as main_mod
@@ -6844,6 +6905,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setenv("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", "true")
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", True)
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_uds", "/tmp/contextforge-mcp-rust.sock")
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_session_core_enabled", True)
 
         response = await main_mod.readiness_check()
         payload = json.loads(response.body.decode())
@@ -6853,9 +6915,11 @@ class TestRemainingCoverageGaps:
         assert payload["mcp_runtime"]["mode"] == "rust-managed"
         assert payload["mcp_runtime"]["mounted"] == "rust"
         assert payload["mcp_runtime"]["sidecar_transport"] == "uds"
+        assert payload["mcp_runtime"]["session_core_mode"] == "rust"
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
         assert response.headers["x-contextforge-mcp-transport-mounted"] == "rust"
         assert response.headers["x-contextforge-rust-build-included"] == "true"
+        assert response.headers["x-contextforge-mcp-session-core-mode"] == "rust"
 
     async def test_sse_endpoint_cookie_auth_and_disconnect_cleanup(self, monkeypatch):
         import mcpgateway.main as main_mod

@@ -253,6 +253,10 @@ class Settings(BaseSettings):
         le=300,
         description="Timeout in seconds for Python-to-Rust MCP runtime proxy requests.",
     )
+    experimental_rust_mcp_session_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned MCP session metadata core while keeping Python as the fallback transport backend.",
+    )
 
     # Authentication
     basic_auth_user: str = "admin"

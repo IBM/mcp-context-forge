@@ -96,6 +96,20 @@ pub struct RuntimeConfig {
     )]
     pub use_rmcp_upstream_client: bool,
 
+    #[arg(
+        long,
+        env = "MCP_RUST_SESSION_CORE_ENABLED",
+        default_value_t = false
+    )]
+    pub session_core_enabled: bool,
+
+    #[arg(
+        long,
+        env = "MCP_RUST_SESSION_TTL_SECONDS",
+        default_value_t = 3_600
+    )]
+    pub session_ttl_seconds: u64,
+
     #[arg(long, env = "MCP_RUST_DATABASE_URL")]
     pub database_url: Option<String>,
 
