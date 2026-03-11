@@ -92,8 +92,9 @@ Reason:
 
 Current limitation:
 
-- GET/DELETE stream management is not yet implemented here, so the integrated
-  gateway currently keeps those methods on the Python transport
+- Rust now fronts `GET/POST/DELETE /mcp`, but the underlying resumable
+  Streamable HTTP session manager, session registry, and Redis-backed event
+  store are still Python-owned behind a trusted internal transport bridge
 
 ### 5. UDS is preferred over loopback TCP
 
@@ -185,6 +186,10 @@ Implemented:
 
 - `GET /healthz`
 - `GET /health`
+- `GET /mcp`
+- `GET /mcp/`
+- `DELETE /mcp`
+- `DELETE /mcp/`
 - `POST /rpc`
 - `POST /rpc/`
 - `POST /mcp`
@@ -195,20 +200,51 @@ Implemented:
 - initialize parameter validation
 - local `ping`
 - `202 Accepted` notification handling
-- backend forwarding for all other JSON-RPC methods
+- Rust-fronted MCP transport for `GET/POST/DELETE /mcp`
+- dedicated Rust-specialized routing for:
+  - `initialize`
+  - `notifications/initialized`
+  - `notifications/message`
+  - `notifications/cancelled`
+  - `tools/list`
+  - `tools/call`
+  - `resources/list`
+  - `resources/read`
+  - `resources/subscribe`
+  - `resources/unsubscribe`
+  - `resources/templates/list`
+  - `prompts/list`
+  - `prompts/get`
+  - `roots/list`
+  - `completion/complete`
+  - `sampling/createMessage`
+  - `logging/setLevel`
+- Rust-local catch-all handling for unsupported:
+  - `notifications/*`
+  - `sampling/*`
+  - `completion/*`
+  - `logging/*`
+  - `elicitation/*` except `elicitation/create`
+- backend forwarding for the remaining compatibility and fallback paths
 - propagation of `Authorization`, cookies, `mcp-session-id`, and other non-hop-by-hop headers
 - stripping of internal-only forwarded headers such as `x-forwarded-internally`
 - Python-side embedding for the mounted `/mcp` route:
   - Python auth and path rewriting stay in front
-  - server-scoped `/servers/<id>/mcp` requests have `server_id` injected before reaching `/rpc`
-  - non-POST MCP session-management requests still fall back to the Python transport
+  - server-scoped `/servers/<id>/mcp` requests preserve scope across the
+    Python -> Rust -> Python seam
+  - GET/DELETE transport requests cross a trusted internal transport bridge
+  - `tools/list` has a Rust-owned DB-backed fast path
+  - `tools/call` has a Rust-owned hot path with reusable upstream sessions
+    and optional `rmcp` upstream client support
 
 Not yet implemented:
 
 - resumable Streamable HTTP session orchestration
 - SSE event streaming
-- direct Rust ownership of `tools/list`, `tools/call`, `resources/*`, `prompts/*`
-- backend contract narrower than `/rpc`
+- full Rust ownership of session registry, session affinity, and resumable
+  event storage
+- `elicitation/create`
+- a completely eliminated Python fallback dispatcher / backend contract
 
 ## Gateway integration
 
@@ -221,17 +257,33 @@ The gateway now supports an integrated experimental mode:
 Behavior in this mode:
 
 - Python still performs MCP auth, token scoping, and path rewriting
-- POST `/mcp` traffic is proxied to the Rust runtime
-- GET/DELETE `/mcp` traffic still uses the Python `StreamableHTTPSessionManager`
-- server-scoped `/servers/<id>/mcp` requests preserve semantics by injecting `server_id`
-  into the forwarded JSON-RPC params
+- all public `GET/POST/DELETE /mcp` traffic hits Rust first
+- server-scoped `/servers/<id>/mcp` requests preserve semantics across the
+  internal seam
+- the current Python boundary is now mostly:
+  - auth and RBAC
+  - session manager internals
+  - fallback compatibility methods
+  - remaining business execution behind narrow internal routes
 
 ## Container integration
 
 `Containerfile.lite` now includes the runtime behind the existing build flag:
 
 ```bash
-docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
+docker build \
+  --build-arg ENABLE_RUST=true \
+  -f Containerfile.lite .
+```
+
+Optional `rmcp` support for the upstream `tools/call` client path is built in
+separately:
+
+```bash
+docker build \
+  --build-arg ENABLE_RUST=true \
+  --build-arg ENABLE_RUST_MCP_RMCP=true \
+  -f Containerfile.lite .
 ```
 
 When the image contains Rust artifacts, the bundled entrypoint can supervise the
@@ -241,6 +293,8 @@ sidecar automatically:
 docker run \
   -e EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true \
   -e EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true \
+  -e EXPERIMENTAL_RUST_MCP_RUNTIME_UDS=/tmp/contextforge-mcp-rust.sock \
+  -e MCP_RUST_LISTEN_UDS=/tmp/contextforge-mcp-rust.sock \
   -e HTTP_SERVER=gunicorn \
   mcpgateway
 ```
@@ -249,18 +303,23 @@ Optional launcher/runtime envs:
 
 - `EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true|false`
 - `MCP_RUST_LISTEN_HTTP=127.0.0.1:8787`
+- `MCP_RUST_LISTEN_UDS=/tmp/contextforge-mcp-rust.sock`
 - `MCP_RUST_LOG=info`
 - `MCP_RUST_BACKEND_RPC_URL=http://127.0.0.1:4444/rpc`
+- `MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=true|false`
 
 With `MCP_RUST_LOG=info`, the runtime emits one line per handled MCP method, for example:
 
 ```text
-rust_mcp_runtime method=tools/list mode=backend-forward
+rust_mcp_runtime method=tools/list mode=db-tools-list-direct
 ```
 
 Every MCP response generated by the Rust edge also includes:
 
 - `x-contextforge-mcp-runtime: rust`
+- direct upstream `tools/call` responses also expose:
+  - `x-contextforge-mcp-upstream-client: native`
+  - `x-contextforge-mcp-upstream-client: rmcp`
 
 That header is the easiest live proof that a request was handled by the Rust runtime instead
 of the legacy Python-only transport path.
@@ -270,6 +329,13 @@ of the legacy Python-only transport path.
 ```bash
 cd tools_rust/mcp_runtime
 cargo test --release
+```
+
+Feature-enabled validation for the optional official Rust SDK upstream client:
+
+```bash
+cd tools_rust/mcp_runtime
+cargo test --release --features rmcp-upstream-client
 ```
 
 The test suite verifies:
@@ -283,6 +349,46 @@ The test suite verifies:
 - forwarded requests preserve JSON bodies
 - forwarded requests propagate auth and session headers
 - `/mcp` aliases correctly to the same runtime handler
+- direct `tools/call` execution can reuse upstream sessions
+- SSE-framed upstream responses are decoded correctly
+- feature-enabled `rmcp` upstream client execution works for `tools/call`
+
+## Compose-backed validation
+
+Validated on the live compose stack with:
+
+- `ENABLE_RUST_BUILD=true`
+- `ENABLE_RUST_MCP_RMCP_BUILD=true`
+- `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`
+- `EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=true`
+- `EXPERIMENTAL_RUST_MCP_RUNTIME_UDS=/tmp/contextforge-mcp-rust.sock`
+- `MCP_RUST_LISTEN_UDS=/tmp/contextforge-mcp-rust.sock`
+- `MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=true`
+- `HTTP_SERVER=gunicorn`
+- `GUNICORN_WORKERS=32`
+
+Validated results on that compose-built stack:
+
+- `make test-mcp-cli` -> `23 passed`
+- `make test-mcp-rbac` -> `40 passed`
+- full `make test-ui-headless` completed with:
+  - `761 passed`
+  - `83 skipped`
+  - `3 failed`
+  - `5 errors`
+  - the exact `8` failing/error cases all passed when rerun individually on
+    the same stack, which currently points to suite-order or shared-state UI
+    flake rather than a deterministic MCP runtime regression
+
+Live proof on the compose-built stack:
+
+- `/health` reports:
+  - `x-contextforge-mcp-runtime-mode: rust-managed`
+  - `x-contextforge-mcp-transport-mounted: rust`
+  - `x-contextforge-rust-build-included: true`
+- `tools/call` responses can report:
+  - `x-contextforge-mcp-runtime: rust`
+  - `x-contextforge-mcp-upstream-client: rmcp`
 
 ## Compliance smoke
 
