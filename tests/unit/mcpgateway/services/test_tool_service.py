@@ -256,7 +256,7 @@ class TestToolServiceHelpersExtended:
             return cached if key == top_tools_key else None
 
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
-        cache_module.metrics_cache.get = MagicMock(side_effect=get_only_top_tools)
+        monkeypatch.setattr(cache_module.metrics_cache, "get", MagicMock(side_effect=get_only_top_tools))
 
         mock_combined = MagicMock()
         monkeypatch.setattr("mcpgateway.services.tool_service.get_top_performers_combined", mock_combined)
