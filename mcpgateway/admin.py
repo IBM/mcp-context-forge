@@ -49,6 +49,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 import httpx
+import jwt
 import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
@@ -3732,6 +3733,7 @@ async def admin_login_page(request: Request) -> Response:
 
     This endpoint serves the login form for email-based authentication.
     If email auth is disabled, redirects to the main admin page.
+    If user is already authenticated, redirects to the dashboard.
 
     Args:
         request (Request): FastAPI request object.
@@ -3765,6 +3767,19 @@ async def admin_login_page(request: Request) -> Response:
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     root_path = settings.app_root_path
+
+    # Check if user is already authenticated via JWT cookie
+    jwt_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+    if jwt_token:
+        try:
+            # Verify the token is valid
+            payload = await verify_jwt_token_cached(jwt_token, request)
+            if payload:
+                # User is authenticated, redirect to dashboard
+                return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        except (HTTPException, jwt.PyJWTError):
+            # Token is invalid or expired, continue to show login page
+            pass
 
     # Only show secure cookie warning if there's a login error AND problematic config
     secure_cookie_warning = None
@@ -5248,7 +5263,9 @@ async def admin_create_team(
         user_email = get_user_email(user)
 
         is_admin = isinstance(user, dict) and user.get("is_admin")
-        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, max_members=team_data.max_members, skip_limits=bool(is_admin))
+        await team_service.create_team(
+            name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, max_members=team_data.max_members, skip_limits=bool(is_admin)
+        )
 
         response = HTMLResponse(content="", status_code=201)
         return response
