@@ -1506,6 +1506,11 @@ class TeamManagementService:
             if existing_member:
                 raise ValueError("User is already a member of this team")
 
+            # Check max teams per user
+            max_teams = getattr(settings, "max_teams_per_user", 50)
+            if self._get_user_team_count(user_email) >= max_teams:
+                raise ValueError(f"User has reached the maximum team limit of {max_teams}")
+
             # Check for existing requests (any status)
             existing_request = self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.team_id == team_id, EmailTeamJoinRequest.user_email == user_email).first()
 

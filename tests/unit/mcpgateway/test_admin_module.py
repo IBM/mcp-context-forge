@@ -1652,3 +1652,100 @@ async def test_admin_servers_partial_html_render_variants(monkeypatch):
     )
     assert isinstance(response, HTMLResponse)
     assert request.app.state.templates.TemplateResponse.call_args[0][1] == "servers_partial.html"
+
+
+# ===========================================================================
+# _generate_unified_teams_view — allow_team_join_requests=True branch (line 4721)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_generate_unified_teams_view_join_button_enabled(monkeypatch):
+    """Verifies the enabled 'Request to Join' button is rendered when allow_team_join_requests=True."""
+    monkeypatch.setattr(admin.settings, "allow_team_join_requests", True)
+
+    current_user = SimpleNamespace(email="user@example.com")
+
+    public_open = SimpleNamespace(
+        id="t-public-open",
+        name="Public Open",
+        description="Open team",
+        is_personal=False,
+        visibility="public",
+        created_by="other@example.com",
+    )
+
+    class _StubService:
+        async def get_user_teams(self, _email):
+            return []
+
+        async def discover_public_teams(self, _email):
+            return [public_open]
+
+        async def get_member_counts_batch_cached(self, team_ids):
+            return {tid: 1 for tid in team_ids}
+
+        def get_user_roles_batch(self, _email, team_ids):
+            return {}
+
+        def get_pending_join_requests_batch(self, _email, team_ids):
+            return {}
+
+    response = await admin._generate_unified_teams_view(_StubService(), current_user, "")
+    html = response.body.decode()
+    # The enabled button includes onclick="requestToJoinTeamSafe(this)"
+    assert "requestToJoinTeamSafe" in html
+    assert "Request to Join" in html
+
+
+# ===========================================================================
+# admin_create_join_request — success 201 branch (lines 6423-6424)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_admin_create_join_request_success_with_allow_join_requests(monkeypatch):
+    """Verifies that a successful join request creation returns 201."""
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+    monkeypatch.setattr(admin.settings, "allow_team_join_requests", True)
+    _allow_permissions(monkeypatch)
+
+    request = _make_request()
+    request.form = AsyncMock(return_value={"message": "please add me"})
+    mock_db = MagicMock()
+    user = {"email": "user@example.com", "db": mock_db}
+
+    team = SimpleNamespace(id="team-1", visibility="public")
+    created = SimpleNamespace(id="req-99")
+    team_service = _StubTeamService(db=mock_db, team=team, existing_requests=[], create_request=created)
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    response = await admin.admin_create_join_request("team-1", request, mock_db, user=user)
+    assert response.status_code == 201
+    assert "Join request submitted successfully" in _response_text(response)
+    assert "cancelJoinRequest" in _response_text(response)
+
+
+# ===========================================================================
+# admin_cancel_join_request — allow_team_join_requests=True branch (line 6473)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_admin_cancel_join_request_success_join_requests_enabled(monkeypatch):
+    """Verifies that cancel returns the enabled 'Request to Join' button when allow_team_join_requests=True."""
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+    monkeypatch.setattr(admin.settings, "allow_team_join_requests", True)
+    _allow_permissions(monkeypatch)
+
+    mock_db = MagicMock()
+    user = {"email": "user@example.com", "db": mock_db}
+    team_service = _StubTeamService(db=mock_db, cancel_ok=True)
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    response = await admin.admin_cancel_join_request("team-1", "req-1", db=mock_db, user=user)
+    assert response.status_code == 200
+    body = _response_text(response)
+    # The enabled button includes onclick="requestToJoinTeamSafe(this)"
+    assert "requestToJoinTeamSafe" in body
+    assert "Request to Join" in body
