@@ -242,6 +242,25 @@ class MCPRegistryPage(BasePage):
         self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
         self.search_input.fill("")
         self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
+
+        # Wait until the server grid count stabilizes (no change between two polls).
+        # This guards against HTMX partials that may reattach the grid multiple
+        # times and avoids races where the DOM is attached but not fully updated.
+        self.page.wait_for_function(
+            """() => {
+                const grid = document.querySelector('#server-grid');
+                if (!grid) return false;
+                const cnt = grid.querySelectorAll('.server-card').length;
+                if (window.__last_server_count_for_tests === cnt) {
+                    window.__last_server_count_for_tests = undefined;
+                    return true;
+                }
+                window.__last_server_count_for_tests = cnt;
+                return false;
+            }""",
+            timeout=30000,
+        )
+
         self.page.wait_for_timeout(1000)
 
     def click_category_badge(self, category: str) -> None:
