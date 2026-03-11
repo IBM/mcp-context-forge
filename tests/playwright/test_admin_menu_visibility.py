@@ -405,7 +405,7 @@ class TestAdminMenuVisibility:
         menu_platform_admin_user: Dict,
     ):
         """Platform admin with unrestricted token should see all available menu sections.
-        
+
         Note: Some sections may be hidden due to feature flags (e.g., grpc_enabled=false),
         not permissions. This test verifies that permission-based hiding doesn't affect admins.
         """
@@ -419,7 +419,7 @@ class TestAdminMenuVisibility:
         core_sections = ["overview", "gateways", "servers", "tools", "teams"]
         for section in core_sections:
             assert visibility.get(section, False), f"Platform admin should see core section '{section}'"
-        
+
         # Count visible sections (some may be hidden by feature flags, not permissions)
         visible_count = sum(1 for v in visibility.values() if v)
         logger.info("✓ Platform admin sees %d/%d menu sections (some may be hidden by feature flags)", visible_count, len(MENU_SECTIONS))

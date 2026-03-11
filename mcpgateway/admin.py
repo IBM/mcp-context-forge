@@ -219,14 +219,17 @@ UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
 # The validate_section_permissions() function (called at startup) verifies consistency.
 SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
     # Admin-only sections
-    "users": "admin.users.read",
-    "maintenance": "admin.maintenance",
-    "logs": "admin.logs.read",
-    "export-import": "admin.export",
-    "plugins": "admin.plugins.read",
-    "metrics": "admin.metrics.read",
+    "users": "admin.user_management",
+    "maintenance": "admin.system_config",
+    "logs": "admin.system_config",
+    "export-import": "admin.system_config",
+    "plugins": "admin.plugins",
+    "metrics": "admin.system_config",
     "version-info": "admin.version.read",
     "settings": "admin.settings.read",
+    "llm-providers": "admin.system_config",
+    "llm-models": "admin.system_config",
+    "llm-api-info": "admin.system_config",
     # Core sections (accessible to developers and above)
     "tools": "tools.read",
     "servers": "servers.read",
@@ -237,9 +240,9 @@ SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
     "teams": "teams.read",
     "tokens": "tokens.read",
     # A2A and agents
-    "agents": "agents.read",
-    # Overview and roots (generally accessible)
-    "overview": None,  # No specific permission required
+    "agents": "a2a.read",
+    # Overview and roots
+    "overview": "admin.overview",  # Requires admin permission
     "roots": "roots.read",
     "mcp-registry": "servers.read",  # Catalog is part of servers
 }
@@ -247,13 +250,16 @@ SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
 # Section-to-route-path mapping for validation
 _SECTION_TO_ROUTE_PATH: Dict[str, str] = {
     "users": "/admin/users/partial",
-    "maintenance": "/admin/maintenance",
+    "maintenance": "/admin/maintenance/partial",
     "logs": "/admin/logs",
-    "export-import": "/admin/export",
+    "export-import": "/admin/export/configuration",
     "plugins": "/admin/plugins/partial",
     "metrics": "/admin/metrics",
     "version-info": "/admin/version",
     "settings": "/admin/llm-settings",
+    "llm-providers": "/admin/llm/providers/html",
+    "llm-models": "/admin/llm/models/html",
+    "llm-api-info": "/admin/llm/api-info/html",
     "tools": "/admin/tools/partial",
     "servers": "/admin/servers/partial",
     "resources": "/admin/resources/partial",
@@ -261,8 +267,8 @@ _SECTION_TO_ROUTE_PATH: Dict[str, str] = {
     "gateways": "/admin/gateways/partial",
     "teams": "/admin/teams/partial",
     "tokens": "/admin/tokens/partial",
-    "agents": "/admin/a2a-agents/partial",
-    "overview": None,
+    "agents": "/admin/a2a/partial",
+    "overview": "/admin/overview/partial",
     "roots": "/admin/roots/partial",
     "mcp-registry": "/admin/servers/partial",
 }
@@ -504,6 +510,80 @@ async def get_hidden_sections_for_user(
             hidden.add(section)
 
     return hidden
+
+
+# UI Action Permissions Mapping
+# Maps UI permission flags to required RBAC permissions
+UI_ACTION_PERMISSIONS = {
+    # Create actions
+    "can_create_team": "teams.create",
+    "can_create_server": "servers.create",
+    "can_create_tool": "tools.create",
+    "can_create_resource": "resources.create",
+    "can_create_prompt": "prompts.create",
+    "can_create_gateway": "gateways.create",
+    "can_create_user": "admin.user_management",
+    "can_create_token": "tokens.read",  # Token creation uses tokens.read
+    "can_create_agent": "a2a.create",
+}
+
+
+async def get_user_action_permissions(
+    db: Session,
+    user_email: str,
+    is_admin: bool,
+    token_teams: Optional[List[str]],
+) -> Dict[str, bool]:
+    """Batch-check all UI action permissions for a user.
+
+    Returns a dictionary mapping permission flags to boolean values.
+    Platform admins with unrestricted tokens get all permissions.
+
+    Args:
+        db: Database session
+        user_email: User's email
+        is_admin: Whether user is platform admin
+        token_teams: Normalized token team scope (None for unrestricted admin, [] for public-only)
+
+    Returns:
+        Dict mapping permission flags (e.g., "can_create_team") to bool
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import Mock
+        >>> db = Mock()
+        >>> # Platform admin with unrestricted token gets all permissions
+        >>> result = asyncio.run(get_user_action_permissions(db, "admin@example.com", True, None))
+        >>> result["can_create_team"]
+        True
+        >>> result["can_delete_server"]
+        True
+    """
+    # Platform admins with unrestricted tokens bypass all checks
+    if is_admin and token_teams is None:
+        return {flag: True for flag in UI_ACTION_PERMISSIONS.keys()}
+
+    # Initialize permission service
+    permission_service = PermissionService(db, audit_enabled=False)
+
+    # Batch check all permissions
+    result = {}
+    for flag, permission in UI_ACTION_PERMISSIONS.items():
+        try:
+            has_permission = await permission_service.check_permission(
+                user_email=user_email,
+                permission=permission,
+                token_teams=token_teams,
+                allow_admin_bypass=True,
+                check_any_team=True,
+            )
+            result[flag] = has_permission
+        except Exception as e:
+            # Fail-closed: deny permission on error
+            LOGGER.warning(f"Error checking {permission} for {user_email}: {e}")
+            result[flag] = False
+
+    return result
 
 
 def set_logging_service(service: LoggingService):
@@ -3377,6 +3457,33 @@ async def admin_ui(
     hidden_header_items = set(ui_visibility_config["hidden_header_items"])
 
     # --------------------------------------------------------------------------------
+    # Add permission-based hiding (merge with static config)
+    # --------------------------------------------------------------------------------
+    is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    token_teams = user.get("token_teams") if isinstance(user, dict) else getattr(user, "token_teams", None)
+
+    permission_hidden_sections = await get_hidden_sections_for_user(
+        db=db,
+        user_email=user_email,
+        is_admin=is_admin_user,
+        token_teams=token_teams,
+        static_hidden=hidden_sections,
+    )
+
+    # Merge permission-based hiding with static config
+    hidden_sections = permission_hidden_sections
+
+    # --------------------------------------------------------------------------------
+    # Get user action permissions for UI button visibility
+    # --------------------------------------------------------------------------------
+    user_permissions = await get_user_action_permissions(
+        db=db,
+        user_email=user_email,
+        is_admin=is_admin_user,
+        token_teams=token_teams,
+    )
+
+    # --------------------------------------------------------------------------------
     # Load user teams so we can validate team_id
     # --------------------------------------------------------------------------------
     user_teams = []
@@ -3434,8 +3541,6 @@ async def admin_ui(
     # supply a team_id they do not belong to.
     # --------------------------------------------------------------------------------
     selected_team_id = team_id
-    user_email = get_user_email(user)
-    is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
     admin_viewing_non_member_team = False
 
     if team_id and getattr(settings, "email_auth_enabled", False):
@@ -3805,9 +3910,10 @@ async def admin_ui(
             "selected_team_id": selected_team_id,
             "admin_viewing_non_member_team": admin_viewing_non_member_team,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
-            "ui_hidden_sections": ui_visibility_config["hidden_sections"],
+            "ui_hidden_sections": sorted(hidden_sections),
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
             "ui_hidden_tabs": ui_visibility_config["hidden_tabs"],
+            "user_permissions": user_permissions,
             # Password policy flags for frontend templates
             "password_min_length": getattr(settings, "password_min_length", 8),
             "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
