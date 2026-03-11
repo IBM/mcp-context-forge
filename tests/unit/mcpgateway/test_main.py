@@ -21,6 +21,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import jwt
+import orjson
 from pydantic import BaseModel, SecretStr, ValidationError
 import pytest
 import sqlalchemy as sa
@@ -31,6 +32,7 @@ from starlette.websockets import WebSocketDisconnect
 from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
+from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING
 from mcpgateway.schemas import (
     A2AAgentAggregateMetrics,
     GatewayRead,
@@ -43,8 +45,6 @@ from mcpgateway.schemas import (
     ToolMetrics,
     ToolRead,
 )
-from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING
-
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
@@ -1211,11 +1211,9 @@ class TestResourceEndpoints:
         assert len(lines) == 2
 
         # Verify each line is valid SSE with JSON payload
-        import orjson
-
         for line in lines:
             assert line.startswith("data: ")
-            payload = orjson.loads(line[len("data: "):])
+            payload = orjson.loads(line[len("data: ") :])
             assert "type" in payload
             assert "data" in payload
 
@@ -3517,12 +3515,7 @@ class TestPluginExceptionHandlers:
         from mcpgateway.plugins.framework.errors import PluginViolationError
         from mcpgateway.plugins.framework.models import PluginViolation
 
-        violation = PluginViolation(
-            reason="Invalid status",
-            description="Status code above valid range",
-            code="RATE_LIMIT",  # Has mapping to 429
-            http_status_code=512  # Invalid: above 511
-        )
+        violation = PluginViolation(reason="Invalid status", description="Status code above valid range", code="RATE_LIMIT", http_status_code=512)  # Has mapping to 429  # Invalid: above 511
         exc = PluginViolationError(message="Invalid status", violation=violation)
 
         result = asyncio.run(plugin_violation_exception_handler(None, exc))
