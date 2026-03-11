@@ -700,8 +700,8 @@ class TestGatewayServiceExtended:
         tools = [mock_tool]
         context = "update"
 
-        # Call the helper method
-        result = service._update_or_create_tools(mock_db, tools, mock_gateway, context)
+        # Call the helper method (with explicit visibility change)
+        result = service._update_or_create_tools(mock_db, tools, mock_gateway, context, update_visibility=True)
 
         # Should return empty list (no new tools, existing one updated)
         assert len(result) == 0
@@ -851,8 +851,8 @@ class TestGatewayServiceExtended:
         resources = [mock_resource]
         context = "update"
 
-        # Call method
-        result = service._update_or_create_resources(mock_db, resources, mock_gateway, context)
+        # Call method (with explicit visibility change)
+        result = service._update_or_create_resources(mock_db, resources, mock_gateway, context, update_visibility=True)
 
         # Should return empty list (no new resources)
         assert len(result) == 0
@@ -943,8 +943,8 @@ class TestGatewayServiceExtended:
         prompts = [mock_prompt]
         context = "update"
 
-        # Call the helper method
-        result = service._update_or_create_prompts(mock_db, prompts, mock_gateway, context)
+        # Call the helper method (with explicit visibility change)
+        result = service._update_or_create_prompts(mock_db, prompts, mock_gateway, context, update_visibility=True)
 
         # Should return empty list (no new prompts, existing one updated)
         assert len(result) == 0
@@ -1611,24 +1611,42 @@ class TestGatewayServiceExtended:
         service._update_or_create_prompts(mock_db, [prompt_from_server], mock_gateway, "rediscovery")
         assert existing_prompt.visibility == "private"
 
-        # --- Test 2: MANUAL UPDATE Context ---
+        # --- Test 2: MANUAL UPDATE with explicit visibility change ---
         mock_db.execute.side_effect = [
             create_mock_result(existing_tool),
         ]
-        service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update")
+        service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=True)
         assert existing_tool.visibility == "public"
 
         mock_db.execute.side_effect = [
             create_mock_result(existing_res),
         ]
-        service._update_or_create_resources(mock_db, [res_from_server], mock_gateway, "update")
+        service._update_or_create_resources(mock_db, [res_from_server], mock_gateway, "update", update_visibility=True)
         assert existing_res.visibility == "public"
 
         mock_db.execute.side_effect = [
             create_mock_result(existing_prompt),
         ]
-        service._update_or_create_prompts(mock_db, [prompt_from_server], mock_gateway, "update")
+        service._update_or_create_prompts(mock_db, [prompt_from_server], mock_gateway, "update", update_visibility=True)
         assert existing_prompt.visibility == "public"
+
+        # --- Test 3: UPDATE without visibility change (e.g. description-only edit) ---
+        # Visibility must NOT be overwritten even though created_via is "update"
+        existing_tool.visibility = "private"
+        existing_res.visibility = "team"
+        existing_prompt.visibility = "private"
+
+        mock_db.execute.side_effect = [create_mock_result(existing_tool)]
+        service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=False)
+        assert existing_tool.visibility == "private"
+
+        mock_db.execute.side_effect = [create_mock_result(existing_res)]
+        service._update_or_create_resources(mock_db, [res_from_server], mock_gateway, "update", update_visibility=False)
+        assert existing_res.visibility == "team"
+
+        mock_db.execute.side_effect = [create_mock_result(existing_prompt)]
+        service._update_or_create_prompts(mock_db, [prompt_from_server], mock_gateway, "update", update_visibility=False)
+        assert existing_prompt.visibility == "private"
 
     def test_create_db_tool_inherits_gateway_visibility(self):
         """New tools created via _create_db_tool inherit visibility from the gateway, not hardcoded 'public'."""
