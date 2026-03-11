@@ -5263,7 +5263,9 @@ async def admin_create_team(
         user_email = get_user_email(user)
 
         is_admin = isinstance(user, dict) and user.get("is_admin")
-        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, max_members=team_data.max_members, skip_limits=bool(is_admin))
+        await team_service.create_team(
+            name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, max_members=team_data.max_members, skip_limits=bool(is_admin)
+        )
 
         response = HTMLResponse(content="", status_code=201)
         return response

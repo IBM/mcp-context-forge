@@ -6788,9 +6788,7 @@ async def test_admin_get_team_edit_renders_max_members(monkeypatch, mock_request
     """Edit team form includes max_members input pre-populated with current value."""
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     team_service = MagicMock()
-    team_service.get_team_by_id = AsyncMock(
-        return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=25)
-    )
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=25))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
     body = response.body.decode()
@@ -12914,9 +12912,7 @@ async def test_admin_test_gateway_basic_auth_dict_value(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
 
-    gateway = SimpleNamespace(
-        id="gw-1", name="GW", auth_type="bearer", auth_value={"Authorization": "Bearer my-token"}, oauth_config=None
-    )
+    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="bearer", auth_value={"Authorization": "Bearer my-token"}, oauth_config=None)
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
@@ -12956,9 +12952,7 @@ async def test_admin_test_gateway_bearer_auth_str_value(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
     monkeypatch.setattr("mcpgateway.admin.decode_auth", lambda val: {"Authorization": "Basic decoded"})
 
-    gateway = SimpleNamespace(
-        id="gw-2", name="GW2", auth_type="basic", auth_value="encrypted-string", oauth_config=None
-    )
+    gateway = SimpleNamespace(id="gw-2", name="GW2", auth_type="basic", auth_value="encrypted-string", oauth_config=None)
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
@@ -13036,14 +13030,15 @@ async def test_admin_test_gateway_preserves_caller_headers(monkeypatch, mock_db)
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
 
-    gateway = SimpleNamespace(
-        id="gw-4", name="GW4", auth_type="bearer", auth_value={"Authorization": "Bearer stored-token"}, oauth_config=None
-    )
+    gateway = SimpleNamespace(id="gw-4", name="GW4", auth_type="bearer", auth_value={"Authorization": "Bearer stored-token"}, oauth_config=None)
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     request = GatewayTestRequest(
-        base_url="https://api.example.com", path="/test", method="GET",
-        headers={"X-Custom": "keep-me", "Authorization": "Bearer caller-token"}, body=None,
+        base_url="https://api.example.com",
+        path="/test",
+        method="GET",
+        headers={"X-Custom": "keep-me", "Authorization": "Bearer caller-token"},
+        body=None,
     )
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
     assert response.status_code == 200
@@ -14751,6 +14746,37 @@ class TestAuthLogin:
         assert call_args[0][1] == "login.html"
 
     @pytest.mark.asyncio
+    async def test_admin_login_page_shows_form_for_expired_token_http_exception(self, monkeypatch):
+        """Test that HTTPException from verify_jwt_token_cached shows login form.
+
+        verify_jwt_token_cached raises HTTPException (not jwt.PyJWTError) for expired/invalid tokens,
+        so this tests the primary real-world error path.
+        """
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/app", raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.secure_cookies", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.environment", "production", raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_ui_airgapped", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.password_reset_enabled", True, raising=False)
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.query_params = {}
+        request.cookies = {"jwt_token": "expired-token"}
+        request.app = MagicMock()
+        request.app.state.templates = MagicMock()
+        request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Login</html>")
+
+        mock_verify = AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has expired"))
+        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
+        monkeypatch.setattr("mcpgateway.admin.load_sri_hashes", lambda: {})
+
+        result = await admin_login_page(request)
+
+        assert isinstance(result, HTMLResponse)
+        assert "mcpgateway_csrf_token=" in (result.headers.get("set-cookie") or "")
+
+    @pytest.mark.asyncio
     async def test_admin_login_handler_email_auth_disabled(self, monkeypatch, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
         request = MagicMock(spec=Request)
@@ -14758,8 +14784,6 @@ class TestAuthLogin:
         result = await admin_login_handler(request, mock_db)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-
-    @pytest.mark.asyncio
 
     @pytest.mark.asyncio
     async def test_admin_login_page_access_token_cookie_valid_redirects(self, monkeypatch):
@@ -14792,6 +14816,7 @@ class TestAuthLogin:
         monkeypatch.setattr("mcpgateway.admin.settings.secure_cookies", False, raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.environment", "production", raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_ui_airgapped", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.password_reset_enabled", True, raising=False)
 
         # Mock request with invalid JWT in access_token cookie
         request = MagicMock(spec=Request)
@@ -14823,6 +14848,7 @@ class TestAuthLogin:
         monkeypatch.setattr("mcpgateway.admin.settings.secure_cookies", False, raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.environment", "production", raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_ui_airgapped", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.password_reset_enabled", True, raising=False)
 
         # Mock request with JWT token
         request = MagicMock(spec=Request)
@@ -14846,7 +14872,7 @@ class TestAuthLogin:
         assert isinstance(result, HTMLResponse)
         assert "mcpgateway_csrf_token=" in (result.headers.get("set-cookie") or "")
 
-
+    @pytest.mark.asyncio
     async def test_admin_login_handler_missing_fields(self, monkeypatch, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
         request = MagicMock(spec=Request)

@@ -20,7 +20,7 @@ import pytest
 from mcpgateway.config import Settings
 
 # Local
-from .conftest import ADMIN_ACTIVE_PASSWORD, ADMIN_EMAIL, BASE_URL, _attempt_admin_login_with_password, _candidate_admin_passwords
+from .conftest import _attempt_admin_login_with_password, _candidate_admin_passwords, ADMIN_ACTIVE_PASSWORD, ADMIN_EMAIL, BASE_URL
 from .pages.admin_page import AdminPage
 from .pages.login_page import LoginPage
 
@@ -212,20 +212,12 @@ class TestAuthentication:
         # Now try to access the login page while already logged in
         page.goto("/admin/login")
 
-        # Wait a moment for any redirect to occur
-        page.wait_for_timeout(1000)
-
         # Verify that we were redirected to the admin dashboard, not the login page
         expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
 
-        # Verify we're NOT on the login page by checking that login form is not visible
+        # Verify login form is not visible (handles both not-in-DOM and hidden cases)
         login_page = LoginPage(page, BASE_URL)
-        try:
-            # The login form should not be visible (with short timeout)
-            expect(login_page.email_input).not_to_be_visible(timeout=2000)
-        except Exception:
-            # If we can't find the email input, that's good - we're not on login page
-            pass
+        expect(login_page.email_input).not_to_be_visible(timeout=2000)
 
         # Verify we can see admin interface elements instead
         admin_ui = AdminPage(page, BASE_URL)
