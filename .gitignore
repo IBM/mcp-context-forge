@@ -258,6 +258,7 @@ uv.lock
 # Rust (plugins_rust)
 # ========================================
 plugins_rust/target/
+plugins_rust/*/target/
 *.rs.bk
 plugins_rust/Cargo.lock
 
@@ -303,6 +304,7 @@ debug_login_page.png
 docs/pstats.png
 docs/docs/coverage/
 docs/docs/images/coverage.svg
+docs/docs/images/contextforge-*.svg
 docs/docs/design/images/code2flow.dot
 docs/docs/test/
 mcp.prof

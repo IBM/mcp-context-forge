@@ -15,7 +15,7 @@ import logging
 import os
 import sys
 import tempfile
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -415,7 +415,9 @@ sys.stdout.flush()
         # Mock subprocess with proper async behavior
         mock_process = Mock()
         mock_process.stdin = Mock()
-        mock_process.stdout = Mock()
+        mock_stdout = AsyncMock()
+        mock_stdout.readline = AsyncMock(return_value=b"")  # EOF immediately
+        mock_process.stdout = mock_stdout
         mock_process.pid = 12345
 
         # Mock the wait method to be awaitable
@@ -444,8 +446,9 @@ sys.stdout.flush()
             # Check that base environment is preserved
             assert "PATH" in env  # PATH should be preserved from os.environ
 
-            # Don't call stop() as it will try to wait for the mock process
-            # Just verify the start() worked correctly
+            # Let the pump task finish (it will hit EOF from the mock)
+            if endpoint._pump_task:
+                await endpoint._pump_task
 
     @pytest.mark.asyncio
     async def test_subprocess_creation_failure(self):

@@ -2,7 +2,7 @@
 
 1. **Install Minikube and kubectl** (Docker or Podman driver required).
 2. Start a local cluster with Ingress and DNS addons.
-3. Load the `ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1` image into Minikube.
+3. Load the `ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2` image into Minikube.
 4. Deploy with the Helm chart (`charts/mcp-stack`).
 5. Access the Gateway at [http://gateway.local](http://gateway.local) or `127.0.0.1:80` via NGINX Ingress.
 
@@ -131,21 +131,21 @@ kubectl get pods -n ingress-nginx
 make minikube-image-load
 ```
 
-This target builds the `ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1` image and loads it into Minikube.
+This target builds the `ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2` image and loads it into Minikube.
 
 ### Alternative methods
 
 * **Pre-cache a remote image:**
 
   ```bash
-  minikube cache add ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  minikube cache add ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
   minikube cache reload
   ```
 
 * **Load a local tarball:**
 
   ```bash
-  docker save ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1 | minikube image load -
+  docker save ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2 | minikube image load -
   ```
 
 ---
@@ -176,6 +176,33 @@ helm install mcp-stack charts/mcp-stack \
 ```
 
 See `charts/mcp-stack/values.yaml` for the full list of configurable values.
+
+### SSRF settings for in-cluster fast-time / fast-test registration
+
+If you enable Helm testing registrations (`testing.fastTime.register.enabled=true`,
+`testing.fastTest.register.enabled=true`), the gateway URLs use in-cluster services:
+
+- `http://<release>-mcp-fast-time-server:80/http`
+- `http://<release>-fast-test-server:8880/mcp`
+
+Strict SSRF defaults block private destinations, which can cause registration jobs to fail with `422`.
+
+Use one of the following:
+
+```yaml
+# Preferred: explicit cluster CIDR allowlist
+mcpContextForge:
+  config:
+    SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example Service CIDR, adjust for your minikube setup
+```
+
+```yaml
+# Local-only shortcut for benchmark/testing
+mcpContextForge:
+  config:
+    SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+```
 
 **Note:** Minikube automatically configures the `kubectl` context upon cluster creation. If not, set it manually:
 
@@ -278,7 +305,7 @@ curl http://gateway.local/health
 | Uninstall Helm release | -                   | `helm uninstall mcp-stack`                                   |
 | Pause cluster       | `make minikube-stop`   | `minikube stop -p mcpgw`                                     |
 | Delete cluster      | `make minikube-delete` | `minikube delete -p mcpgw`                                   |
-| Remove cached image | -                      | `minikube cache delete ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1` |
+| Remove cached image | -                      | `minikube cache delete ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2` |
 
 ---
 

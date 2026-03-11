@@ -6,7 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
-## [1.0.0-BETA-2] - TBD
+## [Unreleased]
+
+### Changed
+
+#### **🔐 Production-Hardened Default Values** ([#3550](https://github.com/IBM/mcp-context-forge/pull/3550))
+
+Aligned `values.yaml` with `config.py` secure defaults and tightened for production deployments.
+
+**Security defaults now match config.py:**
+* `ENVIRONMENT`: `development` → `production`
+* `PASSWORD_REQUIRE_UPPERCASE/LOWERCASE/SPECIAL`: `false` → `true`
+* `REQUIRE_STRONG_SECRETS`: `false` → `true`
+* `MCPGATEWAY_GRPC_REFLECTION_ENABLED`: `true` → `false` (exposes service definitions)
+* `OTEL_EXPORTER_OTLP_INSECURE`: `true` → removed (commented out; default false)
+* `OTEL_TRACES_EXPORTER`: `otlp` → `none` (no collector configured by default)
+* `APP_DOMAIN` / `ALLOWED_ORIGINS`: `http://localhost` → `https://gateway.local`
+* `pullPolicy`: `Always` → `IfNotPresent`
+
+**New security flags (all explicit deny):**
+* `ALLOW_UNAUTHENTICATED_ADMIN: "false"`
+* `TRUST_PROXY_AUTH_DANGEROUSLY: "false"`
+* `PUBLIC_REGISTRATION_ENABLED: "false"`
+* `MCPGATEWAY_STDIO_TRANSPORT_ENABLED: "false"`
+* `PLUGINS_CAN_OVERRIDE_RBAC: "false"`
+* `FAILED_LOGIN_MIN_RESPONSE_MS: "250"`
+* `TOKEN_USAGE_LOGGING_ENABLED: "true"` / `TOKEN_LAST_USED_UPDATE_INTERVAL_MINUTES: "5"`
+* `SSRF_BLOCKED_NETWORKS` / `SSRF_BLOCKED_HOSTS` (explicit cloud metadata blocklists)
+
+**Features disabled by default:**
+* `LLMCHAT_ENABLED`: `true` → `false` (enable only when LLM providers configured)
+* Roots: `DEFAULT_ROOTS/ALLOWED_ROOTS: "[]"`, hidden from UI via `MCPGATEWAY_UI_HIDE_SECTIONS`
+* gRPC, OTEL, plugins, session pool sub-settings collapsed behind disabled master switches
+
+**Removed unnecessary settings:**
+* `DB_DRIVER` (chart uses PostgreSQL), `DB_SQLITE_BUSY_TIMEOUT`, `DB_QUERY_LOG_*` (7 dev settings)
+* `MASKED_AUTH_VALUE`, `PLUGINS_CLI_*`, `TEMPLATES_DIR`/`STATIC_DIR`
+* `VALIDATION_*_PATTERN` regex patterns (18 patterns — config.py defaults are secure)
+* LLM settings (`GATEWAY_MODEL`, `GATEWAY_TEMPERATURE`, `LLM_*`)
+
+**Collapsed disabled feature sub-settings** (commented out with "uncomment when enabling"):
+* Plugins (17), SSO providers (~55), SMTP (9), Session Pool (13), Session Affinity (3)
+* Performance Monitoring (7), Security Logging (4), External Log Sinks (5)
+* Ed25519 (4), Header Passthrough (2), File Logging (6), gRPC (4)
+
+> **Migration:** If you previously relied on `ENVIRONMENT=development` behavior (relaxed CORS, insecure cookies), set `ENVIRONMENT: development` in your override values file. If you used LLM Chat, add `LLMCHAT_ENABLED: "true"` and the `LLM_*` / `GATEWAY_*` settings to your overrides.
+
+### Added
+
+* `charts/mcp-stack/values-minikube.yaml` — local development overlay for minikube (relaxed SSRF, dev credentials, single replica, `pullPolicy: Never`)
+
+---
+
+## [1.0.0-RC2] - 2026-02-28
 
 ### Added
 
@@ -43,6 +95,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 * **Rationale**: Prevents unbounded table growth under sustained load while preserving analytics in hourly rollups
 * **Opt-out**: Set `METRICS_DELETE_RAW_AFTER_ROLLUP=false` to preserve previous behavior
 * **External observability**: If using ELK, Datadog, or similar platforms, raw metrics are redundant - the new defaults are optimal
+
+#### **🩹 Upgrade Workaround for Legacy BETA-2 Releases**
+* **Scope**: Applies to upgrades starting from a release originally installed with chart/app `1.0.0-BETA-2`
+* **Symptom**: `helm upgrade` may fail with immutable selector error on MinIO Deployment (`spec.selector ... field is immutable`)
+* **Workaround**: Delete only the MinIO Deployment, then rerun upgrade
+  - `kubectl delete deployment -n <namespace> <release>-minio`
+  - `helm upgrade <release> charts/mcp-stack -n <namespace> ...`
+* **Data safety**: This workaround preserves existing PVCs and recreates the MinIO Deployment with current labels
+
+#### **📦 MinIO Default Disabled by Default**
+* `minio.enabled` default changed from `true` to `false`
+* **Rationale**: MinIO in this chart is used by PostgreSQL major-upgrade backup/restore flow and is not needed on the regular request path
+* **Migration**: Set `minio.enabled=true` when using `postgres.upgrade.enabled=true`
+* **Upgrade safety**: If your existing release still needs MinIO, pin `minio.enabled=true` in your values before upgrade to avoid MinIO resources being pruned
+* **Validation**: Chart now fails template rendering if `postgres.upgrade.enabled=true` while `minio.enabled=false`
+
+#### **🗄️ PostgreSQL Upgrade Safety Hardening**
+* Internal PostgreSQL Deployment now always uses `strategy.type=Recreate` to prevent overlapping old/new DB pods on the same PVC
+* Added `postgres.terminationGracePeriodSeconds` (default: `120`) for graceful shutdown window
+* Added `postgres.lifecycle.preStop.enabled` (default: `true`) to run a clean `pg_ctl ... stop` before termination
+* Added `postgres.persistence.useReadWriteOncePod` (default: `true`) to prefer strict single-pod mount semantics where supported
+* **Compatibility**: If your storage class does not support `ReadWriteOncePod`, set `postgres.persistence.useReadWriteOncePod=false` and keep `accessModes: [ReadWriteOnce]`
+
+#### **🔒 Ingress TLS and Redirect Hardening**
+* Enabled ingress TLS defaults for:
+  - `mcpContextForge.ingress.tls.enabled: true`
+  - `mcpFastTimeServer.ingress.tls.enabled: true`
+* Ingress templates now auto-generate TLS secret names when unset:
+  - Gateway: `<release>-ingress-tls`
+  - Fast-time: `<release>-fast-time-ingress-tls`
+* For nginx ingress classes with TLS enabled, chart now applies secure defaults unless overridden:
+  - `nginx.ingress.kubernetes.io/ssl-redirect: "true"`
+  - `nginx.ingress.kubernetes.io/force-ssl-redirect: "true"`
+  - `nginx.ingress.kubernetes.io/hsts: "true"`
+  - `nginx.ingress.kubernetes.io/hsts-max-age: "31536000"`
+  - `nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"`
 
 ## [0.9.1] - 2025-12-03
 

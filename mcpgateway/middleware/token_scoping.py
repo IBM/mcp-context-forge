@@ -11,7 +11,7 @@ and time-based restrictions.
 """
 
 # Standard
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 import ipaddress
 import re
@@ -20,11 +20,13 @@ from typing import List, Optional, Pattern, Tuple
 # Third-Party
 from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer
+from sqlalchemy import and_, func, select
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
@@ -68,6 +70,17 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
     ("GET", re.compile(r"^/servers/[^/]+/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/tools/[^/]+/call(?:$|/)"), Permissions.TOOLS_EXECUTE),
+    # JSON-RPC endpoint — multiplexes tools/call, resources/list, initialize, etc.
+    # Fine-grained per-method RBAC is enforced downstream by _ensure_rpc_permission();
+    # the middleware only gates transport-level access via servers.use.
+    ("POST", re.compile(r"^/rpc(?:$|/)"), Permissions.SERVERS_USE),
+    # SSE transport — like /rpc and /mcp, this is a transport-level endpoint;
+    # the handler's own @require_permission enforces fine-grained RBAC.
+    ("GET", re.compile(r"^/sse(?:$|/)"), Permissions.SERVERS_USE),
+    # Streamable HTTP MCP transport (POST=send, GET=SSE stream, DELETE=session termination)
+    ("POST", re.compile(r"^/mcp(?:$|/)"), Permissions.SERVERS_USE),
+    ("GET", re.compile(r"^/mcp(?:$|/)"), Permissions.SERVERS_USE),
+    ("DELETE", re.compile(r"^/mcp(?:$|/)"), Permissions.SERVERS_USE),
     # Resources permissions
     ("GET", re.compile(r"^/resources(?:$|/)"), Permissions.RESOURCES_READ),
     ("POST", re.compile(r"^/resources/?$"), Permissions.RESOURCES_CREATE),  # Only exact /resources or /resources/
@@ -98,6 +111,9 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/gateways/[^/]+/"), Permissions.GATEWAYS_UPDATE),  # POST to sub-resources (state, toggle, refresh)
     ("PUT", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_UPDATE),
     ("DELETE", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
+    # Metrics permissions
+    ("GET", re.compile(r"^/metrics(?:$|/)"), Permissions.ADMIN_METRICS),
+    ("POST", re.compile(r"^/metrics/reset(?:$|/)"), Permissions.ADMIN_METRICS),
     # Token permissions
     ("GET", re.compile(r"^/tokens(?:$|/)"), Permissions.TOKENS_READ),
     ("POST", re.compile(r"^/tokens/?$"), Permissions.TOKENS_CREATE),  # Only exact /tokens or /tokens/
@@ -388,23 +404,21 @@ class TokenScopingMiddleware:
     def _get_client_ip(self, request: Request) -> str:
         """Extract client IP address from request.
 
+        Only trusts X-Forwarded-For / X-Real-IP headers when a trusted proxy
+        configuration is in place (ProxyHeadersMiddleware with specific hosts).
+        Otherwise, uses the direct connection IP to prevent header spoofing.
+
         Args:
             request: FastAPI request object
 
         Returns:
             str: Client IP address
         """
-        # Check for X-Forwarded-For header (proxy/load balancer)
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            return forwarded_for.split(",")[0].strip()
-
-        # Check for X-Real-IP header
-        real_ip = request.headers.get("X-Real-IP")
-        if real_ip:
-            return real_ip
-
-        # Fall back to direct client IP
+        # Use direct client IP as the secure default.
+        # Proxy headers are only trustworthy when Uvicorn/Starlette's
+        # ProxyHeadersMiddleware has already rewritten request.client from a
+        # trusted upstream.  That middleware replaces request.client.host with
+        # the real client IP, so we can rely on it directly.
         return request.client.host if request.client else "unknown"
 
     def _check_ip_restrictions(self, client_ip: str, ip_restrictions: list) -> bool:
@@ -502,6 +516,78 @@ class TokenScopingMiddleware:
 
         return True
 
+    @staticmethod
+    def _parse_positive_limit(value: object) -> Optional[int]:
+        """Parse usage-limit values as positive integers.
+
+        Args:
+            value: Candidate limit value from token scope configuration.
+
+        Returns:
+            Parsed positive integer limit, or ``None`` when invalid/non-positive.
+        """
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    def _check_usage_limits(self, jti: Optional[str], usage_limits: dict) -> Tuple[bool, Optional[str]]:
+        """Check token usage limits against recorded usage logs.
+
+        Args:
+            jti: Token JTI identifier.
+            usage_limits: Usage limits from token scope.
+
+        Returns:
+            Tuple[bool, Optional[str]]: (allowed, denial_reason)
+        """
+        if not isinstance(usage_limits, dict) or not usage_limits or not jti:
+            return True, None
+
+        requests_per_hour = self._parse_positive_limit(usage_limits.get("requests_per_hour"))
+        requests_per_day = self._parse_positive_limit(usage_limits.get("requests_per_day"))
+
+        if not requests_per_hour and not requests_per_day:
+            return True, None
+
+        # First-Party
+        from mcpgateway.db import get_db, TokenUsageLog  # pylint: disable=import-outside-toplevel
+
+        db = next(get_db())
+        try:
+            now = datetime.now(timezone.utc)
+
+            if requests_per_hour:
+                hour_window_start = now - timedelta(hours=1)
+                hourly_count = db.execute(
+                    # Pylint false-positive: SQLAlchemy func namespace is callable at runtime.
+                    # pylint: disable=not-callable
+                    select(func.count(TokenUsageLog.id)).where(and_(TokenUsageLog.token_jti == jti, TokenUsageLog.timestamp >= hour_window_start))
+                ).scalar()
+                if int(hourly_count or 0) >= requests_per_hour:
+                    return False, "Hourly request limit exceeded"
+
+            if requests_per_day:
+                day_window_start = now - timedelta(days=1)
+                daily_count = db.execute(
+                    # Pylint false-positive: SQLAlchemy func namespace is callable at runtime.
+                    # pylint: disable=not-callable
+                    select(func.count(TokenUsageLog.id)).where(and_(TokenUsageLog.token_jti == jti, TokenUsageLog.timestamp >= day_window_start))
+                ).scalar()
+                if int(daily_count or 0) >= requests_per_day:
+                    return False, "Daily request limit exceeded"
+        except Exception as exc:
+            logger.warning("Failed to evaluate token usage limits for jti %s: %s", jti, exc)
+            return True, None
+        finally:
+            try:
+                db.rollback()
+            finally:
+                db.close()
+
+        return True, None
+
     def _check_server_restriction(self, request_path: str, server_id: Optional[str]) -> bool:
         """Check if request path matches server restriction.
 
@@ -548,7 +634,7 @@ class TokenScopingMiddleware:
                 return path_server_id == server_id
 
         # If no server ID found in path, allow general endpoints
-        general_endpoints = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/rpc"]
+        general_endpoints = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/rpc", "/mcp", "/sse"]
 
         # Check exact root path separately
         if request_path == "/":
@@ -608,7 +694,18 @@ class TokenScopingMiddleware:
         # Check each permission mapping (uses precompiled regex patterns)
         for method, path_pattern, required_permission in _PERMISSION_PATTERNS:
             if request_method == method and path_pattern.match(request_path):
-                return required_permission in permissions
+                if required_permission in permissions:
+                    return True
+                # Runtime compensation: tokens with MCP method permissions
+                # (tools.*, resources.*, prompts.*) implicitly have transport
+                # access (servers.use) — mirrors the generation-time injection
+                # in token_catalog_service._generate_token() for pre-existing tokens.
+                if required_permission == Permissions.SERVERS_USE:
+                    if any(p.startswith(Permissions.MCP_METHOD_PREFIXES) for p in permissions):
+                        logger.debug("Runtime servers.use compensation applied for token with MCP method permissions: %s", permissions)
+                        return True
+                    return False
+                return False
 
         # LLM proxy permissions (respect configured llm_api_prefix).
         for method, path_pattern, required_permission in _get_llm_permission_patterns(settings.llm_api_prefix):
@@ -666,9 +763,6 @@ class TokenScopingMiddleware:
             return cached_result
 
         # Cache miss - query database
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
         # First-Party
         from mcpgateway.db import EmailTeamMember, get_db  # pylint: disable=import-outside-toplevel
 
@@ -712,7 +806,7 @@ class TokenScopingMiddleware:
                 finally:
                     db.close()
 
-    def _check_resource_team_ownership(self, request_path: str, token_teams: list, db=None, _user_email: str = None) -> bool:  # pylint: disable=too-many-return-statements
+    def _check_resource_team_ownership(self, request_path: str, token_teams: list, db=None, _user_email: str = None) -> bool:  # noqa: PLR0911  # pylint: disable=too-many-return-statements
         """
         Check if the requested resource is accessible by the token.
 
@@ -780,9 +874,6 @@ class TokenScopingMiddleware:
             return True
 
         # Import database models
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
         # First-Party
         from mcpgateway.db import Gateway, get_db, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
 
@@ -1066,7 +1157,6 @@ class TokenScopingMiddleware:
             # Skip scoping for certain paths (truly public endpoints only)
             skip_paths = [
                 "/health",
-                "/metrics",
                 "/openapi.json",
                 "/docs",
                 "/redoc",
@@ -1134,7 +1224,7 @@ class TokenScopingMiddleware:
                     # Check resource team ownership with shared session
                     if not self._check_resource_team_ownership(normalized_path, token_teams, db=db, _user_email=user_email):
                         logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
-                        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
+                        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
                 finally:
                     # Ensure session cleanup even if checks raise exceptions
                     try:
@@ -1149,7 +1239,7 @@ class TokenScopingMiddleware:
 
                 if not self._check_resource_team_ownership(normalized_path, token_teams, _user_email=user_email):
                     logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Extract scopes from payload
             scopes = payload.get("scopes", {})
@@ -1158,7 +1248,7 @@ class TokenScopingMiddleware:
             server_id = scopes.get("server_id")
             if not self._check_server_restriction(normalized_path, server_id):
                 logger.warning(f"Token not authorized for this server. Required: {server_id}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Token not authorized for this server. Required: {server_id}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Check IP restrictions
             ip_restrictions = scopes.get("ip_restrictions", [])
@@ -1166,7 +1256,7 @@ class TokenScopingMiddleware:
                 client_ip = self._get_client_ip(request)
                 if not self._check_ip_restrictions(client_ip, ip_restrictions):
                     logger.warning(f"Request from IP {client_ip} not allowed by token restrictions")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Request from IP {client_ip} not allowed by token restrictions")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Check time restrictions
             time_restrictions = scopes.get("time_restrictions", {})
@@ -1178,7 +1268,14 @@ class TokenScopingMiddleware:
             permissions = scopes.get("permissions", [])
             if not self._check_permission_restrictions(normalized_path, request.method, permissions):
                 logger.warning("Insufficient permissions for this operation")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions for this operation")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+            # Check optional token usage limits.
+            usage_limits = scopes.get("usage_limits", {})
+            usage_allowed, usage_reason = self._check_usage_limits(payload.get("jti"), usage_limits)
+            if not usage_allowed:
+                logger.warning("Token usage limit exceeded for jti %s: %s", payload.get("jti"), usage_reason)
+                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=usage_reason or "Token usage limit exceeded")
 
             # All scoping checks passed, continue
             return await call_next(request)

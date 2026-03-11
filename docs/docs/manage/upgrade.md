@@ -30,6 +30,15 @@ Check the [release notes](https://github.com/ibm/mcp-context-forge/releases) for
 
 Depending on your deployment method: podman, docker, kubernetes, etc.
 
+!!! note "Helm chart specific notes"
+    - Chart `charts/mcp-stack` now defaults `minio.enabled=false`
+    - PostgreSQL major upgrade workflow requires `minio.enabled=true` with `postgres.upgrade.enabled=true`
+    - Internal PostgreSQL now forces `Deployment.strategy.type=Recreate` to prevent overlapping old/new DB pods on the same PVC during upgrades
+    - Internal PostgreSQL now defaults `postgres.terminationGracePeriodSeconds=120` and `postgres.lifecycle.preStop.enabled=true` for cleaner shutdown
+    - Internal PostgreSQL now defaults `postgres.persistence.useReadWriteOncePod=true` (set it to `false` and use `ReadWriteOnce` if your storage class does not support RWOP)
+    - Releases originally installed from chart/app `1.0.0-BETA-2` may require one-time MinIO Deployment recreation before upgrade:
+      `kubectl delete deployment -n <namespace> <release>-minio`
+
 ### 4. Apply Database Migrations
 
 If the new version includes database schema changes:

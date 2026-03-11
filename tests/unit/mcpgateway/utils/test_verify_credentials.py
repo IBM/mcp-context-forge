@@ -27,7 +27,7 @@ from __future__ import annotations
 # Standard
 import base64
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import uuid
 
 # Third-Party
@@ -616,6 +616,23 @@ async def test_require_docs_auth_override_no_header_no_cookie_raises_not_authent
 
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert exc.value.detail == "Not authenticated"
+
+
+@pytest.mark.asyncio
+async def test_require_docs_auth_override_enforces_revocation_and_user_status(monkeypatch):
+    """Docs auth override should run the same revocation/user checks as API auth paths."""
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", False, raising=False)
+
+    verified_payload = {"sub": "alice@example.com", "jti": "token-jti"}
+    with patch("mcpgateway.utils.verify_credentials.verify_credentials", new=AsyncMock(return_value=verified_payload)), patch(
+        "mcpgateway.utils.verify_credentials._enforce_revocation_and_active_user",
+        new=AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked")),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await vc.require_docs_auth_override(auth_header="Bearer token", jwt_token=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "revoked" in exc.value.detail.lower()
 
 
 # Integration test for /docs endpoint (requires test_client fixture and create_test_jwt_token helper)
@@ -1247,8 +1264,8 @@ async def test_require_admin_auth_email_auth_rejects_inactive_admin_user(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_require_admin_auth_email_auth_non_admin_user_falls_back_to_basic(monkeypatch):
-    """Email auth non-admin path raises internally but falls back to basic auth."""
+async def test_require_admin_auth_email_auth_non_admin_browser_gets_redirect(monkeypatch):
+    """C-85 fix: Non-admin browser user gets 302 redirect, NOT fallback to basic auth."""
     monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
     monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
@@ -1277,13 +1294,15 @@ async def test_require_admin_auth_email_auth_non_admin_user_falls_back_to_basic(
     mock_request.scope = {"root_path": ""}
 
     basic_creds = HTTPBasicCredentials(username="admin", password="secret")
-    result = await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=basic_creds)
-    assert result == "admin"
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=basic_creds)
+    assert exc.value.status_code == status.HTTP_302_FOUND
+    assert "admin_required" in exc.value.headers["Location"]
 
 
 @pytest.mark.asyncio
-async def test_require_admin_auth_email_auth_non_admin_json_falls_back_to_basic(monkeypatch):
-    """Cover the non-admin JSON branch (403 raised internally, then fallback)."""
+async def test_require_admin_auth_email_auth_non_admin_json_gets_403(monkeypatch):
+    """C-85 fix: Non-admin JSON user gets 403 Forbidden, NOT fallback to basic auth."""
     monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
     monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
@@ -1312,8 +1331,10 @@ async def test_require_admin_auth_email_auth_non_admin_json_falls_back_to_basic(
     mock_request.scope = {"root_path": ""}
 
     basic_creds = HTTPBasicCredentials(username="admin", password="secret")
-    result = await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=basic_creds)
-    assert result == "admin"
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=basic_creds)
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+    assert "Admin privileges required" in exc.value.detail
 
 
 @pytest.mark.asyncio
@@ -1635,6 +1656,7 @@ async def test_require_auth_header_first_proxy_auth_returns_proxy_user(monkeypat
     """Proxy user is returned when mcp_client_auth_enabled=False and trust_proxy_auth=True."""
     monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
     monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth_dangerously", True, raising=False)
     monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
 
@@ -1652,6 +1674,7 @@ async def test_require_auth_header_first_proxy_auth_missing_header_raises_401(mo
     """When proxy auth is required but header missing, raises 401."""
     monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
     monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth_dangerously", True, raising=False)
     monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
 
@@ -1685,10 +1708,31 @@ async def test_require_auth_header_first_no_auth_method_configured_raises_401(mo
 
 
 @pytest.mark.asyncio
+async def test_require_auth_header_first_proxy_trust_without_ack_is_ignored(monkeypatch):
+    """Proxy trust mode is ignored unless explicitly acknowledged."""
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth_dangerously", False, raising=False)
+    monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"x-authenticated-user": "proxy-user@example.com"}
+    mock_request.cookies = {}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Authentication required but no auth method configured" in exc.value.detail
+
+
+@pytest.mark.asyncio
 async def test_require_auth_header_first_proxy_trust_no_header_auth_not_required_returns_anonymous(monkeypatch):
     """Line 928: trust_proxy_auth=True but no proxy header and auth_required=False returns 'anonymous'."""
     monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
     monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth_dangerously", True, raising=False)
     monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
     monkeypatch.setattr(vc.settings, "auth_required", False, raising=False)
 
@@ -1795,3 +1839,59 @@ async def test_require_auth_header_first_request_cookie_wins_over_jwt_token_para
     )
     # request.cookies wins over jwt_token parameter (step 2 before step 3)
     assert payload["user"] == "cookie-user"
+
+
+# ---------------------------------------------------------------------------
+# C-85 regression: non-admin JWT must get 403, not fallthrough to basic auth
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_require_admin_auth_non_admin_jwt_gets_403_not_basic_fallback(monkeypatch):
+    """C-85 regression: A non-admin JWT user must receive 403 (not fall through to basic auth).
+
+    Before the fix, `raise Exception` on line 1163 replaced the HTTPException(403)
+    with a bare Exception, which was swallowed by the outer except-Exception handler
+    at line 1176, causing fallthrough to basic auth.
+    """
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+
+    # Patch DB + service layer to return a non-admin user
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class NonAdminUser:
+        def __init__(self):
+            self.email = "viewer@example.com"
+            self.is_admin = False
+            self.is_active = True
+
+    class StubEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, email: str):
+            return NonAdminUser()
+
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", StubEmailAuthService)
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(return_value={"sub": "viewer@example.com"}))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    # Provide valid basic creds - if 403 is swallowed, these would authenticate
+    basic_creds = HTTPBasicCredentials(username="admin", password="secret")
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(
+            request=mock_request,
+            credentials=None,
+            jwt_token="non-admin-token",
+            basic_credentials=basic_creds,
+        )
+
+    # Must be 403 Forbidden, NOT 200/success from basic auth fallback
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+    assert "Admin privileges required" in exc.value.detail

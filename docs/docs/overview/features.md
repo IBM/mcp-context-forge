@@ -1,6 +1,6 @@
 # ✨ Features Overview
 
-**ContextForge** is an AI gateway, registry, and proxy that sits in front of any MCP, A2A, or REST/gRPC APIs, exposing a unified control plane with centralized governance, discovery, and observability. It provides MCP federation, LLM proxy, agent and tool call optimization, rate limiting, auth, caching, plugins, and an HTMX-powered Admin UI.
+**ContextForge** is an open source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability. It provides MCP federation, agent and tool call optimization, rate limiting, auth, caching, plugins, and an HTMX-powered Admin UI.
 
 !!! tip "Gateway URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`

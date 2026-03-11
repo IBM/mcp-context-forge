@@ -18,7 +18,6 @@ It handles:
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
-import os
 from string import Formatter
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Union
@@ -40,11 +39,13 @@ from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
-from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
+from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -109,9 +110,10 @@ def _get_registry_cache():
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-# Initialize structured logger and audit trail for prompt operations
+# Initialize structured logger, audit trail, and metrics buffer for prompt operations
 structured_logger = get_structured_logger("prompt_service")
 audit_trail = get_audit_trail_service()
+metrics_buffer = get_metrics_buffer_service()
 
 
 class PromptError(Exception):
@@ -171,7 +173,7 @@ class PromptLockConflictError(PromptError):
     """
 
 
-class PromptService:
+class PromptService(BaseService):
     """Service for managing prompt templates.
 
     Handles:
@@ -181,6 +183,8 @@ class PromptService:
     - Resource embedding
     - Active/inactive status management
     """
+
+    _visibility_model_cls = DbPrompt
 
     def __init__(self) -> None:
         """
@@ -202,15 +206,7 @@ class PromptService:
         self._event_service = EventService(channel_name="mcpgateway:prompt_events")
         # Use the module-level singleton for template caching
         self._jinja_env = _get_jinja_env()
-        # Initialize plugin manager with env overrides for testability
-        env_flag = os.getenv("PLUGINS_ENABLED")
-        if env_flag is not None:
-            env_enabled = env_flag.strip().lower() in {"1", "true", "yes", "on"}
-            plugins_enabled = env_enabled
-        else:
-            plugins_enabled = settings.plugins_enabled
-        config_file = os.getenv("PLUGIN_CONFIG_FILE", getattr(settings, "plugin_config_file", "plugins/config.yaml"))
-        self._plugin_manager: PluginManager | None = PluginManager(config_file) if plugins_enabled else None
+        self._plugin_manager: PluginManager | None = get_plugin_manager()
 
     async def initialize(self) -> None:
         """Initialize the service."""
@@ -444,22 +440,30 @@ class PromptService:
             PromptError: For other prompt registration errors
 
         Examples:
+            >>> import logging
+            >>> logging.disable(logging.CRITICAL)
             >>> from mcpgateway.services.prompt_service import PromptService
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import AsyncMock, MagicMock
             >>> service = PromptService()
             >>> db = MagicMock()
             >>> prompt = MagicMock()
+            >>> prompt.template = "Hello {{ name }}"
+            >>> prompt.name = "test-prompt"
+            >>> prompt.custom_name = None
+            >>> prompt.display_name = None
+            >>> prompt.arguments = []
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> db.add = MagicMock()
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
-            >>> service._notify_prompt_added = MagicMock()
+            >>> service._notify_prompt_added = AsyncMock()
             >>> service.convert_prompt_to_read = MagicMock(return_value={})
             >>> import asyncio
             >>> try:
             ...     asyncio.run(service.register_prompt(db, prompt))
             ... except Exception:
             ...     pass
+            >>> logging.disable(logging.NOTSET)
         """
         try:
             # Validate template syntax
@@ -694,16 +698,31 @@ class PromptService:
             PromptError: If bulk registration fails critically
 
         Examples:
+            >>> import logging
+            >>> logging.disable(logging.CRITICAL)
             >>> from mcpgateway.services.prompt_service import PromptService
             >>> from unittest.mock import MagicMock
             >>> service = PromptService()
             >>> db = MagicMock()
-            >>> prompts = [MagicMock(), MagicMock()]
+            >>> p1 = MagicMock()
+            >>> p1.name = "prompt-1"
+            >>> p1.template = "Hello"
+            >>> p1.custom_name = None
+            >>> p1.display_name = None
+            >>> p1.arguments = []
+            >>> p2 = MagicMock()
+            >>> p2.name = "prompt-2"
+            >>> p2.template = "World"
+            >>> p2.custom_name = None
+            >>> p2.display_name = None
+            >>> p2.arguments = []
+            >>> prompts = [p1, p2]
             >>> import asyncio
             >>> try:
             ...     result = asyncio.run(service.register_prompts_bulk(db, prompts))
             ... except Exception:
             ...     pass
+            >>> logging.disable(logging.NOTSET)
         """
         if not prompts:
             return {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
@@ -1038,48 +1057,10 @@ class PromptService:
         if not include_inactive:
             query = query.where(DbPrompt.enabled)
 
-        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
-        # This ensures unauthenticated requests with token_teams=[] only see public prompts
-        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            if token_teams is not None:
-                team_ids = token_teams
-            elif user_email:
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                team_ids = [team.id for team in user_teams]
-            else:
-                team_ids = []
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-            # Check if this is a public-only token (empty teams array)
-            # Public-only tokens can ONLY see public resources - no owner access
-            is_public_only_token = token_teams is not None and len(token_teams) == 0
-
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)
-                access_conditions = [
-                    and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])),
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email))
-                query = query.where(or_(*access_conditions))
-            else:
-                # General access: public prompts + team prompts (+ owner prompts if not public-only token)
-                access_conditions = [
-                    DbPrompt.visibility == "public",
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(DbPrompt.owner_email == user_email)
-                if team_ids:
-                    access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
-                query = query.where(or_(*access_conditions))
-
-            if visibility:
-                query = query.where(DbPrompt.visibility == visibility)
+        if visibility:
+            query = query.where(DbPrompt.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
@@ -1408,8 +1389,8 @@ class PromptService:
         if is_public_only_token:
             return False  # Already checked public above
 
-        # Owner can always access their own prompts
-        if prompt_owner_email and prompt_owner_email == user_email:
+        # Owner can access their own private prompts
+        if visibility == "private" and prompt_owner_email and prompt_owner_email == user_email:
             return True
 
         # Team prompts: check team membership (matches list_prompts behavior)
@@ -1484,6 +1465,7 @@ class PromptService:
         success = False
         error_message = None
         prompt = None
+        server_scoped = False
 
         # Create database span for observability dashboard
         trace_id = current_trace_id.get()
@@ -1599,6 +1581,7 @@ class PromptService:
                     ).first()
                     if not server_match:
                         raise PromptNotFoundError(f"Prompt not found: {search_key}")
+                    server_scoped = True
 
                 if not arguments:
                     result = PromptResult(
@@ -1688,10 +1671,6 @@ class PromptService:
                 # Record metrics only if we found a prompt
                 if prompt:
                     try:
-                        # First-Party
-                        from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
-
-                        metrics_buffer = get_metrics_buffer_service()
                         metrics_buffer.record_prompt_metric(
                             prompt_id=prompt.id,
                             start_time=start_time,
@@ -1700,6 +1679,21 @@ class PromptService:
                         )
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record prompt metric: {metrics_error}")
+
+                    # Record server metrics ONLY when the server scoping check passed.
+                    # This prevents recording metrics with unvalidated server_id values
+                    # from admin API headers (X-Server-ID) or RPC params.
+                    if server_scoped:
+                        try:
+                            # Record server metric only for the specific virtual server being accessed
+                            metrics_buffer.record_server_metric(
+                                server_id=server_id,
+                                start_time=start_time,
+                                success=success,
+                                error_message=error_message,
+                            )
+                        except Exception as metrics_error:
+                            logger.warning(f"Failed to record server metric: {metrics_error}")
 
                 # End database span for observability dashboard
                 if db_span_id and observability_service and not db_span_ended:
@@ -1750,20 +1744,31 @@ class PromptService:
             PromptError: For other update errors
 
         Examples:
+            >>> import logging
+            >>> logging.disable(logging.CRITICAL)
             >>> from mcpgateway.services.prompt_service import PromptService
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import AsyncMock, MagicMock
             >>> service = PromptService()
             >>> db = MagicMock()
-            >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock()
+            >>> existing = MagicMock()
+            >>> existing.custom_name = "test-prompt"
+            >>> existing.name = "test-prompt"
+            >>> existing.gateway = None
+            >>> db.execute.return_value.scalar_one_or_none.return_value = existing
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
-            >>> service._notify_prompt_updated = MagicMock()
+            >>> service._notify_prompt_updated = AsyncMock()
             >>> service.convert_prompt_to_read = MagicMock(return_value={})
+            >>> update = MagicMock()
+            >>> update.name = None
+            >>> update.visibility = None
+            >>> update.team_id = None
             >>> import asyncio
             >>> try:
-            ...     asyncio.run(service.update_prompt(db, 'prompt_name', MagicMock()))
+            ...     asyncio.run(service.update_prompt(db, 'prompt_name', update))
             ... except Exception:
             ...     pass
+            >>> logging.disable(logging.NOTSET)
         """
         try:
             # Acquire a row-level lock for the prompt being updated to make
@@ -1775,7 +1780,7 @@ class PromptService:
 
             visibility = prompt_update.visibility or prompt.visibility
             team_id = prompt_update.team_id or prompt.team_id
-            owner_email = prompt_update.owner_email or prompt.owner_email or user_email
+            owner_email = prompt.owner_email or user_email
 
             candidate_custom_name = prompt.custom_name
 
@@ -2008,22 +2013,25 @@ class PromptService:
             PermissionError: If user doesn't own the prompt.
 
         Examples:
+            >>> import logging
+            >>> logging.disable(logging.CRITICAL)
             >>> from mcpgateway.services.prompt_service import PromptService
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import AsyncMock, MagicMock
             >>> service = PromptService()
             >>> db = MagicMock()
             >>> prompt = MagicMock()
             >>> db.get.return_value = prompt
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
-            >>> service._notify_prompt_activated = MagicMock()
-            >>> service._notify_prompt_deactivated = MagicMock()
+            >>> service._notify_prompt_activated = AsyncMock()
+            >>> service._notify_prompt_deactivated = AsyncMock()
             >>> service.convert_prompt_to_read = MagicMock(return_value={})
             >>> import asyncio
             >>> try:
-            ...     asyncio.run(service.set_prompt_state(db, 1, True))
+            ...     result = asyncio.run(service.set_prompt_state(db, 1, True))
             ... except Exception:
             ...     pass
+            >>> logging.disable(logging.NOTSET)
         """
         try:
             # Use nowait=True to fail fast if row is locked, preventing lock contention under high load
@@ -2203,20 +2211,23 @@ class PromptService:
             Exception: For unexpected errors.
 
         Examples:
+            >>> import logging
+            >>> logging.disable(logging.CRITICAL)
             >>> from mcpgateway.services.prompt_service import PromptService
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import AsyncMock, MagicMock
             >>> service = PromptService()
             >>> db = MagicMock()
             >>> prompt = MagicMock()
             >>> db.get.return_value = prompt
             >>> db.delete = MagicMock()
             >>> db.commit = MagicMock()
-            >>> service._notify_prompt_deleted = MagicMock()
+            >>> service._notify_prompt_deleted = AsyncMock()
             >>> import asyncio
             >>> try:
             ...     asyncio.run(service.delete_prompt(db, '123'))
             ... except Exception:
             ...     pass
+            >>> logging.disable(logging.NOTSET)
         """
         try:
             prompt = db.get(DbPrompt, prompt_id)
@@ -2575,7 +2586,7 @@ class PromptService:
         await self._event_service.publish_event(event)
 
     # --- Metrics ---
-    async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
+    async def aggregate_metrics(self, db: Session) -> PromptMetrics:
         """
         Aggregate metrics for all prompt invocations across all prompts.
 
@@ -2587,7 +2598,7 @@ class PromptService:
             db: Database session
 
         Returns:
-            Dict[str, Any]: Aggregated prompt metrics from raw + hourly rollups.
+            PromptMetrics: Aggregated prompt metrics from raw + hourly rollups.
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
@@ -2603,18 +2614,28 @@ class PromptService:
         if is_cache_enabled():
             cached = metrics_cache.get("prompts")
             if cached is not None:
-                return cached
+                return PromptMetrics(**cached)
 
         # Use combined raw + rollup query for full historical coverage
         # First-Party
         from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
         result = aggregate_metrics_combined(db, "prompt")
-        metrics = result.to_dict()
 
-        # Cache the result (if enabled)
+        metrics = PromptMetrics(
+            total_executions=result.total_executions,
+            successful_executions=result.successful_executions,
+            failed_executions=result.failed_executions,
+            failure_rate=result.failure_rate,
+            min_response_time=result.min_response_time,
+            max_response_time=result.max_response_time,
+            avg_response_time=result.avg_response_time,
+            last_execution_time=result.last_execution_time,
+        )
+
+        # Cache the result as dict for serialization compatibility (if enabled)
         if is_cache_enabled():
-            metrics_cache.set("prompts", metrics)
+            metrics_cache.set("prompts", metrics.model_dump())
 
         return metrics
 

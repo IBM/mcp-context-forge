@@ -526,7 +526,9 @@ class RoleService:
         logger.info(f"Deleted role: {role.name} (id: {role.id})")
         return True
 
-    async def assign_role_to_user(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str], granted_by: str, expires_at: Optional[datetime] = None) -> UserRole:
+    async def assign_role_to_user(
+        self, user_email: str, role_id: str, scope: str, scope_id: Optional[str], granted_by: str, expires_at: Optional[datetime] = None, grant_source: Optional[str] = None
+    ) -> UserRole:
         """Assign a role to a user.
 
         Args:
@@ -536,6 +538,7 @@ class RoleService:
             scope_id: Team ID if team-scoped
             granted_by: Email of user granting the role
             expires_at: Optional expiration datetime
+            grant_source: Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
 
         Returns:
             UserRole: The role assignment
@@ -619,7 +622,7 @@ class RoleService:
             raise ValueError("User already has this role assignment")
 
         # Create the assignment
-        user_role = UserRole(user_email=user_email, role_id=role_id, scope=scope, scope_id=scope_id, granted_by=granted_by, expires_at=expires_at)
+        user_role = UserRole(user_email=user_email, role_id=role_id, scope=scope, scope_id=scope_id, granted_by=granted_by, expires_at=expires_at, grant_source=grant_source)
 
         self.db.add(user_role)
         self.db.commit()

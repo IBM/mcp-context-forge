@@ -45,6 +45,7 @@ per-file-ignores =
     mcpgateway/services/gateway_service.py: DAR401,DAR402
     mcpgateway/translate.py: DAR401
     tests/**/*.py: DAR
+    tests/unit/**/*.py: F841
     tests/loadtest/locustfile.py: DAR101,DAR201,DUO102
     tests/unit/mcpgateway/cache/test_cache_invalidation_subscriber.py: DAR101,DAR201
     mcpgateway/plugins/framework/external/grpc/proto/*_pb2.py: E501,E701,E711,W503,N802,F401,E402,DAR

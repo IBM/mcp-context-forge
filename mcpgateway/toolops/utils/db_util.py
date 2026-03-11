@@ -148,6 +148,8 @@ def query_tool_auth(tool_id, db: Session):
         decoded-encoded-val
 
         >>> # Case 2: Exception Handling
+        >>> import logging
+        >>> logging.disable(logging.CRITICAL)
         >>> mock_db_fail = MagicMock()
         >>> mock_db_fail.query.side_effect = Exception("DB Connection Error")
 
@@ -155,6 +157,7 @@ def query_tool_auth(tool_id, db: Session):
         ...     auth = query_tool_auth("tool-2", mock_db_fail)
         ...     print(auth)
         None
+        >>> logging.disable(logging.NOTSET)
     """
     tool_auth = None
     try:

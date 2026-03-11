@@ -484,7 +484,7 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for MCP client operations | `true`            | bool    |
-| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only | `false` | bool |
+| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers               | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
@@ -609,11 +609,14 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | Setting                                  | Description                                      | Default    | Options |
 | ---------------------------------------- | ------------------------------------------------ | ---------- | ------- |
 | `AUTO_CREATE_PERSONAL_TEAMS`             | Enable automatic personal team creation for new users | `true`   | bool    |
-| `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix                      | `personal` | string  |
+| `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix (empty = derive from display name) | `""` | string  |
 | `MAX_TEAMS_PER_USER`                     | Maximum number of teams a user can belong to    | `50`       | int > 0 |
 | `MAX_MEMBERS_PER_TEAM`                   | Maximum number of members per team               | `100`      | int > 0 |
 | `INVITATION_EXPIRY_DAYS`                 | Number of days before team invitations expire   | `7`        | int > 0 |
 | `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` | Require email verification for team invitations | `true`     | bool    |
+| `ALLOW_TEAM_CREATION`                    | Allow users to create organizational teams (admins always can) | `true`  | bool    |
+| `ALLOW_TEAM_JOIN_REQUESTS`               | Allow users to request to join public teams | `true`  | bool    |
+| `ALLOW_TEAM_INVITATIONS`                 | Allow team owners to send invitations       | `true`  | bool    |
 
 ### MCP Server Catalog
 
@@ -717,6 +720,38 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
     ```
     The `100.64.0.0/10` range blocks Carrier-Grade NAT (CGNAT) used by some cloud providers.
 
+#### Helm/Kubernetes registration examples
+
+When deployed with the Helm chart, the testing registration jobs create gateways pointing to
+in-cluster Service DNS names:
+
+- Fast-time: `http://<release>-mcp-fast-time-server:80/http`
+- Fast-test: `http://<release>-fast-test-server:8880/mcp`
+
+Under strict defaults (`SSRF_ALLOW_PRIVATE_NETWORKS=false`, `SSRF_ALLOWED_NETWORKS=[]`), these private
+destinations are rejected with `422` during `/gateways` creation.
+
+Recommended approach for cluster deployments is to keep private networks blocked globally and allow only
+known internal CIDRs:
+
+```yaml
+mcpContextForge:
+  config:
+    SSRF_PROTECTION_ENABLED: "true"
+    SSRF_ALLOW_LOCALHOST: "false"
+    SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example Service CIDR, adjust to your environment
+    SSRF_DNS_FAIL_CLOSED: "true"
+```
+
+For local benchmark profiles where broad private access is acceptable, use:
+
+```yaml
+mcpContextForge:
+  config:
+    SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+```
+
 !!! note "Local Development Defaults"
     The repository's `.env.example` and `docker-compose.yml` intentionally set local-friendly overrides
     (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
@@ -780,7 +815,7 @@ ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed 
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | bool                                       |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
-| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-1`               | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-2`               | string                                     |
 | `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |
@@ -824,7 +859,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 
 | Setting                      | Description                                              | Default   | Options          |
 | ---------------------------- | -------------------------------------------------------- | --------- | ---------------- |
-| `ENABLE_METRICS`             | Enable Prometheus metrics instrumentation                | `true`    | bool             |
+| `ENABLE_METRICS`             | Enable Prometheus metrics endpoint (requires JWT auth)   | `false`   | bool             |
 | `METRICS_EXCLUDED_HANDLERS`  | Regex patterns for paths to exclude from metrics         | (empty)   | comma-separated  |
 | `METRICS_NAMESPACE`          | Prometheus metrics namespace (prefix)                    | `default` | string           |
 | `METRICS_SUBSYSTEM`          | Prometheus metrics subsystem (secondary prefix)          | (empty)   | string           |
@@ -1027,20 +1062,44 @@ The gateway includes built-in observability features for tracking HTTP requests,
 !!! warning "Security Warning"
     Header passthrough is disabled by default for security. Only enable if you understand the implications.
 
-### Plugin Configuration
+### Plugins Configuration
 
-| Setting                        | Description                                      | Default               | Options |
-| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
-| `PLUGINS_ENABLED`             | Enable the plugin framework                      | `false`               | bool    |
-| `PLUGIN_CONFIG_FILE`          | Path to main plugin configuration file          | `plugins/config.yaml` | string  |
-| `PLUGINS_CLIENT_MTLS_CA_BUNDLE`      | Default CA bundle for external plugin mTLS | (empty)               | string  |
-| `PLUGINS_CLIENT_MTLS_CERTFILE`       | Gateway client certificate for plugin mTLS | (empty)               | string  |
-| `PLUGINS_CLIENT_MTLS_KEYFILE`        | Gateway client key for plugin mTLS         | (empty)               | string  |
-| `PLUGINS_CLIENT_MTLS_KEYFILE_PASSWORD` | Password for plugin client key           | (empty)               | string  |
-| `PLUGINS_CLIENT_MTLS_VERIFY`         | Verify remote plugin certificates          | `true`                | bool    |
-| `PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME` | Enforce hostname verification for plugins  | `true`                | bool    |
-| `PLUGINS_CLI_COMPLETION`      | Enable auto-completion for plugins CLI          | `false`               | bool    |
-| `PLUGINS_CLI_MARKUP_MODE`     | Set markup mode for plugins CLI                 | (none)                | `rich`, `markdown`, `disabled` |
+Plugin settings are documented separately to match the plugin-framework
+settings split in code.
+
+- See [Plugin Configuration Reference](configuration-plugins.md) for all
+  `PLUGINS_*` settings and aliases.
+
+
+#### Plugin Framework (Standalone) Settings
+
+The plugin framework has its own configuration via `pydantic-settings` with the `PLUGINS_` env var prefix. These settings allow the plugin framework to operate independently of the gateway configuration. When the plugin framework is used standalone (e.g., via the `mcpplugins` CLI or as a library), only these `PLUGINS_`-prefixed variables are needed. When running inside the gateway, **both** the gateway settings (above) and these framework settings are in effect.
+
+`PLUGINS_ENABLED`, `PLUGINS_CLI_COMPLETION`, and `PLUGINS_CLI_MARKUP_MODE` are shared — the same env var is read by both the gateway and the plugin framework. The HTTP client and SSL settings below are scoped specifically to plugin requests.
+
+| Setting                                  | Description                                              | Default               | Options |
+| ---------------------------------------- | -------------------------------------------------------- | --------------------- | ------- |
+| `PLUGINS_ENABLED`                       | Enable the plugin framework (shared with gateway)        | `false`               | bool    |
+| `PLUGINS_CONFIG_FILE`                   | Path to plugin configuration file                        | `plugins/config.yaml` | string  |
+| `PLUGINS_PLUGIN_TIMEOUT`               | Plugin execution timeout (seconds)                       | `30`                  | int     |
+| `PLUGINS_LOG_LEVEL`                     | Plugin framework log level                               | `INFO`                | string  |
+| `PLUGINS_SKIP_SSL_VERIFY`              | Skip TLS verification for plugin HTTP requests           | `false`               | bool    |
+| `PLUGINS_HTTPX_MAX_CONNECTIONS`         | Plugin HTTP client max total connections                 | `200`                 | int     |
+| `PLUGINS_HTTPX_MAX_KEEPALIVE_CONNECTIONS` | Plugin HTTP client max keepalive connections            | `100`                 | int     |
+| `PLUGINS_HTTPX_KEEPALIVE_EXPIRY`        | Plugin HTTP client keepalive expiry (seconds)            | `30.0`                | float   |
+| `PLUGINS_HTTPX_CONNECT_TIMEOUT`         | Plugin HTTP client TCP connect timeout (seconds)         | `5.0`                 | float   |
+| `PLUGINS_HTTPX_READ_TIMEOUT`            | Plugin HTTP client read timeout (seconds)                | `120.0`               | float   |
+| `PLUGINS_HTTPX_WRITE_TIMEOUT`           | Plugin HTTP client write timeout (seconds)               | `30.0`                | float   |
+| `PLUGINS_HTTPX_POOL_TIMEOUT`            | Plugin HTTP client pool timeout (seconds)                | `10.0`                | float   |
+| `PLUGINS_CLI_COMPLETION`               | Enable CLI auto-completion (shared with gateway)          | `false`               | bool    |
+| `PLUGINS_CLI_MARKUP_MODE`              | CLI markup mode (shared with gateway)                     | (none)                | `rich`, `markdown`, `disabled` |
+
+!!! note "Gateway ↔ Plugin Framework Shared Settings"
+    `PLUGINS_ENABLED`, `PLUGINS_CLI_COMPLETION`, and `PLUGINS_CLI_MARKUP_MODE` are read by both the gateway
+    and the plugin framework from the same env var. The gateway also reads `PLUGIN_CONFIG_FILE` for backwards
+    compatibility, while the plugin framework reads `PLUGINS_CONFIG_FILE`. The gateway's `HTTPX_CONNECT_TIMEOUT` /
+    `HTTPX_READ_TIMEOUT` / `SKIP_SSL_VERIFY` are independent of the plugin framework's `PLUGINS_HTTPX_CONNECT_TIMEOUT` /
+    `PLUGINS_HTTPX_READ_TIMEOUT` / `PLUGINS_SKIP_SSL_VERIFY`.
 
 ### HTTP Retry Configuration
 

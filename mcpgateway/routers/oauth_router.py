@@ -35,6 +35,7 @@ from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -451,7 +452,8 @@ async def oauth_callback(
         if error:
             error_text = escape(error)
             description_text = escape(error_description or "OAuth provider returned an authorization error.")
-            logger.warning(f"OAuth provider returned error callback: error={error}, description={error_description}")
+            # Sanitize untrusted query parameters before logging to prevent log injection
+            logger.warning(f"OAuth provider returned error callback: error={sanitize_for_log(error)}, description={sanitize_for_log(error_description)}")
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>
@@ -485,16 +487,12 @@ async def oauth_callback(
                 status_code=400,
             )
 
-        oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
-        gateway_id = await oauth_manager.resolve_gateway_id_from_state(state)
-        if not gateway_id:
-            logger.warning("OAuth callback received invalid or unknown state token")
-            return HTMLResponse(content="<h1>❌ Invalid state parameter</h1>", status_code=400)
+        def _invalid_state_response() -> HTMLResponse:
+            """Return an HTML error page for invalid or missing OAuth state.
 
-        # Get gateway configuration
-        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
-
-        if not gateway:
+            Returns:
+                HTMLResponse: A 400 error page describing the invalid state.
+            """
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>
@@ -502,29 +500,30 @@ async def oauth_callback(
                 <head><title>OAuth Authorization Failed</title></head>
                 <body>
                     <h1>❌ OAuth Authorization Failed</h1>
-                    <p>Error: Gateway not found</p>
-                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
-                </body>
-                </html>
-                """,
-                status_code=404,
-            )
-
-        if not gateway.oauth_config:
-            return HTMLResponse(
-                content=f"""
-                <!DOCTYPE html>
-                <html>
-                <head><title>OAuth Authorization Failed</title></head>
-                <body>
-                    <h1>❌ OAuth Authorization Failed</h1>
-                    <p>Error: Gateway has no OAuth configuration</p>
+                    <p>Error: Invalid OAuth state parameter.</p>
                     <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
                 </body>
                 </html>
                 """,
                 status_code=400,
             )
+
+        oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
+        gateway_id = await oauth_manager.resolve_gateway_id_from_state(state, allow_legacy_fallback=False)
+        if not gateway_id:
+            logger.warning("OAuth callback received invalid or unknown state token")
+            return _invalid_state_response()
+
+        # Get gateway configuration
+        gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
+
+        if not gateway:
+            logger.warning("OAuth callback state resolved to unknown gateway id")
+            return _invalid_state_response()
+
+        if not gateway.oauth_config:
+            logger.warning("OAuth callback state resolved to gateway without OAuth configuration")
+            return _invalid_state_response()
 
         # Complete OAuth flow
 
