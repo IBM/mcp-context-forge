@@ -4876,7 +4876,17 @@ async def subscribe_resource(request: Request, user=Depends(get_current_user_wit
     """
     logger.debug(f"User {user} is subscribing to resource")
     user_email, token_teams = _get_scoped_resource_access_context(request, user)
-    return StreamingResponse(resource_service.subscribe_events(user_email=user_email, token_teams=token_teams), media_type="text/event-stream")
+
+    async def sse_generator():
+        """Generate SSE-formatted events from resource subscription changes.
+
+        Yields:
+            str: SSE-formatted event data.
+        """
+        async for event in resource_service.subscribe_events(user_email=user_email, token_teams=token_teams):
+            yield f"data: {orjson.dumps(event).decode()}\n\n"
+
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")
 
 
 ###############
