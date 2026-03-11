@@ -38,21 +38,32 @@ jobs:
                       venv-${{ runner.os }}-python-3.12-
                       venv-${{ runner.os }}-
 
+            - name: Install Rust Toolchain
+              run: |
+                uv tool install rustup
+                echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
             - name: Setup Rust
-              if: true
-              uses: dtolnay/rust-toolchain@stable
+              run: |
+                rustup toolchain install stable --profile minimal
+                rustup default stable
+                echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-            - name: Rust Cache
-              if: true
-              uses: swatinem/rust-cache@v2
+            - name: Check Rust version
+              run: rustc --version
+
+            - name: Cache Cargo & Rust
+              uses: actions/cache@v4
               with:
-                  workspaces: tools_rust/wrapper
-                  cache-on-failure: true
-
-            - name: Compile
-              if: true
-              working-directory: tools_rust/wrapper
-              run: cargo build --release
+                path: |
+                  ~/.cargo/bin/
+                  ~/.cargo/registry/index/
+                  ~/.cargo/registry/cache/
+                  ~/.cargo/git/db/
+                  tools_rust/wrapper/target/
+                key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+                restore-keys: |
+                  ${{ runner.os }}-cargo-
 
             - name: Secrets
               run: |
