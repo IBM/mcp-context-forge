@@ -1427,7 +1427,7 @@ class TestAdminToolRoutes:
         call_args = mock_update_tool.call_args[0]
         tool_update = call_args[2]
         assert tool_update.headers == {}
-        assert tool_update.input_schema == {}
+        assert tool_update.input_schema == {"type": "object", "properties": {}}
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_basic_auth(self, mock_register_tool, mock_request, mock_db):

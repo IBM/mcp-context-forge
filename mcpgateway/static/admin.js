@@ -105,6 +105,252 @@ window.addEventListener("beforeunload", () => {
     window.chartRegistry.destroyAll();
 });
 
+/**
+ * Generate input and output schemas from OpenAPI specification (Add Tool form)
+ */
+// eslint-disable-next-line no-unused-vars
+async function generateSchemasFromOpenAPI() {
+    try {
+        const urlField = safeGetElement("tool-url");
+        const requestTypeField = safeGetElement("requestType");
+
+        if (!urlField || !urlField.value) {
+            alert("Please enter a URL first");
+            return;
+        }
+
+        const newUrl = urlField.value.trim();
+        const requestType = requestTypeField ? requestTypeField.value : "POST";
+
+        // Show loading state
+        const button = safeGetElement("generate-schemas-from-openapi-btn");
+        if (button) {
+            button.disabled = true;
+            button.textContent = "Generating...";
+        }
+
+        // Call backend endpoint to generate schemas
+        const response = await fetchWithTimeout(
+            `/admin/tools/generate-schemas-from-openapi`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    url: newUrl,
+                    request_type: requestType,
+                }),
+                timeout: 15000,
+            },
+        );
+
+        if (!response.ok) {
+            const errorData = await response
+                .json()
+                .catch(() => ({ message: response.statusText }));
+            throw new Error(errorData.message || `HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.message || "Failed to generate schemas");
+        }
+
+        const { input_schema: inputSchema, output_schema: outputSchema } = data;
+
+        // Switch to JSON Input mode
+        const jsonRadio = document.querySelector(
+            'input[name="schema_input_mode"][value="json"]',
+        );
+        if (jsonRadio) {
+            jsonRadio.checked = true;
+            const event = new Event("change", { bubbles: true });
+            jsonRadio.dispatchEvent(event);
+        }
+
+        // Populate input schema only if it exists
+        const schemaField = safeGetElement("schema-editor");
+        if (schemaField) {
+            if (inputSchema) {
+                schemaField.value = JSON.stringify(inputSchema, null, 2);
+                if (window.schemaEditor) {
+                    window.schemaEditor.setValue(
+                        JSON.stringify(inputSchema, null, 2),
+                    );
+                    window.schemaEditor.refresh();
+                }
+            } else {
+                schemaField.value = "";
+                if (window.schemaEditor) {
+                    window.schemaEditor.setValue("");
+                    window.schemaEditor.refresh();
+                }
+            }
+        }
+
+        // Populate output schema only if it exists
+        const outputSchemaField = safeGetElement("output-schema-editor");
+        if (outputSchemaField) {
+            if (outputSchema) {
+                outputSchemaField.value = JSON.stringify(outputSchema, null, 2);
+                if (window.outputSchemaEditor) {
+                    window.outputSchemaEditor.setValue(
+                        JSON.stringify(outputSchema, null, 2),
+                    );
+                    window.outputSchemaEditor.refresh();
+                }
+            } else {
+                outputSchemaField.value = "";
+                if (window.outputSchemaEditor) {
+                    window.outputSchemaEditor.setValue("");
+                    window.outputSchemaEditor.clearHistory();
+                    window.outputSchemaEditor.refresh();
+                }
+            }
+        }
+
+        console.log("✓ Schemas populated from OpenAPI spec");
+        alert(
+            "Schemas generated successfully from OpenAPI spec!\n\nPlease review the generated schemas before saving.",
+        );
+    } catch (error) {
+        console.error("Error generating schemas from OpenAPI:", error);
+        alert(`Error: ${error.message}`);
+    } finally {
+        // Restore button state
+        const button = safeGetElement("generate-schemas-from-openapi-btn");
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = `
+                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                </svg>
+                Generate from OpenAPI Spec
+            `;
+        }
+    }
+}
+
+/**
+ * Generate input and output schemas from OpenAPI specification (Edit Tool form)
+ */
+// eslint-disable-next-line no-unused-vars
+async function generateSchemasFromOpenAPIEdit() {
+    try {
+        const urlField = safeGetElement("edit-tool-url");
+        const requestTypeField = safeGetElement("edit-tool-request-type");
+
+        if (!urlField || !urlField.value) {
+            alert("Please enter a URL first");
+            return;
+        }
+
+        const newUrl = urlField.value.trim();
+        const requestType = requestTypeField ? requestTypeField.value : "POST";
+
+        // Show loading state
+        const button = safeGetElement("edit-generate-schemas-from-openapi-btn");
+        if (button) {
+            button.disabled = true;
+            button.textContent = "Generating...";
+        }
+
+        // Call backend endpoint to generate schemas
+        const response = await fetchWithTimeout(
+            `/admin/tools/generate-schemas-from-openapi`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    url: newUrl,
+                    request_type: requestType,
+                }),
+                timeout: 15000,
+            },
+        );
+
+        if (!response.ok) {
+            const errorData = await response
+                .json()
+                .catch(() => ({ message: response.statusText }));
+            throw new Error(errorData.message || `HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.message || "Failed to generate schemas");
+        }
+
+        const { input_schema: inputSchema, output_schema: outputSchema } = data;
+
+        // Populate input schema only if it exists
+        const schemaField = safeGetElement("edit-tool-schema");
+        if (schemaField) {
+            if (inputSchema) {
+                schemaField.value = JSON.stringify(inputSchema, null, 2);
+                if (window.editToolSchemaEditor) {
+                    window.editToolSchemaEditor.setValue(
+                        JSON.stringify(inputSchema, null, 2),
+                    );
+                    window.editToolSchemaEditor.refresh();
+                }
+            } else {
+                schemaField.value = "";
+                if (window.editToolSchemaEditor) {
+                    window.editToolSchemaEditor.setValue("");
+                    window.editToolSchemaEditor.refresh();
+                }
+            }
+        }
+
+        // Populate output schema only if it exists
+        const outputSchemaField = safeGetElement("edit-tool-output-schema");
+        if (outputSchemaField) {
+            if (outputSchema) {
+                outputSchemaField.value = JSON.stringify(outputSchema, null, 2);
+                if (window.editToolOutputSchemaEditor) {
+                    window.editToolOutputSchemaEditor.setValue(
+                        JSON.stringify(outputSchema, null, 2),
+                    );
+                    window.editToolOutputSchemaEditor.refresh();
+                }
+            } else {
+                outputSchemaField.value = "";
+                if (window.editToolOutputSchemaEditor) {
+                    window.editToolOutputSchemaEditor.setValue("");
+                    window.editToolOutputSchemaEditor.clearHistory();
+                    window.editToolOutputSchemaEditor.refresh();
+                }
+            }
+        }
+
+        console.log("✓ Schemas updated from OpenAPI spec");
+        alert(
+            "Schemas generated successfully from OpenAPI spec!\n\nPlease review the generated schemas before saving.",
+        );
+    } catch (error) {
+        console.error("Error generating schemas from OpenAPI:", error);
+        alert(`Error: ${error.message}`);
+    } finally {
+        // Restore button state
+        const button = safeGetElement("edit-generate-schemas-from-openapi-btn");
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = `
+                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                </svg>
+                Generate from OpenAPI Spec
+            `;
+        }
+    }
+}
+
 // Add three fields to passthrough section on Advanced button click
 function handleAddPassthrough() {
     const passthroughContainer = safeGetElement("passthrough-container");
@@ -1056,8 +1302,13 @@ function validateUrl(url, label = "") {
  * SECURITY: Validate JSON input
  */
 function validateJson(jsonString, fieldName = "JSON") {
-    if (!jsonString || !jsonString.trim()) {
+    if (!jsonString || (typeof jsonString === "string" && !jsonString.trim())) {
         return { valid: true, value: {} }; // Empty is OK, defaults to empty object
+    }
+
+    // Handle explicit null
+    if (jsonString === null) {
+        return { valid: true, value: null };
     }
 
     try {
@@ -3634,7 +3885,7 @@ async function editTool(toolId) {
             "Schema",
         );
         const outputSchemaValidation = validateJson(
-            tool.outputSchema ? JSON.stringify(tool.outputSchema) : "",
+            tool.outputSchema ? JSON.stringify(tool.outputSchema) : null,
             "Output Schema",
         );
         const annotationsValidation = validateJson(
@@ -3943,6 +4194,20 @@ async function editTool(toolId) {
             default:
                 // No auth – keep everything hidden
                 break;
+        }
+
+        // Add URL change listener for REST tools to auto-populate schemas
+        const editUrlField = safeGetElement("edit-tool-url");
+        if (editUrlField && tool.integrationType === "REST") {
+            // Store original URL to detect changes
+            editUrlField.dataset.originalUrl = tool.url || "";
+
+            // Remove any existing listener to avoid duplicates
+            const newUrlField = editUrlField.cloneNode(true);
+            editUrlField.parentNode.replaceChild(newUrlField, editUrlField);
+
+            // Removed automatic schema population on URL blur
+            // Users should now use the "Generate from OpenAPI Spec" button instead
         }
 
         openModal("tool-edit-modal");
@@ -15487,7 +15752,9 @@ async function viewTool(toolId) {
             );
             setTextSafely(
                 ".tool-output-schema",
-                JSON.stringify(tool.outputSchema || {}, null, 2),
+                tool.outputSchema
+                    ? JSON.stringify(tool.outputSchema, null, 2)
+                    : "",
             );
 
             // Set auth fields safely
@@ -17701,6 +17968,9 @@ function setupFormHandlers() {
                 refreshEditors();
             }
         });
+
+        // Removed automatic schema population on URL blur for add tool form
+        // Users should now use the "Generate from OpenAPI Spec" button instead
     }
 
     const paramButton = safeGetElement("add-parameter-btn");

@@ -134,6 +134,7 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.openapi_service import fetch_and_extract_schemas
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
@@ -10938,7 +10939,7 @@ async def admin_add_tool(
         "integration_type": integration_type,
         "headers": orjson.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}"),
         "input_schema": orjson.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}"),
-        "output_schema": (orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None),
+        "output_schema": (orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw.strip() and output_schema_raw.strip() != "{}" else None),
         "annotations": orjson.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}"),
         "jsonpath_filter": form.get("jsonpath_filter", ""),
         "auth": auth_obj,
@@ -11078,7 +11079,7 @@ async def admin_edit_tool(
         "description": form.get("description"),
         "headers": orjson.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}"),
         "input_schema": orjson.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}"),
-        "output_schema": (orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None),
+        "output_schema": (orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2.strip() and output_schema_raw2.strip() != "{}" else None),
         "annotations": orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}"),
         "jsonpath_filter": form.get("jsonpathFilter", ""),
         "auth": auth_obj,
@@ -11137,6 +11138,107 @@ async def admin_edit_tool(
     except Exception as ex:  # Generic catch-all for unexpected errors
         LOGGER.error(f"Unexpected error in admin_edit_tool: {str(ex)}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+
+
+@admin_router.post("/tools/generate-schemas-from-openapi")
+@require_permission("tools.create", allow_admin_bypass=False)
+async def generate_schemas_from_openapi(
+    request: Request,
+    _db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+) -> JSONResponse:
+    """
+    Generate input_schema and output_schema from OpenAPI specification URL.
+
+    Expects JSON body with:
+      - url: The tool URL (e.g., http://localhost:8100/calculate)
+      - request_type: HTTP method (GET, POST, etc.)
+      - openapi_url: (optional) Direct OpenAPI spec URL
+
+    Args:
+        request: FastAPI Request object containing JSON body
+
+    Returns:
+        JSONResponse with generated schemas or error message.
+
+    Examples:
+        >>> callable(generate_schemas_from_openapi)
+        True
+    """
+    try:
+        body = await request.json()
+        tool_url = body.get("url", "")
+        request_type = body.get("request_type", "GET")
+        openapi_url = body.get("openapi_url", "")
+
+        if not tool_url and not openapi_url:
+            return ORJSONResponse(
+                content={"message": "Either 'url' or 'openapi_url' is required", "success": False},
+                status_code=400,
+            )
+
+        # Determine base URL and path
+        parsed = urllib.parse.urlparse(tool_url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        tool_path = parsed.path
+
+        # Use the service to fetch and extract schemas with SSRF protection
+        try:
+            input_schema, output_schema, spec_url = await fetch_and_extract_schemas(
+                base_url=base_url,
+                path=tool_path,
+                method=request_type,
+                openapi_url=openapi_url,
+                timeout=10.0,
+            )
+        except ValueError as e:
+            # Security validation failed
+            return ORJSONResponse(
+                content={"message": f"Security validation failed: {str(e)}", "success": False},
+                status_code=400,
+            )
+        except KeyError as e:
+            # Path or method not found in spec
+            return ORJSONResponse(
+                content={"message": str(e), "success": False},
+                status_code=404,
+            )
+        except httpx.HTTPError as e:
+            # HTTP request failed
+            return ORJSONResponse(
+                content={"message": f"Failed to fetch OpenAPI spec: {str(e)}", "success": False},
+                status_code=404,
+            )
+        except Exception as e:
+            # Other errors
+            LOGGER.error(f"Error fetching OpenAPI spec: {str(e)}", exc_info=True)
+            return ORJSONResponse(
+                content={"message": f"Error: {str(e)}", "success": False},
+                status_code=500,
+            )
+
+        return ORJSONResponse(
+            content={
+                "message": "Schemas generated successfully from OpenAPI spec",
+                "success": True,
+                "input_schema": input_schema,
+                "output_schema": output_schema,
+                "spec_url": spec_url,
+            },
+            status_code=200,
+        )
+
+    except orjson.JSONDecodeError:
+        return ORJSONResponse(
+            content={"message": "Invalid JSON in request body", "success": False},
+            status_code=400,
+        )
+    except Exception as ex:
+        LOGGER.error(f"Error generating schemas from OpenAPI: {str(ex)}", exc_info=True)
+        return ORJSONResponse(
+            content={"message": f"Error: {str(ex)}", "success": False},
+            status_code=500,
+        )
 
 
 @admin_router.post("/tools/{tool_id}/delete")
