@@ -19,6 +19,10 @@ SHELL := /bin/bash
 # Rust build configuration (set to 1 to enable Rust builds, 0 to disable)
 # Default is disabled to avoid requiring Rust toolchain for standard builds
 ENABLE_RUST_BUILD ?= 0
+ENABLE_RUST_MCP_RMCP_BUILD ?=
+RUST_MCP_BUILD ?= 0
+RUST_MCP_MODE ?= off
+RUST_MCP_LOG ?= warn
 
 # Project variables
 PROJECT_NAME      = mcpgateway
@@ -1288,6 +1292,28 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo ""
 	@echo "   Next:"
 	@echo "      • Open Locust: http://localhost:8089 (default host is http://nginx:80)"
+
+.PHONY: testing-up-rust
+testing-up-rust:                           ## Start testing stack with RUST_MCP_MODE=edge
+	@RUST_MCP_MODE=edge RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
+
+.PHONY: testing-up-rust-full
+testing-up-rust-full:                      ## Start testing stack with RUST_MCP_MODE=full
+	@RUST_MCP_MODE=full RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
+
+.PHONY: testing-rebuild-rust
+testing-rebuild-rust:                      ## Rebuild Rust image with no cache, then start testing stack in edge mode
+	@$(MAKE) testing-down
+	@$(MAKE) compose-clean
+	@$(MAKE) docker-prod-rust-no-cache
+	@RUST_MCP_MODE=edge RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
+
+.PHONY: testing-rebuild-rust-full
+testing-rebuild-rust-full:                 ## Rebuild Rust image with no cache, then start testing stack in full mode
+	@$(MAKE) testing-down
+	@$(MAKE) compose-clean
+	@$(MAKE) docker-prod-rust-no-cache
+	@RUST_MCP_MODE=full RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
 
 .PHONY: testing-down
 testing-down:                              ## Stop testing stack
@@ -4605,13 +4631,26 @@ PLATFORM ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 
 container-build:
 	@echo "🔨 Building with $(CONTAINER_RUNTIME) for platform $(PLATFORM)..."
-	@RUST_ARG=""; PROFILING_ARG=""; \
-	if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
+	@RUST_BUILD_VALUE="$(ENABLE_RUST_BUILD)"; RMCP_BUILD_VALUE="$(ENABLE_RUST_MCP_RMCP_BUILD)"; RUST_ARG=""; RMCP_ARG=""; PROFILING_ARG=""; \
+	if [ "$(RUST_MCP_BUILD)" = "1" ] || [ "$(RUST_MCP_BUILD)" = "true" ]; then \
+		RUST_BUILD_VALUE="1"; \
+		if [ -z "$$RMCP_BUILD_VALUE" ] || [ "$$RMCP_BUILD_VALUE" = "0" ] || [ "$$RMCP_BUILD_VALUE" = "false" ]; then \
+			RMCP_BUILD_VALUE="1"; \
+		fi; \
+	fi; \
+	if [ "$$RUST_BUILD_VALUE" = "1" ] || [ "$$RUST_BUILD_VALUE" = "true" ]; then \
 		echo "🦀 Building container WITH Rust plugins..."; \
 		RUST_ARG="--build-arg ENABLE_RUST=true"; \
+		if [ "$$RMCP_BUILD_VALUE" = "1" ] || [ "$$RMCP_BUILD_VALUE" = "true" ]; then \
+			echo "🦀 Enabling rmcp support in the Rust MCP runtime..."; \
+			RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=true"; \
+		else \
+			RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=false"; \
+		fi; \
 	else \
-		echo "⏭️  Building container WITHOUT Rust plugins (set ENABLE_RUST_BUILD=1 to enable)"; \
+		echo "⏭️  Building container WITHOUT Rust plugins (set RUST_MCP_BUILD=1 or ENABLE_RUST_BUILD=1 to enable)"; \
 		RUST_ARG="--build-arg ENABLE_RUST=false"; \
+		RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=false"; \
 	fi; \
 	if [ "$(ENABLE_PROFILING_BUILD)" = "1" ]; then \
 		echo "📊 Building container WITH profiling tools (memray)..."; \
@@ -4623,7 +4662,9 @@ container-build:
 		--platform=$(PLATFORM) \
 		-f $(CONTAINER_FILE) \
 		$$RUST_ARG \
+		$$RMCP_ARG \
 		$$PROFILING_ARG \
+		$(DOCKER_BUILD_ARGS) \
 		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
 		.
 	@echo "✅ Built image: $(call get_image_name)"
@@ -5122,6 +5163,12 @@ docker:
 
 docker-prod:
 	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+
+docker-prod-rust:
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1
+
+docker-prod-rust-no-cache:
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
 
 # Build production image with profiling tools (memray) for performance debugging
 # Usage: make docker-prod-profiling

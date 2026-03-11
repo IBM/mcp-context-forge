@@ -1227,6 +1227,19 @@ Integrated in the main application:
 - token-scoping middleware now explicitly bypasses trusted loopback `/_internal/mcp/*` Rust sidecar hops so scoped tokens do not get re-denied on the private internal path
 - the managed sidecar can be launched from `docker-entrypoint.sh`
 - the managed sidecar can derive `MCP_RUST_DATABASE_URL` from `DATABASE_URL` for Postgres-backed direct read paths
+- the top-level user-facing enablement flow is now:
+  - `RUST_MCP_BUILD=true` to build the Rust runtime into the image
+  - `RUST_MCP_MODE=off|edge|full` to select Python, Rust edge, or Rust edge + session/event/resume/live-stream cores
+  - `RUST_MCP_LOG=warn` to set the default sidecar log filter for the simple mode flow
+- `docker-entrypoint.sh` now fans `RUST_MCP_MODE=edge|full` out into the lower-level `EXPERIMENTAL_RUST_MCP_*` and `MCP_RUST_*` defaults
+- `docker-compose.yml` derives the Rust build args from `RUST_MCP_BUILD` and carries `RUST_MCP_MODE` into the gateway service
+- the common Rust workflows are now wrapped in top-level make targets:
+  - `make docker-prod-rust`
+  - `make docker-prod-rust-no-cache`
+  - `make testing-up-rust`
+  - `make testing-up-rust-full`
+  - `make testing-rebuild-rust`
+  - `make testing-rebuild-rust-full`
 - `Containerfile.lite` includes the Rust runtime binary when built with `ENABLE_RUST=true`
 - `docker-compose.yml` exposes the Rust runtime env vars, including `MCP_RUST_LOG`
 
