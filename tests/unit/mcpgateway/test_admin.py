@@ -11269,6 +11269,27 @@ class TestAdminAdditionalCoverage:
         assert "No teams found" in response.body.decode()
 
     @patch("mcpgateway.admin.settings")
+    async def test_generate_unified_teams_view_join_requests_disabled(self, mock_settings):
+        """Cover the disabled join request button branch when allow_team_join_requests=False."""
+        mock_settings.email_auth_enabled = True
+        mock_settings.allow_team_join_requests = False
+
+        public_team = SimpleNamespace(id="t1", name="Public Team", visibility="public", is_personal=False, created_by="owner@example.com", description=None)
+
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=[])
+        team_service.discover_public_teams = AsyncMock(return_value=[public_team])
+        team_service.get_member_counts_batch_cached = AsyncMock(return_value={"t1": 5})
+        team_service.get_user_roles_batch = MagicMock(return_value={})
+        team_service.get_pending_join_requests_batch = MagicMock(return_value={})
+
+        response = await _generate_unified_teams_view(team_service, SimpleNamespace(email="user@example.com"), "")
+        assert isinstance(response, HTMLResponse)
+        html_content = response.body.decode()
+        assert "disabled" in html_content
+        assert "team-card" in html_content
+
+    @patch("mcpgateway.admin.settings")
     async def test_admin_get_log_file_list_with_rotation(self, mock_settings, tmp_path, mock_db):
         """List log files with rotation enabled."""
         log_dir = tmp_path
@@ -16161,6 +16182,35 @@ class TestTeamJoinRequests:
         result = await admin_cancel_join_request("team-1", "req-1", mock_db, user={"email": "user@test.com"})
         assert result.status_code == 400
         assert "error canceling join request" in result.body.decode().lower()
+
+    @pytest.mark.asyncio
+    async def test_admin_cancel_join_request_join_requests_disabled(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_team_join_requests", False, raising=False)
+        ts = MagicMock()
+        ts.cancel_join_request = AsyncMock(return_value=True)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        result = await admin_cancel_join_request("team-1", "req-1", mock_db, user={"email": "user@test.com"})
+        assert result.status_code == 200
+        assert "disabled" in result.body.decode().lower()
+
+    @pytest.mark.asyncio
+    async def test_admin_create_join_request_value_error(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        team = SimpleNamespace(visibility="public", name="PublicTeam")
+        ts = MagicMock()
+        ts.get_team_by_id = AsyncMock(return_value=team)
+        ts.get_user_role_in_team = AsyncMock(return_value=None)
+        ts.get_user_join_requests = AsyncMock(return_value=[])
+        ts.create_join_request = AsyncMock(side_effect=ValueError("duplicate request"))
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        request = MagicMock(spec=Request)
+        request.form = AsyncMock(return_value={"message": "join me"})
+        result = await admin_create_join_request("team-1", request, mock_db, user={"email": "user@test.com"})
+        assert result.status_code == 400
+        assert "duplicate request" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_admin_list_join_requests_success(self, monkeypatch, allow_permission, mock_db):

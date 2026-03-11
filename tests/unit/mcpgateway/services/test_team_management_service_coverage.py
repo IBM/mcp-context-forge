@@ -1357,3 +1357,31 @@ class TestGetUserRoleNoCachePath:
         with patch.object(svc, "_get_auth_cache", return_value=None):
             result = await svc.get_user_role_in_team("u@t.com", "t1")
         assert result is None
+
+
+# ===========================================================================
+# create_join_request — max_teams_per_user limit (line 1512)
+# ===========================================================================
+
+
+class TestCreateJoinRequestMaxTeamsLimit:
+    @pytest.mark.asyncio
+    async def test_raises_when_user_at_max_team_limit(self, svc, db):
+        """create_join_request raises ValueError when user has reached max teams per user."""
+        team = _mock_team(visibility="public")
+
+        # No existing member, no existing request
+        mock_query = MagicMock()
+        mock_filter = MagicMock()
+        mock_filter.first.return_value = None
+        mock_query.filter.return_value = mock_filter
+        db.query.return_value = mock_query
+
+        # User is at the limit
+        svc._get_user_team_count.return_value = 50
+
+        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)):
+            with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+                mock_settings.max_teams_per_user = 50
+                with pytest.raises(ValueError, match="maximum team limit"):
+                    await svc.create_join_request("t1", "u@t.com")

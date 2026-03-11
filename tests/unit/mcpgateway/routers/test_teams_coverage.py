@@ -480,6 +480,22 @@ class TestRequestToJoinTeamErrors:
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
+    async def test_value_error(self, user_ctx, db, mock_team):
+        mock_team.visibility = "public"
+        with _svc(
+            get_team_by_id=AsyncMock(return_value=mock_team),
+            get_user_role_in_team=AsyncMock(return_value=None),
+            create_join_request=AsyncMock(side_effect=ValueError("User has reached the maximum team limit of 50")),
+        ):
+            from mcpgateway.schemas import TeamJoinRequest
+
+            req = TeamJoinRequest(message="hi")
+            with pytest.raises(HTTPException) as exc:
+                await teams.request_to_join_team(mock_team.id, req, current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "maximum team limit" in exc.value.detail
+
+    @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
         with _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
             from mcpgateway.schemas import TeamJoinRequest
@@ -598,6 +614,30 @@ class TestApproveJoinRequestErrors:
             with pytest.raises(HTTPException) as exc:
                 await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
+
+    @pytest.mark.asyncio
+    async def test_value_error_max_team_limit(self, user_ctx, db, mock_team):
+        with _svc(
+            get_team_by_id=AsyncMock(return_value=mock_team),
+            get_user_role_in_team=AsyncMock(return_value="owner"),
+            approve_join_request=AsyncMock(side_effect=ValueError("User has reached the maximum team limit of 50")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "Cannot approve" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_value_error_generic(self, user_ctx, db, mock_team):
+        with _svc(
+            get_team_by_id=AsyncMock(return_value=mock_team),
+            get_user_role_in_team=AsyncMock(return_value="owner"),
+            approve_join_request=AsyncMock(side_effect=ValueError("some other validation error")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "some other validation error" in exc.value.detail
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
