@@ -2078,14 +2078,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway.auth_value = None
                         gateway.oauth_config = None
 
-                    # Update tools using helper method
-                    tools_to_add = self._update_or_create_tools(db, tools, gateway, "update")
+                    # Update tools using helper method — only propagate visibility
+                    # when the user explicitly changed it in this request
+                    _vis_changed = gateway_update.visibility is not None
+                    tools_to_add = self._update_or_create_tools(db, tools, gateway, "update", update_visibility=_vis_changed)
 
                     # Update resources using helper method
-                    resources_to_add = self._update_or_create_resources(db, resources, gateway, "update")
+                    resources_to_add = self._update_or_create_resources(db, resources, gateway, "update", update_visibility=_vis_changed)
 
                     # Update prompts using helper method
-                    prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "update")
+                    prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "update", update_visibility=_vis_changed)
 
                     # Log newly added items
                     items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
@@ -4051,10 +4053,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Inherit team assignment and visibility from gateway
             team_id=gateway.team_id,
             owner_email=gateway.owner_email,
-            visibility="public",  # Federated tools should be public for discovery
+            visibility=gateway.visibility,
         )
 
-    def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str) -> List[DbTool]:
+    def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbTool]:
         """Helper to handle update-or-create logic for tools from MCP server.
 
         Args:
@@ -4062,6 +4064,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             tools: List of tools from MCP server
             gateway: Gateway object
             created_via: String indicating creation source ("oauth", "update", etc.)
+            update_visibility: Whether to propagate gateway visibility to existing tools
 
         Returns:
             List of new tools to be added to the database
@@ -4123,7 +4126,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     except Exception:
                         gateway_tool_auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
                         auth_value_changed = existing_tool.auth_value != gateway_tool_auth_value
-                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or auth_value_changed or existing_tool.visibility != gateway.visibility
+
+                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or auth_value_changed or (update_visibility and existing_tool.visibility != gateway.visibility)
 
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed:
                         fields_to_update = True
@@ -4142,7 +4146,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
                         existing_tool.auth_type = gateway.auth_type
                         existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
-                        existing_tool.visibility = gateway.visibility
+                        if update_visibility:
+                            existing_tool.visibility = gateway.visibility
                         logger.debug(f"Updated existing tool: {tool.name}")
                 else:
                     # Create new tool if it doesn't exist
@@ -4162,7 +4167,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return tools_to_add
 
-    def _update_or_create_resources(self, db: Session, resources: List[Any], gateway: DbGateway, created_via: str) -> List[DbResource]:
+    def _update_or_create_resources(self, db: Session, resources: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbResource]:
         """Helper to handle update-or-create logic for resources from MCP server.
 
         Args:
@@ -4170,6 +4175,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             resources: List of resources from MCP server
             gateway: Gateway object
             created_via: String indicating creation source ("oauth", "update", etc.)
+            update_visibility: Whether to propagate gateway visibility to existing resources
 
         Returns:
             List of new resources to be added to the database
@@ -4206,7 +4212,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or existing_resource.description != resource.description
                         or existing_resource.mime_type != resource.mime_type
                         or existing_resource.uri_template != resource.uri_template
-                        or existing_resource.visibility != gateway.visibility
+                        or (update_visibility and existing_resource.visibility != gateway.visibility)
                     ):
                         fields_to_update = True
 
@@ -4215,7 +4221,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_resource.description = resource.description
                         existing_resource.mime_type = resource.mime_type
                         existing_resource.uri_template = resource.uri_template
-                        existing_resource.visibility = gateway.visibility
+                        if update_visibility:
+                            existing_resource.visibility = gateway.visibility
                         logger.debug(f"Updated existing resource: {resource.uri}")
                 else:
                     # Create new resource if it doesn't exist
@@ -4238,7 +4245,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return resources_to_add
 
-    def _update_or_create_prompts(self, db: Session, prompts: List[Any], gateway: DbGateway, created_via: str) -> List[DbPrompt]:
+    def _update_or_create_prompts(self, db: Session, prompts: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbPrompt]:
         """Helper to handle update-or-create logic for prompts from MCP server.
 
         Args:
@@ -4246,6 +4253,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             prompts: List of prompts from MCP server
             gateway: Gateway object
             created_via: String indicating creation source ("oauth", "update", etc.)
+            update_visibility: Whether to propagate gateway visibility to existing prompts
 
         Returns:
             List of new prompts to be added to the database
@@ -4280,14 +4288,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     if (
                         existing_prompt.description != prompt.description
                         or existing_prompt.template != (prompt.template if hasattr(prompt, "template") else "")
-                        or existing_prompt.visibility != gateway.visibility
+                        or (update_visibility and existing_prompt.visibility != gateway.visibility)
                     ):
                         fields_to_update = True
 
                     if fields_to_update:
                         existing_prompt.description = prompt.description
                         existing_prompt.template = prompt.template if hasattr(prompt, "template") else ""
-                        existing_prompt.visibility = gateway.visibility
+                        if update_visibility:
+                            existing_prompt.visibility = gateway.visibility
                         logger.debug(f"Updated existing prompt: {prompt.name}")
                 else:
                     # Create new prompt if it doesn't exist
