@@ -105,10 +105,16 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         trace_id = None
         span_id = None
         start_time = time.time()
+        session_owned_by_middleware = False
 
         try:
-            # Create database session
+            # Create request-scoped database session and store in request.state
+            # This session will be reused by route handlers via get_db() dependency,
+            # eliminating duplicate session creation
             db = SessionLocal()
+            logger.info(f"[OBSERVABILITY] DB session created: {id(db)}")
+            request.state.db = db
+            session_owned_by_middleware = True
 
             # Start trace (use external trace_id if provided for distributed tracing)
             trace_id = self.service.start_trace(
@@ -155,10 +161,14 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     db.close()
                 except Exception as close_error:
                     logger.debug(f"Failed to close database session during cleanup: {close_error}")
+                # Clean up request.state.db to prevent get_db() from reusing a closed session
+                if hasattr(request.state, "db"):
+                    delattr(request.state, "db")
             # Continue without tracing
             return await call_next(request)
 
         # Process request (trace is set up at this point)
+        # Route handlers will reuse request.state.db via get_db() dependency
         try:
             response = await call_next(request)
             status_code = response.status_code
@@ -189,6 +199,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 except Exception as end_trace_error:
                     logger.warning(f"Failed to end trace {trace_id}: {end_trace_error}")
 
+            # Commit the shared session (used by both observability and route handler)
+            # Only commit if the transaction is still active
+            if db.is_active:
+                db.commit()
+
             return response
 
         except Exception as e:
@@ -218,15 +233,22 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 except Exception as trace_error:
                     logger.warning(f"Failed to end trace: {trace_error}")
 
+            # Rollback the shared session on error
+            try:
+                db.rollback()
+            except Exception as rollback_error:
+                logger.warning(f"Failed to rollback database session: {rollback_error}")
+
             # Re-raise the original exception
             raise
 
         finally:
-            # Always close database session - observability service handles its own commits
-            if db:
+            # Always close database session and clean up request state
+            if db and session_owned_by_middleware:
                 try:
-                    if db.in_transaction():
-                        db.rollback()
                     db.close()
                 except Exception as close_error:
                     logger.warning(f"Failed to close database session: {close_error}")
+                # Clean up request.state.db to prevent stale references
+                if hasattr(request.state, "db"):
+                    delattr(request.state, "db")
