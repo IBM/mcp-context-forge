@@ -656,6 +656,18 @@ class Settings(BaseSettings):
     mcpgateway_elicitation_timeout: int = Field(default=60, description="Default timeout for elicitation requests in seconds")
     mcpgateway_elicitation_max_concurrent: int = Field(default=100, description="Maximum concurrent elicitation requests")
 
+    # ===================================
+    # Policy Testing Sandbox Configuration
+    # ===================================
+    mcpgateway_sandbox_enabled: bool = Field(default=True, description="Enable the policy testing sandbox feature")
+    mcpgateway_sandbox_isolation_mode: str = Field(default="memory", description="Sandbox isolation mode ('memory' for in-memory PDP instances)")
+    mcpgateway_sandbox_max_concurrent_tests: int = Field(default=10, ge=1, le=100, description="Maximum concurrent sandbox test executions")
+    mcpgateway_sandbox_max_test_cases_per_run: int = Field(default=1000, ge=1, le=10000, description="Maximum test cases per batch run")
+    mcpgateway_sandbox_timeout_per_case_ms: int = Field(default=100, ge=10, le=60000, description="Timeout per test case in milliseconds")
+    mcpgateway_sandbox_regression_enabled: bool = Field(default=True, description="Enable regression testing against historical decisions")
+    mcpgateway_sandbox_regression_replay_last_days: int = Field(default=7, ge=1, le=365, description="Number of days of historical decisions to replay")
+    mcpgateway_sandbox_regression_sample_size: int = Field(default=1000, ge=1, le=100000, description="Maximum historical decisions to sample for regression")
+
     # Security
     skip_ssl_verify: bool = Field(
         default=False,

@@ -1,0 +1,104 @@
+<!-- Test Case Manager -->
+<div class="space-y-6" x-data="testCaseManager()">
+  <!-- Header -->
+  <div class="flex justify-between items-center">
+    <div>
+      <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Test Case Manager</h2>
+      <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Create and manage policy test cases</p>
+    </div>
+    <div class="flex space-x-3">
+      <button hx-get="{{ root_path }}/admin/sandbox/partial" hx-target="#sandbox-panel" hx-swap="innerHTML" class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+        Back
+      </button>
+      <button @click="openCreate()" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700">
+        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
+        New Test Case
+      </button>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="bg-white dark:bg-gray-800 shadow rounded-lg p-4">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <input type="text" x-model="search" @input="filter()" placeholder="Search..." class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white" />
+      <select x-model="filterAction" @change="filter()" class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+        <option value="">All Actions</option>
+        <option value="tools.invoke">tools.invoke</option>
+        <option value="tools.delete">tools.delete</option>
+        <option value="resources.read">resources.read</option>
+      </select>
+      <select x-model="filterDecision" @change="filter()" class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+        <option value="">All Decisions</option>
+        <option value="ALLOW">ALLOW</option>
+        <option value="DENY">DENY</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
+    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+      <thead class="bg-gray-50 dark:bg-gray-900">
+        <tr>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">ID</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Description</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Subject</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Action</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Resource</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Expected</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+        <template x-for="tc in filtered" :key="tc.id">
+          <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+            <td class="px-6 py-4 text-sm font-mono text-gray-500 dark:text-gray-400" x-text="tc.id"></td>
+            <td class="px-6 py-4 text-sm text-gray-900 dark:text-white" x-text="tc.description"></td>
+            <td class="px-6 py-4 text-sm text-gray-600 dark:text-gray-400" x-text="tc.subject"></td>
+            <td class="px-6 py-4 text-sm text-gray-600 dark:text-gray-400" x-text="tc.action"></td>
+            <td class="px-6 py-4 text-sm text-gray-600 dark:text-gray-400" x-text="tc.resource"></td>
+            <td class="px-6 py-4">
+              <span :class="tc.expected === 'ALLOW' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'" class="px-2 py-1 text-xs font-semibold rounded-full" x-text="tc.expected"></span>
+            </td>
+            <td class="px-6 py-4 text-sm space-x-2">
+              <button @click="openEdit(tc)" class="text-blue-600 hover:text-blue-900">Edit</button>
+              <button @click="deleteCase(tc.id)" class="text-red-600 hover:text-red-900">Delete</button>
+            </td>
+          </tr>
+        </template>
+        <tr x-show="filtered.length === 0">
+          <td colspan="7" class="px-6 py-12 text-center text-gray-500 dark:text-gray-400">No test cases found</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Modal -->
+  <div x-show="modal" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
+    <div class="flex items-center justify-center min-h-screen p-4">
+      <div class="fixed inset-0 bg-gray-500 bg-opacity-75" @click="closeModal()"></div>
+      <div class="relative bg-white dark:bg-gray-800 rounded-lg max-w-2xl w-full p-6">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4" x-text="editing ? 'Edit Test Case' : 'Create Test Case'"></h3>
+        <form @submit.prevent="save()" class="space-y-4">
+          <div><label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description *</label><input type="text" x-model="form.description" required class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"/></div>
+          <div class="grid grid-cols-2 gap-4">
+            <div><label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Subject *</label><input type="text" x-model="form.subject" required class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"/></div>
+            <div><label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Action *</label><select x-model="form.action" required class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"><option value="">Select...</option><option value="tools.invoke">tools.invoke</option><option value="tools.delete">tools.delete</option><option value="resources.read">resources.read</option></select></div>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div><label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Resource *</label><input type="text" x-model="form.resource" required class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"/></div>
+            <div><label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Expected *</label><select x-model="form.expected" required class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"><option value="">Select...</option><option value="ALLOW">ALLOW</option><option value="DENY">DENY</option></select></div>
+          </div>
+          <div class="flex justify-end space-x-3 mt-6">
+            <button type="button" @click="closeModal()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800">Cancel</button>
+            <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- testCaseManager() is defined in admin.js -->
+<style>[x-cloak]{display:none !important;}</style>
