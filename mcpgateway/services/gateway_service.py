@@ -1181,7 +1181,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 },
             )
 
-            return GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked()
+            return self.convert_gateway_to_read(db_gateway)
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
@@ -1727,7 +1727,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         result = []
         for g in gateways:
             logger.info(f"Gateway: {g.team_id}, Team: {g.team}")
-            result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
+            result.append(self.convert_gateway_to_read(g))
         return result
 
     async def update_gateway(
@@ -2268,7 +2268,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     },
                 )
 
-                return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+                return self.convert_gateway_to_read(gateway)
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
         except GatewayNameConflictError as ge:
@@ -2433,7 +2433,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 },
             )
 
-            return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+            return self.convert_gateway_to_read(gateway)
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -2724,7 +2724,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     },
                 )
 
-            return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+            return self.convert_gateway_to_read(gateway)
 
         except PermissionError as e:
             db.rollback()
@@ -3723,7 +3723,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # other service methods. Return None if no match found.
         if result is None:
             return None
-        return GatewayRead.model_validate(self._prepare_gateway_for_read(result)).masked()
+        return self.convert_gateway_to_read(result)
 
     async def _run_leader_heartbeat(self) -> None:
         """Run leader heartbeat loop to keep leader key alive.
@@ -4002,32 +4002,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_dict["team"] = getattr(gateway, "team", None)
 
         return GatewayRead.model_validate(gateway_dict).masked()
-
-    def _prepare_gateway_for_read(self, gateway: DbGateway) -> DbGateway:
-        """DEPRECATED: Use convert_gateway_to_read instead.
-
-        Prepare a gateway object for GatewayRead validation.
-
-        Ensures auth_value is in the correct format (encoded string) for the schema.
-        Converts legacy List[str] tags to List[Dict[str, str]] format for GatewayRead schema.
-
-        Args:
-            gateway: Gateway database object
-
-        Returns:
-            Gateway object with properly formatted auth_value and tags
-        """
-        # If auth_value is a dict, encode it to string for GatewayRead schema
-        if isinstance(gateway.auth_value, dict):
-            gateway.auth_value = encode_auth(gateway.auth_value)
-
-        # Handle legacy List[str] tags - convert to List[Dict[str, str]] for GatewayRead schema
-        if gateway.tags:
-            if isinstance(gateway.tags[0], str):
-                # Legacy format: convert to dict format
-                gateway.tags = validate_tags_field(gateway.tags)
-
-        return gateway
 
     def _create_db_tool(
         self,
