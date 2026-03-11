@@ -529,6 +529,7 @@ class TestBootstrapDefaultRoles:
 
                             mock_role_service.create_role.assert_not_called()
                             mock_role_service.assign_role_to_user.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_bootstrap_roles_synchronizes_is_admin_flag_when_false(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
         """Test that is_admin flag is synchronized to True when platform_admin role is assigned and flag is False."""
@@ -543,7 +544,7 @@ class TestBootstrapDefaultRoles:
         # Role doesn't exist yet, will be created
         mock_role_service.get_role_by_name.return_value = None
         mock_role_service.create_role.return_value = platform_admin_role
-        
+
         # No existing assignment
         mock_role_service.get_user_role_assignment.return_value = None
 
@@ -563,21 +564,15 @@ class TestBootstrapDefaultRoles:
 
                             # Verify role was assigned
                             mock_role_service.assign_role_to_user.assert_called_once_with(
-                                user_email=mock_admin_user.email,
-                                role_id=platform_admin_role.id,
-                                scope="global",
-                                scope_id=None,
-                                granted_by=mock_admin_user.email
+                                user_email=mock_admin_user.email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=mock_admin_user.email
                             )
 
                             # Verify is_admin flag was synchronized
                             assert mock_admin_user.is_admin is True
                             mock_db.commit.assert_called()
-                            
+
                             # Verify synchronization was logged
-                            mock_logger.info.assert_any_call(
-                                f"Synchronizing is_admin flag for {mock_admin_user.email} (was False, setting to True)"
-                            )
+                            mock_logger.info.assert_any_call(f"Synchronizing is_admin flag for {mock_admin_user.email} (was False, setting to True)")
 
     @pytest.mark.asyncio
     async def test_bootstrap_roles_skips_sync_when_is_admin_already_true(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
@@ -592,7 +587,7 @@ class TestBootstrapDefaultRoles:
 
         # Role already exists
         mock_role_service.get_role_by_name.return_value = platform_admin_role
-        
+
         # Role already assigned and active
         existing_assignment = Mock()
         existing_assignment.is_active = True
@@ -617,17 +612,12 @@ class TestBootstrapDefaultRoles:
 
                             # Verify is_admin flag remains True
                             assert mock_admin_user.is_admin is True
-                            
-                            # Verify synchronization log was NOT emitted (flag already True)
-                            sync_log_calls = [
-                                call for call in mock_logger.info.call_args_list
-                                if "Synchronizing is_admin flag" in str(call)
-                            ]
-                            assert len(sync_log_calls) == 0
-                            
-                            # Verify the "already has role" message was logged
-                            mock_logger.info.assert_any_call("Admin user already has platform_admin role")
 
+                            # Verify synchronization log was NOT emitted (flag already True)
+                            sync_log_calls = [call for call in mock_logger.info.call_args_list if "Synchronizing is_admin flag" in str(call)]
+                            assert len(sync_log_calls) == 0
+
+                            # Verify the "already has role" message was logged
                             mock_logger.info.assert_any_call("Admin user already has platform_admin role")
 
     @pytest.mark.asyncio
