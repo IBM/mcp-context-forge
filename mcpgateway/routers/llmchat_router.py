@@ -563,7 +563,7 @@ async def delete_active_session(user_id: str):
             """
             await redis_client.eval(release_script, 1, _active_key(user_id), WORKER_ID)
         except Exception as e:
-            logger.warning(f"Failed to delete active session for user {user_id}: {e}")
+            logger.warning(f"Failed to delete active session for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
 
 
 async def _try_acquire_lock(user_id: str) -> bool:
@@ -603,7 +603,7 @@ async def _release_lock_safe(user_id: str):
         """
         await redis_client.eval(release_script, 1, _lock_key(user_id), WORKER_ID)
     except Exception as e:
-        logger.warning(f"Failed to release lock for user {user_id}: {e}")
+        logger.warning(f"Failed to release lock for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
 
 
 async def _create_local_session_from_config(user_id: str) -> Optional[MCPChatService]:
@@ -627,7 +627,7 @@ async def _create_local_session_from_config(user_id: str) -> Optional[MCPChatSer
         return chat_service
     except Exception as e:
         # If initialization fails, ensure nothing partial remains
-        logger.error(f"Failed to initialize MCPChatService for {user_id}: {e}", exc_info=True)
+        logger.error(f"Failed to initialize MCPChatService for {SecurityValidator.sanitize_log_message(user_id)}: {e}", exc_info=True)
         # cleanup local state and redis ownership (if we set it)
         await delete_active_session(user_id)
         return None
@@ -668,7 +668,7 @@ async def get_active_session(user_id: str) -> Optional[MCPChatService]:
                 await redis_client.expire(active_key, SESSION_TTL)
             except Exception as e:  # nosec B110
                 # non-fatal if expire fails, just log the error
-                logger.debug(f"Failed to refresh session TTL for {user_id}: {e}")
+                logger.debug(f"Failed to refresh session TTL for {SecurityValidator.sanitize_log_message(user_id)}: {e}")
             return local
 
         # Owner in Redis points to this worker but local session missing (process restart or lost).
@@ -817,10 +817,10 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
         existing = await get_active_session(user_id)
         if existing:
             try:
-                logger.debug(f"Disconnecting existing session for {user_id} before reconnecting")
+                logger.debug(f"Disconnecting existing session for {SecurityValidator.sanitize_log_message(user_id)} before reconnecting")
                 await existing.shutdown()
             except Exception as shutdown_error:
-                logger.warning(f"Failed to cleanly shutdown existing session for {user_id}: {shutdown_error}")
+                logger.warning(f"Failed to cleanly shutdown existing session for {SecurityValidator.sanitize_log_message(user_id)}: {shutdown_error}")
             finally:
                 # Always remove the session from active sessions, even if shutdown failed
                 await delete_active_session(user_id)
@@ -1088,7 +1088,7 @@ async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permiss
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in chat endpoint for user {user_id}: {e}", exc_info=True)
+        logger.error(f"Unexpected error in chat endpoint for user {SecurityValidator.sanitize_log_message(user_id)}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 
@@ -1163,12 +1163,12 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
     try:
         # Clear chat history on disconnect
         await chat_service.clear_history()
-        logger.info(f"Chat session disconnected for {user_id}")
+        logger.info(f"Chat session disconnected for {SecurityValidator.sanitize_log_message(user_id)}")
 
         await chat_service.shutdown()
         return {"status": "disconnected", "user_id": user_id, "message": "Successfully disconnected"}
     except Exception as e:
-        logger.error(f"Error during disconnect for user {user_id}: {e}", exc_info=True)
+        logger.error(f"Error during disconnect for user {SecurityValidator.sanitize_log_message(user_id)}: {e}", exc_info=True)
         # Session already removed, so return success with warning
         return {"status": "disconnected_with_errors", "user_id": user_id, "message": "Disconnected but cleanup encountered errors", "warning": str(e)}
 

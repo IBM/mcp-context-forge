@@ -20,6 +20,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import contains_eager, Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import PermissionAuditLog, Permissions, Role, UserRole, utc_now
 
@@ -122,7 +123,7 @@ class PermissionService:
             # SECURITY: Public-only tokens (teams=[]) must never satisfy admin.*
             # permissions, even when the backing user identity is an admin.
             if permission.startswith("admin.") and token_teams is not None and len(token_teams) == 0:
-                logger.warning(f"Permission denied for public-only token: user={user_email}, permission={permission}")
+                logger.warning(f"Permission denied for public-only token: user={SecurityValidator.sanitize_log_message(user_email)}, permission={permission}")
                 return False
 
             # Check if user is admin (bypass all permission checks if allowed)
@@ -151,12 +152,14 @@ class PermissionService:
                     user_agent=user_agent,
                 )
 
-            logger.debug(f"Permission check: user={user_email}, permission={permission}, team={team_id}, granted={granted}")
+            logger.debug(
+                f"Permission check: user={SecurityValidator.sanitize_log_message(user_email)}, permission={permission}, team={SecurityValidator.sanitize_log_message(team_id)}, granted={granted}"
+            )
 
             return granted
 
         except Exception as e:
-            logger.error(f"Error checking permission for {user_email}: {e}")
+            logger.error(f"Error checking permission for {SecurityValidator.sanitize_log_message(user_email)}: {e}")
             # Default to deny on error
             return False
 
@@ -203,7 +206,7 @@ class PermissionService:
             return False
 
         except Exception as e:
-            logger.error(f"Error checking admin permission for {user_email}: {e}")
+            logger.error(f"Error checking admin permission for {SecurityValidator.sanitize_log_message(user_email)}: {e}")
             return False
 
     async def get_user_permissions(self, user_email: str, team_id: Optional[str] = None, include_all_teams: bool = False) -> Set[str]:
@@ -238,14 +241,14 @@ class PermissionService:
             cache_key = f"{user_email}:{team_id or 'global'}"
         if self._is_cache_valid(cache_key):
             cached_perms = self._permission_cache[cache_key]
-            logger.debug(f"[RBAC] Cache hit for {user_email} (team_id={team_id}): {cached_perms}")
+            logger.debug(f"[RBAC] Cache hit for {SecurityValidator.sanitize_log_message(user_email)} (team_id={SecurityValidator.sanitize_log_message(team_id)}): {cached_perms}")
             return cached_perms
 
         permissions = set()
 
         # Get all active roles for the user (with eager-loaded role relationship)
         user_roles = await self._get_user_roles(user_email, team_id, include_all_teams=include_all_teams)
-        logger.debug(f"[RBAC] Found {len(user_roles)} roles for {user_email} (team_id={team_id})")
+        logger.debug(f"[RBAC] Found {len(user_roles)} roles for {SecurityValidator.sanitize_log_message(user_email)} (team_id={SecurityValidator.sanitize_log_message(team_id)})")
 
         # Collect permissions from all roles
         for user_role in user_roles:
@@ -426,7 +429,7 @@ class PermissionService:
             self._roles_cache.pop(key, None)
             self._cache_timestamps.pop(key, None)
 
-        logger.debug(f"Cleared permission cache for user: {user_email}")
+        logger.debug(f"Cleared permission cache for user: {SecurityValidator.sanitize_log_message(user_email)}")
 
     def clear_cache(self) -> None:
         """Clear all cached permissions.

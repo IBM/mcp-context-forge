@@ -182,7 +182,7 @@ Our security posture is continuously evolving. We regularly update our toolchain
 
 ### Input Validation Framework
 
-As of version 0.3.1, ContextForge implements comprehensive input validation across all API endpoints using Pydantic data models with strict validation rules:
+As of version 0.3.1, ContextForge implements comprehensive input validation across all API endpoints using the [`SecurityValidator`](mcpgateway/common/validators.py:287) class with strict validation rules:
 
 - **Character restrictions** for names and identifiers to prevent injection attacks
 - **URL scheme validation** blocking potentially dangerous protocols (`javascript:`, `data:`, `vbscript:`)
@@ -191,6 +191,112 @@ As of version 0.3.1, ContextForge implements comprehensive input validation acro
 - **MIME type validation** for content type security
 
 These validation rules help prevent XSS injection when data from untrusted MCP servers is displayed in downstream UIs. However, **the gateway is only one layer of defense** - downstream applications should implement their own validation and sanitization appropriate to their specific use cases.
+
+### Cross-Site Scripting (XSS) Protection
+
+ContextForge implements enterprise-grade XSS protection through the [`SecurityValidator`](mcpgateway/common/validators.py:287) class:
+
+**HTML Sanitization:**
+- [`sanitize_display_text()`](mcpgateway/common/validators.py:313) - Strips HTML tags and dangerous patterns
+- Blocks `<script>`, `<iframe>`, `<object>`, `<embed>`, and other dangerous tags
+- Removes event handlers (`onclick`, `onerror`, etc.)
+- Prevents `javascript:`, `vbscript:`, and `data:` URI schemes
+
+**Polyglot Attack Prevention:**
+- 6 precompiled regex patterns detect polyglot XSS attempts
+- Blocks mixed-context attacks (HTML + JavaScript + CSS)
+- Validates against known XSS bypass techniques
+
+**Character Validation:**
+- Strict allowlists for names, identifiers, and URIs
+- Length limits prevent buffer overflow attacks
+- Unicode normalization prevents homograph attacks
+
+**Pydantic Integration:**
+- All API schemas use SecurityValidator for automatic input validation
+- Type-safe validation at the schema level
+- Consistent validation across all endpoints
+
+**Example Usage:**
+```python
+from mcpgateway.common.validators import SecurityValidator
+
+# Sanitize user-provided text
+safe_text = SecurityValidator.sanitize_display_text(user_input)
+
+# Validate tool names
+SecurityValidator.validate_tool_name(tool_name)
+
+# Validate identifiers
+SecurityValidator.validate_identifier(identifier)
+```
+
+### Server-Side Request Forgery (SSRF) Protection
+
+ContextForge implements comprehensive SSRF protection through [`validate_url()`](mcpgateway/common/validators.py:885):
+
+**Scheme Allowlist:**
+- Only permits: `http://`, `https://`, `ws://`, `wss://`
+- Blocks dangerous protocols: `javascript:`, `data:`, `file:`, `ftp:`, `vbscript:`, `about:`, `chrome:`, `mailto:`
+
+**Network Security:**
+- Blocks IPv6 addresses (prevents `[::1]` localhost bypass)
+- Prevents line break injection (`\r`, `\n`)
+- Validates URL structure and format
+
+**Length & Format Validation:**
+- Maximum URL length: 2048 characters
+- Prevents malformed URLs with spaces
+- Validates against URL parsing vulnerabilities
+
+**Example Usage:**
+```python
+from mcpgateway.common.validators import SecurityValidator
+
+# Validate external URLs before making requests
+try:
+    SecurityValidator.validate_url(url, "External API endpoint")
+except ValueError as e:
+    logger.error(f"Invalid URL rejected: {e}")
+    raise
+```
+
+### Log Injection Protection (CWE-117)
+
+As of version 1.0.0-RC-2, ContextForge implements log injection protection to prevent attackers from forging log entries:
+
+**Protection Mechanism:**
+- [`sanitize_log_message()`](mcpgateway/common/validators.py:884) - Sanitizes user-controlled data in logs
+- Removes newline characters (`\n`, `\r`) that enable log forging
+- Strips ANSI escape sequences
+- Removes control characters
+- Truncates excessive length (default: 10,000 characters)
+
+**Attack Prevention:**
+- Prevents fake log entry injection
+- Protects log parsing and SIEM systems
+- Prevents hiding malicious activity in logs
+- Ensures log integrity for security auditing
+
+**Example Usage:**
+```python
+from mcpgateway.common.validators import SecurityValidator
+
+# Sanitize user-controlled data before logging
+logger.info(f"User {SecurityValidator.sanitize_log_message(user_email)} requested resource")
+logger.error(f"Failed to process: {SecurityValidator.sanitize_log_message(error_message)}")
+logger.debug(f"Session {SecurityValidator.sanitize_log_message(session_id)} established")
+```
+
+**Implementation Status:**
+- ✅ Phase 1 Complete: Critical authentication paths protected
+- 📋 Phase 2-4 In Progress: Gradual rollout to all log statements
+
+**Developer Guidelines:**
+- Always sanitize user-controlled data in log statements
+- Apply to: user emails, session IDs, error messages, request parameters
+- Use for any data that originates from external sources
+- Test log output to ensure no injection vectors remain
 
 ### Secure by Default Configuration
 
@@ -264,6 +370,9 @@ When deploying ContextForge in production:
 - [ ] Configure appropriate rate limits per endpoint and per client
 - [ ] Set up comprehensive monitoring, alerting, and anomaly detection
 - [ ] Review and customize validation rules for your use case
+- [ ] Verify XSS protection is active (SecurityValidator automatically applied via Pydantic schemas)
+- [ ] Verify SSRF protection is active (validate_url() used for all external requests)
+- [ ] Verify log injection protection is applied to user-controlled data in logs
 - [ ] Secure database connections (use TLS, strong passwords, restricted access)
 - [ ] Secure Redis connections if using Redis (password, TLS, network isolation)
 - [ ] Configure resource limits (CPU, memory) to prevent DoS attacks

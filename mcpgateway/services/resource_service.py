@@ -2167,7 +2167,9 @@ class ResourceService(BaseService):
                                         content = TextResourceContents(uri=uri, text="")
 
                                     success = True
-                                    logger.info(f"[READ RESOURCE] Using direct_proxy mode for gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}")
+                                    logger.info(
+                                        f"[READ RESOURCE] Using direct_proxy mode for gateway {SecurityValidator.sanitize_log_message(gateway.id)} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}"
+                                    )
                                     # Skip the rest of the DB lookup logic
 
                         except Exception as e:

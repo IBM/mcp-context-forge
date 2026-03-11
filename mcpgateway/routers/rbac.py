@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Permissions, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_admin_permission, require_permission
 from mcpgateway.schemas import PermissionCheckRequest, PermissionCheckResponse, PermissionListResponse, RoleCreateRequest, RoleResponse, RoleUpdateRequest, UserRoleAssignRequest, UserRoleResponse
@@ -110,7 +111,7 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
             is_system_role=role_data.is_system_role or False,
         )
 
-        logger.info(f"Role created: {role.id} by {user['email']}")
+        logger.info(f"Role created: {role.id} by {SecurityValidator.sanitize_log_message(user['email'])}")
         db.commit()
         db.close()
         return RoleResponse.model_validate(role)
@@ -232,7 +233,7 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
         if not role:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
-        logger.info(f"Role updated: {role_id} by {user['email']}")
+        logger.info(f"Role updated: {role_id} by {SecurityValidator.sanitize_log_message(user['email'])}")
         db.commit()
         db.close()
         return RoleResponse.model_validate(role)
@@ -275,7 +276,7 @@ async def delete_role(role_id: str, user=Depends(get_current_user_with_permissio
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
-        logger.info(f"Role deleted: {role_id} by {user['email']}")
+        logger.info(f"Role deleted: {role_id} by {SecurityValidator.sanitize_log_message(user['email'])}")
         db.commit()
         db.close()
         return {"message": "Role deleted successfully"}
@@ -320,7 +321,7 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
             user_email=user_email, role_id=assignment_data.role_id, scope=assignment_data.scope, scope_id=assignment_data.scope_id, granted_by=user["email"], expires_at=assignment_data.expires_at
         )
 
-        logger.info(f"Role assigned: {assignment_data.role_id} to {user_email} by {user['email']}")
+        logger.info(f"Role assigned: {assignment_data.role_id} to {SecurityValidator.sanitize_log_message(user_email)} by {SecurityValidator.sanitize_log_message(user['email'])}")
         db.commit()
         db.close()
         return UserRoleResponse.model_validate(user_role)
@@ -372,7 +373,7 @@ async def get_user_roles(
         return result
 
     except Exception as e:
-        logger.error(f"Failed to get user roles for {user_email}: {e}")
+        logger.error(f"Failed to get user roles for {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user roles")
 
 
@@ -414,7 +415,7 @@ async def revoke_user_role(
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role assignment not found")
 
-        logger.info(f"Role revoked: {role_id} from {user_email} by {user['email']}")
+        logger.info(f"Role revoked: {role_id} from {SecurityValidator.sanitize_log_message(user_email)} by {SecurityValidator.sanitize_log_message(user['email'])}")
         db.commit()
         db.close()
         return {"message": "Role revoked successfully"}
@@ -503,7 +504,7 @@ async def get_user_permissions(user_email: str, team_id: Optional[str] = Query(N
         return result
 
     except Exception as e:
-        logger.error(f"Failed to get user permissions for {user_email}: {e}")
+        logger.error(f"Failed to get user permissions for {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user permissions")
 
 
@@ -563,7 +564,7 @@ async def get_my_roles(user=Depends(get_current_user_with_permissions), db: Sess
         return result
 
     except Exception as e:
-        logger.error(f"Failed to get my roles for {user['email']}: {e}")
+        logger.error(f"Failed to get my roles for {SecurityValidator.sanitize_log_message(user['email'])}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve your roles")
 
 
@@ -597,5 +598,5 @@ async def get_my_permissions(team_id: Optional[str] = Query(None, description="T
         return result
 
     except Exception as e:
-        logger.error(f"Failed to get my permissions for {user['email']}: {e}")
+        logger.error(f"Failed to get my permissions for {SecurityValidator.sanitize_log_message(user['email'])}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve your permissions")

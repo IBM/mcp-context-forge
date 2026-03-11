@@ -78,6 +78,7 @@ except ImportError:
     logging.info("Redis is not utilized in this environment.")
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
@@ -946,7 +947,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             key = (res.team_id, res.owner_email, res.uri)
                             orphaned_resources_map[key] = res
                     if orphaned_resources_map:
-                        logger.info(f"Found {len(orphaned_resources_map)} orphaned resources to reassign for gateway {gateway.name}")
+                        logger.info(f"Found {len(orphaned_resources_map)} orphaned resources to reassign for gateway {SecurityValidator.sanitize_log_message(gateway.name)}")
                 except Exception as e:
                     # If orphan detection fails (e.g., in mocked tests), skip upsert and create new resources
                     # This is conservative - we won't accidentally reassign resources from active gateways
@@ -1033,7 +1034,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             key = (pmt.team_id, pmt.owner_email, pmt.name)
                             orphaned_prompts_map[key] = pmt
                     if orphaned_prompts_map:
-                        logger.info(f"Found {len(orphaned_prompts_map)} orphaned prompts to reassign for gateway {gateway.name}")
+                        logger.info(f"Found {len(orphaned_prompts_map)} orphaned prompts to reassign for gateway {SecurityValidator.sanitize_log_message(gateway.name)}")
                 except Exception as e:
                     # If orphan detection fails (e.g., in mocked tests), skip upsert and create new prompts
                     logger.debug(f"Orphan prompt detection skipped: {e}")
@@ -1134,7 +1135,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Notify subscribers
             await self._notify_gateway_added(db_gateway)
 
-            logger.info(f"Registered gateway: {gateway.name}")
+            logger.info(f"Registered gateway: {SecurityValidator.sanitize_log_message(gateway.name)}")
 
             # Structured logging: Audit trail for gateway creation
             audit_trail.log_action(
@@ -1487,11 +1488,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except GatewayConnectionError as gce:
             db.rollback()
             # Surface validation or depth-related failures directly to the user
-            logger.error(f"GatewayConnectionError during OAuth fetch for {gateway_id}: {gce}")
+            logger.error(f"GatewayConnectionError during OAuth fetch for {SecurityValidator.sanitize_log_message(gateway_id)}: {gce}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(gce)}")
         except Exception as e:
             db.rollback()
-            logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
+            logger.error(f"Failed to fetch tools after OAuth for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
 
     async def list_gateways(
@@ -1726,7 +1727,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # Team names are loaded via joinedload(DbGateway.email_team)
         result = []
         for g in gateways:
-            logger.info(f"Gateway: {g.team_id}, Team: {g.team}")
+            logger.info(f"Gateway: {SecurityValidator.sanitize_log_message(g.team_id)}, Team: {g.team}")
             result.append(self.convert_gateway_to_read(g))
         return result
 
@@ -1933,7 +1934,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Clear auth_query_params when switching away from query_param auth
                     if original_auth_type == "query_param" and gateway_update.auth_type != "query_param":
                         gateway.auth_query_params = None
-                        logger.debug(f"Cleared auth_query_params for gateway {gateway.id} (switched from query_param to {gateway_update.auth_type})")
+                        logger.debug(f"Cleared auth_query_params for gateway {SecurityValidator.sanitize_log_message(gateway.id)} (switched from query_param to {gateway_update.auth_type})")
 
                     # if auth_type is not None and only then check auth_value
                 # Handle OAuth configuration updates
@@ -2229,7 +2230,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Notify subscribers
                 await self._notify_gateway_updated(gateway)
 
-                logger.info(f"Updated gateway: {gateway.name}")
+                logger.info(f"Updated gateway: {SecurityValidator.sanitize_log_message(gateway.name)}")
 
                 # Structured logging: Audit trail for gateway update
                 audit_trail.log_action(
@@ -2685,9 +2686,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         db.commit()
                         await cache.invalidate_resources()
 
-                logger.debug(f"Gateway {gateway.name} bulk state update: {tools_updated} tools, {prompts_updated} prompts, {resources_updated} resources")
+                logger.debug(f"Gateway {SecurityValidator.sanitize_log_message(gateway.name)} bulk state update: {tools_updated} tools, {prompts_updated} prompts, {resources_updated} resources")
 
-                logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
+                logger.info(f"Gateway status: {SecurityValidator.sanitize_log_message(gateway.name)} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
                 # Structured logging: Audit trail for gateway state change
                 audit_trail.log_action(
@@ -3012,10 +3013,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         count = self._gateway_failure_counts.get(gateway.id, 0) + 1
         self._gateway_failure_counts[gateway.id] = count
 
-        logger.warning(f"Gateway {gateway.name} failed health check {count} time(s).")
+        logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway.name)} failed health check {count} time(s).")
 
         if count >= GW_FAILURE_THRESHOLD:
-            logger.error(f"Gateway {gateway.name} failed {GW_FAILURE_THRESHOLD} times. Deactivating...")
+            logger.error(f"Gateway {SecurityValidator.sanitize_log_message(gateway.name)} failed {GW_FAILURE_THRESHOLD} times. Deactivating...")
             with cast(Any, SessionLocal)() as db:
                 await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
                 self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
@@ -4430,7 +4431,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         if gateway:
             if not gateway.enabled or not gateway.reachable:
-                logger.debug(f"Skipping tool refresh for disabled/unreachable gateway {gateway.name}")
+                logger.debug(f"Skipping tool refresh for disabled/unreachable gateway {SecurityValidator.sanitize_log_message(gateway.name)}")
                 return result
 
             gateway_name = gateway.name
@@ -4446,7 +4447,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway_obj = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
 
                 if not gateway_obj:
-                    logger.warning(f"Gateway {gateway_id} not found for tool refresh")
+                    logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} not found for tool refresh")
                     return result
 
                 if not gateway_obj.enabled or not gateway_obj.reachable:
@@ -4742,7 +4743,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             raise GatewayError(f"Refresh already in progress for gateway {gateway_name}")
 
         async with lock:
-            logger.info(f"Starting manual refresh for gateway {gateway_name} (ID: {gateway_id})")
+            logger.info(f"Starting manual refresh for gateway {gateway_name} (ID: {SecurityValidator.sanitize_log_message(gateway_id)})")
 
             result = await self._refresh_gateway_tools_resources_prompts(
                 gateway_id=gateway_id,

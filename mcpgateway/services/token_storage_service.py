@@ -20,6 +20,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import get_settings
 from mcpgateway.db import OAuthToken
 from mcpgateway.services.encryption_service import get_encryption_service
@@ -114,14 +115,18 @@ class TokenStorageService:
                 token_record.expires_at = expires_at
                 token_record.scopes = scopes
                 token_record.updated_at = datetime.now(timezone.utc)
-                logger.info(f"Updated OAuth tokens for gateway {gateway_id}, app user {app_user_email}, OAuth user {user_id}")
+                logger.info(
+                    f"Updated OAuth tokens for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}, OAuth user {SecurityValidator.sanitize_log_message(user_id)}"
+                )
             else:
                 # Create new record
                 token_record = OAuthToken(
                     gateway_id=gateway_id, user_id=user_id, app_user_email=app_user_email, access_token=encrypted_access, refresh_token=encrypted_refresh, expires_at=expires_at, scopes=scopes
                 )
                 self.db.add(token_record)
-                logger.info(f"Stored new OAuth tokens for gateway {gateway_id}, app user {app_user_email}, OAuth user {user_id}")
+                logger.info(
+                    f"Stored new OAuth tokens for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}, OAuth user {SecurityValidator.sanitize_log_message(user_id)}"
+                )
 
             self.db.commit()
             return token_record
@@ -146,12 +151,12 @@ class TokenStorageService:
             token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
 
             if not token_record:
-                logger.debug(f"No OAuth tokens found for gateway {gateway_id}, app user {app_user_email}")
+                logger.debug(f"No OAuth tokens found for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}")
                 return None
 
             # Check if token is expired or near expiration
             if self._is_token_expired(token_record, threshold_seconds):
-                logger.info(f"OAuth token expired for gateway {gateway_id}, app user {app_user_email}")
+                logger.info(f"OAuth token expired for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}")
                 if token_record.refresh_token:
                     # Attempt to refresh token
                     new_token = await self._refresh_access_token(token_record)
@@ -419,7 +424,7 @@ class TokenStorageService:
             if token_record:
                 self.db.delete(token_record)
                 self.db.commit()
-                logger.info(f"Revoked OAuth tokens for gateway {gateway_id}, user {app_user_email}")
+                logger.info(f"Revoked OAuth tokens for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(app_user_email)}")
                 return True
 
             return False
