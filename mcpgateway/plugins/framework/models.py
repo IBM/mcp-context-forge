@@ -485,6 +485,8 @@ class MCPClientConfig(BaseModel):
         cwd (Optional[str]): Working directory for STDIO server process.
         uds (Optional[str]): Unix domain socket path for streamable HTTP.
         tls (Optional[MCPClientTLSConfig]): Client-side TLS configuration for mTLS.
+        reconnect_attempts (int): Number of reconnection attempts on failure.
+        reconnect_delay (float): Base delay between reconnection attempts (seconds).
     """
 
     proto: TransportType
@@ -495,6 +497,8 @@ class MCPClientConfig(BaseModel):
     cwd: Optional[str] = None
     uds: Optional[str] = None
     tls: Optional[MCPClientTLSConfig] = None
+    reconnect_attempts: int = Field(default=3, description="Number of reconnection attempts on failure")
+    reconnect_delay: float = Field(default=0.1, description="Base delay between reconnection attempts (seconds)")
 
     @field_validator(URL, mode="after")
     @classmethod
