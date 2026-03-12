@@ -4749,6 +4749,7 @@ async function runResourceTest() {
 
     // Copy button
     const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
     copyBtn.textContent = "Copy";
     copyBtn.className =
         "text-xs px-2 py-1 rounded bg-gray-300 dark:bg-gray-600 hover:bg-gray-400 dark:hover:bg-gray-500";
@@ -4756,6 +4757,7 @@ async function runResourceTest() {
 
     // Fullscreen button
     const fullscreenBtn = document.createElement("button");
+    fullscreenBtn.type = "button";
     fullscreenBtn.textContent = "Fullscreen";
     fullscreenBtn.className =
         "text-xs px-2 py-1 rounded bg-blue-300 dark:bg-blue-600 hover:bg-blue-400 dark:hover:bg-blue-500";
@@ -4763,6 +4765,7 @@ async function runResourceTest() {
 
     // Download button
     const downloadBtn = document.createElement("button");
+    downloadBtn.type = "button";
     downloadBtn.textContent = "Download";
     downloadBtn.className =
         "text-xs px-2 py-1 rounded bg-green-300 dark:bg-green-600 hover:bg-green-400 dark:hover:bg-green-500";
@@ -4831,6 +4834,7 @@ async function runResourceTest() {
             "bg-white dark:bg-gray-900 rounded-lg w-full h-full p-4 overflow-auto";
 
         const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
         closeBtn.textContent = "Close";
         closeBtn.className =
             "text-xs px-3 py-1 mb-2 rounded bg-red-400 hover:bg-red-500 dark:bg-red-700 dark:hover:bg-red-600";
