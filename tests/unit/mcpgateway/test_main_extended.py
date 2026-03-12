@@ -7047,10 +7047,18 @@ class TestRpcScopedPermissions:
         assert result["error"]["code"] == -32003
         assert "Access denied" in result["error"]["message"]
 
-    async def test_logging_set_level_denied_with_servers_use_only(self):
-        """Token scoped to servers.use only should be denied logging/setLevel."""
+    async def test_logging_set_level_allowed_with_servers_use(self):
+        """Token scoped to servers.use should be allowed logging/setLevel."""
         payload = {"jsonrpc": "2.0", "id": 1, "method": "logging/setLevel", "params": {"level": "error"}}
         request = self._make_request(payload, scoped_permissions=["servers.use"])
+
+        result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+        assert "error" not in result
+
+    async def test_logging_set_level_denied_without_servers_use(self):
+        """Token scoped to tools.read only (no servers.use) should be denied logging/setLevel."""
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "logging/setLevel", "params": {"level": "error"}}
+        request = self._make_request(payload, scoped_permissions=["tools.read"])
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
