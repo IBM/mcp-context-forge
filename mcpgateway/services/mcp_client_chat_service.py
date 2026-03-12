@@ -102,6 +102,7 @@ except ImportError:
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.logging_service import LoggingService
@@ -2620,10 +2621,10 @@ class ChatHistoryManager:
                     return []
                 return orjson.loads(data)
             except orjson.JSONDecodeError:
-                logger.warning(f"Failed to decode chat history for user {user_id}")
+                logger.warning(f"Failed to decode chat history for user {SecurityValidator.sanitize_log_message(user_id)}")
                 return []
             except Exception as e:
-                logger.error(f"Error retrieving chat history from Redis for user {user_id}: {e}")
+                logger.error(f"Error retrieving chat history from Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
                 return []
         else:
             return self._memory_store.get(user_id, [])
@@ -2655,7 +2656,7 @@ class ChatHistoryManager:
             try:
                 await self.redis_client.set(self._history_key(user_id), orjson.dumps(trimmed), ex=self.ttl)
             except Exception as e:
-                logger.error(f"Error saving chat history to Redis for user {user_id}: {e}")
+                logger.error(f"Error saving chat history to Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
         else:
             self._memory_store[user_id] = trimmed
 
@@ -2705,7 +2706,7 @@ class ChatHistoryManager:
             try:
                 await self.redis_client.delete(self._history_key(user_id))
             except Exception as e:
-                logger.error(f"Error clearing chat history from Redis for user {user_id}: {e}")
+                logger.error(f"Error clearing chat history from Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
         else:
             self._memory_store.pop(user_id, None)
 
