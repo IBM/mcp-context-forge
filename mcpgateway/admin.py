@@ -15062,6 +15062,13 @@ async def admin_test_a2a_agent(
 ) -> JSONResponse:
     """Test A2A agent via admin UI.
 
+    Invokes the specified A2A agent with a test message and returns the result.
+    Returns appropriate HTTP status codes based on the failure type:
+    - 404: Agent not found or user lacks access
+    - 502: Agent disabled, unreachable, or returning errors
+    - 422: Invalid test parameters
+    - 500: Unexpected system errors
+
     Args:
         agent_id: Agent ID
         request: FastAPI request object containing optional 'query' field
@@ -15069,10 +15076,24 @@ async def admin_test_a2a_agent(
         user: Authenticated user
 
     Returns:
-        JSON response with test results
+        JSON response with test results. On success, includes:
+        - success: True
+        - result: Agent response
+        - agent_name: Name of the tested agent
+        - test_timestamp: Unix timestamp of the test
+
+        On failure, includes:
+        - success: False
+        - error: Error message (sanitized to prevent credential leakage)
+        - error_type: Type of error (not_found, agent_error, validation_error, internal_error)
+        - agent_id: ID of the agent that was tested
 
     Raises:
-        HTTPException: If A2A features are disabled
+        HTTPException: If A2A features are disabled (403)
+
+    Note:
+        Error messages are sanitized by a2a_service to prevent credential leakage.
+        Returns 404 (not 403) for access denied to avoid leaking agent existence.
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         return ORJSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
@@ -15122,9 +15143,30 @@ async def admin_test_a2a_agent(
 
         return ORJSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
 
+    except A2AAgentNotFoundError as e:
+        LOGGER.warning(f"A2A agent not found or access denied for {agent_id}: {e}")
+        return ORJSONResponse(
+            content={"success": False, "error": str(e), "error_type": "not_found", "agent_id": agent_id},
+            status_code=404,
+        )
+    except A2AAgentError as e:
+        LOGGER.error(f"A2A agent error for {agent_id}: {e}")
+        return ORJSONResponse(
+            content={"success": False, "error": str(e), "error_type": "agent_error", "agent_id": agent_id},
+            status_code=502,
+        )
+    except ValidationError as e:
+        LOGGER.warning(f"Validation error testing A2A agent {agent_id}: {e}")
+        return ORJSONResponse(
+            content={"success": False, "error": str(e), "error_type": "validation_error", "agent_id": agent_id},
+            status_code=422,
+        )
     except Exception as e:
-        LOGGER.error(f"Error testing A2A agent {agent_id}: {e}")
-        return ORJSONResponse(content={"success": False, "error": str(e), "agent_id": agent_id}, status_code=500)
+        LOGGER.error(f"Unexpected error testing A2A agent {agent_id}: {e}")
+        return ORJSONResponse(
+            content={"success": False, "error": str(e), "error_type": "internal_error", "agent_id": agent_id},
+            status_code=500,
+        )
 
 
 # gRPC Service Management Endpoints
