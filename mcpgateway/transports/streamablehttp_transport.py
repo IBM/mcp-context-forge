@@ -84,11 +84,16 @@ logger = logging_service.get_logger(__name__)
 
 
 def _record_mcp_auth_cache_event(outcome: str) -> None:
-    """Best-effort Prometheus counter update for MCP auth cache flow."""
+    """Best-effort Prometheus counter update for MCP auth cache flow.
+
+    Args:
+        outcome: Cache-flow outcome label to emit.
+    """
     try:
         mcp_auth_cache_events_counter.labels(outcome=outcome).inc()
     except Exception:
         pass  # nosec B110 - Metrics must not break auth flow
+
 
 # Precompiled regex for server ID extraction from path
 _SERVER_ID_RE: Pattern[str] = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp")
@@ -462,7 +467,11 @@ class RustEventStore(EventStore):
 
 
 async def _get_rust_event_store_client() -> httpx.AsyncClient:
-    """Return the HTTP client used for Python -> Rust event-store calls."""
+    """Return the HTTP client used for Python -> Rust event-store calls.
+
+    Returns:
+        An async HTTP client configured for Rust event-store access.
+    """
     global _rust_event_store_client  # pylint: disable=global-statement
 
     uds_path = settings.experimental_rust_mcp_runtime_uds
@@ -484,7 +493,14 @@ async def _get_rust_event_store_client() -> httpx.AsyncClient:
 
 
 def _build_rust_runtime_internal_url(path: str) -> str:
-    """Build a Rust sidecar internal URL for UDS or loopback HTTP transport."""
+    """Build a Rust sidecar internal URL for UDS or loopback HTTP transport.
+
+    Args:
+        path: Internal Rust runtime path to append to the configured base URL.
+
+    Returns:
+        Absolute URL targeting the Rust sidecar over HTTP or UDS-backed transport.
+    """
     base = urlsplit(settings.experimental_rust_mcp_runtime_url)
     base_path = base.path.rstrip("/")
     target_path = f"{base_path}{path}" if base_path else path
@@ -2879,6 +2895,10 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
     The Rust MCP proxy uses this to carry already-authenticated MCP request context
     across the Python -> Rust -> Python seam so the internal dispatcher does not
     need to repeat JWT verification and team normalization on the hot path.
+
+    Returns:
+        A shallow copy of the trusted auth context fields that may be forwarded
+        across the internal MCP seam.
     """
     user_context = user_context_var.get()
     if not isinstance(user_context, dict):
@@ -3057,8 +3077,8 @@ class _StreamableHttpAuthHandler:
                 return True
 
             # First-Party
-            from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
             from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
+            from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
             jti = user_payload.get("jti")
             user_email = user_payload.get("sub") or user_payload.get("email")
@@ -3093,7 +3113,7 @@ class _StreamableHttpAuthHandler:
                         elif settings.require_user_in_db and user_email != platform_admin_email:
                             return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
 
-                        if token_use == "session" and not is_admin:
+                        if token_use == "session" and not is_admin:  # nosec B105 - token_use is a JWT claim type, not a password
                             cached_team_ids = await auth_cache.get_user_teams(f"{user_email}:True")
                             if cached_team_ids is not None:
                                 _record_mcp_auth_cache_event("teams_cache_hit")
@@ -3134,7 +3154,7 @@ class _StreamableHttpAuthHandler:
                                 is_token_revoked=bool(batched_auth_ctx.get("is_token_revoked", False)),
                             ),
                         )
-                        if token_use == "session" and not is_admin:
+                        if token_use == "session" and not is_admin:  # nosec B105 - token_use is a JWT claim type, not a password
                             cached_team_ids = list(batched_auth_ctx.get("team_ids") or [])
                             await auth_cache.set_user_teams(f"{user_email}:True", cached_team_ids)
                             _record_mcp_auth_cache_event("teams_batch_hit")

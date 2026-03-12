@@ -2167,6 +2167,16 @@ class ToolService(BaseService):
         auth and visibility semantics aligned with ``list_server_tools`` while
         avoiding the heavier ``ToolRead`` conversion that is only needed for the
         admin/API surfaces.
+
+        Args:
+            db: Active database session.
+            server_id: Virtual server identifier used to scope the tool listing.
+            include_inactive: Whether disabled tools should be included.
+            user_email: Requester email for owner-scoped visibility checks.
+            token_teams: Normalized team scope from the caller token.
+
+        Returns:
+            A list of MCP-compatible tool definition dictionaries.
         """
         name_column = DbTool.__table__.c.name
         query = (
@@ -2834,6 +2844,23 @@ class ToolService(BaseService):
         but stops before the actual upstream MCP call. The Rust runtime can then
         execute the call directly for the simple streamable HTTP MCP cases that
         dominate load tests, while Python remains the authority for policy.
+
+        Args:
+            db: Active database session.
+            name: Tool name requested by the caller.
+            request_headers: Incoming request headers used for passthrough/auth decisions.
+            app_user_email: OAuth application user email, when present.
+            user_email: Effective requester email after auth normalization.
+            token_teams: Normalized team scope from the caller token.
+            server_id: Optional virtual server identifier restricting tool access.
+
+        Returns:
+            A Rust execution plan dictionary, or a fallback descriptor when direct
+            Rust execution is not eligible.
+
+        Raises:
+            ToolNotFoundError: If the requested tool is not visible or invocable.
+            ToolInvocationError: If gateway auth preparation fails or the tool name is ambiguous.
         """
         if self._plugin_manager and (self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) or self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)):
             return {"eligible": False, "fallbackReason": "plugin-hooks-configured"}
@@ -3095,7 +3122,16 @@ class ToolService(BaseService):
         }
 
     def _load_invocable_tools(self, db: Session, name: str, server_id: Optional[str] = None) -> List[DbTool]:
-        """Load candidate tools for invocation, narrowing to a virtual server when possible."""
+        """Load candidate tools for invocation, narrowing to a virtual server when possible.
+
+        Args:
+            db: Active database session.
+            name: Tool name to resolve.
+            server_id: Optional virtual server identifier used to constrain results.
+
+        Returns:
+            A list of candidate tool ORM rows matching the request.
+        """
         query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)
         if server_id:
             query = query.join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
@@ -3165,7 +3201,6 @@ class ToolService(BaseService):
         gateway = None
         tool_payload: Dict[str, Any] = {}
         gateway_payload: Optional[Dict[str, Any]] = None
-        tool_selected_from_server_scope = False
 
         if gateway_id_from_header:
             # Look up gateway to check if it's in direct_proxy mode
