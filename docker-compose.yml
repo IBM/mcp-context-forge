@@ -158,7 +158,7 @@ services:
       - SSRF_DNS_FAIL_CLOSED=${SSRF_DNS_FAIL_CLOSED:-false}
       # Database connection: Via PgBouncer (default) or direct PostgreSQL
       # PgBouncer provides connection pooling for better performance under high concurrency
-      - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp
+      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp}
       # Direct PostgreSQL connection (bypass PgBouncer - increase DB_POOL_SIZE if using):
       # - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
       # SQLAlchemy query logging (useful for N+1 detection; noisy under load)
@@ -422,7 +422,7 @@ services:
       # ═══════════════════════════════════════════════════════════════════════════
       # Gunicorn Configuration (used when HTTP_SERVER=gunicorn)
       # ═══════════════════════════════════════════════════════════════════════════
-      - GUNICORN_WORKERS=24                    # Worker processes (match CPU cores)
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-24}  # Worker processes per replica
       - GUNICORN_TIMEOUT=120                   # Worker timeout in seconds
       - GUNICORN_GRACEFUL_TIMEOUT=60           # Grace period for worker shutdown
       - GUNICORN_KEEP_ALIVE=30                 # Keep-alive timeout (matches SSE keepalive)
@@ -471,7 +471,7 @@ services:
       # Session pooling for MCP ClientSessions reduces per-request overhead from
       # ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant
       # via identity hashing to prevent cross-user session sharing.
-      - MCP_SESSION_POOL_ENABLED=true              # Enable session pooling (default: false, enabled for docker-compose)
+      - MCP_SESSION_POOL_ENABLED=${MCP_SESSION_POOL_ENABLED:-true}  # Session pooling (broken sessions are now evicted on error)
       - MCP_SESSION_POOL_MAX_PER_KEY=200           # Max sessions per (URL, identity, transport) - increased from 150 for 4000+ users
       - MCP_SESSION_POOL_TTL=300.0                 # Session TTL in seconds (default: 300)
       - MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL=60.0  # Idle time before health check (default: 60)
@@ -484,8 +484,7 @@ services:
       - MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=false  # Force RPC on health checks (default: false)
       # Configurable health check chain - ordered list of methods to try (JSON array)
       # Options: ping, list_tools, list_prompts, list_resources, skip
-      # - MCP_SESSION_POOL_HEALTH_CHECK_METHODS=["ping", "skip"]  # Try ping, skip if unsupported
-      - MCP_SESSION_POOL_HEALTH_CHECK_METHODS=["skip"]  # skip, highest performance
+      - MCP_SESSION_POOL_HEALTH_CHECK_METHODS=["ping", "skip"]  # Try ping, fall back to skip if unsupported
       - MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT=5.0               # Timeout per health check attempt
       # ═══════════════════════════════════════════════════════════════════════════
       # CPU Spin Loop Mitigation (Issue #2360, anyio#695)
@@ -611,14 +610,14 @@ services:
 
     deploy:
       mode: replicated
-      replicas: 3
+      replicas: ${GATEWAY_REPLICAS:-3}
       resources:
         limits:
-          cpus: '8'
-          memory: 8G
+          cpus: '${GATEWAY_CPU_LIMIT:-8}'
+          memory: ${GATEWAY_MEM_LIMIT:-8G}
         reservations:
-          cpus: '4'
-          memory: 4G
+          cpus: '${GATEWAY_CPU_RESERVATION:-4}'
+          memory: ${GATEWAY_MEM_RESERVATION:-4G}
 
     # ──────────────────────────────────────────────────────────────────────
     # Volume Mounts
@@ -626,6 +625,7 @@ services:
     # Mount catalog configuration and SSL certificates
     volumes:
       - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
+      - ${PLUGINS_DIR:-./plugins}:/app/plugins:ro # override the plugins directory
       # - ./certs:/app/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
     #
     # SSL/TLS Certificate Setup:
@@ -1847,6 +1847,15 @@ services:
         except Exception as e:
             print(f'Note: {e}')
 
+        VIRTUAL_SERVER_ID = 'b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8'
+
+        # Delete existing virtual server if present
+        try:
+            api_request('DELETE', f'/servers/{VIRTUAL_SERVER_ID}')
+            print(f'Deleted existing virtual server {VIRTUAL_SERVER_ID}')
+        except Exception as e:
+            print(f'Note: No existing virtual server to delete (or error: {e})')
+
         # Register the gateway
         try:
             result = api_request('POST', '/gateways', {
@@ -1854,9 +1863,54 @@ services:
                 'url': 'http://fast_test_server:8880/mcp',
                 'transport': 'STREAMABLEHTTP'
             })
-            print(f'✅ Registered fast_test_server: {result.get(\"id\", \"unknown\")}')
+            gateway_id = result.get('id', '')
+            print(f'✅ Registered fast_test_server (gateway_id: {gateway_id})')
         except Exception as e:
             print(f'❌ Registration failed: {e}')
+            exit(1)
+
+        # Wait for tools to sync from the gateway
+        print('Waiting for tools to sync...')
+        for i in range(30):
+            time.sleep(1)
+            try:
+                tools = api_request('GET', '/tools')
+                fast_test_tools = [t for t in tools if t.get('gatewayId') == gateway_id]
+                if fast_test_tools:
+                    print(f'Found {len(fast_test_tools)} tools from fast_test gateway')
+                    break
+            except Exception:
+                pass
+            print(f'Waiting for sync... ({i+1}/30)')
+        else:
+            print('Warning: No tools synced, continuing anyway...')
+
+        # Collect tool IDs from the fast_test gateway
+        tool_ids = []
+        try:
+            tools = api_request('GET', '/tools')
+            tool_ids = [t['id'] for t in tools if t.get('gatewayId') == gateway_id]
+            print(f'Tools: {[t[\"name\"] for t in tools if t.get(\"gatewayId\") == gateway_id]}')
+        except Exception as e:
+            print(f'Failed to fetch tools: {e}')
+
+        # Create virtual server
+        print('Creating virtual server...')
+        try:
+            server_payload = {
+                'server': {
+                    'id': VIRTUAL_SERVER_ID,
+                    'name': 'Fast Test Server',
+                    'description': 'Virtual server exposing Fast Test MCP tools (echo, time, stats)',
+                    'associated_tools': tool_ids,
+                    'associated_resources': [],
+                    'associated_prompts': []
+                }
+            }
+            result = api_request('POST', '/servers', server_payload)
+            print(f'✅ Virtual server created: {VIRTUAL_SERVER_ID} with {len(tool_ids)} tools')
+        except Exception as e:
+            print(f'❌ Failed to create virtual server: {e}')
             exit(1)
         "
         echo "✅ Registration complete!"
@@ -2023,7 +2077,7 @@ services:
         export MCPGATEWAY_BEARER_TOKEN="$$(cat /tokens/gateway.jwt)"
         MODE="$${LOCUST_MODE:-master}"
         if [ "$$MODE" = "headless" ]; then
-          exec locust -f /mnt/locust/locustfile.py \
+          exec locust -f /mnt/locust/$${LOCUST_LOCUSTFILE:-locustfile.py} \
             --host=http://nginx:80 \
             --users="$${LOCUST_USERS:-100}" \
             --spawn-rate="$${LOCUST_SPAWN_RATE:-10}" \
@@ -2034,7 +2088,7 @@ services:
             --only-summary
         fi
 
-        exec locust -f /mnt/locust/locustfile.py \
+        exec locust -f /mnt/locust/$${LOCUST_LOCUSTFILE:-locustfile.py} \
           --host=http://nginx:80 \
           --web-host=0.0.0.0 --web-port=8089 \
           --master --expect-workers="$${LOCUST_EXPECT_WORKERS:-1}" \
@@ -2043,6 +2097,7 @@ services:
       - HOME=/tmp
       - LOCUST_EXPECT_WORKERS=${LOCUST_EXPECT_WORKERS:-1}
       - LOCUST_MODE=${LOCUST_MODE:-master}          # master (default) or headless
+      - LOCUST_LOCUSTFILE=${LOCUST_LOCUSTFILE:-locustfile.py}
       - LOCUST_USERS=${LOCUST_USERS:-100}
       - LOCUST_SPAWN_RATE=${LOCUST_SPAWN_RATE:-10}
       - LOCUST_RUN_TIME=${LOCUST_RUN_TIME:-5m}
@@ -2076,11 +2131,12 @@ services:
         set -eu
         while [ ! -s /tokens/gateway.jwt ]; do echo "Waiting for gateway JWT..."; sleep 0.5; done
         export MCPGATEWAY_BEARER_TOKEN="$$(cat /tokens/gateway.jwt)"
-        exec locust -f /mnt/locust/locustfile.py \
+        exec locust -f /mnt/locust/$${LOCUST_LOCUSTFILE:-locustfile.py} \
           --host=http://nginx:80 \
           --worker --master-host=locust
     environment:
       - HOME=/tmp
+      - LOCUST_LOCUSTFILE=${LOCUST_LOCUSTFILE:-locustfile.py}
     deploy:
       resources:
         limits:

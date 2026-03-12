@@ -154,6 +154,7 @@ Full runbook, environment variable reference, and results template: [`tests/manu
 
 ## 🔍 Additional Testing
 
+- [Load Testing Hints](load-testing-hints.md) - environment variables and workflows for containerized load tests
 - [Acceptance Testing](acceptance.md) - formal acceptance criteria
 - [Fuzzing](fuzzing.md) - fuzz testing for edge cases
 
