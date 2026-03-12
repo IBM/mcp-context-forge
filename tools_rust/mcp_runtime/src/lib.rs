@@ -97,6 +97,11 @@ pub struct AppState {
     backend_sampling_create_message_url: Arc<str>,
     backend_logging_set_level_url: Arc<str>,
     backend_tools_list_authz_url: Arc<str>,
+    backend_resources_list_authz_url: Arc<str>,
+    backend_resources_read_authz_url: Arc<str>,
+    backend_resource_templates_list_authz_url: Arc<str>,
+    backend_prompts_list_authz_url: Arc<str>,
+    backend_prompts_get_authz_url: Arc<str>,
     backend_tools_call_url: Arc<str>,
     backend_tools_call_resolve_url: Arc<str>,
     client: Client,
@@ -433,6 +438,21 @@ impl AppState {
             backend_tools_list_authz_url: Arc::from(derive_backend_tools_list_authz_url(
                 &config.backend_rpc_url,
             )),
+            backend_resources_list_authz_url: Arc::from(derive_backend_resources_list_authz_url(
+                &config.backend_rpc_url,
+            )),
+            backend_resources_read_authz_url: Arc::from(derive_backend_resources_read_authz_url(
+                &config.backend_rpc_url,
+            )),
+            backend_resource_templates_list_authz_url: Arc::from(
+                derive_backend_resource_templates_list_authz_url(&config.backend_rpc_url),
+            ),
+            backend_prompts_list_authz_url: Arc::from(derive_backend_prompts_list_authz_url(
+                &config.backend_rpc_url,
+            )),
+            backend_prompts_get_authz_url: Arc::from(derive_backend_prompts_get_authz_url(
+                &config.backend_rpc_url,
+            )),
             backend_tools_call_url: Arc::from(derive_backend_tools_call_url(
                 &config.backend_rpc_url,
             )),
@@ -544,6 +564,26 @@ impl AppState {
 
     pub fn backend_tools_list_authz_url(&self) -> &str {
         &self.backend_tools_list_authz_url
+    }
+
+    pub fn backend_resources_list_authz_url(&self) -> &str {
+        &self.backend_resources_list_authz_url
+    }
+
+    pub fn backend_resources_read_authz_url(&self) -> &str {
+        &self.backend_resources_read_authz_url
+    }
+
+    pub fn backend_resource_templates_list_authz_url(&self) -> &str {
+        &self.backend_resource_templates_list_authz_url
+    }
+
+    pub fn backend_prompts_list_authz_url(&self) -> &str {
+        &self.backend_prompts_list_authz_url
+    }
+
+    pub fn backend_prompts_get_authz_url(&self) -> &str {
+        &self.backend_prompts_get_authz_url
     }
 
     pub fn backend_tools_call_url(&self) -> &str {
@@ -824,8 +864,8 @@ async fn rpc(
         Err(response) => return response,
     };
 
-    let server_scoped_tools_list =
-        request.method == "tools/list" && is_server_scoped_tools_list(&headers);
+    let server_scoped_request = has_server_scope(&headers);
+    let server_scoped_tools_list = request.method == "tools/list" && server_scoped_request;
     let rust_db_direct_tools_list = server_scoped_tools_list && state.db_pool().is_some();
     let specialized_initialize = request.method == "initialize";
     let specialized_resources_list = request.method == "resources/list";
@@ -858,6 +898,21 @@ async fn rpc(
     let catch_all_elicitation =
         request.method.starts_with("elicitation/") && request.method != "elicitation/create";
     let specialized_tools_call = request.method == "tools/call";
+    let rust_db_direct_resources_list =
+        specialized_resources_list && server_scoped_request && state.db_pool().is_some();
+    let rust_db_direct_resources_read = specialized_resources_read
+        && server_scoped_request
+        && state.db_pool().is_some()
+        && can_use_direct_resources_read(&request.params);
+    let rust_db_direct_resource_templates_list = specialized_resource_templates_list
+        && server_scoped_request
+        && state.db_pool().is_some();
+    let rust_db_direct_prompts_list =
+        specialized_prompts_list && server_scoped_request && state.db_pool().is_some();
+    let rust_db_direct_prompts_get = specialized_prompts_get
+        && server_scoped_request
+        && state.db_pool().is_some()
+        && can_use_direct_prompts_get(&request.params);
     let mut effective_headers = headers.clone();
 
     if state.session_core_enabled() {
@@ -922,18 +977,28 @@ async fn rpc(
         "backend-notifications-message-direct"
     } else if specialized_cancelled_notification {
         "backend-notifications-cancelled-direct"
+    } else if rust_db_direct_resources_list {
+        "db-resources-list-direct"
     } else if specialized_resources_list {
         "backend-resources-list-direct"
+    } else if rust_db_direct_resources_read {
+        "db-resources-read-direct"
     } else if specialized_resources_read {
         "backend-resources-read-direct"
     } else if specialized_resources_subscribe {
         "backend-resources-subscribe-direct"
     } else if specialized_resources_unsubscribe {
         "backend-resources-unsubscribe-direct"
+    } else if rust_db_direct_resource_templates_list {
+        "db-resource-templates-list-direct"
     } else if specialized_resource_templates_list {
         "backend-resource-templates-list-direct"
+    } else if rust_db_direct_prompts_list {
+        "db-prompts-list-direct"
     } else if specialized_prompts_list {
         "backend-prompts-list-direct"
+    } else if rust_db_direct_prompts_get {
+        "db-prompts-get-direct"
     } else if specialized_prompts_get {
         "backend-prompts-get-direct"
     } else if specialized_roots_list {
@@ -979,12 +1044,32 @@ async fn rpc(
         return forward_cancelled_notification_to_backend(&state, effective_headers, body).await;
     }
 
+    if rust_db_direct_resources_list {
+        return direct_server_resources_list(
+            &state,
+            effective_headers,
+            request.id.clone(),
+        )
+        .await;
+    }
+
     if specialized_resources_list {
         return forward_resources_list_to_backend(
             &state,
             effective_headers,
             body,
             request.id.clone(),
+        )
+        .await;
+    }
+
+    if rust_db_direct_resources_read {
+        return direct_server_resources_read(
+            &state,
+            effective_headers,
+            request.id.clone(),
+            &request,
+            body,
         )
         .await;
     }
@@ -1019,11 +1104,29 @@ async fn rpc(
         .await;
     }
 
+    if rust_db_direct_resource_templates_list {
+        return direct_server_resource_templates_list(
+            &state,
+            effective_headers,
+            request.id.clone(),
+        )
+        .await;
+    }
+
     if specialized_resource_templates_list {
         return forward_resource_templates_list_to_backend(
             &state,
             effective_headers,
             body,
+            request.id.clone(),
+        )
+        .await;
+    }
+
+    if rust_db_direct_prompts_list {
+        return direct_server_prompts_list(
+            &state,
+            effective_headers,
             request.id.clone(),
         )
         .await;
@@ -1035,6 +1138,17 @@ async fn rpc(
             effective_headers,
             body,
             request.id.clone(),
+        )
+        .await;
+    }
+
+    if rust_db_direct_prompts_get {
+        return direct_server_prompts_get(
+            &state,
+            effective_headers,
+            request.id.clone(),
+            &request,
+            body,
         )
         .await;
     }
@@ -1508,6 +1622,101 @@ fn derive_backend_tools_list_authz_url(backend_rpc_url: &str) -> String {
     )
 }
 
+fn derive_backend_resources_list_authz_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/resources/list/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/resources/list/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/resources/list/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/resources/list/authz");
+    }
+    format!(
+        "{}/_internal/mcp/resources/list/authz",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
+fn derive_backend_resources_read_authz_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/resources/read/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/resources/read/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/resources/read/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/resources/read/authz");
+    }
+    format!(
+        "{}/_internal/mcp/resources/read/authz",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
+fn derive_backend_resource_templates_list_authz_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/resources/templates/list/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/resources/templates/list/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/resources/templates/list/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/resources/templates/list/authz");
+    }
+    format!(
+        "{}/_internal/mcp/resources/templates/list/authz",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
+fn derive_backend_prompts_list_authz_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/prompts/list/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/prompts/list/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/prompts/list/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/prompts/list/authz");
+    }
+    format!(
+        "{}/_internal/mcp/prompts/list/authz",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
+fn derive_backend_prompts_get_authz_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/prompts/get/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/prompts/get/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/prompts/get/authz");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/prompts/get/authz");
+    }
+    format!(
+        "{}/_internal/mcp/prompts/get/authz",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
 fn derive_backend_tools_call_url(backend_rpc_url: &str) -> String {
     if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
         return format!("{prefix}/_internal/mcp/tools/call");
@@ -1586,8 +1795,32 @@ fn build_redis_client(config: &RuntimeConfig) -> Result<Option<redis::Client>, R
     Ok(Some(client))
 }
 
-fn is_server_scoped_tools_list(headers: &HeaderMap) -> bool {
+fn has_server_scope(headers: &HeaderMap) -> bool {
     headers.contains_key("x-contextforge-server-id")
+}
+
+fn can_use_direct_resources_read(params: &Value) -> bool {
+    let Some(params) = params.as_object() else {
+        return false;
+    };
+    matches!(params.get("uri"), Some(Value::String(uri)) if !uri.is_empty())
+        && !params.contains_key("requestId")
+        && !params.contains_key("_meta")
+}
+
+fn can_use_direct_prompts_get(params: &Value) -> bool {
+    let Some(params) = params.as_object() else {
+        return false;
+    };
+
+    let has_name = matches!(params.get("name"), Some(Value::String(name)) if !name.is_empty());
+    let arguments_are_empty = match params.get("arguments") {
+        None | Some(Value::Null) => true,
+        Some(Value::Object(arguments)) => arguments.is_empty(),
+        _ => false,
+    };
+
+    has_name && arguments_are_empty && !params.contains_key("_meta")
 }
 
 fn decode_request(body: &[u8]) -> Result<JsonRpcRequest, Response> {
@@ -3565,6 +3798,826 @@ async fn query_server_tools_list_from_db(
             output_schema: row.get("output_schema"),
         })
         .collect())
+}
+
+async fn direct_server_resources_list(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    request_id: Option<Value>,
+) -> Response {
+    let server_id = incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let auth_context = decode_internal_auth_context_from_headers(&incoming_headers);
+
+    let (Some(server_id), Ok(auth_context)) = (server_id, auth_context) else {
+        warn!(
+            "Rust MCP direct resources/list missing trusted context; falling back to Python dispatcher"
+        );
+        return forward_resources_list_to_backend(
+            state,
+            incoming_headers,
+            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"resources/list","params":{}}"#),
+            request_id,
+        )
+        .await;
+    };
+
+    if let Err(response) = authorize_server_method_via_backend(
+        state,
+        &incoming_headers,
+        request_id.clone(),
+        state.backend_resources_list_authz_url(),
+        "resources/list",
+    )
+    .await
+    {
+        return response;
+    }
+
+    match query_server_resources_list_from_db(state, &server_id, &auth_context).await {
+        Ok(resources) => json_response(
+            StatusCode::OK,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": {
+                    "resources": resources,
+                },
+            }),
+        ),
+        Err(err) => {
+            error!(
+                "Rust MCP direct resources/list DB query failed: {err}; falling back to Python dispatcher"
+            );
+            forward_resources_list_to_backend(
+                state,
+                incoming_headers,
+                Bytes::from_static(br#"{"jsonrpc":"2.0","method":"resources/list","params":{}}"#),
+                request_id,
+            )
+            .await
+        }
+    }
+}
+
+async fn direct_server_resource_templates_list(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    request_id: Option<Value>,
+) -> Response {
+    let server_id = incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let auth_context = decode_internal_auth_context_from_headers(&incoming_headers);
+
+    let (Some(server_id), Ok(auth_context)) = (server_id, auth_context) else {
+        warn!(
+            "Rust MCP direct resources/templates/list missing trusted context; falling back to Python dispatcher"
+        );
+        return forward_resource_templates_list_to_backend(
+            state,
+            incoming_headers,
+            Bytes::from_static(
+                br#"{"jsonrpc":"2.0","method":"resources/templates/list","params":{}}"#,
+            ),
+            request_id,
+        )
+        .await;
+    };
+
+    if let Err(response) = authorize_server_method_via_backend(
+        state,
+        &incoming_headers,
+        request_id.clone(),
+        state.backend_resource_templates_list_authz_url(),
+        "resources/templates/list",
+    )
+    .await
+    {
+        return response;
+    }
+
+    match query_server_resource_templates_list_from_db(state, &server_id, &auth_context).await {
+        Ok(resource_templates) => json_response(
+            StatusCode::OK,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": {
+                    "resourceTemplates": resource_templates,
+                },
+            }),
+        ),
+        Err(err) => {
+            error!(
+                "Rust MCP direct resources/templates/list DB query failed: {err}; falling back to Python dispatcher"
+            );
+            forward_resource_templates_list_to_backend(
+                state,
+                incoming_headers,
+                Bytes::from_static(
+                    br#"{"jsonrpc":"2.0","method":"resources/templates/list","params":{}}"#,
+                ),
+                request_id,
+            )
+            .await
+        }
+    }
+}
+
+async fn direct_server_prompts_list(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    request_id: Option<Value>,
+) -> Response {
+    let server_id = incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let auth_context = decode_internal_auth_context_from_headers(&incoming_headers);
+
+    let (Some(server_id), Ok(auth_context)) = (server_id, auth_context) else {
+        warn!(
+            "Rust MCP direct prompts/list missing trusted context; falling back to Python dispatcher"
+        );
+        return forward_prompts_list_to_backend(
+            state,
+            incoming_headers,
+            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"prompts/list","params":{}}"#),
+            request_id,
+        )
+        .await;
+    };
+
+    if let Err(response) = authorize_server_method_via_backend(
+        state,
+        &incoming_headers,
+        request_id.clone(),
+        state.backend_prompts_list_authz_url(),
+        "prompts/list",
+    )
+    .await
+    {
+        return response;
+    }
+
+    match query_server_prompts_list_from_db(state, &server_id, &auth_context).await {
+        Ok(prompts) => json_response(
+            StatusCode::OK,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": {
+                    "prompts": prompts,
+                },
+            }),
+        ),
+        Err(err) => {
+            error!(
+                "Rust MCP direct prompts/list DB query failed: {err}; falling back to Python dispatcher"
+            );
+            forward_prompts_list_to_backend(
+                state,
+                incoming_headers,
+                Bytes::from_static(br#"{"jsonrpc":"2.0","method":"prompts/list","params":{}}"#),
+                request_id,
+            )
+            .await
+        }
+    }
+}
+
+async fn direct_server_resources_read(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    request_id: Option<Value>,
+    request: &JsonRpcRequest,
+    body: Bytes,
+) -> Response {
+    let server_id = incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let auth_context = decode_internal_auth_context_from_headers(&incoming_headers);
+
+    let (Some(server_id), Ok(auth_context)) = (server_id, auth_context) else {
+        warn!(
+            "Rust MCP direct resources/read missing trusted context; falling back to Python dispatcher"
+        );
+        return forward_resources_read_to_backend(state, incoming_headers, body, request_id).await;
+    };
+
+    let Some(uri) = request
+        .params
+        .as_object()
+        .and_then(|params| params.get("uri"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    else {
+        return forward_resources_read_to_backend(state, incoming_headers, body, request_id).await;
+    };
+
+    if let Err(response) = authorize_server_method_via_backend(
+        state,
+        &incoming_headers,
+        request_id.clone(),
+        state.backend_resources_read_authz_url(),
+        "resources/read",
+    )
+    .await
+    {
+        return response;
+    }
+
+    match query_server_resource_read_from_db(state, &server_id, &auth_context, uri).await {
+        Ok(Some(content)) => json_response(
+            StatusCode::OK,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": {
+                    "contents": [content],
+                },
+            }),
+        ),
+        Ok(None) => json_response(
+            StatusCode::NOT_FOUND,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": {
+                    "code": -32002,
+                    "message": format!("Resource not found: {uri}"),
+                    "data": {"uri": uri},
+                },
+            }),
+        ),
+        Err(RuntimeError::Config(reason)) if reason == "fallback-python" => {
+            forward_resources_read_to_backend(state, incoming_headers, body, request_id).await
+        }
+        Err(err) => {
+            error!(
+                "Rust MCP direct resources/read DB query failed: {err}; falling back to Python dispatcher"
+            );
+            forward_resources_read_to_backend(state, incoming_headers, body, request_id).await
+        }
+    }
+}
+
+async fn direct_server_prompts_get(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    request_id: Option<Value>,
+    request: &JsonRpcRequest,
+    body: Bytes,
+) -> Response {
+    let server_id = incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let auth_context = decode_internal_auth_context_from_headers(&incoming_headers);
+
+    let (Some(server_id), Ok(auth_context)) = (server_id, auth_context) else {
+        warn!(
+            "Rust MCP direct prompts/get missing trusted context; falling back to Python dispatcher"
+        );
+        return forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await;
+    };
+
+    let Some(name) = request
+        .params
+        .as_object()
+        .and_then(|params| params.get("name"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    else {
+        return forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await;
+    };
+
+    if let Err(response) = authorize_server_method_via_backend(
+        state,
+        &incoming_headers,
+        request_id.clone(),
+        state.backend_prompts_get_authz_url(),
+        "prompts/get",
+    )
+    .await
+    {
+        return response;
+    }
+
+    match query_server_prompt_get_from_db(state, &server_id, &auth_context, name).await {
+        Ok(Some(result)) => json_response(
+            StatusCode::OK,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": result,
+            }),
+        ),
+        Ok(None) => json_response(
+            StatusCode::NOT_FOUND,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": {
+                    "code": -32002,
+                    "message": format!("Prompt not found: {name}"),
+                    "data": {"name": name},
+                },
+            }),
+        ),
+        Err(RuntimeError::Config(reason)) if reason == "fallback-python" => {
+            forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await
+        }
+        Err(err) => {
+            error!(
+                "Rust MCP direct prompts/get DB query failed: {err}; falling back to Python dispatcher"
+            );
+            forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await
+        }
+    }
+}
+
+async fn query_server_resources_list_from_db(
+    state: &AppState,
+    server_id: &str,
+    auth_context: &InternalAuthContext,
+) -> Result<Vec<Value>, RuntimeError> {
+    let pool = state
+        .db_pool()
+        .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
+    let client = pool.get().await.map_err(|err| {
+        RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
+    })?;
+
+    let is_unrestricted_admin = auth_context.is_admin && auth_context.teams.is_none();
+    let rows = if is_unrestricted_admin {
+        client
+            .query(
+                "SELECT r.uri, r.name, r.description, r.mime_type, r.size \
+                 FROM resources r \
+                 JOIN server_resource_association sra ON r.id = sra.resource_id \
+                 WHERE sra.server_id = $1 AND r.uri_template IS NULL AND r.enabled = TRUE",
+                &[&server_id],
+            )
+            .await?
+    } else {
+        let team_ids = auth_context.teams.clone().unwrap_or_default();
+        let is_public_only = auth_context
+            .teams
+            .as_ref()
+            .map(|teams| teams.is_empty())
+            .unwrap_or(true);
+        let allow_owner_access = !is_public_only && auth_context.email.is_some();
+        let owner_email = auth_context.email.as_deref();
+
+        client
+            .query(
+                "SELECT r.uri, r.name, r.description, r.mime_type, r.size \
+                 FROM resources r \
+                 JOIN server_resource_association sra ON r.id = sra.resource_id \
+                 WHERE sra.server_id = $1 \
+                   AND r.uri_template IS NULL \
+                   AND r.enabled = TRUE \
+                   AND ( \
+                        r.visibility = 'public' \
+                        OR ($2::bool AND r.owner_email = $3) \
+                        OR (COALESCE(array_length($4::text[], 1), 0) > 0 AND r.team_id = ANY($4::text[]) AND r.visibility IN ('team', 'public')) \
+                   )",
+                &[&server_id, &allow_owner_access, &owner_email, &team_ids],
+            )
+            .await?
+    };
+
+    Ok(rows.into_iter().map(resource_row_to_value).collect())
+}
+
+async fn query_server_resource_templates_list_from_db(
+    state: &AppState,
+    server_id: &str,
+    auth_context: &InternalAuthContext,
+) -> Result<Vec<Value>, RuntimeError> {
+    let pool = state
+        .db_pool()
+        .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
+    let client = pool.get().await.map_err(|err| {
+        RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
+    })?;
+
+    let is_unrestricted_admin = auth_context.is_admin && auth_context.teams.is_none();
+    let rows = if is_unrestricted_admin {
+        client
+            .query(
+                "SELECT r.id, r.uri_template, r.name, r.description, r.mime_type \
+                 FROM resources r \
+                 JOIN server_resource_association sra ON r.id = sra.resource_id \
+                 WHERE sra.server_id = $1 AND r.uri_template IS NOT NULL AND r.enabled = TRUE",
+                &[&server_id],
+            )
+            .await?
+    } else {
+        let team_ids = auth_context.teams.clone().unwrap_or_default();
+        let is_public_only = auth_context
+            .teams
+            .as_ref()
+            .map(|teams| teams.is_empty())
+            .unwrap_or(true);
+        let allow_owner_access = !is_public_only && auth_context.email.is_some();
+        let owner_email = auth_context.email.as_deref();
+
+        client
+            .query(
+                "SELECT r.id, r.uri_template, r.name, r.description, r.mime_type \
+                 FROM resources r \
+                 JOIN server_resource_association sra ON r.id = sra.resource_id \
+                 WHERE sra.server_id = $1 \
+                   AND r.uri_template IS NOT NULL \
+                   AND r.enabled = TRUE \
+                   AND ( \
+                        r.visibility = 'public' \
+                        OR ($2::bool AND r.owner_email = $3) \
+                        OR (COALESCE(array_length($4::text[], 1), 0) > 0 AND r.team_id = ANY($4::text[]) AND r.visibility IN ('team', 'public')) \
+                   )",
+                &[&server_id, &allow_owner_access, &owner_email, &team_ids],
+            )
+            .await?
+    };
+
+    Ok(rows
+        .into_iter()
+        .map(resource_template_row_to_value)
+        .collect())
+}
+
+async fn query_server_prompts_list_from_db(
+    state: &AppState,
+    server_id: &str,
+    auth_context: &InternalAuthContext,
+) -> Result<Vec<Value>, RuntimeError> {
+    let pool = state
+        .db_pool()
+        .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
+    let client = pool.get().await.map_err(|err| {
+        RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
+    })?;
+
+    let is_unrestricted_admin = auth_context.is_admin && auth_context.teams.is_none();
+    let rows = if is_unrestricted_admin {
+        client
+            .query(
+                "SELECT p.name, p.description, p.argument_schema \
+                 FROM prompts p \
+                 JOIN server_prompt_association spa ON p.id = spa.prompt_id \
+                 WHERE spa.server_id = $1 AND p.enabled = TRUE",
+                &[&server_id],
+            )
+            .await?
+    } else {
+        let team_ids = auth_context.teams.clone().unwrap_or_default();
+        let is_public_only = auth_context
+            .teams
+            .as_ref()
+            .map(|teams| teams.is_empty())
+            .unwrap_or(true);
+        let allow_owner_access = !is_public_only && auth_context.email.is_some();
+        let owner_email = auth_context.email.as_deref();
+
+        client
+            .query(
+                "SELECT p.name, p.description, p.argument_schema \
+                 FROM prompts p \
+                 JOIN server_prompt_association spa ON p.id = spa.prompt_id \
+                 WHERE spa.server_id = $1 \
+                   AND p.enabled = TRUE \
+                   AND ( \
+                        p.visibility = 'public' \
+                        OR ($2::bool AND p.owner_email = $3) \
+                        OR (COALESCE(array_length($4::text[], 1), 0) > 0 AND p.team_id = ANY($4::text[]) AND p.visibility IN ('team', 'public')) \
+                   )",
+                &[&server_id, &allow_owner_access, &owner_email, &team_ids],
+            )
+            .await?
+    };
+
+    Ok(rows.into_iter().map(prompt_row_to_value).collect())
+}
+
+async fn query_server_resource_read_from_db(
+    state: &AppState,
+    server_id: &str,
+    auth_context: &InternalAuthContext,
+    uri: &str,
+) -> Result<Option<Value>, RuntimeError> {
+    let pool = state
+        .db_pool()
+        .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
+    let client = pool.get().await.map_err(|err| {
+        RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
+    })?;
+
+    let is_unrestricted_admin = auth_context.is_admin && auth_context.teams.is_none();
+    let rows = if is_unrestricted_admin {
+        client
+            .query(
+                "SELECT r.uri, r.mime_type, r.text_content, r.binary_content, r.gateway_id, r.uri_template \
+                 FROM resources r \
+                 JOIN server_resource_association sra ON r.id = sra.resource_id \
+                 WHERE sra.server_id = $1 AND r.uri = $2 AND r.enabled = TRUE \
+                 LIMIT 2",
+                &[&server_id, &uri],
+            )
+            .await?
+    } else {
+        let team_ids = auth_context.teams.clone().unwrap_or_default();
+        let is_public_only = auth_context
+            .teams
+            .as_ref()
+            .map(|teams| teams.is_empty())
+            .unwrap_or(true);
+        let allow_owner_access = !is_public_only && auth_context.email.is_some();
+        let owner_email = auth_context.email.as_deref();
+
+        client
+            .query(
+                "SELECT r.uri, r.mime_type, r.text_content, r.binary_content, r.gateway_id, r.uri_template \
+                 FROM resources r \
+                 JOIN server_resource_association sra ON r.id = sra.resource_id \
+                 WHERE sra.server_id = $1 \
+                   AND r.uri = $2 \
+                   AND r.enabled = TRUE \
+                   AND ( \
+                        r.visibility = 'public' \
+                        OR ($3::bool AND r.owner_email = $4) \
+                        OR (COALESCE(array_length($5::text[], 1), 0) > 0 AND r.team_id = ANY($5::text[]) AND r.visibility IN ('team', 'public')) \
+                   ) \
+                 LIMIT 2",
+                &[&server_id, &uri, &allow_owner_access, &owner_email, &team_ids],
+            )
+            .await?
+    };
+
+    if rows.len() > 1 {
+        warn!(
+            "Rust MCP direct resources/read found multiple rows for uri={uri}; falling back to Python dispatcher"
+        );
+        return Err(RuntimeError::Config("fallback-python".to_string()));
+    }
+
+    let Some(row) = rows.into_iter().next() else {
+        return Ok(None);
+    };
+
+    let gateway_id = row.get::<_, Option<String>>("gateway_id");
+    let uri_template = row.get::<_, Option<String>>("uri_template");
+    if gateway_id.is_some() || uri_template.is_some() {
+        return Err(RuntimeError::Config("fallback-python".to_string()));
+    }
+
+    let text_content = row.get::<_, Option<String>>("text_content");
+    let binary_content = row.get::<_, Option<Vec<u8>>>("binary_content");
+    let resource_uri = row.get::<_, String>("uri");
+    let mime_type = row.get::<_, Option<String>>("mime_type");
+
+    let mut content = serde_json::Map::new();
+    content.insert("uri".to_string(), Value::String(resource_uri));
+    if let Some(mime_type) = mime_type {
+        content.insert("mimeType".to_string(), Value::String(mime_type));
+    }
+    if let Some(text_content) = text_content {
+        content.insert("text".to_string(), Value::String(text_content));
+        return Ok(Some(Value::Object(content)));
+    }
+    if let Some(binary_content) = binary_content {
+        content.insert(
+            "blob".to_string(),
+            Value::String(base64::engine::general_purpose::STANDARD.encode(binary_content)),
+        );
+        return Ok(Some(Value::Object(content)));
+    }
+
+    Err(RuntimeError::Config("fallback-python".to_string()))
+}
+
+async fn query_server_prompt_get_from_db(
+    state: &AppState,
+    server_id: &str,
+    auth_context: &InternalAuthContext,
+    name: &str,
+) -> Result<Option<Value>, RuntimeError> {
+    let pool = state
+        .db_pool()
+        .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
+    let client = pool.get().await.map_err(|err| {
+        RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
+    })?;
+
+    let is_unrestricted_admin = auth_context.is_admin && auth_context.teams.is_none();
+    let row = if is_unrestricted_admin {
+        client
+            .query_opt(
+                "SELECT p.template, p.description \
+                 FROM prompts p \
+                 JOIN server_prompt_association spa ON p.id = spa.prompt_id \
+                 WHERE spa.server_id = $1 AND p.name = $2 AND p.enabled = TRUE",
+                &[&server_id, &name],
+            )
+            .await?
+    } else {
+        let team_ids = auth_context.teams.clone().unwrap_or_default();
+        let is_public_only = auth_context
+            .teams
+            .as_ref()
+            .map(|teams| teams.is_empty())
+            .unwrap_or(true);
+        let allow_owner_access = !is_public_only && auth_context.email.is_some();
+        let owner_email = auth_context.email.as_deref();
+
+        client
+            .query_opt(
+                "SELECT p.template, p.description \
+                 FROM prompts p \
+                 JOIN server_prompt_association spa ON p.id = spa.prompt_id \
+                 WHERE spa.server_id = $1 \
+                   AND p.name = $2 \
+                   AND p.enabled = TRUE \
+                   AND ( \
+                        p.visibility = 'public' \
+                        OR ($3::bool AND p.owner_email = $4) \
+                        OR (COALESCE(array_length($5::text[], 1), 0) > 0 AND p.team_id = ANY($5::text[]) AND p.visibility IN ('team', 'public')) \
+                   )",
+                &[&server_id, &name, &allow_owner_access, &owner_email, &team_ids],
+            )
+            .await?
+    };
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    Ok(Some(json!({
+        "description": row.get::<_, Option<String>>("description"),
+        "messages": [{
+            "role": "user",
+            "content": {
+                "type": "text",
+                "text": row.get::<_, String>("template"),
+            }
+        }],
+    })))
+}
+
+fn resource_row_to_value(row: tokio_postgres::Row) -> Value {
+    let mut resource = serde_json::Map::new();
+    resource.insert("uri".to_string(), Value::String(row.get("uri")));
+    resource.insert("name".to_string(), Value::String(row.get("name")));
+    if let Some(description) = row.get::<_, Option<String>>("description") {
+        resource.insert("description".to_string(), Value::String(description));
+    }
+    if let Some(mime_type) = row.get::<_, Option<String>>("mime_type") {
+        resource.insert("mimeType".to_string(), Value::String(mime_type));
+    }
+    if let Some(size) = row.get::<_, Option<i32>>("size") {
+        resource.insert("size".to_string(), Value::Number(size.into()));
+    }
+    Value::Object(resource)
+}
+
+fn resource_template_row_to_value(row: tokio_postgres::Row) -> Value {
+    let mut resource_template = serde_json::Map::new();
+    resource_template.insert("id".to_string(), Value::String(row.get("id")));
+    resource_template.insert("uriTemplate".to_string(), Value::String(row.get("uri_template")));
+    resource_template.insert("name".to_string(), Value::String(row.get("name")));
+    if let Some(description) = row.get::<_, Option<String>>("description") {
+        resource_template.insert("description".to_string(), Value::String(description));
+    }
+    if let Some(mime_type) = row.get::<_, Option<String>>("mime_type") {
+        resource_template.insert("mimeType".to_string(), Value::String(mime_type));
+    }
+    Value::Object(resource_template)
+}
+
+fn prompt_row_to_value(row: tokio_postgres::Row) -> Value {
+    let mut prompt = serde_json::Map::new();
+    prompt.insert("name".to_string(), Value::String(row.get("name")));
+    if let Some(description) = row.get::<_, Option<String>>("description") {
+        prompt.insert("description".to_string(), Value::String(description));
+    }
+    prompt.insert(
+        "arguments".to_string(),
+        Value::Array(prompt_arguments_from_schema(
+            row.get::<_, Option<Value>>("argument_schema"),
+        )),
+    );
+    Value::Object(prompt)
+}
+
+fn prompt_arguments_from_schema(argument_schema: Option<Value>) -> Vec<Value> {
+    let Some(argument_schema) = argument_schema else {
+        return Vec::new();
+    };
+    let Some(schema_object) = argument_schema.as_object() else {
+        return Vec::new();
+    };
+    let properties = schema_object
+        .get("properties")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let required = schema_object
+        .get("required")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let required_names: std::collections::HashSet<String> = required
+        .into_iter()
+        .filter_map(|value| value.as_str().map(str::to_string))
+        .collect();
+
+    let mut arguments = Vec::new();
+    for (name, property) in properties {
+        let description = property
+            .as_object()
+            .and_then(|object| object.get("description"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        arguments.push(json!({
+            "name": name,
+            "description": description,
+            "required": required_names.contains(&name),
+        }));
+    }
+    arguments
+}
+
+async fn authorize_server_method_via_backend(
+    state: &AppState,
+    incoming_headers: &HeaderMap,
+    request_id: Option<Value>,
+    url: &str,
+    method_label: &str,
+) -> Result<(), Response> {
+    let backend_response = state
+        .client
+        .post(url)
+        .headers(build_forwarded_headers(incoming_headers))
+        .send()
+        .await
+        .map_err(|err| {
+            error!("backend MCP {method_label} authz failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request_id,
+                    "error": {
+                        "code": -32000,
+                        "message": format!("Backend MCP {method_label} authz failed"),
+                        "data": err.to_string(),
+                    }
+                }),
+            )
+        })?;
+
+    if backend_response.status().is_success() {
+        return Ok(());
+    }
+
+    let status = backend_response.status();
+    let backend_headers = backend_response.headers().clone();
+    let payload: Value = match backend_response.json().await {
+        Ok(payload) => payload,
+        Err(err) => {
+            error!("backend MCP {method_label} authz response decode failed: {err}");
+            return Err(json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request_id,
+                    "error": {
+                        "code": -32000,
+                        "message": format!("Backend MCP {method_label} authz decode failed"),
+                        "data": err.to_string(),
+                    }
+                }),
+            ));
+        }
+    };
+
+    Err(response_from_json_with_headers(
+        status,
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id,
+            "error": payload,
+        }),
+        &backend_headers,
+    ))
 }
 
 fn decode_internal_auth_context_from_headers(
