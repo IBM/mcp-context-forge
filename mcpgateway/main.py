@@ -6343,7 +6343,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
                 else:
                     result = {"contents": [result]}
-            except ValueError:
+            except (ValueError, ResourceNotFoundError):
                 # Resource not found in the gateway
                 logger.error(f"Resource not found: {uri}")
                 raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri})
