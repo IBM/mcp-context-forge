@@ -419,11 +419,30 @@ class RustEventStore(EventStore):
     """Rust-backed event store that delegates resumable stream state to the sidecar."""
 
     def __init__(self, max_events_per_stream: int = 100, ttl: int = 3600, key_prefix: str = _RUST_EVENT_STORE_DEFAULT_KEY_PREFIX):
+        """Initialize the Rust-backed event store wrapper.
+
+        Args:
+            max_events_per_stream: Maximum number of events retained per stream.
+            ttl: Event retention time in seconds.
+            key_prefix: Redis key prefix shared with the Rust sidecar.
+        """
         self.max_events_per_stream = max_events_per_stream
         self.ttl = ttl
         self.key_prefix = key_prefix.rstrip(":")
 
     async def store_event(self, stream_id: StreamId, message: JSONRPCMessage | None) -> EventId:
+        """Store an event in the Rust-backed resumable event store.
+
+        Args:
+            stream_id: Stream that owns the event.
+            message: JSON-RPC payload to persist for replay.
+
+        Returns:
+            The generated event identifier returned by the Rust sidecar.
+
+        Raises:
+            RuntimeError: If the Rust sidecar event store is unavailable or returns invalid data.
+        """
         client = await _get_rust_event_store_client()
         message_dict = None if message is None else (message.model_dump() if hasattr(message, "model_dump") else dict(message))
         response = await client.post(
@@ -445,6 +464,15 @@ class RustEventStore(EventStore):
         return event_id
 
     async def replay_events_after(self, last_event_id: EventId, send_callback: EventCallback) -> Union[StreamId, None]:
+        """Replay events newer than ``last_event_id`` through the provided callback.
+
+        Args:
+            last_event_id: Last event acknowledged by the reconnecting client.
+            send_callback: Callback invoked for each replayed event payload.
+
+        Returns:
+            The associated stream identifier when replay succeeds, else ``None``.
+        """
         client = await _get_rust_event_store_client()
         response = await client.post(
             _build_rust_runtime_internal_url("/_internal/event-store/replay"),
