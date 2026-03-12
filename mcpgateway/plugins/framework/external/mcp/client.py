@@ -478,6 +478,7 @@ class ExternalPlugin(Plugin):
             raise
         except Exception as e:
             # Also catch McpError from the mcp library
+            # Third-Party
             from mcp import McpError  # pylint: disable=import-outside-toplevel
 
             if isinstance(e, McpError):
