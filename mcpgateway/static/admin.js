@@ -14512,8 +14512,10 @@ async function testPrompt(promptId) {
             if (resultContainer) {
                 resultContainer.textContent = "";
                 const placeholder = document.createElement("div");
-                placeholder.className = "text-gray-500 dark:text-gray-400 text-sm italic";
-                placeholder.textContent = 'Click "Render Prompt" to see the rendered output';
+                placeholder.className =
+                    "text-gray-500 dark:text-gray-400 text-sm italic";
+                placeholder.textContent =
+                    'Click "Render Prompt" to see the rendered output';
                 resultContainer.appendChild(placeholder);
             }
             const promptLoading = safeGetElement("prompt-test-loading");
