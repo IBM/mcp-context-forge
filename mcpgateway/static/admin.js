@@ -21694,11 +21694,15 @@ async function handleA2ATestSubmit(e) {
             window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
         );
 
-        if (!response.ok) {
+        // Parse the JSON body for all responses — the backend returns
+        // structured {success, error, error_type} even for non-2xx status
+        // codes, and the display logic below already handles both cases.
+        let result;
+        try {
+            result = await response.json();
+        } catch {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-
-        const result = await response.json();
 
         // Display result
         const isSuccess = result.success && !result.error;
