@@ -110,9 +110,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         try:
             # Create request-scoped database session and store in request.state
             # This session will be reused by route handlers via get_db() dependency,
-            # eliminating duplicate session creation
+            # eliminating duplicate session creation (Issue #3467)
             db = SessionLocal()
-            logger.info(f"[OBSERVABILITY] DB session created: {id(db)}")
+            logger.debug(f"[OBSERVABILITY] DB session created: {id(db)}")
             request.state.db = db
             session_owned_by_middleware = True
 
@@ -158,6 +158,14 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if db:
                 try:
                     db.rollback()  # Error path - rollback any partial transaction
+                except Exception as rollback_error:
+                    logger.debug(f"Failed to rollback during cleanup: {rollback_error}")
+                    # Connection is broken - invalidate to remove from pool
+                    try:
+                        db.invalidate()
+                    except Exception:
+                        pass  # Best effort cleanup
+                try:
                     db.close()
                 except Exception as close_error:
                     logger.debug(f"Failed to close database session during cleanup: {close_error}")
@@ -200,8 +208,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     logger.warning(f"Failed to end trace {trace_id}: {end_trace_error}")
 
             # Commit the shared session (used by both observability and route handler)
-            # Only commit if the transaction is still active
-            if db.is_active:
+            # Note: Some route handlers may have already committed. The is_active check
+            # ensures we only commit if the transaction is still open. Services that
+            # explicitly commit will have already closed their transaction.
+            # Only commit if the transaction is still active AND has uncommitted changes
+            if db.is_active and db.in_transaction():
                 db.commit()
 
             return response
@@ -238,6 +249,13 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 db.rollback()
             except Exception as rollback_error:
                 logger.warning(f"Failed to rollback database session: {rollback_error}")
+                # Connection is broken - invalidate to remove from pool
+                # This handles cases like PgBouncer query_wait_timeout where
+                # the connection is dead and rollback itself fails
+                try:
+                    db.invalidate()
+                except Exception:
+                    pass  # Best effort cleanup on connection failure
 
             # Re-raise the original exception
             raise

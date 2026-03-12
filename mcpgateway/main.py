@@ -2407,11 +2407,11 @@ def get_db(request: Request = None):
         'ResilientSession'
     """
     # Check if ObservabilityMiddleware already created a request-scoped session
-    # This eliminates duplicate session creation when observability is enabled
+    # This eliminates duplicate session creation when observability is enabled (Issue #3467)
     if request is not None and hasattr(request, "state") and hasattr(request.state, "db"):
         db = request.state.db
         if db is not None:
-            logger.info(f"[GET_DB] Reusing session from middleware: {id(db)}")
+            logger.debug(f"[GET_DB] Reusing session from middleware: {id(db)}")
             # Yield the middleware's session without closing it
             # The middleware will handle commit/rollback/close
             yield db
@@ -2419,7 +2419,7 @@ def get_db(request: Request = None):
 
     # Fallback: Create our own session (observability disabled or middleware didn't create one)
     db = SessionLocal()
-    logger.info(f"[GET_DB] DB session created: {id(db)}")
+    logger.debug(f"[GET_DB] DB session created: {id(db)}")
     try:
         yield db
         # Only commit if the transaction is still active.
