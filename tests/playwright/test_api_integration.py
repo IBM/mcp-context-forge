@@ -189,6 +189,20 @@ class TestAPIIntegration:
         expect(page.locator("div.fixed.bg-red-600")).to_be_visible(timeout=5000)
         page.wait_for_timeout(2000)
 
+        # Close modal and reopen for next test
+        page.click("#tool-test-modal button:has-text('Close')")
+        page.wait_for_timeout(1000)
+        test_btn.click()
+        page.wait_for_timeout(1000)
+        expect(page.locator("#tool-test-modal")).to_be_visible(timeout=10000)
+
+        # Test null JSON (should be rejected - typeof null === "object" in JS)
+        page.locator("#tool-test-form-fields textarea").first.fill("null")
+        page.wait_for_timeout(1000)
+        page.click('button:has-text("Run Tool")')
+        expect(page.locator("div.fixed.bg-red-600")).to_be_visible(timeout=5000)
+        page.wait_for_timeout(2000)
+
     def test_mcp_initialize_endpoint(self, page: Page, api_request_context: APIRequestContext, admin_page):
         """Test MCP initialize endpoint directly via APIRequestContext."""
         cookies = page.context.cookies()

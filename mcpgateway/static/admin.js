@@ -12271,10 +12271,7 @@ async function testTool(toolId) {
                     let fieldInput;
                     const isTextType = prop.type === "text";
                     const isObjectType = prop.type === "object";
-                    if (isTextType) {
-                        fieldInput = document.createElement("textarea");
-                        fieldInput.rows = 4;
-                    } else if (isObjectType) {
+                    if (isTextType || isObjectType) {
                         fieldInput = document.createElement("textarea");
                         fieldInput.rows = 4;
                     } else {
@@ -14324,6 +14321,7 @@ async function runToolTest() {
                         try {
                             const parsed = JSON.parse(value);
                             if (
+                                parsed === null ||
                                 typeof parsed !== "object" ||
                                 Array.isArray(parsed)
                             ) {
