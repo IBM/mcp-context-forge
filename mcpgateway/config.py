@@ -1871,7 +1871,17 @@ Disallow: /
     @field_validator("experimental_rust_mcp_runtime_uds", mode="after")
     @classmethod
     def _validate_experimental_rust_mcp_runtime_uds(cls, value: Optional[str]) -> Optional[str]:
-        """Validate the optional UDS path used for the Rust MCP runtime sidecar."""
+        """Validate the optional UDS path used for the Rust MCP runtime sidecar.
+
+        Args:
+            value: Candidate UDS path from configuration.
+
+        Returns:
+            The normalized absolute UDS path, or ``None`` when unset.
+
+        Raises:
+            ValueError: If the path is not absolute or its parent directory is missing.
+        """
         if value in (None, ""):
             return None
 

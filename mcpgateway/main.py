@@ -307,7 +307,14 @@ _INTERNAL_MCP_SESSION_VALIDATED_HEADER = "x-contextforge-session-validated"
 
 
 def _get_internal_mcp_auth_context(request: Request) -> Optional[Dict[str, Any]]:
-    """Return trusted auth context forwarded from the StreamableHTTP MCP auth layer."""
+    """Return trusted auth context forwarded from the StreamableHTTP MCP auth layer.
+
+    Args:
+        request: Incoming request that may carry trusted MCP auth context on state.
+
+    Returns:
+        The forwarded auth context dictionary when present, otherwise ``None``.
+    """
     internal_auth_context = getattr(request.state, "_mcp_internal_auth_context", None)
     if isinstance(internal_auth_context, dict):
         return internal_auth_context
@@ -315,7 +322,17 @@ def _get_internal_mcp_auth_context(request: Request) -> Optional[Dict[str, Any]]
 
 
 def _decode_internal_mcp_auth_context(header_value: str) -> Dict[str, Any]:
-    """Decode the trusted internal MCP auth header payload."""
+    """Decode the trusted internal MCP auth header payload.
+
+    Args:
+        header_value: Base64url-encoded trusted auth context header value.
+
+    Returns:
+        Decoded auth context dictionary.
+
+    Raises:
+        ValueError: If the decoded payload is not a JSON object.
+    """
     padding = "=" * (-len(header_value) % 4)
     decoded = base64.urlsafe_b64decode(f"{header_value}{padding}".encode("ascii"))
     payload = orjson.loads(decoded)
@@ -325,14 +342,33 @@ def _decode_internal_mcp_auth_context(header_value: str) -> Dict[str, Any]:
 
 
 def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
-    """Return whether the request came from the local Rust runtime sidecar."""
+    """Return whether the request came from the local Rust runtime sidecar.
+
+    Args:
+        request: Incoming request to inspect.
+
+    Returns:
+        ``True`` when the request carries the trusted Rust runtime marker from
+        loopback, otherwise ``False``.
+    """
     runtime_marker = request.headers.get("x-contextforge-mcp-runtime")
     client_host = getattr(getattr(request, "client", None), "host", None)
     return runtime_marker == "rust" and client_host in ("127.0.0.1", "::1")
 
 
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
-    """Build the authenticated user payload for internal Rust -> Python MCP dispatch."""
+    """Build the authenticated user payload for internal Rust -> Python MCP dispatch.
+
+    Args:
+        request: Trusted internal request forwarded from the Rust runtime.
+
+    Returns:
+        Synthetic authenticated user payload used by internal MCP handlers.
+
+    Raises:
+        HTTPException: If the request is not trusted or the forwarded auth context
+            is missing or invalid.
+    """
     if not _is_trusted_internal_mcp_runtime_request(request):
         raise HTTPException(status_code=403, detail="Internal MCP dispatch is only available to the local Rust runtime")
 
@@ -363,7 +399,15 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
 
 
 def _enforce_internal_mcp_server_scope(request: Request, server_id: str) -> None:
-    """Validate trusted internal server scope against any forwarded token server scope."""
+    """Validate trusted internal server scope against any forwarded token server scope.
+
+    Args:
+        request: Trusted internal MCP request.
+        server_id: Effective virtual server identifier for the operation.
+
+    Raises:
+        HTTPException: If the forwarded token scope does not authorize the server.
+    """
     auth_context = _get_internal_mcp_auth_context(request)
     if not isinstance(auth_context, dict):
         return
@@ -381,6 +425,16 @@ async def _authorize_internal_mcp_request(request: Request, db: Session, *, perm
     StreamableHTTP middleware already downgraded them to public-only scope and
     enforced per-server OAuth, so the internal Rust -> Python hop should not re-deny
     public-only requests merely because there is no authenticated RBAC identity.
+
+    Args:
+        request: Trusted internal MCP request.
+        db: Active database session.
+        permission: RBAC permission required for the method.
+        method: MCP method name being authorized.
+        server_id: Optional virtual server identifier used for additional scope checks.
+
+    Returns:
+        The forwarded user payload used for downstream authorization and scoping.
     """
     user = _build_internal_mcp_forwarded_user(request)
     auth_context = _get_internal_mcp_auth_context(request) or {}
@@ -680,6 +734,12 @@ def _is_permission_admin_user(user) -> bool:
 
     This is stricter than token-scope admin semantics. It is used only to skip
     redundant RBAC DB lookups after token scope caps have already been enforced.
+
+    Args:
+        user: Authenticated user object or dict-like payload.
+
+    Returns:
+        ``True`` when the caller already has permission-layer admin authority.
     """
     if hasattr(user, "is_admin"):
         return bool(getattr(user, "is_admin", False))
@@ -723,7 +783,14 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
 
 
 def _serialize_mcp_tool_definition(tool: Any) -> Dict[str, Any]:
-    """Return an MCP-compliant tool definition without API-only metadata fields."""
+    """Return an MCP-compliant tool definition without API-only metadata fields.
+
+    Args:
+        tool: Tool ORM object, pydantic model, or dict-like payload.
+
+    Returns:
+        MCP-compatible tool definition dictionary.
+    """
     if hasattr(tool, "model_dump"):
         data = tool.model_dump(by_alias=True, exclude_none=True)
     elif isinstance(tool, dict):
@@ -749,12 +816,26 @@ def _serialize_mcp_tool_definition(tool: Any) -> Dict[str, Any]:
 
 
 def _serialize_mcp_tool_definitions(tools: List[Any]) -> List[Dict[str, Any]]:
-    """Serialize tool records to MCP tool definitions."""
+    """Serialize tool records to MCP tool definitions.
+
+    Args:
+        tools: Iterable of tool-like records to serialize.
+
+    Returns:
+        List of MCP-compatible tool definitions.
+    """
     return [_serialize_mcp_tool_definition(tool) for tool in tools]
 
 
 def _serialize_legacy_tool_payloads(tools: List[Any]) -> List[Dict[str, Any]]:
-    """Serialize tool records using the legacy JSON-RPC shape."""
+    """Serialize tool records using the legacy JSON-RPC shape.
+
+    Args:
+        tools: Iterable of tool-like records to serialize.
+
+    Returns:
+        List of legacy tool payload dictionaries.
+    """
     payloads: List[Dict[str, Any]] = []
     for tool in tools:
         if hasattr(tool, "model_dump"):
@@ -864,7 +945,15 @@ resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settin
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
-    """Read a boolean environment variable using common truthy spellings."""
+    """Read a boolean environment variable using common truthy spellings.
+
+    Args:
+        name: Environment variable name.
+        default: Default value used when the variable is unset.
+
+    Returns:
+        Parsed boolean value.
+    """
     value = os.getenv(name)
     if value is None:
         return default
@@ -872,22 +961,38 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 def _rust_build_included() -> bool:
-    """Return whether the current image includes Rust MCP artifacts."""
+    """Return whether the current image includes Rust MCP artifacts.
+
+    Returns:
+        ``True`` when the current image contains the Rust MCP binaries/plugins.
+    """
     return _env_flag("CONTEXTFORGE_ENABLE_RUST_BUILD", default=False)
 
 
 def _rust_runtime_managed() -> bool:
-    """Return whether the gateway expects to manage the Rust MCP sidecar locally."""
+    """Return whether the gateway expects to manage the Rust MCP sidecar locally.
+
+    Returns:
+        ``True`` when the gateway should launch and supervise the Rust sidecar.
+    """
     return _env_flag("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", default=True)
 
 
 def _current_mcp_transport_mount() -> str:
-    """Return which public /mcp transport is currently mounted."""
+    """Return which public /mcp transport is currently mounted.
+
+    Returns:
+        Runtime label identifying the currently mounted public MCP transport.
+    """
     return "rust" if settings.experimental_rust_mcp_runtime_enabled else "python"
 
 
 def _current_mcp_runtime_mode() -> str:
-    """Return a compact runtime-mode label for observability."""
+    """Return a compact runtime-mode label for observability.
+
+    Returns:
+        Human-readable runtime mode label for health/readiness reporting.
+    """
     if settings.experimental_rust_mcp_runtime_enabled:
         return "rust-managed" if _rust_runtime_managed() else "rust-external"
     if _rust_build_included():
@@ -896,21 +1001,33 @@ def _current_mcp_runtime_mode() -> str:
 
 
 def _current_mcp_session_core_mode() -> str:
-    """Return which session core currently owns MCP session metadata."""
+    """Return which session core currently owns MCP session metadata.
+
+    Returns:
+        ``"rust"`` when the Rust session core is enabled, otherwise ``"python"``.
+    """
     if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_core_enabled:
         return "rust"
     return "python"
 
 
 def _current_mcp_event_store_mode() -> str:
-    """Return which runtime currently owns MCP resumable event-store semantics."""
+    """Return which runtime currently owns MCP resumable event-store semantics.
+
+    Returns:
+        ``"rust"`` when the Rust event store is enabled, otherwise ``"python"``.
+    """
     if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_event_store_enabled:
         return "rust"
     return "python"
 
 
 def _current_mcp_resume_core_mode() -> str:
-    """Return which runtime currently owns public MCP replay/resume behavior."""
+    """Return which runtime currently owns public MCP replay/resume behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns replay/resume, otherwise ``"python"``.
+    """
     if (
         settings.experimental_rust_mcp_runtime_enabled
         and settings.experimental_rust_mcp_session_core_enabled
@@ -922,21 +1039,33 @@ def _current_mcp_resume_core_mode() -> str:
 
 
 def _current_mcp_live_stream_core_mode() -> str:
-    """Return which runtime currently owns non-resume public GET /mcp SSE behavior."""
+    """Return which runtime currently owns non-resume public GET /mcp SSE behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns live GET /mcp streaming, otherwise ``"python"``.
+    """
     if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_live_stream_core_enabled:
         return "rust"
     return "python"
 
 
 def _current_mcp_affinity_core_mode() -> str:
-    """Return which runtime currently owns MCP multi-worker session-affinity forwarding."""
+    """Return which runtime currently owns MCP multi-worker session-affinity forwarding.
+
+    Returns:
+        ``"rust"`` when Rust owns session-affinity forwarding, otherwise ``"python"``.
+    """
     if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_affinity_core_enabled:
         return "rust"
     return "python"
 
 
 def _mcp_runtime_status_payload() -> Dict[str, Any]:
-    """Return MCP runtime diagnostics for health/readiness endpoints."""
+    """Return MCP runtime diagnostics for health/readiness endpoints.
+
+    Returns:
+        Diagnostic payload describing the active MCP runtime configuration.
+    """
     payload: Dict[str, Any] = {
         "mode": _current_mcp_runtime_mode(),
         "mounted": _current_mcp_transport_mount(),
@@ -972,7 +1101,11 @@ def _mcp_runtime_status_payload() -> Dict[str, Any]:
 
 
 def _apply_runtime_mode_headers(response: Response) -> None:
-    """Attach MCP runtime mode headers to a response."""
+    """Attach MCP runtime mode headers to a response.
+
+    Args:
+        response: Response object to annotate.
+    """
     response.headers["x-contextforge-mcp-runtime-mode"] = _current_mcp_runtime_mode()
     response.headers["x-contextforge-mcp-transport-mounted"] = _current_mcp_transport_mount()
     response.headers["x-contextforge-rust-build-included"] = "true" if _rust_build_included() else "false"
@@ -6326,14 +6459,33 @@ async def remove_root(
 @utility_router.post("/rpc/")
 @utility_router.post("/rpc")
 async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
-    """Handle authenticated public RPC requests."""
+    """Handle authenticated public RPC requests.
+
+    Args:
+        request: Incoming public RPC request.
+        db: Database session provided by dependency injection.
+        user: Authenticated user payload with permissions.
+
+    Returns:
+        JSON-RPC response generated by the shared authenticated RPC dispatcher.
+    """
     return await _handle_rpc_authenticated(request, db=db, user=user)
 
 
 @utility_router.post("/_internal/mcp/rpc/")
 @utility_router.post("/_internal/mcp/rpc")
 async def handle_internal_mcp_rpc(request: Request):
-    """Handle trusted MCP dispatch forwarded from the local Rust runtime."""
+    """Handle trusted MCP dispatch forwarded from the local Rust runtime.
+
+    Args:
+        request: Trusted internal MCP request from the Rust runtime.
+
+    Returns:
+        JSON-RPC response from the shared authenticated RPC dispatcher.
+
+    Raises:
+        Exception: Propagated after rolling back the local database session.
+    """
     user = _build_internal_mcp_forwarded_user(request)
     db = SessionLocal()
     try:
@@ -6357,7 +6509,14 @@ async def handle_internal_mcp_rpc(request: Request):
 @utility_router.post("/_internal/mcp/initialize/")
 @utility_router.post("/_internal/mcp/initialize")
 async def handle_internal_mcp_initialize(request: Request):
-    """Handle trusted MCP initialize requests forwarded from the local Rust runtime."""
+    """Handle trusted MCP initialize requests forwarded from the local Rust runtime.
+
+    Args:
+        request: Trusted internal MCP initialize request.
+
+    Returns:
+        JSON-RPC initialize response payload.
+    """
     user = _build_internal_mcp_forwarded_user(request)
     req_id = None
     try:
@@ -6422,7 +6581,14 @@ async def handle_internal_mcp_initialize(request: Request):
 @utility_router.delete("/_internal/mcp/session/")
 @utility_router.delete("/_internal/mcp/session")
 async def handle_internal_mcp_session_delete(request: Request):
-    """Handle trusted MCP session teardown forwarded from the local Rust runtime."""
+    """Handle trusted MCP session teardown forwarded from the local Rust runtime.
+
+    Args:
+        request: Trusted internal MCP session-delete request.
+
+    Returns:
+        Empty HTTP response indicating the session was removed.
+    """
     _build_internal_mcp_forwarded_user(request)
     auth_context = _get_internal_mcp_auth_context(request) or {}
     mcp_session_id = request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id")
@@ -6459,7 +6625,17 @@ async def handle_internal_mcp_session_delete(request: Request):
 @utility_router.post("/_internal/mcp/notifications/initialized/")
 @utility_router.post("/_internal/mcp/notifications/initialized")
 async def handle_internal_mcp_notifications_initialized(request: Request):
-    """Handle trusted MCP notifications/initialized requests from the local Rust runtime."""
+    """Handle trusted MCP notifications/initialized requests from the local Rust runtime.
+
+    Args:
+        request: Trusted internal MCP notification request.
+
+    Returns:
+        Empty HTTP response acknowledging the notification.
+
+    Raises:
+        HTTPException: If trusted server-scope validation fails.
+    """
     _build_internal_mcp_forwarded_user(request)
     req_id = None
     try:
@@ -6509,7 +6685,17 @@ async def handle_internal_mcp_notifications_initialized(request: Request):
 @utility_router.post("/_internal/mcp/notifications/message/")
 @utility_router.post("/_internal/mcp/notifications/message")
 async def handle_internal_mcp_notifications_message(request: Request):
-    """Handle trusted MCP notifications/message requests from the local Rust runtime."""
+    """Handle trusted MCP notifications/message requests from the local Rust runtime.
+
+    Args:
+        request: Trusted internal MCP notification request.
+
+    Returns:
+        Empty HTTP response acknowledging the notification.
+
+    Raises:
+        HTTPException: If trusted server-scope validation fails.
+    """
     _build_internal_mcp_forwarded_user(request)
     req_id = None
     try:
@@ -6566,7 +6752,17 @@ async def handle_internal_mcp_notifications_message(request: Request):
 @utility_router.post("/_internal/mcp/notifications/cancelled/")
 @utility_router.post("/_internal/mcp/notifications/cancelled")
 async def handle_internal_mcp_notifications_cancelled(request: Request):
-    """Handle trusted MCP notifications/cancelled requests from the local Rust runtime."""
+    """Handle trusted MCP notifications/cancelled requests from the local Rust runtime.
+
+    Args:
+        request: Trusted internal MCP cancellation notification.
+
+    Returns:
+        Empty HTTP response acknowledging the cancellation.
+
+    Raises:
+        HTTPException: If cancellation authorization or trusted scope validation fails.
+    """
     user = _build_internal_mcp_forwarded_user(request)
     req_id = None
     try:
@@ -6626,7 +6822,17 @@ async def handle_internal_mcp_notifications_cancelled(request: Request):
 @utility_router.post("/_internal/mcp/tools/list/")
 @utility_router.post("/_internal/mcp/tools/list")
 async def handle_internal_mcp_tools_list(request: Request):
-    """Handle trusted server-scoped tools/list requests forwarded from the Rust runtime."""
+    """Handle trusted server-scoped tools/list requests forwarded from the Rust runtime.
+
+    Args:
+        request: Trusted internal MCP tools/list request.
+
+    Returns:
+        MCP tools/list response payload for the requested virtual server.
+
+    Raises:
+        HTTPException: If the trusted server scope is missing or invalid.
+    """
     server_id = request.headers.get("x-contextforge-server-id")
     if not server_id:
         raise HTTPException(status_code=400, detail="Missing trusted MCP server scope")
@@ -6681,7 +6887,14 @@ async def handle_internal_mcp_tools_list(request: Request):
 @utility_router.post("/_internal/mcp/resources/list/")
 @utility_router.post("/_internal/mcp/resources/list")
 async def handle_internal_mcp_resources_list(request: Request):
-    """Handle trusted resources/list requests forwarded from the Rust runtime."""
+    """Handle trusted resources/list requests forwarded from the Rust runtime.
+
+    Args:
+        request: Trusted internal MCP resources/list request.
+
+    Returns:
+        MCP resources/list response payload.
+    """
     db = SessionLocal()
     req_id = None
     try:
@@ -6776,7 +6989,14 @@ async def handle_internal_mcp_resources_list(request: Request):
 @utility_router.post("/_internal/mcp/resources/read/")
 @utility_router.post("/_internal/mcp/resources/read")
 async def handle_internal_mcp_resources_read(request: Request):
-    """Handle trusted resources/read requests forwarded from the Rust runtime."""
+    """Handle trusted resources/read requests forwarded from the Rust runtime.
+
+    Args:
+        request: Trusted internal MCP resources/read request.
+
+    Returns:
+        MCP resources/read response payload.
+    """
     db = SessionLocal()
     req_id = None
     uri = None
@@ -6891,7 +7111,14 @@ async def handle_internal_mcp_resources_read(request: Request):
 @utility_router.post("/_internal/mcp/resources/subscribe/")
 @utility_router.post("/_internal/mcp/resources/subscribe")
 async def handle_internal_mcp_resources_subscribe(request: Request):
-    """Handle trusted resources/subscribe requests forwarded from the Rust runtime."""
+    """Handle trusted resources/subscribe requests forwarded from the Rust runtime.
+
+    Args:
+        request: Trusted internal MCP resources/subscribe request.
+
+    Returns:
+        Empty JSON response confirming the subscription.
+    """
     db = SessionLocal()
     req_id = None
     try:
@@ -6986,7 +7213,14 @@ async def handle_internal_mcp_resources_subscribe(request: Request):
 @utility_router.post("/_internal/mcp/resources/unsubscribe/")
 @utility_router.post("/_internal/mcp/resources/unsubscribe")
 async def handle_internal_mcp_resources_unsubscribe(request: Request):
-    """Handle trusted resources/unsubscribe requests forwarded from the Rust runtime."""
+    """Handle trusted resources/unsubscribe requests forwarded from the Rust runtime.
+
+    Args:
+        request: Trusted internal MCP resources/unsubscribe request.
+
+    Returns:
+        Empty JSON response confirming the unsubscription.
+    """
     db = SessionLocal()
     req_id = None
     try:
@@ -7065,7 +7299,17 @@ async def handle_internal_mcp_resources_unsubscribe(request: Request):
 @utility_router.post("/_internal/mcp/resources/templates/list/")
 @utility_router.post("/_internal/mcp/resources/templates/list")
 async def handle_internal_mcp_resource_templates_list(request: Request):
-    """Handle trusted resources/templates/list requests forwarded from the Rust runtime."""
+    """Handle trusted resources/templates/list requests forwarded from the Rust runtime.
+
+    Args:
+        request: Trusted internal MCP resources/templates/list request.
+
+    Returns:
+        MCP resources/templates/list response payload.
+
+    Raises:
+        Exception: Propagated after best-effort rollback when unexpected failures occur.
+    """
     db = SessionLocal()
     req_id = None
     try:
@@ -7146,11 +7390,21 @@ async def handle_internal_mcp_resource_templates_list(request: Request):
 @utility_router.post("/_internal/mcp/roots/list/")
 @utility_router.post("/_internal/mcp/roots/list")
 async def handle_internal_mcp_roots_list(request: Request):
-    """Handle trusted roots/list requests forwarded from the Rust runtime."""
+    """Handle trusted roots/list requests forwarded from the Rust runtime.
+
+    Args:
+        request: Trusted internal MCP roots/list request.
+
+    Returns:
+        MCP roots/list response payload.
+
+    Raises:
+        Exception: Propagated after best-effort rollback when unexpected failures occur.
+    """
     db = SessionLocal()
     req_id = None
     try:
-        user = _build_internal_mcp_forwarded_user(request)
+        _build_internal_mcp_forwarded_user(request)
         try:
             body = orjson.loads(await request.body())
         except orjson.JSONDecodeError:
@@ -7204,7 +7458,14 @@ async def handle_internal_mcp_roots_list(request: Request):
 @utility_router.post("/_internal/mcp/completion/complete/")
 @utility_router.post("/_internal/mcp/completion/complete")
 async def handle_internal_mcp_completion_complete(request: Request):
-    """Handle trusted completion/complete requests forwarded from the Rust runtime."""
+    """Handle trusted completion/complete requests forwarded from the Rust runtime.
+
+    Args:
+        request: Trusted internal MCP completion/complete request.
+
+    Returns:
+        MCP completion response payload.
+    """
     db = SessionLocal()
     req_id = None
     try:
@@ -7284,7 +7545,14 @@ async def handle_internal_mcp_completion_complete(request: Request):
 @utility_router.post("/_internal/mcp/sampling/createMessage/")
 @utility_router.post("/_internal/mcp/sampling/createMessage")
 async def handle_internal_mcp_sampling_create_message(request: Request):
-    """Handle trusted sampling/createMessage requests forwarded from the Rust runtime."""
+    """Handle trusted sampling/createMessage requests forwarded from the Rust runtime.
+
+    Args:
+        request: Trusted internal MCP sampling/createMessage request.
+
+    Returns:
+        MCP sampling/createMessage response payload.
+    """
     db = SessionLocal()
     req_id = None
     try:
@@ -7343,7 +7611,14 @@ async def handle_internal_mcp_sampling_create_message(request: Request):
 @utility_router.post("/_internal/mcp/logging/setLevel/")
 @utility_router.post("/_internal/mcp/logging/setLevel")
 async def handle_internal_mcp_logging_set_level(request: Request):
-    """Handle trusted logging/setLevel requests forwarded from the Rust runtime."""
+    """Handle trusted logging/setLevel requests forwarded from the Rust runtime.
+
+    Args:
+        request: Trusted internal MCP logging/setLevel request.
+
+    Returns:
+        Empty JSON response confirming the new log level.
+    """
     db = SessionLocal()
     req_id = None
     try:
@@ -7406,7 +7681,17 @@ async def handle_internal_mcp_logging_set_level(request: Request):
 @utility_router.post("/_internal/mcp/prompts/list/")
 @utility_router.post("/_internal/mcp/prompts/list")
 async def handle_internal_mcp_prompts_list(request: Request):
-    """Handle trusted prompts/list requests forwarded from the Rust runtime."""
+    """Handle trusted prompts/list requests forwarded from the Rust runtime.
+
+    Args:
+        request: Trusted internal MCP prompts/list request.
+
+    Returns:
+        MCP prompts/list response payload.
+
+    Raises:
+        Exception: Propagated after best-effort rollback when unexpected failures occur.
+    """
     db = SessionLocal()
     req_id = None
     try:
@@ -7502,7 +7787,17 @@ async def handle_internal_mcp_prompts_list(request: Request):
 @utility_router.post("/_internal/mcp/prompts/get/")
 @utility_router.post("/_internal/mcp/prompts/get")
 async def handle_internal_mcp_prompts_get(request: Request):
-    """Handle trusted prompts/get requests forwarded from the Rust runtime."""
+    """Handle trusted prompts/get requests forwarded from the Rust runtime.
+
+    Args:
+        request: Trusted internal MCP prompts/get request.
+
+    Returns:
+        MCP prompts/get response payload.
+
+    Raises:
+        Exception: Propagated after best-effort rollback when unexpected failures occur.
+    """
     db = SessionLocal()
     req_id = None
     name = None
@@ -7614,7 +7909,14 @@ async def handle_internal_mcp_prompts_get(request: Request):
 @utility_router.post("/_internal/mcp/tools/list/authz/")
 @utility_router.post("/_internal/mcp/tools/list/authz")
 async def handle_internal_mcp_tools_list_authz(request: Request):
-    """Authorize trusted server-scoped tools/list requests for the Rust direct-DB path."""
+    """Authorize trusted server-scoped tools/list requests for the Rust direct-DB path.
+
+    Args:
+        request: Trusted internal MCP authz request.
+
+    Returns:
+        Empty success response when the request is authorized.
+    """
     return await _authorize_internal_mcp_server_scoped_method(
         request,
         permission="tools.read",
@@ -7628,7 +7930,20 @@ async def _authorize_internal_mcp_server_scoped_method(
     permission: str,
     method: str,
 ) -> Response:
-    """Authorize a trusted server-scoped MCP method for Rust direct-path execution."""
+    """Authorize a trusted server-scoped MCP method for Rust direct-path execution.
+
+    Args:
+        request: Trusted internal MCP authz request.
+        permission: Permission required for the target method.
+        method: MCP method name being authorized.
+
+    Returns:
+        Empty success response when the method is authorized, otherwise a JSON error response.
+
+    Raises:
+        HTTPException: If the trusted server scope header is missing.
+        Exception: Propagated after best-effort rollback when unexpected failures occur.
+    """
     server_id = request.headers.get("x-contextforge-server-id")
     if not server_id:
         raise HTTPException(status_code=400, detail="Missing trusted MCP server scope")
@@ -7663,7 +7978,14 @@ async def _authorize_internal_mcp_server_scoped_method(
 @utility_router.post("/_internal/mcp/resources/list/authz/")
 @utility_router.post("/_internal/mcp/resources/list/authz")
 async def handle_internal_mcp_resources_list_authz(request: Request):
-    """Authorize trusted server-scoped resources/list requests for Rust direct-path execution."""
+    """Authorize trusted server-scoped resources/list requests for Rust direct-path execution.
+
+    Args:
+        request: Trusted internal MCP authz request.
+
+    Returns:
+        Empty success response when the request is authorized.
+    """
     return await _authorize_internal_mcp_server_scoped_method(
         request,
         permission="resources.read",
@@ -7674,7 +7996,14 @@ async def handle_internal_mcp_resources_list_authz(request: Request):
 @utility_router.post("/_internal/mcp/resources/read/authz/")
 @utility_router.post("/_internal/mcp/resources/read/authz")
 async def handle_internal_mcp_resources_read_authz(request: Request):
-    """Authorize trusted server-scoped resources/read requests for Rust direct-path execution."""
+    """Authorize trusted server-scoped resources/read requests for Rust direct-path execution.
+
+    Args:
+        request: Trusted internal MCP authz request.
+
+    Returns:
+        Empty success response when the request is authorized.
+    """
     return await _authorize_internal_mcp_server_scoped_method(
         request,
         permission="resources.read",
@@ -7685,7 +8014,14 @@ async def handle_internal_mcp_resources_read_authz(request: Request):
 @utility_router.post("/_internal/mcp/resources/templates/list/authz/")
 @utility_router.post("/_internal/mcp/resources/templates/list/authz")
 async def handle_internal_mcp_resource_templates_list_authz(request: Request):
-    """Authorize trusted server-scoped resources/templates/list requests for Rust direct-path execution."""
+    """Authorize trusted server-scoped resources/templates/list requests for Rust direct-path execution.
+
+    Args:
+        request: Trusted internal MCP authz request.
+
+    Returns:
+        Empty success response when the request is authorized.
+    """
     return await _authorize_internal_mcp_server_scoped_method(
         request,
         permission="resources.read",
@@ -7696,7 +8032,14 @@ async def handle_internal_mcp_resource_templates_list_authz(request: Request):
 @utility_router.post("/_internal/mcp/prompts/list/authz/")
 @utility_router.post("/_internal/mcp/prompts/list/authz")
 async def handle_internal_mcp_prompts_list_authz(request: Request):
-    """Authorize trusted server-scoped prompts/list requests for Rust direct-path execution."""
+    """Authorize trusted server-scoped prompts/list requests for Rust direct-path execution.
+
+    Args:
+        request: Trusted internal MCP authz request.
+
+    Returns:
+        Empty success response when the request is authorized.
+    """
     return await _authorize_internal_mcp_server_scoped_method(
         request,
         permission="prompts.read",
@@ -7707,7 +8050,14 @@ async def handle_internal_mcp_prompts_list_authz(request: Request):
 @utility_router.post("/_internal/mcp/prompts/get/authz/")
 @utility_router.post("/_internal/mcp/prompts/get/authz")
 async def handle_internal_mcp_prompts_get_authz(request: Request):
-    """Authorize trusted server-scoped prompts/get requests for Rust direct-path execution."""
+    """Authorize trusted server-scoped prompts/get requests for Rust direct-path execution.
+
+    Args:
+        request: Trusted internal MCP authz request.
+
+    Returns:
+        Empty success response when the request is authorized.
+    """
     return await _authorize_internal_mcp_server_scoped_method(
         request,
         permission="prompts.read",
@@ -7723,7 +8073,19 @@ async def _maybe_forward_affinitized_rpc_request(
     req_id: Any,
     lowered_request_headers: Dict[str, str],
 ) -> Optional[Dict[str, Any]]:
-    """Forward an MCP request to the owning worker when session affinity requires it."""
+    """Forward an MCP request to the owning worker when session affinity requires it.
+
+    Args:
+        request: Incoming RPC request.
+        method: MCP method name being executed.
+        params: Parsed JSON-RPC params payload.
+        req_id: JSON-RPC request identifier.
+        lowered_request_headers: Lower-cased request headers used for forwarding.
+
+    Returns:
+        Forwarded JSON-RPC response payload when affinity forwarding handled the
+        request, otherwise ``None`` so local execution can continue.
+    """
     request_headers = request.headers
     rpc_client_host = getattr(getattr(request, "client", None), "host", None)
     rpc_from_loopback = rpc_client_host in ("127.0.0.1", "::1") if rpc_client_host else False
@@ -7776,7 +8138,21 @@ async def _execute_rpc_initialize(
     server_id: Optional[str],
     mcp_session_id: Optional[str],
 ):
-    """Execute the MCP initialize handshake while preserving session ownership semantics."""
+    """Execute the MCP initialize handshake while preserving session ownership semantics.
+
+    Args:
+        request: Incoming RPC request.
+        user: Authenticated user payload.
+        params: Initialize params payload.
+        server_id: Optional virtual server identifier.
+        mcp_session_id: Session id from the transport headers, when present.
+
+    Returns:
+        Serialized initialize result payload.
+
+    Raises:
+        JSONRPCError: If session ownership cannot be claimed or validated.
+    """
     init_session_id = params.get("session_id") or params.get("sessionId") or request.query_params.get("session_id")
     requester_email, requester_is_admin = _get_request_identity(request, user)
 
@@ -7816,7 +8192,24 @@ async def _execute_rpc_tools_call(
     lowered_request_headers: Dict[str, str],
     server_id: Optional[str],
 ):
-    """Execute the hot-path ``tools/call`` branch without the generic RPC method switch."""
+    """Execute the hot-path ``tools/call`` branch without the generic RPC method switch.
+
+    Args:
+        request: Incoming RPC request.
+        db: Active database session.
+        user: Authenticated user payload.
+        req_id: JSON-RPC request identifier.
+        params: Parsed tools/call params payload.
+        lowered_request_headers: Lower-cased request headers used for passthrough.
+        server_id: Optional virtual server identifier.
+
+    Returns:
+        Serialized MCP tools/call result payload.
+
+    Raises:
+        JSONRPCError: If the tool name is missing, execution is cancelled, or the
+            downstream tool branch reports a JSON-RPC-visible failure.
+    """
     name = params.get("name")
     arguments = params.get("arguments", {})
     meta_data = params.get("_meta", None)
@@ -7839,7 +8232,11 @@ async def _execute_rpc_tools_call(
     tool_task: Optional[asyncio.Task] = None
 
     async def cancel_tool_task(reason: Optional[str] = None):
-        """Cancel the active tool execution task when cancellation is requested."""
+        """Cancel the active tool execution task when cancellation is requested.
+
+        Args:
+            reason: Optional human-readable cancellation reason.
+        """
         if tool_task and not tool_task.done():
             logger.info("Cancelling tool task for run_id=%s, reason=%s", run_id, reason)
             tool_task.cancel()
@@ -7860,7 +8257,14 @@ async def _execute_rpc_tools_call(
                 raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id})
 
         async def execute_tool():
-            """Execute the tool invocation using the existing Python service layer."""
+            """Execute the tool invocation using the existing Python service layer.
+
+            Returns:
+                Result returned by the Python tool service.
+
+            Raises:
+                JSONRPCError: If the requested tool cannot be found.
+            """
             try:
                 return await tool_service.invoke_tool(
                     db=db,
@@ -7902,7 +8306,19 @@ async def _execute_rpc_tools_call(
 @utility_router.post("/_internal/mcp/tools/call/")
 @utility_router.post("/_internal/mcp/tools/call")
 async def handle_internal_mcp_tools_call(request: Request):
-    """Handle trusted tools/call requests forwarded from the local Rust runtime."""
+    """Handle trusted tools/call requests forwarded from the local Rust runtime.
+
+    Args:
+        request: Trusted internal MCP tools/call request.
+
+    Returns:
+        JSON-RPC response payload for the tools/call request.
+
+    Raises:
+        PluginError: Re-raised so plugin middleware can preserve existing behavior.
+        PluginViolationError: Re-raised so plugin middleware can preserve existing behavior.
+        Exception: Propagated after best-effort rollback when unexpected failures occur.
+    """
     req_id = None
     db = SessionLocal()
     try:
@@ -7994,7 +8410,19 @@ async def handle_internal_mcp_tools_call(request: Request):
 @utility_router.post("/_internal/mcp/tools/call/resolve/")
 @utility_router.post("/_internal/mcp/tools/call/resolve")
 async def handle_internal_mcp_tools_call_resolve(request: Request):
-    """Resolve a Rust-direct MCP tools/call execution plan without executing the tool."""
+    """Resolve a Rust-direct MCP tools/call execution plan without executing the tool.
+
+    Args:
+        request: Trusted internal MCP tools/call resolve request.
+
+    Returns:
+        JSON response containing either an execution plan or a JSON-RPC-visible error.
+
+    Raises:
+        PluginError: Re-raised so plugin middleware can preserve existing behavior.
+        PluginViolationError: Re-raised so plugin middleware can preserve existing behavior.
+        Exception: Propagated after best-effort rollback when unexpected failures occur.
+    """
     db = SessionLocal()
     try:
         user = _build_internal_mcp_forwarded_user(request)
@@ -9135,6 +9563,9 @@ def healthcheck(response: Response = None):
     Uses a dedicated session to avoid cross-thread issues and double-commit
     from get_db dependency. All DB operations happen in the same thread.
 
+    Args:
+        response: Optional response object used to attach runtime-mode headers.
+
     Returns:
         A dictionary with the health status and optional error message.
     """
@@ -9872,12 +10303,23 @@ class MCPRuntimeHeaderTransportWrapper:
     """Annotate Python-owned MCP transport responses with the active runtime marker."""
 
     def __init__(self, transport_app, *, runtime_name: str) -> None:
-        """Wrap an MCP transport app and stamp a runtime header on responses."""
+        """Wrap an MCP transport app and stamp a runtime header on responses.
+
+        Args:
+            transport_app: Underlying MCP transport app.
+            runtime_name: Runtime label to expose via response headers.
+        """
         self.transport_app = transport_app
         self.runtime_name = runtime_name.encode("ascii")
 
     async def handle_streamable_http(self, scope, receive, send):
-        """Forward an MCP request while ensuring the runtime marker header is present."""
+        """Forward an MCP request while ensuring the runtime marker header is present.
+
+        Args:
+            scope: Incoming ASGI scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
 
         async def _send_with_runtime_header(message):
             if message.get("type") == "http.response.start":
@@ -9906,7 +10348,11 @@ class MCPRuntimeHeaderTransportWrapper:
 
 
 def _build_mcp_transport_app():
-    """Choose the MCP transport app for the mounted /mcp path."""
+    """Choose the MCP transport app for the mounted /mcp path.
+
+    Returns:
+        Transport app object that should be mounted at the public ``/mcp`` path.
+    """
     if settings.experimental_rust_mcp_runtime_enabled:
         logger.warning(
             "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s.",
@@ -9934,11 +10380,21 @@ class InternalTrustedMCPTransportBridge:
     """Trusted internal bridge from Rust MCP transport requests to the Python session manager."""
 
     def __init__(self, transport_app) -> None:
-        """Store the underlying Python transport app used for trusted forwarding."""
+        """Store the underlying Python transport app used for trusted forwarding.
+
+        Args:
+            transport_app: Python transport app that ultimately owns session handling.
+        """
         self.transport_app = transport_app
 
     async def handle_streamable_http(self, scope, receive, send):
-        """Translate trusted Rust transport requests into Python session-manager calls."""
+        """Translate trusted Rust transport requests into Python session-manager calls.
+
+        Args:
+            scope: Incoming ASGI scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
         if scope.get("type") != "http":
             response = ORJSONResponse(status_code=404, content={"detail": "Not found"})
             await response(scope, receive, send)

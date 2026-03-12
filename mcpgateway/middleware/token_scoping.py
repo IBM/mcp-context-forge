@@ -1339,7 +1339,16 @@ class TokenScopingMiddleware:
             )
 
     def _is_trusted_internal_mcp_runtime_request(self, request: Request, normalized_path: str) -> bool:
-        """Return whether the request is a trusted loopback Rust MCP sidecar hop."""
+        """Return whether the request is a trusted loopback Rust MCP sidecar hop.
+
+        Args:
+            request: Incoming HTTP request.
+            normalized_path: Canonicalized request path used for route matching.
+
+        Returns:
+            ``True`` when the request originated from the local Rust MCP runtime and
+            includes the expected trusted headers.
+        """
         if normalized_path != _INTERNAL_MCP_PATH_PREFIX and not normalized_path.startswith(f"{_INTERNAL_MCP_PATH_PREFIX}/"):
             return False
 
