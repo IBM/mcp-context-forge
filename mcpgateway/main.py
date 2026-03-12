@@ -3442,12 +3442,7 @@ async def server_get_resources(
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
     resources = await resource_service.list_server_resources(
-        db,
-        server_id=server_id,
-        include_inactive=include_inactive,
-        include_metrics=include_metrics,
-        user_email=user_email,
-        token_teams=token_teams
+        db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics, user_email=user_email, token_teams=token_teams
     )
     return [resource.model_dump(by_alias=True) for resource in resources]
 
@@ -3489,14 +3484,7 @@ async def server_get_prompts(
         token_teams = None  # Admin unrestricted
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
-    prompts = await prompt_service.list_server_prompts(
-        db,
-        server_id=server_id,
-        include_inactive=include_inactive,
-        include_metrics=include_metrics,
-        user_email=user_email,
-        token_teams=token_teams
-    )
+    prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics, user_email=user_email, token_teams=token_teams)
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
 
 

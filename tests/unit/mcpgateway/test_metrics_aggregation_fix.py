@@ -9,41 +9,33 @@ SPDX-License-Identifier: Apache-2.0
 
 # Standard
 from datetime import datetime, timedelta, timezone
+import uuid
 
 # Third-Party
 import pytest
 
 # First-Party
-from mcpgateway.db import SessionLocal, Tool, ToolMetric, ToolMetricsHourly
+from mcpgateway.db import Tool, ToolMetric, ToolMetricsHourly
 
 
 @pytest.fixture
-def db_session():
-    """Create a test database session."""
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    finally:
-        session.close()
-
-
-@pytest.fixture
-def test_tool(db_session):
-    """Create a test tool."""
+def test_tool(test_db):
+    """Create a test tool with a unique ID for each test."""
+    tool_id = f"test-tool-{uuid.uuid4()}"
     tool = Tool(
-        id="test-tool-id",
+        id=tool_id,
         original_name="test_tool",
         custom_name="test_tool",
-        custom_name_slug="test-tool",
+        custom_name_slug=f"test-tool-{uuid.uuid4()}",
         input_schema={},
     )
-    db_session.add(tool)
-    db_session.commit()
+    test_db.add(tool)
+    test_db.commit()
+    test_db.refresh(tool)
     return tool
 
 
-def test_metrics_summary_with_only_raw_metrics(db_session, test_tool):
+def test_metrics_summary_with_only_raw_metrics(test_db, test_tool):
     """Test metrics_summary when only raw metrics exist."""
     # Add raw metrics
     now = datetime.now(timezone.utc)
@@ -53,11 +45,11 @@ def test_metrics_summary_with_only_raw_metrics(db_session, test_tool):
         ToolMetric(tool_id=test_tool.id, response_time=0.3, is_success=False, timestamp=now),
     ]
     for m in metrics:
-        db_session.add(m)
-    db_session.commit()
+        test_db.add(m)
+    test_db.commit()
 
     # Get metrics summary
-    db_session.refresh(test_tool)
+    test_db.refresh(test_tool)
     summary = test_tool.metrics_summary
 
     assert summary["total_executions"] == 3
@@ -68,7 +60,7 @@ def test_metrics_summary_with_only_raw_metrics(db_session, test_tool):
     assert abs(summary["avg_response_time"] - 0.2) < 0.01  # (0.1 + 0.2 + 0.3) / 3
 
 
-def test_metrics_summary_with_only_hourly_metrics(db_session, test_tool):
+def test_metrics_summary_with_only_hourly_metrics(test_db, test_tool):
     """Test metrics_summary when only hourly metrics exist (raw deleted after rollup)."""
     # Add hourly aggregated metrics (simulating raw metrics were deleted)
     hour_start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) - timedelta(hours=2)
@@ -86,11 +78,11 @@ def test_metrics_summary_with_only_hourly_metrics(db_session, test_tool):
         p95_response_time=1.2,
         p99_response_time=2.0,
     )
-    db_session.add(hourly)
-    db_session.commit()
+    test_db.add(hourly)
+    test_db.commit()
 
     # Get metrics summary
-    db_session.refresh(test_tool)
+    test_db.refresh(test_tool)
     summary = test_tool.metrics_summary
 
     assert summary["total_executions"] == 100
@@ -101,7 +93,7 @@ def test_metrics_summary_with_only_hourly_metrics(db_session, test_tool):
     assert abs(summary["avg_response_time"] - 0.5) < 0.01
 
 
-def test_metrics_summary_with_both_raw_and_hourly(db_session, test_tool):
+def test_metrics_summary_with_both_raw_and_hourly(test_db, test_tool):
     """Test metrics_summary correctly combines raw and hourly metrics without double-counting.
 
     This is the main fix for issue #3598.
@@ -127,7 +119,7 @@ def test_metrics_summary_with_both_raw_and_hourly(db_session, test_tool):
         p95_response_time=1.2,
         p99_response_time=2.0,
     )
-    db_session.add(hourly)
+    test_db.add(hourly)
 
     # Add raw metrics from CURRENT hour (not yet rolled up) - should be counted
     metrics_current_hour = [
@@ -136,7 +128,7 @@ def test_metrics_summary_with_both_raw_and_hourly(db_session, test_tool):
         ToolMetric(tool_id=test_tool.id, response_time=3.0, is_success=False, timestamp=now),  # new max
     ]
     for m in metrics_current_hour:
-        db_session.add(m)
+        test_db.add(m)
 
     # Add raw metrics from OLD hour (already rolled up) - should NOT be counted (double-count prevention)
     old_hour_timestamp = current_hour_start - timedelta(hours=2, minutes=30)
@@ -145,12 +137,12 @@ def test_metrics_summary_with_both_raw_and_hourly(db_session, test_tool):
         ToolMetric(tool_id=test_tool.id, response_time=0.2, is_success=True, timestamp=old_hour_timestamp),
     ]
     for m in metrics_old_hour:
-        db_session.add(m)
+        test_db.add(m)
 
-    db_session.commit()
+    test_db.commit()
 
     # Get metrics summary
-    db_session.refresh(test_tool)
+    test_db.refresh(test_tool)
     summary = test_tool.metrics_summary
 
     # Total counts: 100 (hourly) + 3 (current hour raw) = 103
@@ -171,7 +163,7 @@ def test_metrics_summary_with_both_raw_and_hourly(db_session, test_tool):
     assert abs(summary["failure_rate"] - (6 / 103)) < 0.01
 
 
-def test_no_double_counting_when_rollup_done_but_cleanup_pending(db_session, test_tool):
+def test_no_double_counting_when_rollup_done_but_cleanup_pending(test_db, test_tool):
     """Test that metrics from completed hours aren't double-counted.
 
     Scenario: METRICS_DELETE_RAW_AFTER_ROLLUP=true, METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS=1
@@ -196,7 +188,7 @@ def test_no_double_counting_when_rollup_done_but_cleanup_pending(db_session, tes
         max_response_time=1.0,
         avg_response_time=0.5,
     )
-    db_session.add(hourly)
+    test_db.add(hourly)
 
     # Raw metrics from completed hour (not yet cleaned up) - should be IGNORED
     old_timestamp = completed_hour_start + timedelta(minutes=30)
@@ -205,19 +197,19 @@ def test_no_double_counting_when_rollup_done_but_cleanup_pending(db_session, tes
         ToolMetric(tool_id=test_tool.id, response_time=0.3, is_success=True, timestamp=old_timestamp),
     ]
     for m in old_metrics:
-        db_session.add(m)
+        test_db.add(m)
 
     # Raw metrics from current hour - should be counted
     current_metrics = [
         ToolMetric(tool_id=test_tool.id, response_time=0.1, is_success=True, timestamp=now),
     ]
     for m in current_metrics:
-        db_session.add(m)
+        test_db.add(m)
 
-    db_session.commit()
+    test_db.commit()
 
     # Get metrics summary
-    db_session.refresh(test_tool)
+    test_db.refresh(test_tool)
     summary = test_tool.metrics_summary
 
     # Should be 50 (hourly) + 1 (current hour) = 51
@@ -227,7 +219,7 @@ def test_no_double_counting_when_rollup_done_but_cleanup_pending(db_session, tes
     assert summary["failed_executions"] == 2
 
 
-def test_metrics_summary_with_multiple_hourly_buckets(db_session, test_tool):
+def test_metrics_summary_with_multiple_hourly_buckets(test_db, test_tool):
     """Test metrics_summary with multiple hourly aggregation buckets."""
     now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
@@ -247,11 +239,11 @@ def test_metrics_summary_with_multiple_hourly_buckets(db_session, test_tool):
         for i in range(1, 4)  # 3 hourly buckets
     ]
     for h in hourly_buckets:
-        db_session.add(h)
-    db_session.commit()
+        test_db.add(h)
+    test_db.commit()
 
     # Get metrics summary
-    db_session.refresh(test_tool)
+    test_db.refresh(test_tool)
     summary = test_tool.metrics_summary
 
     assert summary["total_executions"] == 30  # 10 * 3
