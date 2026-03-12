@@ -744,7 +744,9 @@ def _is_permission_admin_user(user) -> bool:
     if hasattr(user, "is_admin"):
         return bool(getattr(user, "is_admin", False))
     if isinstance(user, dict):
-        return bool(user.get("is_admin", False))
+        if "permission_is_admin" in user:
+            return bool(user.get("permission_is_admin", False))
+        return False
     return False
 
 
@@ -771,6 +773,9 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
         if scoped is not None and "*" not in scoped and permission not in scoped:
             logger.warning("RPC permission denied (token scope): method=%s, required=%s", method, permission)
             raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
+
+    if permission == "admin.system_config" and _is_permission_admin_user(user):
+        return
 
     # Layer 2: RBAC check
     # Session tokens have no explicit team_id, so check across all team-scoped roles.
@@ -8570,6 +8575,11 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         lowered_headers: Optional[Dict[str, str]] = None
 
         def _lowered_request_headers() -> Dict[str, str]:
+            """Return a cached lower-cased copy of the incoming request headers.
+
+            Returns:
+                Dict[str, str]: Lower-cased request headers cached for repeated access.
+            """
             nonlocal lowered_headers
             if lowered_headers is None:
                 lowered_headers = {k.lower(): v for k, v in request_headers.items()}
@@ -10322,6 +10332,11 @@ class MCPRuntimeHeaderTransportWrapper:
         """
 
         async def _send_with_runtime_header(message):
+            """Attach MCP runtime mode headers before sending the ASGI event downstream.
+
+            Args:
+                message: Outgoing ASGI message emitted by the wrapped application.
+            """
             if message.get("type") == "http.response.start":
                 headers = list(message.get("headers") or [])
                 if not any(isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-runtime" for item in headers):

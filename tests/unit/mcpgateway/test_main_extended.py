@@ -5737,7 +5737,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.root_service.list_roots", new=AsyncMock(return_value=[])),
             patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(side_effect=AssertionError("RBAC lookup should be skipped for admins"))),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "admin@example.com", "is_admin": True})
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "admin@example.com", "is_admin": True, "permission_is_admin": True})
 
         assert result["result"]["roots"] == []
 
