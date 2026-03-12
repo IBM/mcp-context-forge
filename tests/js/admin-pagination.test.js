@@ -75,7 +75,10 @@ beforeAll(() => {
                 }
 
                 if (
-                    !additionalParams.hasOwnProperty("include_inactive") &&
+                    !Object.prototype.hasOwnProperty.call(
+                        additionalParams,
+                        "include_inactive",
+                    ) &&
                     params.includeInactive !== null
                 ) {
                     url.searchParams.set(
@@ -770,6 +773,142 @@ describe("pagination_controls data-extra-params handling", () => {
 });
 
 // ---------------------------------------------------------------------------
+// pagination_controls: dynamic search input reading (#3128)
+//
+// When paginating, loadPage() reads the current search and tag filter input
+// values from the DOM. This ensures the user's active search filter is
+// preserved across pages even if the input changed after the last server
+// render (which would make data-extra-params stale).
+// ---------------------------------------------------------------------------
+describe("pagination_controls dynamic search input reading (#3128)", () => {
+    /**
+     * Replicates the full loadPage() URL-building logic from
+     * pagination_controls.html, including extraParams AND the dynamic
+     * input-reading block added in #3128.
+     */
+    function buildUrlWithInputs(
+        baseUrl,
+        extraParamsJson,
+        tableName,
+        inputs = {},
+    ) {
+        const url = new URL(baseUrl, "http://localhost");
+        url.searchParams.set("page", "1");
+        url.searchParams.set("per_page", "50");
+
+        // Step 1: extraParams from server-rendered data attribute
+        const extraParams = JSON.parse(extraParamsJson || "{}");
+        Object.entries(extraParams).forEach(([k, v]) => {
+            if (k !== "include_inactive" && v !== null && v !== undefined) {
+                url.searchParams.set(k, String(v));
+            }
+        });
+
+        // Step 2: dynamic input reading (mirrors #3128 fix)
+        if (tableName) {
+            if (inputs.search !== undefined) {
+                const trimmedQuery = inputs.search.trim();
+                if (trimmedQuery) {
+                    url.searchParams.set("q", trimmedQuery);
+                } else {
+                    url.searchParams.delete("q");
+                }
+            }
+            if (inputs.tags !== undefined) {
+                const trimmedTags = inputs.tags.trim();
+                if (trimmedTags) {
+                    url.searchParams.set("tags", trimmedTags);
+                } else {
+                    url.searchParams.delete("tags");
+                }
+            }
+        }
+
+        return url;
+    }
+
+    test("search input value is used for q param", () => {
+        const url = buildUrlWithInputs("/admin/tools/partial", "{}", "tools", {
+            search: "my query",
+        });
+        expect(url.searchParams.get("q")).toBe("my query");
+    });
+
+    test("tag input value is used for tags param", () => {
+        const url = buildUrlWithInputs("/admin/tools/partial", "{}", "tools", {
+            tags: "prod,staging",
+        });
+        expect(url.searchParams.get("tags")).toBe("prod,staging");
+    });
+
+    test("input values override stale extraParams q and tags", () => {
+        const json = JSON.stringify({ q: "old query", tags: "old-tag" });
+        const url = buildUrlWithInputs("/admin/tools/partial", json, "tools", {
+            search: "new query",
+            tags: "new-tag",
+        });
+        expect(url.searchParams.get("q")).toBe("new query");
+        expect(url.searchParams.get("tags")).toBe("new-tag");
+    });
+
+    test("empty input clears stale extraParams q", () => {
+        const json = JSON.stringify({ q: "stale search" });
+        const url = buildUrlWithInputs("/admin/tools/partial", json, "tools", {
+            search: "",
+        });
+        expect(url.searchParams.has("q")).toBe(false);
+    });
+
+    test("empty input clears stale extraParams tags", () => {
+        const json = JSON.stringify({ tags: "stale-tag" });
+        const url = buildUrlWithInputs("/admin/tools/partial", json, "tools", {
+            tags: "",
+        });
+        expect(url.searchParams.has("tags")).toBe(false);
+    });
+
+    test("whitespace-only input clears q", () => {
+        const json = JSON.stringify({ q: "stale" });
+        const url = buildUrlWithInputs("/admin/tools/partial", json, "tools", {
+            search: "   ",
+        });
+        expect(url.searchParams.has("q")).toBe(false);
+    });
+
+    test("input values are trimmed", () => {
+        const url = buildUrlWithInputs("/admin/tools/partial", "{}", "tools", {
+            search: "  hello  ",
+            tags: "  alpha  ",
+        });
+        expect(url.searchParams.get("q")).toBe("hello");
+        expect(url.searchParams.get("tags")).toBe("alpha");
+    });
+
+    test("other extraParams are preserved when input overrides q", () => {
+        const json = JSON.stringify({
+            q: "old",
+            gateway_id: "42",
+            team_id: "t1",
+        });
+        const url = buildUrlWithInputs("/admin/tools/partial", json, "tools", {
+            search: "new",
+        });
+        expect(url.searchParams.get("q")).toBe("new");
+        expect(url.searchParams.get("gateway_id")).toBe("42");
+        expect(url.searchParams.get("team_id")).toBe("t1");
+    });
+
+    test("skips input reading when tableName is empty", () => {
+        const json = JSON.stringify({ q: "from-server" });
+        const url = buildUrlWithInputs("/admin/tools/partial", json, "", {
+            search: "from-input",
+        });
+        // Without tableName, input reading is skipped; extraParams value stands
+        expect(url.searchParams.get("q")).toBe("from-server");
+    });
+});
+
+// ---------------------------------------------------------------------------
 // Pagination swapStyle used by loadPage (#3396)
 //
 // Table-targeted pagination must use outerHTML swap to prevent nested <table>
@@ -797,7 +936,7 @@ describe("pagination loadPage swapStyle (#3396)", () => {
             hasNext: true,
             hasPrev: false,
             targetSelector: "#tools-table",
-            swapStyle: swapStyle,
+            swapStyle,
             tableName: "tools",
             baseUrl: "/admin/tools/partial",
             $el: {
@@ -846,5 +985,151 @@ describe("pagination loadPage swapStyle (#3396)", () => {
             createComponentWithAjaxSpy(defaultSwap);
         component.loadPage(2);
         expect(ajaxCalls[0].swap).toBe("innerHTML");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// _navigateAdmin: pagination state preservation (#3389)
+//
+// _navigateAdmin is the single function all edit/save/toggle handlers use to
+// redirect after a successful operation. The fix copies namespaced pagination
+// params (*_page, *_size, *_inactive, *_q, *_tags) from the current URL into
+// the outgoing searchParams so editing an item on page 3 returns to page 3.
+//
+// Testing strategy: the function mutates the passed URLSearchParams before
+// attempting navigation (which throws "Not implemented" in JSDOM). We inspect
+// the URLSearchParams object after catching the error to verify the mutation.
+// ---------------------------------------------------------------------------
+describe("_navigateAdmin pagination state preservation (#3389)", () => {
+    /**
+     * Call _navigateAdmin and swallow the JSDOM navigation error.
+     * Returns the searchParams object after mutation.
+     */
+    function callNavigateAdmin(fragment, searchParams) {
+        try {
+            win._navigateAdmin(fragment, searchParams);
+        } catch (_) {
+            // JSDOM throws "Not implemented: navigation" — expected
+        }
+        return searchParams;
+    }
+
+    test("preserves *_page and *_size params from current URL", () => {
+        win.history.replaceState({}, "", "/admin?tools_page=3&tools_size=25");
+        const params = new win.URLSearchParams();
+        callNavigateAdmin("tools", params);
+        expect(params.get("tools_page")).toBe("3");
+        expect(params.get("tools_size")).toBe("25");
+    });
+
+    test("preserves *_q and *_tags params from current URL", () => {
+        win.history.replaceState(
+            {},
+            "",
+            "/admin?tools_q=search&tools_tags=alpha,beta",
+        );
+        const params = new win.URLSearchParams();
+        callNavigateAdmin("tools", params);
+        expect(params.get("tools_q")).toBe("search");
+        expect(params.get("tools_tags")).toBe("alpha,beta");
+    });
+
+    test("preserves namespaced *_inactive params (e.g. tools_inactive)", () => {
+        win.history.replaceState({}, "", "/admin?tools_inactive=true");
+        const params = new win.URLSearchParams();
+        callNavigateAdmin("tools", params);
+        expect(params.get("tools_inactive")).toBe("true");
+    });
+
+    test("does NOT preserve bare include_inactive param", () => {
+        win.history.replaceState({}, "", "/admin?include_inactive=true");
+        const params = new win.URLSearchParams();
+        callNavigateAdmin("tools", params);
+        expect(params.has("include_inactive")).toBe(false);
+    });
+
+    test("does NOT preserve non-pagination params (e.g. team_id, random)", () => {
+        win.history.replaceState(
+            {},
+            "",
+            "/admin?team_id=abc&random=42&tools_page=2",
+        );
+        const params = new win.URLSearchParams();
+        callNavigateAdmin("tools", params);
+        expect(params.has("team_id")).toBe(false);
+        expect(params.has("random")).toBe(false);
+        expect(params.get("tools_page")).toBe("2");
+    });
+
+    test("caller-set params take precedence over URL params", () => {
+        win.history.replaceState({}, "", "/admin?tools_page=5&tools_size=50");
+        const params = new win.URLSearchParams();
+        params.set("tools_page", "1");
+        callNavigateAdmin("tools", params);
+        expect(params.get("tools_page")).toBe("1");
+        expect(params.get("tools_size")).toBe("50");
+    });
+
+    test("preserves params across multiple table namespaces", () => {
+        win.history.replaceState(
+            {},
+            "",
+            "/admin?tools_page=3&gateways_page=2&servers_size=50&agents_q=bot",
+        );
+        const params = new win.URLSearchParams();
+        callNavigateAdmin("tools", params);
+        expect(params.get("tools_page")).toBe("3");
+        expect(params.get("gateways_page")).toBe("2");
+        expect(params.get("servers_size")).toBe("50");
+        expect(params.get("agents_q")).toBe("bot");
+    });
+
+    test("handles null searchParams without TypeError", () => {
+        win.history.replaceState({}, "", "/admin?tools_page=4");
+        let typeError = false;
+        try {
+            win._navigateAdmin("tools", null);
+        } catch (e) {
+            if (e.message && e.message.includes("Cannot read properties")) {
+                typeError = true;
+            }
+        }
+        expect(typeError).toBe(false);
+    });
+
+    test("handles undefined searchParams without TypeError", () => {
+        win.history.replaceState({}, "", "/admin?tools_page=4");
+        let typeError = false;
+        try {
+            win._navigateAdmin("tools");
+        } catch (e) {
+            if (e.message && e.message.includes("Cannot read properties")) {
+                typeError = true;
+            }
+        }
+        expect(typeError).toBe(false);
+    });
+
+    test("preserves all five pagination suffixes simultaneously", () => {
+        win.history.replaceState(
+            {},
+            "",
+            "/admin?tools_page=3&tools_size=25&tools_inactive=true&tools_q=search&tools_tags=v1,v2",
+        );
+        const params = new win.URLSearchParams();
+        callNavigateAdmin("tools", params);
+        expect(params.get("tools_page")).toBe("3");
+        expect(params.get("tools_size")).toBe("25");
+        expect(params.get("tools_inactive")).toBe("true");
+        expect(params.get("tools_q")).toBe("search");
+        expect(params.get("tools_tags")).toBe("v1,v2");
+    });
+
+    test("does not overwrite caller include_inactive with URL's bare include_inactive", () => {
+        win.history.replaceState({}, "", "/admin?include_inactive=true");
+        const params = new win.URLSearchParams();
+        params.set("include_inactive", "false");
+        callNavigateAdmin("tools", params);
+        expect(params.get("include_inactive")).toBe("false");
     });
 });
