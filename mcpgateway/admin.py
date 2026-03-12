@@ -3626,6 +3626,7 @@ async def admin_ui(
             # Token policy flags
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
             "sri_hashes": load_sri_hashes(),
+            "max_members_per_team": getattr(settings, "max_members_per_team", 100),
         },
     )
 
@@ -5644,6 +5645,10 @@ async def admin_get_team_edit(
 
         safe_team_name = html.escape(team.name, quote=True)
         safe_description = html.escape(team.description or "")
+        is_admin_edit = isinstance(_user, dict) and _user.get("is_admin")
+        max_members_limit = getattr(settings, "max_members_per_team", 100)
+        max_attr = "" if is_admin_edit else f'max="{max_members_limit}"'
+        max_members_hint = "Admins can set any limit. Leave empty to keep current value." if is_admin_edit else f"Max {max_members_limit}. Leave empty to keep current value."
         edit_form = rf"""
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit Team</h3>
@@ -5676,9 +5681,9 @@ async def admin_get_team_edit(
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Maximum Members</label>
-                    <input type="number" name="max_members" min="1" max="1000" value="{team.max_members if team.max_members else ''}"
+                    <input type="number" name="max_members" min="1" {max_attr} value="{team.max_members if team.max_members else ''}"
                            class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
-                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty to keep current value</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{max_members_hint}</p>
                 </div>
                 <div class="flex justify-end space-x-3">
                     <button type="button" onclick="hideTeamEditModal()"
