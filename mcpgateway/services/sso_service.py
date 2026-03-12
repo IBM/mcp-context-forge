@@ -1308,39 +1308,45 @@ class SSOService:
 
         # Handle Google provider
         if provider.id == "google":
-            return {
+            google_normalized: Dict[str, Any] = {
                 "email": user_data.get("email"),
-                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name"),
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub"),
                 "username": user_data.get("email", "").split("@")[0],
                 "provider": "google",
             }
+            if "email_verified" in user_data:
+                google_normalized["email_verified"] = user_data["email_verified"]
+            return google_normalized
 
         # Handle IBM Verify provider
         if provider.id == "ibm_verify":
-            return {
+            ibm_normalized: Dict[str, Any] = {
                 "email": user_data.get("email"),
-                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name"),
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub"),
                 "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
                 "provider": "ibm_verify",
             }
+            if "email_verified" in user_data:
+                ibm_normalized["email_verified"] = user_data["email_verified"]
+            return ibm_normalized
 
         # Handle Okta provider
         if provider.id == "okta":
-            return {
+            okta_normalized: Dict[str, Any] = {
                 "email": user_data.get("email"),
-                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name"),
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub"),
                 "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
                 "provider": "okta",
             }
+            if "email_verified" in user_data:
+                okta_normalized["email_verified"] = user_data["email_verified"]
+            return okta_normalized
 
         # Handle Keycloak provider with role mapping
         if provider.id == "keycloak":
@@ -1371,9 +1377,8 @@ class SSOService:
                 if isinstance(custom_groups, list):
                     groups.extend(custom_groups)
 
-            return {
+            keycloak_normalized: Dict[str, Any] = {
                 "email": user_data.get(email_claim),
-                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name"),
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub"),
@@ -1381,6 +1386,9 @@ class SSOService:
                 "provider": "keycloak",
                 "groups": list(set(groups)),  # Deduplicate
             }
+            if "email_verified" in user_data:
+                keycloak_normalized["email_verified"] = user_data["email_verified"]
+            return keycloak_normalized
 
         # Handle Microsoft Entra ID provider with role mapping
         if provider.id == "entra":
@@ -1431,16 +1439,22 @@ class SSOService:
                 entra_normalized["email_verified"] = user_data["email_verified"]
             return entra_normalized
 
-        # Generic OIDC format for all other providers
-        return {
+        # Generic OIDC format for all other providers.
+        # Only propagate email_verified when the IdP explicitly includes it so that
+        # _is_email_verified_claim's absent-means-pass-through logic applies correctly.
+        # Injecting None (via .get()) when the key is missing would cause the key to
+        # be present in the dict with a falsy value, silently blocking login.
+        generic_normalized: Dict[str, Any] = {
             "email": user_data.get("email"),
-            "email_verified": user_data.get("email_verified"),
             "full_name": user_data.get("name"),
             "avatar_url": user_data.get("picture"),
             "provider_id": user_data.get("sub"),
             "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
             "provider": provider.id,
         }
+        if "email_verified" in user_data:
+            generic_normalized["email_verified"] = user_data["email_verified"]
+        return generic_normalized
 
     async def authenticate_or_create_user(self, user_info: Dict[str, Any]) -> Optional[str]:
         """Authenticate existing user or create new user from SSO info.
