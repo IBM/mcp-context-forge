@@ -12404,8 +12404,9 @@ async def admin_edit_prompt(
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     try:
-        # Validate arguments JSON using prompt service
-        arguments = prompt_service.validate_arguments_json(form.get("arguments"), context="prompt update")
+        # Validate arguments JSON using prompt service; preserve existing when field absent
+        args_value = form.get("arguments")
+        arguments = prompt_service.validate_arguments_json(args_value, context="prompt update") if args_value is not None else None
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         prompt = PromptUpdate(
             custom_name=str(form.get("customName") or form.get("name")),

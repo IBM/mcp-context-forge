@@ -2630,7 +2630,7 @@ class TestAdminPromptRoutes:
 
     @patch.object(PromptService, "register_prompt")
     async def test_admin_add_prompt_with_invalid_arguments_json(self, mock_register_prompt, mock_request, mock_db):
-        """Test adding prompt with invalid arguments JSON returns 400 Bad Request."""
+        """Test adding prompt with invalid arguments JSON returns 422."""
         form_data = FakeForm(
             {
                 "name": "Bad-JSON-Prompt",  # Valid prompt name
@@ -2647,6 +2647,7 @@ class TestAdminPromptRoutes:
         assert "json" in response_body or "invalid" in response_body or "arguments" in response_body
         # Verify the response includes the field name
         assert b"arguments" in result.body.lower()
+        mock_register_prompt.assert_not_called()
 
     @patch.object(PromptService, "register_prompt")
     async def test_admin_add_prompt_error_handlers(self, mock_register_prompt, mock_request, mock_db, monkeypatch):
@@ -2727,7 +2728,7 @@ class TestAdminPromptRoutes:
 
     @patch.object(PromptService, "update_prompt")
     async def test_admin_edit_prompt_with_invalid_arguments_json(self, mock_update_prompt, mock_request, mock_db):
-        """Test editing prompt with invalid arguments JSON returns 400 Bad Request."""
+        """Test editing prompt with invalid arguments JSON returns 422."""
         form_data = FakeForm(
             {
                 "name": "Updated-Prompt",
@@ -2744,6 +2745,28 @@ class TestAdminPromptRoutes:
         assert "json" in response_body or "invalid" in response_body or "arguments" in response_body
         # Verify the response includes the field name
         assert b"arguments" in result.body.lower()
+        mock_update_prompt.assert_not_called()
+
+    @patch.object(PromptService, "update_prompt")
+    async def test_admin_edit_prompt_missing_arguments_preserves_existing(self, mock_update_prompt, mock_request, mock_db):
+        """Test editing prompt without arguments field preserves existing arguments."""
+        form_data = FakeForm(
+            {
+                "name": "Updated-Prompt",
+                "template": "Updated template",
+                # arguments key intentionally omitted
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_update_prompt.return_value = MagicMock()
+
+        result = await admin_edit_prompt("prompt-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        # Verify update_prompt was called with arguments=None (preserving existing)
+        call_args = mock_update_prompt.call_args
+        prompt_update = call_args[0][2]  # Third positional arg is the PromptUpdate
+        assert prompt_update.arguments is None
 
     @patch.object(PromptService, "update_prompt")
     async def test_admin_edit_prompt_error_handlers(self, mock_update_prompt, mock_request, mock_db, monkeypatch):
