@@ -67,6 +67,7 @@ from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics import mcp_auth_cache_events_counter
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
@@ -80,6 +81,14 @@ from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, requ
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _record_mcp_auth_cache_event(outcome: str) -> None:
+    """Best-effort Prometheus counter update for MCP auth cache flow."""
+    try:
+        mcp_auth_cache_events_counter.labels(outcome=outcome).inc()
+    except Exception:
+        pass  # nosec B110 - Metrics must not break auth flow
 
 # Precompiled regex for server ID extraction from path
 _SERVER_ID_RE: Pattern[str] = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp")
@@ -3071,11 +3080,14 @@ class _StreamableHttpAuthHandler:
                 try:
                     cached_ctx = await auth_cache.get_auth_context(user_email, jti)
                     if cached_ctx is not None:
+                        _record_mcp_auth_cache_event("auth_context_hit")
                         if cached_ctx.is_token_revoked:
+                            _record_mcp_auth_cache_event("auth_context_hit_revoked")
                             return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
 
                         cached_user = cached_ctx.user
                         if cached_user and not cached_user.get("is_active", True):
+                            _record_mcp_auth_cache_event("auth_context_hit_inactive")
                             return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
 
                         if cached_user:
@@ -3085,20 +3097,28 @@ class _StreamableHttpAuthHandler:
 
                         if token_use == "session" and not is_admin:
                             cached_team_ids = await auth_cache.get_user_teams(f"{user_email}:True")
+                            if cached_team_ids is not None:
+                                _record_mcp_auth_cache_event("teams_cache_hit")
+                    else:
+                        _record_mcp_auth_cache_event("auth_context_miss")
                 except HTTPException:
                     raise
                 except Exception as cache_error:
+                    _record_mcp_auth_cache_event("auth_context_cache_error")
                     logger.debug("MCP auth cache lookup failed for %s: %s", user_email, cache_error)
                     cached_ctx = None
 
             if user_email and cached_ctx is None and settings.auth_cache_batch_queries:
                 try:
                     batched_auth_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, user_email, jti)
+                    _record_mcp_auth_cache_event("auth_context_batch_hit")
                     if batched_auth_ctx.get("is_token_revoked", False):
+                        _record_mcp_auth_cache_event("auth_context_batch_revoked")
                         return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
 
                     cached_user = batched_auth_ctx.get("user")
                     if cached_user and not cached_user.get("is_active", True):
+                        _record_mcp_auth_cache_event("auth_context_batch_inactive")
                         return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
 
                     if cached_user:
@@ -3119,13 +3139,16 @@ class _StreamableHttpAuthHandler:
                         if token_use == "session" and not is_admin:
                             cached_team_ids = list(batched_auth_ctx.get("team_ids") or [])
                             await auth_cache.set_user_teams(f"{user_email}:True", cached_team_ids)
+                            _record_mcp_auth_cache_event("teams_batch_hit")
                 except HTTPException:
                     raise
                 except Exception as batch_error:
+                    _record_mcp_auth_cache_event("auth_context_batch_error")
                     logger.warning("Batched MCP auth lookup failed for user=%s; falling back to individual checks: %s", user_email, batch_error)
                     batched_auth_ctx = None
 
             if user_email and cached_ctx is None and batched_auth_ctx is None:
+                _record_mcp_auth_cache_event("auth_context_fallback")
                 # First-Party
                 from mcpgateway.auth import _check_token_revoked_sync, _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
 
@@ -3199,6 +3222,7 @@ class _StreamableHttpAuthHandler:
                             except Exception as cache_set_error:
                                 logger.debug("Failed to cache MCP teams list for %s: %s", user_email, cache_set_error)
                     else:
+                        _record_mcp_auth_cache_event("teams_db_resolve")
                         # Resolve teams synchronously with L1 cache (StreamableHTTP uses sync context)
                         # First-Party
                         from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
@@ -3238,10 +3262,12 @@ class _StreamableHttpAuthHandler:
                 # Check cache first (60s TTL)
                 cached_result = auth_cache.get_team_membership_valid_sync(user_email, final_teams)
                 if cached_result is False:
+                    _record_mcp_auth_cache_event("team_membership_cache_reject")
                     logger.warning("MCP auth rejected: User %s no longer member of teams (cached)", user_email)
                     return await self._send_error(detail="Token invalid: User is no longer a member of the associated team", status_code=HTTP_403_FORBIDDEN)
 
                 if cached_result is None:
+                    _record_mcp_auth_cache_event("team_membership_cache_miss")
                     # Cache miss - query database
                     with SessionLocal() as db:
                         memberships = (
@@ -3266,6 +3292,8 @@ class _StreamableHttpAuthHandler:
 
                         # Cache positive result
                         auth_cache.set_team_membership_valid_sync(user_email, final_teams, True)
+                else:
+                    _record_mcp_auth_cache_event("team_membership_cache_hit")
 
             auth_user_ctx: dict[str, Any] = {
                 "email": user_email,

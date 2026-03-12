@@ -7595,6 +7595,20 @@ async def handle_internal_mcp_prompts_get(request: Request):
 @utility_router.post("/_internal/mcp/tools/list/authz")
 async def handle_internal_mcp_tools_list_authz(request: Request):
     """Authorize trusted server-scoped tools/list requests for the Rust direct-DB path."""
+    return await _authorize_internal_mcp_server_scoped_method(
+        request,
+        permission="tools.read",
+        method="tools/list",
+    )
+
+
+async def _authorize_internal_mcp_server_scoped_method(
+    request: Request,
+    *,
+    permission: str,
+    method: str,
+) -> Response:
+    """Authorize a trusted server-scoped MCP method for Rust direct-path execution."""
     server_id = request.headers.get("x-contextforge-server-id")
     if not server_id:
         raise HTTPException(status_code=400, detail="Missing trusted MCP server scope")
@@ -7604,8 +7618,8 @@ async def handle_internal_mcp_tools_list_authz(request: Request):
         await _authorize_internal_mcp_request(
             request,
             db,
-            permission="tools.read",
-            method="tools/list",
+            permission=permission,
+            method=method,
             server_id=server_id,
         )
         if db.is_active and db.in_transaction() is not None:
@@ -7624,6 +7638,61 @@ async def handle_internal_mcp_tools_list_authz(request: Request):
         raise
     finally:
         db.close()
+
+
+@utility_router.post("/_internal/mcp/resources/list/authz/")
+@utility_router.post("/_internal/mcp/resources/list/authz")
+async def handle_internal_mcp_resources_list_authz(request: Request):
+    """Authorize trusted server-scoped resources/list requests for Rust direct-path execution."""
+    return await _authorize_internal_mcp_server_scoped_method(
+        request,
+        permission="resources.read",
+        method="resources/list",
+    )
+
+
+@utility_router.post("/_internal/mcp/resources/read/authz/")
+@utility_router.post("/_internal/mcp/resources/read/authz")
+async def handle_internal_mcp_resources_read_authz(request: Request):
+    """Authorize trusted server-scoped resources/read requests for Rust direct-path execution."""
+    return await _authorize_internal_mcp_server_scoped_method(
+        request,
+        permission="resources.read",
+        method="resources/read",
+    )
+
+
+@utility_router.post("/_internal/mcp/resources/templates/list/authz/")
+@utility_router.post("/_internal/mcp/resources/templates/list/authz")
+async def handle_internal_mcp_resource_templates_list_authz(request: Request):
+    """Authorize trusted server-scoped resources/templates/list requests for Rust direct-path execution."""
+    return await _authorize_internal_mcp_server_scoped_method(
+        request,
+        permission="resources.read",
+        method="resources/templates/list",
+    )
+
+
+@utility_router.post("/_internal/mcp/prompts/list/authz/")
+@utility_router.post("/_internal/mcp/prompts/list/authz")
+async def handle_internal_mcp_prompts_list_authz(request: Request):
+    """Authorize trusted server-scoped prompts/list requests for Rust direct-path execution."""
+    return await _authorize_internal_mcp_server_scoped_method(
+        request,
+        permission="prompts.read",
+        method="prompts/list",
+    )
+
+
+@utility_router.post("/_internal/mcp/prompts/get/authz/")
+@utility_router.post("/_internal/mcp/prompts/get/authz")
+async def handle_internal_mcp_prompts_get_authz(request: Request):
+    """Authorize trusted server-scoped prompts/get requests for Rust direct-path execution."""
+    return await _authorize_internal_mcp_server_scoped_method(
+        request,
+        permission="prompts.read",
+        method="prompts/get",
+    )
 
 
 async def _maybe_forward_affinitized_rpc_request(

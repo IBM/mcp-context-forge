@@ -7461,6 +7461,54 @@ async def test_streamable_http_auth_rejects_revoked_cached_auth_context(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_inactive_cached_auth_context(monkeypatch):
+    """Cached inactive auth context should reject before touching the DB helpers."""
+
+    # First-Party
+    from mcpgateway.cache.auth_cache import CachedAuthContext, auth_cache
+
+    async def fake_verify(_token):
+        return {
+            "sub": "cached@example.com",
+            "jti": "cached-jti",
+            "token_use": "api",
+            "teams": [],
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with (
+        patch.object(
+            auth_cache,
+            "get_auth_context",
+            AsyncMock(
+                return_value=CachedAuthContext(
+                    user={
+                        "email": "cached@example.com",
+                        "is_admin": False,
+                        "is_active": False,
+                    },
+                    personal_team_id=None,
+                    is_token_revoked=False,
+                )
+            ),
+        ),
+        patch("mcpgateway.auth._check_token_revoked_sync", side_effect=AssertionError("should not be called")),
+        patch("mcpgateway.auth._get_user_by_email_sync", side_effect=AssertionError("should not be called")),
+    ):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_auth_uses_batched_auth_context(monkeypatch):
     """MCP auth should use the existing batched auth lookup before per-query fallbacks."""
 
@@ -7508,6 +7556,100 @@ async def test_streamable_http_auth_uses_batched_auth_context(monkeypatch):
     assert sent == []
     mock_set_auth_context.assert_awaited_once()
     assert tr.user_context_var.get()["email"] == "batched@example.com"
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_revoked_batched_auth_context(monkeypatch):
+    """Batched MCP auth lookup should reject revoked tokens before individual DB fallbacks."""
+
+    # First-Party
+    from mcpgateway.cache.auth_cache import auth_cache
+
+    async def fake_verify(_token):
+        return {
+            "sub": "batched@example.com",
+            "jti": "batched-jti",
+            "token_use": "api",
+            "teams": [],
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with (
+        patch.object(auth_cache, "get_auth_context", AsyncMock(return_value=None)),
+        patch(
+            "mcpgateway.auth._get_auth_context_batched_sync",
+            return_value={
+                "user": {
+                    "email": "batched@example.com",
+                    "is_admin": False,
+                    "is_active": True,
+                },
+                "personal_team_id": None,
+                "is_token_revoked": True,
+                "team_ids": [],
+            },
+        ),
+        patch("mcpgateway.auth._check_token_revoked_sync", side_effect=AssertionError("should not be called")),
+        patch("mcpgateway.auth._get_user_by_email_sync", side_effect=AssertionError("should not be called")),
+    ):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_inactive_batched_auth_context(monkeypatch):
+    """Batched MCP auth lookup should reject inactive users before individual DB fallbacks."""
+
+    # First-Party
+    from mcpgateway.cache.auth_cache import auth_cache
+
+    async def fake_verify(_token):
+        return {
+            "sub": "batched@example.com",
+            "jti": "batched-jti",
+            "token_use": "api",
+            "teams": [],
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with (
+        patch.object(auth_cache, "get_auth_context", AsyncMock(return_value=None)),
+        patch(
+            "mcpgateway.auth._get_auth_context_batched_sync",
+            return_value={
+                "user": {
+                    "email": "batched@example.com",
+                    "is_admin": False,
+                    "is_active": False,
+                },
+                "personal_team_id": None,
+                "is_token_revoked": False,
+                "team_ids": [],
+            },
+        ),
+        patch("mcpgateway.auth._check_token_revoked_sync", side_effect=AssertionError("should not be called")),
+        patch("mcpgateway.auth._get_user_by_email_sync", side_effect=AssertionError("should not be called")),
+    ):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
 
 
 @pytest.mark.asyncio
