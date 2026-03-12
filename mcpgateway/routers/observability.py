@@ -93,7 +93,9 @@ async def list_traces(
         attribute_search: Free-text search across all trace attributes
         limit: Maximum results
         offset: Result offset
+        current_user_ctx: Authenticated user
         db: Database session
+
 
     Returns:
         List[ObservabilityTraceRead]: List of traces matching filters
@@ -119,7 +121,7 @@ async def list_traces(
         ...         return [FakeTrace('t1')]
         >>> obs.ObservabilityService = FakeService
         >>> async def run_list_traces():
-        ...     traces = await obs.list_traces(db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     traces = await obs.list_traces(db=None, current_user_ctx={"email": settings.platform_admin_email, "db": None})
         ...     return traces[0].trace_id
         >>> asyncio.run(run_list_traces())
         't1'
@@ -176,6 +178,7 @@ async def query_traces_advanced(
 
     Args:
         request_body: JSON request body with filter criteria
+        current_user_ctx: Authenticated user
         db: Database session
 
     Returns:
@@ -190,7 +193,7 @@ async def query_traces_advanced(
         >>> from mcpgateway.config import settings
         >>> async def run_invalid_query():
         ...     try:
-        ...         await query_traces_advanced({"start_time": "not-a-date"}, db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...         await query_traces_advanced({"start_time": "not-a-date"}, db=None, current_user_ctx={"email": settings.platform_admin_email, "db": None})
         ...     except HTTPException as e:
         ...         return (e.status_code, "Invalid request body" in str(e.detail))
         >>> asyncio.run(run_invalid_query())
@@ -207,7 +210,7 @@ async def query_traces_advanced(
         ...         return [FakeTrace()]
         >>> obs.ObservabilityService = FakeService2
         >>> async def run_query_traces():
-        ...     traces = await obs.query_traces_advanced({}, db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     traces = await obs.query_traces_advanced({}, db=None, current_user_ctx={"email": settings.platform_admin_email, "db": None})
         ...     return traces[0].trace_id
         >>> asyncio.run(run_query_traces())
         'tx'
@@ -266,6 +269,7 @@ async def get_trace(trace_id: str, db: Session = Depends(get_db), current_user_c
 
     Args:
         trace_id: UUID of the trace to retrieve
+        current_user_ctx: Authenticated user
         db: Database session
 
     Returns:
@@ -284,7 +288,7 @@ async def get_trace(trace_id: str, db: Session = Depends(get_db), current_user_c
         >>> obs.ObservabilityService = FakeService
         >>> async def run_missing_trace():
         ...     try:
-        ...         await obs.get_trace("missing", db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...         await obs.get_trace("missing", db=None, current_user_ctx={"email": settings.platform_admin_email, "db": None})
         ...     except obs.HTTPException as e:
         ...         return e.status_code
         >>> asyncio.run(run_missing_trace())
@@ -294,7 +298,7 @@ async def get_trace(trace_id: str, db: Session = Depends(get_db), current_user_c
         ...         return {'trace_id': trace_id}
         >>> obs.ObservabilityService = FakeService2
         >>> async def run_found_trace():
-        ...     trace = await obs.get_trace("found", db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     trace = await obs.get_trace("found", db=None, current_user_ctx={"email": settings.platform_admin_email, "db": None})
         ...     return trace["trace_id"]
         >>> asyncio.run(run_found_trace())
         'found'
@@ -332,6 +336,7 @@ async def list_spans(
         end_time: Filter spans before this time
         limit: Maximum results
         offset: Result offset
+        current_user_ctx: Authenticated user
         db: Database session
 
     Returns:
@@ -385,6 +390,8 @@ async def cleanup_old_traces(
     Args:
         days: Delete traces older than this many days
         db: Database session
+        current_user_ctx:Authenticated user
+
 
     Returns:
         dict: Number of deleted traces and cutoff time
@@ -398,7 +405,7 @@ async def cleanup_old_traces(
         ...         return 5
         >>> obs.ObservabilityService = FakeService
         >>> async def run_cleanup():
-        ...     res = await obs.cleanup_old_traces(days=7, db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     res = await obs.cleanup_old_traces(days=7, db=None, current_user_ctx={"email": settings.platform_admin_email, "db": None})
         ...     return res["deleted"]
         >>> asyncio.run(run_cleanup())
         5
@@ -426,6 +433,7 @@ async def get_stats(
 
     Args:
         hours: Time window in hours
+        current_user_ctx:Authenticated user
         db: Database session
 
     Returns:
@@ -491,6 +499,7 @@ async def export_traces(
     Args:
         request_body: JSON request body with filter criteria (same as /traces/query)
         format: Export format (json, csv, ndjson)
+        current_user_ctx:Authenticated user
         db: Database session
 
     Returns:
@@ -507,7 +516,7 @@ async def export_traces(
         >>> from mcpgateway.config import settings
         >>> async def run_invalid_export():
         ...     try:
-        ...         await export_traces({}, format="xml", db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...         await export_traces({}, format="xml", db=None, current_user_ctx={"email": settings.platform_admin_email, "db": None})
         ...     except HTTPException as e:
         ...         return (e.status_code, "format must be one of" in str(e.detail))
         >>> asyncio.run(run_invalid_export())
@@ -529,17 +538,17 @@ async def export_traces(
         ...         return [FakeTrace()]
         >>> obs.ObservabilityService = FakeService
         >>> async def run_json_export():
-        ...     out = await obs.export_traces({}, format="json", db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     out = await obs.export_traces({}, format="json", db=None, current_user_ctx={"email": settings.platform_admin_email, "db": None})
         ...     return out[0]["trace_id"]
         >>> asyncio.run(run_json_export())
         'tx'
         >>> async def run_csv_export():
-        ...     resp = await obs.export_traces({}, format="csv", db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     resp = await obs.export_traces({}, format="csv", db=None, current_user_ctx={"email": settings.platform_admin_email, "db": None})
         ...     return hasattr(resp, "media_type") and "csv" in resp.media_type
         >>> asyncio.run(run_csv_export())
         True
         >>> async def run_ndjson_export():
-        ...     resp2 = await obs.export_traces({}, format="ndjson", db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     resp2 = await obs.export_traces({}, format="ndjson", db=None, current_user_ctx={"email": settings.platform_admin_email, "db": None})
         ...     return type(resp2).__name__
         >>> asyncio.run(run_ndjson_export())
         'StreamingResponse'
@@ -630,18 +639,21 @@ async def export_traces(
                     str: A JSON-encoded line (with trailing newline) for a trace.
                 """
                 for t in traces:
-                    yield orjson.dumps(
-                        {
-                            "trace_id": t.trace_id,
-                            "name": t.name,
-                            "start_time": t.start_time.isoformat() if t.start_time else None,
-                            "duration_ms": t.duration_ms,
-                            "status": t.status,
-                            "http_method": t.http_method,
-                            "http_status_code": t.http_status_code,
-                            "user_email": t.user_email,
-                        }
-                    ).decode() + "\n"
+                    yield (
+                        orjson.dumps(
+                            {
+                                "trace_id": t.trace_id,
+                                "name": t.name,
+                                "start_time": t.start_time.isoformat() if t.start_time else None,
+                                "duration_ms": t.duration_ms,
+                                "status": t.status,
+                                "http_method": t.http_method,
+                                "http_status_code": t.http_status_code,
+                                "user_email": t.user_email,
+                            }
+                        ).decode()
+                        + "\n"
+                    )
 
             return StreamingResponse(generate(), media_type="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=traces.ndjson"})
 
@@ -665,6 +677,7 @@ async def get_query_performance(
 
     Args:
         hours: Time window in hours
+        current_user_ctx:Authenticated user
         db: Database session
 
     Returns:
@@ -688,7 +701,7 @@ async def get_query_performance(
         ...     def all(self):
         ...         return []
         >>> async def run_empty_stats():
-        ...     return (await obs.get_query_performance(hours=1, db=EmptyDB(), _user={"email": settings.platform_admin_email, "db": None}))["total_traces"]
+        ...     return (await obs.get_query_performance(hours=1, db=EmptyDB(), current_user_ctx={"email": settings.platform_admin_email, "db": None}))["total_traces"]
         >>> asyncio.run(run_empty_stats())
         0
 
@@ -702,7 +715,7 @@ async def get_query_performance(
         ...     def all(self):
         ...         return [(10,), (20,), (30,), (40,)]
         >>> async def run_small_stats():
-        ...     return await obs.get_query_performance(hours=1, db=SmallDB(), _user={"email": settings.platform_admin_email, "db": None})
+        ...     return await obs.get_query_performance(hours=1, db=SmallDB(), current_user_ctx={"email": settings.platform_admin_email, "db": None})
         >>> res = asyncio.run(run_small_stats())
         >>> res["total_traces"]
         4

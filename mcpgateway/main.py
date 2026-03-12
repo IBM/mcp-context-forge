@@ -7253,13 +7253,13 @@ async def readiness_check():
 
 
 @app.get("/health/security", tags=["health"])
-async def security_health(request: Request, _user=Depends(require_admin_auth)):  # pylint: disable=unused-argument
+async def security_health(request: Request, current_user_ctx=Depends(require_admin_auth)):  # pylint: disable=unused-argument
     """
     Get the security configuration health status (admin only).
 
     Args:
         request (Request): The incoming HTTP request.
-        _user: Authenticated admin user (injected by require_admin_auth).
+        current_user_ctx: Authenticated admin user (injected by require_admin_auth).
 
     Returns:
         dict: A dictionary containing the overall security health status, score,
