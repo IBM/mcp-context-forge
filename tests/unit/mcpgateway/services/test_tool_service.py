@@ -5309,6 +5309,8 @@ class TestToolServiceHelpers:
             team_id="team-1",
             owner_email="owner@example.com",
             visibility="team",
+            query_mapping={},
+            header_mapping={}
         )
         gateway = SimpleNamespace(
             id="gw-1",
@@ -5331,6 +5333,8 @@ class TestToolServiceHelpers:
             owner_email="owner@example.com",
             visibility="team",
             tags=None,
+            query_mapping={},
+            header_mapping={}
         )
 
         payload = service._build_tool_cache_payload(tool, gateway)
