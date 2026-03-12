@@ -577,6 +577,76 @@ class TestPromptsTestModal:
         prompts_page.close_prompt_test_modal()
         expect(prompts_page.prompt_test_modal).to_be_hidden()
 
+    def test_test_modal_result_shows_placeholder_on_open(self, prompts_page: PromptsPage):
+        """Regression: test modal result area must show placeholder text when first opened."""
+        prompts_page.navigate_to_prompts_tab()
+        prompts_page.wait_for_prompts_table_loaded()
+        _skip_if_no_prompts(prompts_page)
+
+        prompts_page.open_prompt_test_modal(0)
+
+        result_text = prompts_page.prompt_test_result.text_content().strip()
+        assert "Render Prompt" in result_text, (
+            f"Prompt test result should show placeholder on open, got: '{result_text[:100]}'"
+        )
+
+        prompts_page.close_prompt_test_modal()
+
+    def test_test_modal_result_cleared_on_reopen(self, prompts_page: PromptsPage):
+        """Regression: opening test modal for a different prompt must not show stale results.
+
+        This verifies the fix for the bug where closing a test modal and opening
+        it for another prompt would display the previous prompt's rendered output.
+        """
+        prompts_page.navigate_to_prompts_tab()
+        prompts_page.wait_for_prompts_table_loaded()
+
+        count = prompts_page.get_prompt_count()
+        if count < 2:
+            pytest.skip("Need at least 2 prompts to test stale result clearing")
+
+        # Open test modal for first prompt and inject fake result content
+        prompts_page.open_prompt_test_modal(0)
+        first_title = prompts_page.prompt_test_modal.locator(
+            "#prompt-test-modal-title"
+        ).text_content()
+        prompts_page.page.evaluate(
+            """() => {
+                const el = document.getElementById('prompt-test-result');
+                if (el) el.textContent = 'STALE_PROMPT_RESULT_MARKER';
+            }"""
+        )
+        prompts_page.close_prompt_test_modal()
+
+        # Open test modal for second prompt
+        prompts_page.open_prompt_test_modal(1)
+
+        second_title = prompts_page.prompt_test_modal.locator(
+            "#prompt-test-modal-title"
+        ).text_content()
+        assert first_title != second_title, "Test modal should show different prompt"
+
+        result_text = prompts_page.prompt_test_result.text_content().strip()
+        assert "STALE_PROMPT_RESULT_MARKER" not in result_text, (
+            "Prompt test result should not contain stale data from previous prompt"
+        )
+
+        prompts_page.close_prompt_test_modal()
+
+    def test_test_modal_loading_hidden_on_open(self, prompts_page: PromptsPage):
+        """Regression: loading spinner must be hidden when test modal opens."""
+        prompts_page.navigate_to_prompts_tab()
+        prompts_page.wait_for_prompts_table_loaded()
+        _skip_if_no_prompts(prompts_page)
+
+        prompts_page.open_prompt_test_modal(0)
+
+        loading = prompts_page.prompt_test_modal.locator("#prompt-test-loading")
+        # Loading spinner should be hidden
+        expect(loading).to_be_hidden()
+
+        prompts_page.close_prompt_test_modal()
+
 
 # ---------------------------------------------------------------------------
 # Row Actions

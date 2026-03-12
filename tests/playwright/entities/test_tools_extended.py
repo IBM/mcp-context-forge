@@ -729,6 +729,76 @@ class TestToolsTestModal:
 
         tools_page.close_tool_test_modal()
 
+    def test_test_modal_result_empty_on_open(self, tools_page: ToolsPage):
+        """Regression: test modal result area must be empty when first opened."""
+        tools_page.navigate_to_tools_tab()
+        tools_page.wait_for_tools_table_loaded()
+        _skip_if_no_tools(tools_page)
+
+        tools_page.open_tool_test_modal(0)
+
+        result_text = tools_page.tool_test_result.text_content().strip()
+        assert result_text == "", (
+            f"Tool test result should be empty on open, got: '{result_text[:100]}'"
+        )
+
+        tools_page.close_tool_test_modal()
+
+    def test_test_modal_result_cleared_on_reopen(self, tools_page: ToolsPage):
+        """Regression: opening test modal for a different tool must not show stale results.
+
+        This verifies the fix for the bug where closing a test modal and opening
+        it for another tool would display the previous tool's test response.
+        """
+        tools_page.navigate_to_tools_tab()
+        tools_page.wait_for_tools_table_loaded()
+
+        count = _get_tool_count(tools_page)
+        if count < 2:
+            pytest.skip("Need at least 2 tools to test stale result clearing")
+
+        # Open test modal for first tool and inject fake result content
+        tools_page.open_tool_test_modal(0)
+        first_title = tools_page.tool_test_modal.locator(
+            "#tool-test-modal-title"
+        ).text_content()
+        tools_page.page.evaluate(
+            """() => {
+                const el = document.getElementById('tool-test-result');
+                if (el) el.textContent = 'STALE_RESULT_MARKER';
+            }"""
+        )
+        tools_page.close_tool_test_modal()
+
+        # Open test modal for second tool
+        tools_page.open_tool_test_modal(1)
+
+        second_title = tools_page.tool_test_modal.locator(
+            "#tool-test-modal-title"
+        ).text_content()
+        assert first_title != second_title, "Test modal should show different tool"
+
+        result_text = tools_page.tool_test_result.text_content().strip()
+        assert "STALE_RESULT_MARKER" not in result_text, (
+            "Tool test result should not contain stale data from previous tool"
+        )
+
+        tools_page.close_tool_test_modal()
+
+    def test_test_modal_loading_hidden_on_open(self, tools_page: ToolsPage):
+        """Regression: loading spinner must be hidden when test modal opens."""
+        tools_page.navigate_to_tools_tab()
+        tools_page.wait_for_tools_table_loaded()
+        _skip_if_no_tools(tools_page)
+
+        tools_page.open_tool_test_modal(0)
+
+        loading = tools_page.tool_test_modal.locator("#tool-test-loading")
+        # Loading spinner should be hidden (display:none)
+        expect(loading).to_be_hidden()
+
+        tools_page.close_tool_test_modal()
+
 
 # ---------------------------------------------------------------------------
 # Row Actions
