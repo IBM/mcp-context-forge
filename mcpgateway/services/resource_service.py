@@ -1199,6 +1199,7 @@ class ResourceService(BaseService):
         db: Session,
         server_id: str,
         include_inactive: bool = False,
+        include_metrics: bool = False,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> List[ResourceRead]:
@@ -1295,7 +1296,7 @@ class ResourceService(BaseService):
         for t in resources:
             try:
                 t.team = team_map.get(str(t.team_id)) if t.team_id else None
-                result.append(self.convert_resource_to_read(t, include_metrics=False))
+                result.append(self.convert_resource_to_read(t, include_metrics=include_metrics))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                 logger.exception(f"Failed to convert resource {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
                 # Continue with remaining resources instead of failing completely
