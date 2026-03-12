@@ -1256,6 +1256,8 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
 	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
 	@echo ""
+	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
+	@echo ""
 	@echo "   📝 Auto-registered:"
 	@echo "      • MCP gateway: fast_test (from fast_test_server)"
 	@echo "      • A2A agent:   a2a-echo-agent"
@@ -1266,7 +1268,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 .PHONY: testing-down
 testing-down:                              ## Stop testing stack
 	@echo "🧪 Stopping testing stack..."
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector down --remove-orphans
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile dast down --remove-orphans
 	@echo "✅ Testing stack stopped."
 
 .PHONY: testing-status
@@ -1280,6 +1282,24 @@ testing-status:                            ## Show status of testing services
 .PHONY: testing-logs
 testing-logs:                              ## Show testing stack logs
 	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector logs -f --tail=100
+
+.PHONY: testing-zap-up
+testing-zap-up:                            ## Start OWASP ZAP DAST daemon (requires testing stack)
+	@echo "🔒 Starting OWASP ZAP DAST daemon..."
+	$(COMPOSE_CMD_MONITOR) --profile dast up -d
+	@echo ""
+	@echo "✅ ZAP DAST daemon started!"
+	@echo ""
+	@echo "   OWASP ZAP API:    http://localhost:8090"
+	@echo "   OWASP ZAP API UI: http://localhost:8090/UI"
+	@echo ""
+	@echo "   Run security tests: make test-zap"
+
+.PHONY: testing-zap-down
+testing-zap-down:                          ## Stop OWASP ZAP DAST daemon
+	@echo "🔒 Stopping ZAP DAST daemon..."
+	$(COMPOSE_CMD_MONITOR) --profile dast down --remove-orphans
+	@echo "✅ ZAP stopped."
 
 # =============================================================================
 # help: 🔍 MCP INSPECTOR (Interactive MCP Client)
@@ -5502,6 +5522,22 @@ compose-scale:
 		echo "Usage: make compose-scale SERVICE=worker SCALE=3"; exit 1; }
 	$(COMPOSE) up -d --scale $(SERVICE)=$(SCALE)
 
+
+# help: compose-cache-clear  - Clear nginx cache (requires running nginx container)
+.PHONY: compose-cache-clear
+compose-cache-clear:						## 🧹 Clear nginx cache
+	@echo "🧹 Clearing nginx cache..."
+	@if docker ps --format '{{.Names}}' | grep -q nginx; then \
+		echo "   Clearing cache files..."; \
+		$(COMPOSE) exec nginx sh -c "rm -rf /var/cache/nginx/*"; \
+		echo "   Reloading nginx..."; \
+		$(COMPOSE) exec nginx nginx -s reload; \
+	else \
+		echo "   ⚠️  Nginx is not running. Cache is ephemeral and will be fresh on next start."; \
+		echo "   Start the stack with: make compose-up"; \
+	fi
+	@echo "✅ Done"
+
 # Compose with validation and health check
 .PHONY: compose-up-safe
 compose-up-safe: compose-validate compose-up
@@ -6677,8 +6713,10 @@ db-fix-head: ## Fix multiple heads issue
 # help: test-ui-record       - Run Playwright UI tests and record videos + screenshots (headless)
 # help: test-ui-update-snapshots - Update Playwright visual regression snapshots
 # help: test-ui-clean        - Clean up Playwright test artifacts
+# help: test-owasp           - Run OWASP access-control security tests (no ZAP required)
+# help: test-zap             - Run ZAP DAST security scan (requires ZAP daemon; set ZAP_BASE_URL)
 
-.PHONY: playwright-install playwright-install-all playwright-preflight test-ui test-ui-headless test-ui-headless-parallel test-ui-debug test-ui-smoke test-ui-ci-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-screenshots test-ui-record test-ui-update-snapshots test-ui-clean
+.PHONY: playwright-install playwright-install-all playwright-preflight test-ui test-ui-headless test-ui-headless-parallel test-ui-debug test-ui-smoke test-ui-ci-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-screenshots test-ui-record test-ui-update-snapshots test-ui-clean test-zap test-owasp
 
 # Playwright test variables
 PLAYWRIGHT_DIR := tests/playwright
@@ -6687,6 +6725,14 @@ PLAYWRIGHT_SCREENSHOTS := $(PLAYWRIGHT_DIR)/screenshots
 PLAYWRIGHT_VIDEOS := $(PLAYWRIGHT_DIR)/videos
 PLAYWRIGHT_SLOWMO ?= 750
 TEST_BASE_URL ?= http://localhost:8080
+ZAP_BASE_URL   ?= http://localhost:8090
+ZAP_API_KEY    ?= changeme
+# URL ZAP uses internally to spider the app. nginx exposes port 80 on mcpnet
+# (host sees it as 8080 via port mapping), so ZAP inside Docker must use port 80.
+# Works on both Linux and macOS/Windows Docker Desktop.
+# Override only if your setup differs (e.g. a standalone ZAP outside mcpnet).
+ZAP_TARGET_URL ?= http://nginx:80
+ZAP_REPORTS   := tests/reports
 # Optional install flags for Playwright browser installation (e.g. --with-deps in Linux CI)
 PLAYWRIGHT_INSTALL_FLAGS ?=
 PLAYWRIGHT_CI_SMOKE_TESTS := \
@@ -6871,6 +6917,38 @@ test-ui-clean:
 	@rm -rf test-results/
 	@rm -f playwright-report-*.html test-results-*.xml
 	@echo "✅ Playwright artifacts cleaned!"
+
+## --- OWASP / ZAP Security Testing ------------------------------------------
+test-owasp: playwright-install  ## 🔒 Run OWASP access-control security tests (no ZAP required)
+	@echo "🔒 Running OWASP access-control security tests..."
+	@$(MAKE) --no-print-directory playwright-preflight
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(ZAP_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
+		uv run --active pytest tests/playwright/security/owasp/ \
+			-v -m owasp_a01 --tb=short \
+			|| { echo '❌ OWASP security tests failed!'; exit 1; }"
+	@echo "✅ OWASP security tests completed!"
+
+test-zap: playwright-install  ## 🔒 Run ZAP DAST security scan (requires ZAP daemon; set ZAP_BASE_URL)
+	@echo "🔒 Running ZAP DAST security scan against $(TEST_BASE_URL)..."
+	@if [ -z "$(ZAP_BASE_URL)" ]; then \
+		echo "❌ ZAP_BASE_URL is not set. Start the testing stack with: make testing-up"; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory playwright-preflight
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(ZAP_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
+		export ZAP_BASE_URL='$(ZAP_BASE_URL)' && \
+		export ZAP_API_KEY='$(ZAP_API_KEY)' && \
+		export ZAP_TARGET_URL='$(ZAP_TARGET_URL)' && \
+		uv run --active pytest tests/playwright/security/owasp/ \
+			-v -m owasp_a01_zap --tb=short \
+			|| { echo '❌ ZAP DAST scan failed!'; exit 1; }"
+	@echo "✅ ZAP DAST scan completed! Reports in $(ZAP_REPORTS)/"
 
 ## --- Combined Testing -------------------------------------------------------
 test-all: test test-js test-ui-headless
@@ -8007,6 +8085,10 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
+
+.PHONY: conc-02-gateways
+conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)
+	@/bin/bash tests/manual/concurrency/run_conc_02_gateways.sh
 
 # -----------------------------------------------------------------------------
 # Temporary CI toggle for Conventional Commit message linting

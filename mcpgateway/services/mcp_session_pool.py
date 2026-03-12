@@ -50,6 +50,7 @@ import mcp.types as mcp_types
 import orjson
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
@@ -609,7 +610,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         # Store in local memory
         async with self._mcp_session_mapping_lock:
             self._mcp_session_mapping[mapping_key] = pool_key
-            logger.debug(f"Session affinity pre-registered (local): {mcp_session_id[:8]}... → {url}, user={user_identity}")
+            logger.debug(f"Session affinity pre-registered (local): {mcp_session_id[:8]}... → {url}, user={SecurityValidator.sanitize_log_message(user_identity)}")
 
         # Store in Redis for multi-worker support AND register ownership atomically
         # Registering ownership HERE (during mapping) instead of in acquire() prevents
@@ -1127,7 +1128,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             if self._message_handler_factory:
                 try:
                     message_handler = self._message_handler_factory(url, gateway_id)
-                    logger.debug(f"Created message handler for session {sanitize_url_for_logging(url)} (gateway={gateway_id})")
+                    logger.debug(f"Created message handler for session {sanitize_url_for_logging(url)} (gateway={SecurityValidator.sanitize_log_message(gateway_id)})")
                 except Exception as e:
                     logger.warning(f"Failed to create message handler for {sanitize_url_for_logging(url)}: {e}")
 
@@ -1561,6 +1562,11 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     headers=internal_headers,
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                 )
+
+                # Treat non-2xx HTTP responses as errors
+                if not response.is_success:
+                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
+                    return {"error": {"code": -32603, "message": f"Internal request failed with HTTP {response.status_code}"}}
 
                 # Parse response
                 response_data = response.json()
