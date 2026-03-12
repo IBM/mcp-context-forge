@@ -861,7 +861,26 @@ function _navigateAdmin(fragment, searchParams) {
         adminIdx >= 0
             ? window.location.origin + currentPath.slice(0, adminIdx)
             : window.ROOT_PATH || window.location.origin;
-    const qs = searchParams ? searchParams.toString() : "";
+
+    // Preserve namespaced pagination state (*_page, *_size, *_inactive, *_q, *_tags)
+    // from the current URL so that editing an item on page 3 returns to page 3.
+    if (!searchParams) {
+        searchParams = new URLSearchParams();
+    }
+    const currentUrlParams = new URLSearchParams(window.location.search);
+    currentUrlParams.forEach((value, key) => {
+        const isPaginationParam =
+            key.endsWith("_page") ||
+            key.endsWith("_size") ||
+            (key.endsWith("_inactive") && key !== "include_inactive") ||
+            key.endsWith("_q") ||
+            key.endsWith("_tags");
+        if (isPaginationParam && !searchParams.has(key)) {
+            searchParams.set(key, value);
+        }
+    });
+
+    const qs = searchParams.toString();
     const target = `${base}/admin${qs ? `?${qs}` : ""}#${fragment}`;
 
     // When the target URL is identical to the current URL (same path, query,
@@ -5585,11 +5604,12 @@ async function viewPrompt(promptName) {
 
             const argsEl = promptDetailsDiv.querySelector(".prompt-arguments");
             if (argsEl) {
-                argsEl.textContent = JSON.stringify(
-                    prompt.arguments || {},
-                    null,
-                    2,
-                );
+                const args = prompt.arguments;
+                if (!args || args.length === 0) {
+                    argsEl.textContent = "No arguments";
+                } else {
+                    argsEl.textContent = JSON.stringify(args, null, 2);
+                }
             }
 
             if (prompt.metrics) {
@@ -5826,7 +5846,7 @@ async function editPrompt(promptId) {
 
         // Validate arguments JSON
         const argsValidation = validateJson(
-            JSON.stringify(prompt.arguments || {}),
+            JSON.stringify(prompt.arguments || []),
             "Arguments",
         );
         if (argsField && argsValidation.valid) {
@@ -6655,7 +6675,7 @@ async function viewServer(serverId) {
                     toolsList.appendChild(toolItem);
                 });
 
-                // If more than maxToShow, add a summary badge
+                // If more than maxToShow, add a summary badge (clickable to expand)
                 if (server.associatedTools.length > maxToShow) {
                     const moreItem = document.createElement("div");
                     moreItem.className = "flex items-center space-x-2";
@@ -6666,6 +6686,32 @@ async function viewServer(serverId) {
                     moreBadge.title = "Total tools associated";
                     const remaining = server.associatedTools.length - maxToShow;
                     moreBadge.textContent = `+${remaining} more`;
+
+                    // Expand inline to show full list when clicked
+                    moreBadge.addEventListener("click", () => {
+                        toolsList.innerHTML = "";
+                        (server.associatedTools || []).forEach((toolId) => {
+                            const toolItem = document.createElement("div");
+                            toolItem.className = "flex items-center space-x-2";
+
+                            const toolBadge = document.createElement("span");
+                            toolBadge.className =
+                                "inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full dark:bg-green-900 dark:text-green-200";
+                            toolBadge.textContent =
+                                window.toolMapping && window.toolMapping[toolId]
+                                    ? window.toolMapping[toolId]
+                                    : toolId;
+
+                            const toolIdSpan = document.createElement("span");
+                            toolIdSpan.className =
+                                "text-xs text-gray-500 dark:text-gray-400";
+                            toolIdSpan.textContent = `(${toolId})`;
+
+                            toolItem.appendChild(toolBadge);
+                            toolItem.appendChild(toolIdSpan);
+                            toolsList.appendChild(toolItem);
+                        });
+                    });
 
                     moreItem.appendChild(moreBadge);
                     toolsList.appendChild(moreItem);
@@ -6721,7 +6767,7 @@ async function viewServer(serverId) {
                     resourcesList.appendChild(resourceItem);
                 });
 
-                // If more than maxToShow, add a summary badge
+                // If more than maxToShow, add a summary badge (clickable to expand)
                 if (server.associatedResources.length > maxToShow) {
                     const moreItem = document.createElement("div");
                     moreItem.className = "flex items-center space-x-2";
@@ -6733,6 +6779,38 @@ async function viewServer(serverId) {
                     const remaining =
                         server.associatedResources.length - maxToShow;
                     moreBadge.textContent = `+${remaining} more`;
+
+                    moreBadge.addEventListener("click", () => {
+                        resourcesList.innerHTML = "";
+                        (server.associatedResources || []).forEach(
+                            (resourceId) => {
+                                const resourceItem =
+                                    document.createElement("div");
+                                resourceItem.className =
+                                    "flex items-center space-x-2";
+
+                                const resourceBadge =
+                                    document.createElement("span");
+                                resourceBadge.className =
+                                    "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full dark:bg-blue-900 dark:text-blue-200";
+                                resourceBadge.textContent =
+                                    window.resourceMapping &&
+                                    window.resourceMapping[resourceId]
+                                        ? window.resourceMapping[resourceId]
+                                        : `Resource ${resourceId}`;
+
+                                const resourceIdSpan =
+                                    document.createElement("span");
+                                resourceIdSpan.className =
+                                    "text-xs text-gray-500 dark:text-gray-400";
+                                resourceIdSpan.textContent = `(${resourceId})`;
+
+                                resourceItem.appendChild(resourceBadge);
+                                resourceItem.appendChild(resourceIdSpan);
+                                resourcesList.appendChild(resourceItem);
+                            },
+                        );
+                    });
 
                     moreItem.appendChild(moreBadge);
                     resourcesList.appendChild(moreItem);
@@ -6787,7 +6865,7 @@ async function viewServer(serverId) {
                     promptsList.appendChild(promptItem);
                 });
 
-                // If more than maxToShow, add a summary badge
+                // If more than maxToShow, add a summary badge (clickable to expand)
                 if (server.associatedPrompts.length > maxToShow) {
                     const moreItem = document.createElement("div");
                     moreItem.className = "flex items-center space-x-2";
@@ -6799,6 +6877,33 @@ async function viewServer(serverId) {
                     const remaining =
                         server.associatedPrompts.length - maxToShow;
                     moreBadge.textContent = `+${remaining} more`;
+
+                    moreBadge.addEventListener("click", () => {
+                        promptsList.innerHTML = "";
+                        (server.associatedPrompts || []).forEach((promptId) => {
+                            const promptItem = document.createElement("div");
+                            promptItem.className =
+                                "flex items-center space-x-2";
+
+                            const promptBadge = document.createElement("span");
+                            promptBadge.className =
+                                "inline-block bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full dark:bg-purple-900 dark:text-purple-200";
+                            promptBadge.textContent =
+                                window.promptMapping &&
+                                window.promptMapping[promptId]
+                                    ? window.promptMapping[promptId]
+                                    : `Prompt ${promptId}`;
+
+                            const promptIdSpan = document.createElement("span");
+                            promptIdSpan.className =
+                                "text-xs text-gray-500 dark:text-gray-400";
+                            promptIdSpan.textContent = `(${promptId})`;
+
+                            promptItem.appendChild(promptBadge);
+                            promptItem.appendChild(promptIdSpan);
+                            promptsList.appendChild(promptItem);
+                        });
+                    });
 
                     moreItem.appendChild(moreBadge);
                     promptsList.appendChild(moreItem);
@@ -6869,6 +6974,111 @@ async function viewServer(serverId) {
             }
 
             container.appendChild(associatedDiv);
+
+            // OAuth Configuration section
+            if (server.oauthEnabled) {
+                const oauthDiv = document.createElement("div");
+                oauthDiv.className = "mt-6 border-t pt-4";
+
+                const oauthTitle = document.createElement("strong");
+                oauthTitle.textContent = "OAuth 2.0 Configuration:";
+                oauthTitle.className =
+                    "block text-gray-900 dark:text-gray-100 mb-3";
+                oauthDiv.appendChild(oauthTitle);
+
+                // OAuth Config details
+                const oauthConfig = server.oauthConfig || server.oauth_config;
+                if (oauthConfig) {
+                    const oauthConfigDiv = document.createElement("div");
+                    oauthConfigDiv.className =
+                        "mt-3 space-y-2 bg-gray-50 dark:bg-gray-800 p-3 rounded-md";
+
+                    // Authorization Servers
+                    if (
+                        oauthConfig.authorization_servers &&
+                        oauthConfig.authorization_servers.length > 0
+                    ) {
+                        const authServersP = document.createElement("p");
+                        authServersP.className = "text-sm";
+                        const authServersStrong =
+                            document.createElement("strong");
+                        authServersStrong.textContent =
+                            "Authorization Servers: ";
+                        authServersStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        authServersP.appendChild(authServersStrong);
+
+                        const serversList = document.createElement("ul");
+                        serversList.className =
+                            "mt-1 ml-4 list-disc list-inside";
+                        oauthConfig.authorization_servers.forEach(
+                            (serverUrl) => {
+                                const li = document.createElement("li");
+                                li.className =
+                                    "text-gray-600 dark:text-gray-400 text-sm";
+                                li.textContent = serverUrl;
+                                serversList.appendChild(li);
+                            },
+                        );
+                        authServersP.appendChild(serversList);
+                        oauthConfigDiv.appendChild(authServersP);
+                    }
+
+                    // Token Endpoint
+                    if (oauthConfig.token_endpoint) {
+                        const tokenEndpointP = document.createElement("p");
+                        tokenEndpointP.className = "text-sm";
+                        const tokenEndpointStrong =
+                            document.createElement("strong");
+                        tokenEndpointStrong.textContent = "Token Endpoint: ";
+                        tokenEndpointStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        tokenEndpointP.appendChild(tokenEndpointStrong);
+
+                        const tokenEndpointSpan =
+                            document.createElement("span");
+                        tokenEndpointSpan.className =
+                            "text-gray-600 dark:text-gray-400 break-all";
+                        tokenEndpointSpan.textContent =
+                            oauthConfig.token_endpoint;
+                        tokenEndpointP.appendChild(tokenEndpointSpan);
+                        oauthConfigDiv.appendChild(tokenEndpointP);
+                    }
+
+                    // Scopes Supported
+                    if (
+                        oauthConfig.scopes_supported &&
+                        oauthConfig.scopes_supported.length > 0
+                    ) {
+                        const scopesP = document.createElement("p");
+                        scopesP.className = "text-sm";
+                        const scopesStrong = document.createElement("strong");
+                        scopesStrong.textContent = "Supported Scopes: ";
+                        scopesStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        scopesP.appendChild(scopesStrong);
+
+                        const scopesSpan = document.createElement("span");
+                        scopesSpan.className =
+                            "text-gray-600 dark:text-gray-400";
+                        scopesSpan.textContent =
+                            oauthConfig.scopes_supported.join(", ");
+                        scopesP.appendChild(scopesSpan);
+                        oauthConfigDiv.appendChild(scopesP);
+                    }
+
+                    oauthDiv.appendChild(oauthConfigDiv);
+                } else {
+                    const noConfigP = document.createElement("p");
+                    noConfigP.className =
+                        "mt-2 text-sm text-gray-500 dark:text-gray-400";
+                    noConfigP.textContent =
+                        "OAuth is enabled but no configuration details are available.";
+                    oauthDiv.appendChild(noConfigP);
+                }
+
+                container.appendChild(oauthDiv);
+            }
 
             // Add metadata section
             const metadataDiv = document.createElement("div");
@@ -12107,6 +12317,16 @@ async function testTool(toolId) {
             }
         }
 
+        // Clear previous result before opening
+        const resultContainer = safeGetElement("tool-test-result");
+        if (resultContainer) {
+            resultContainer.textContent = "";
+        }
+        const loadingEl = safeGetElement("tool-test-loading");
+        if (loadingEl) {
+            loadingEl.style.display = "none";
+        }
+
         openModal("tool-test-modal");
         console.log("✓ Tool test modal loaded successfully");
     } catch (error) {
@@ -14393,6 +14613,22 @@ async function testPrompt(promptId) {
                 }
             }
 
+            // Clear previous result before opening
+            const resultContainer = safeGetElement("prompt-test-result");
+            if (resultContainer) {
+                resultContainer.textContent = "";
+                const placeholder = document.createElement("div");
+                placeholder.className =
+                    "text-gray-500 dark:text-gray-400 text-sm italic";
+                placeholder.textContent =
+                    'Click "Render Prompt" to see the rendered output';
+                resultContainer.appendChild(placeholder);
+            }
+            const promptLoading = safeGetElement("prompt-test-loading");
+            if (promptLoading) {
+                promptLoading.classList.add("hidden");
+            }
+
             // Build form fields based on prompt arguments
             buildPromptTestForm(prompt);
 
@@ -14724,6 +14960,16 @@ async function testGateway(gatewayURL) {
 
         // Clean up any existing event listeners first
         cleanupGatewayTestModal();
+
+        // Clear previous result before opening
+        const responseDiv = safeGetElement("gateway-test-response-json");
+        const resultDiv = safeGetElement("gateway-test-result");
+        if (responseDiv) {
+            responseDiv.textContent = "";
+        }
+        if (resultDiv) {
+            resultDiv.classList.add("hidden");
+        }
 
         // Open the modal
         openModal("gateway-test-modal");
@@ -16779,9 +17025,20 @@ function setupFormValidation() {
 
     forms.forEach((form) => {
         // Add validation to name fields
-        const nameFields = form.querySelectorAll(
-            'input[name*="name"], input[name*="Name"]',
-        );
+        // Target only the actual technical name inputs (avoid matching displayName)
+        const nameFields = Array.from(
+            form.querySelectorAll(
+                'input[name="name"], input[name="customName"], input[name="custom_name"]',
+            ),
+        ).filter((f) => {
+            // Exclude hidden inputs and any display-name-like fields so
+            // display names remain optional and aren't validated here.
+            if (!f) return false;
+            if (f.type && f.type.toLowerCase() === "hidden") return false;
+            if (/display/i.test(f.name || "")) return false;
+            return true;
+        });
+
         nameFields.forEach((field) => {
             field.addEventListener("blur", function () {
                 const parentNode = this.parentNode;
@@ -18489,38 +18746,8 @@ function clearSearch(entityType) {
             if (tagInput) {
                 tagInput.value = "";
             }
-            // Keep rows visible even if HTMX reload is delayed/missed.
-            if (
-                entityType === "catalog" &&
-                typeof filterServerTable === "function"
-            ) {
-                filterServerTable("");
-            } else if (
-                entityType === "tools" &&
-                typeof filterToolsTable === "function"
-            ) {
-                filterToolsTable("");
-            } else if (
-                entityType === "resources" &&
-                typeof filterResourcesTable === "function"
-            ) {
-                filterResourcesTable("");
-            } else if (
-                entityType === "prompts" &&
-                typeof filterPromptsTable === "function"
-            ) {
-                filterPromptsTable("");
-            } else if (
-                entityType === "gateways" &&
-                typeof filterGatewaysTable === "function"
-            ) {
-                filterGatewaysTable("");
-            } else if (
-                entityType === "a2a-agents" &&
-                typeof filterA2AAgentsTable === "function"
-            ) {
-                filterA2AAgentsTable("");
-            }
+            // Trigger server-side reload to show all results (fixes #3128)
+            // Removed client-side DOM filtering as it only filters visible page
             loadSearchablePanel(entityType);
             return;
         }
@@ -21609,11 +21836,15 @@ async function handleA2ATestSubmit(e) {
             window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
         );
 
-        if (!response.ok) {
+        // Parse the JSON body for all responses — the backend returns
+        // structured {success, error, error_type} even for non-2xx status
+        // codes, and the display logic below already handles both cases.
+        let result;
+        try {
+            result = await response.json();
+        } catch {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-
-        const result = await response.json();
 
         // Display result
         const isSuccess = result.success && !result.error;
