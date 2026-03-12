@@ -12211,6 +12211,16 @@ async function testTool(toolId) {
             }
         }
 
+        // Clear previous result before opening
+        const resultContainer = safeGetElement("tool-test-result");
+        if (resultContainer) {
+            resultContainer.textContent = "";
+        }
+        const loadingEl = safeGetElement("tool-test-loading");
+        if (loadingEl) {
+            loadingEl.style.display = "none";
+        }
+
         openModal("tool-test-modal");
         console.log("✓ Tool test modal loaded successfully");
     } catch (error) {
@@ -14497,6 +14507,22 @@ async function testPrompt(promptId) {
                 }
             }
 
+            // Clear previous result before opening
+            const resultContainer = safeGetElement("prompt-test-result");
+            if (resultContainer) {
+                resultContainer.textContent = "";
+                const placeholder = document.createElement("div");
+                placeholder.className =
+                    "text-gray-500 dark:text-gray-400 text-sm italic";
+                placeholder.textContent =
+                    'Click "Render Prompt" to see the rendered output';
+                resultContainer.appendChild(placeholder);
+            }
+            const promptLoading = safeGetElement("prompt-test-loading");
+            if (promptLoading) {
+                promptLoading.classList.add("hidden");
+            }
+
             // Build form fields based on prompt arguments
             buildPromptTestForm(prompt);
 
@@ -14828,6 +14854,16 @@ async function testGateway(gatewayURL) {
 
         // Clean up any existing event listeners first
         cleanupGatewayTestModal();
+
+        // Clear previous result before opening
+        const responseDiv = safeGetElement("gateway-test-response-json");
+        const resultDiv = safeGetElement("gateway-test-result");
+        if (responseDiv) {
+            responseDiv.textContent = "";
+        }
+        if (resultDiv) {
+            resultDiv.classList.add("hidden");
+        }
 
         // Open the modal
         openModal("gateway-test-modal");
