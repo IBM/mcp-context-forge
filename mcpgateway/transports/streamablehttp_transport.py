@@ -3047,24 +3047,95 @@ class _StreamableHttpAuthHandler:
             if not isinstance(user_payload, dict):
                 return True
 
+            # First-Party
+            from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
+            from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
+
             jti = user_payload.get("jti")
-            if jti:
-                # First-Party
-                from mcpgateway.auth import _check_token_revoked_sync  # pylint: disable=import-outside-toplevel
-
-                try:
-                    is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
-                except Exception as exc:
-                    logger.warning("MCP token revocation check failed for jti=%s; allowing request (fail-open): %s", jti, exc)
-                    is_revoked = False
-                if is_revoked:
-                    return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
-
             user_email = user_payload.get("sub") or user_payload.get("email")
+            nested_user = user_payload.get("user", {})
+            nested_is_admin = nested_user.get("is_admin", False) if isinstance(nested_user, dict) else False
+            is_admin = user_payload.get("is_admin", False) or nested_is_admin
+            token_use = user_payload.get("token_use")
             db_user_is_admin = False
-            if user_email:
+            user_record = None
+            auth_cache = get_auth_cache() if settings.auth_cache_enabled else None
+            cached_ctx: CachedAuthContext | None = None
+            batched_auth_ctx: dict[str, Any] | None = None
+            cached_team_ids: list[str] | None = None
+            platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+
+            if user_email and auth_cache is not None:
+                try:
+                    cached_ctx = await auth_cache.get_auth_context(user_email, jti)
+                    if cached_ctx is not None:
+                        if cached_ctx.is_token_revoked:
+                            return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
+
+                        cached_user = cached_ctx.user
+                        if cached_user and not cached_user.get("is_active", True):
+                            return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
+
+                        if cached_user:
+                            db_user_is_admin = bool(cached_user.get("is_admin", False))
+                        elif settings.require_user_in_db and user_email != platform_admin_email:
+                            return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
+
+                        if token_use == "session" and not is_admin:
+                            cached_team_ids = await auth_cache.get_user_teams(f"{user_email}:True")
+                except HTTPException:
+                    raise
+                except Exception as cache_error:
+                    logger.debug("MCP auth cache lookup failed for %s: %s", user_email, cache_error)
+                    cached_ctx = None
+
+            if user_email and cached_ctx is None and settings.auth_cache_batch_queries:
+                try:
+                    batched_auth_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, user_email, jti)
+                    if batched_auth_ctx.get("is_token_revoked", False):
+                        return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
+
+                    cached_user = batched_auth_ctx.get("user")
+                    if cached_user and not cached_user.get("is_active", True):
+                        return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
+
+                    if cached_user:
+                        db_user_is_admin = bool(cached_user.get("is_admin", False))
+                    elif settings.require_user_in_db and user_email != platform_admin_email:
+                        return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
+
+                    if auth_cache is not None:
+                        await auth_cache.set_auth_context(
+                            user_email,
+                            jti,
+                            CachedAuthContext(
+                                user=cached_user,
+                                personal_team_id=batched_auth_ctx.get("personal_team_id"),
+                                is_token_revoked=bool(batched_auth_ctx.get("is_token_revoked", False)),
+                            ),
+                        )
+                        if token_use == "session" and not is_admin:
+                            cached_team_ids = list(batched_auth_ctx.get("team_ids") or [])
+                            await auth_cache.set_user_teams(f"{user_email}:True", cached_team_ids)
+                except HTTPException:
+                    raise
+                except Exception as batch_error:
+                    logger.warning("Batched MCP auth lookup failed for user=%s; falling back to individual checks: %s", user_email, batch_error)
+                    batched_auth_ctx = None
+
+            if user_email and cached_ctx is None and batched_auth_ctx is None:
                 # First-Party
-                from mcpgateway.auth import _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+                from mcpgateway.auth import _check_token_revoked_sync, _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+
+                is_revoked = False
+                if jti:
+                    try:
+                        is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
+                    except Exception as exc:
+                        logger.warning("MCP token revocation check failed for jti=%s; allowing request (fail-open): %s", jti, exc)
+                        is_revoked = False
+                    if is_revoked:
+                        return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
 
                 user_lookup_succeeded = True
                 try:
@@ -3079,23 +3150,63 @@ class _StreamableHttpAuthHandler:
                         return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
                     if user_record:
                         db_user_is_admin = bool(getattr(user_record, "is_admin", False))
-                    if user_record is None and settings.require_user_in_db and user_email != getattr(settings, "platform_admin_email", "admin@example.com"):
+                    if user_record is None and settings.require_user_in_db and user_email != platform_admin_email:
                         return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
 
-            # Resolve teams based on token_use claim
-            token_use = user_payload.get("token_use")
+                    if auth_cache is not None:
+                        try:
+                            await auth_cache.set_auth_context(
+                                user_email,
+                                jti,
+                                CachedAuthContext(
+                                    user=(
+                                        {
+                                            "email": user_record.email,
+                                            "password_hash": user_record.password_hash,
+                                            "full_name": user_record.full_name,
+                                            "is_admin": bool(user_record.is_admin),
+                                            "is_active": bool(user_record.is_active),
+                                            "auth_provider": user_record.auth_provider,
+                                            "password_change_required": bool(user_record.password_change_required),
+                                            "email_verified_at": user_record.email_verified_at,
+                                            "created_at": user_record.created_at,
+                                            "updated_at": user_record.updated_at,
+                                        }
+                                        if user_record is not None
+                                        else None
+                                    ),
+                                    personal_team_id=None,
+                                    is_token_revoked=is_revoked,
+                                ),
+                            )
+                        except Exception as cache_set_error:
+                            logger.debug("Failed to cache MCP auth context for %s: %s", user_email, cache_set_error)
+
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                 # Session token: resolve teams from DB/cache
-                user_email_for_teams = user_payload.get("sub") or user_payload.get("email")
-                is_admin_flag = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
-                if is_admin_flag:
+                if is_admin:
                     final_teams = None  # Admin bypass
-                elif user_email_for_teams:
-                    # Resolve teams synchronously with L1 cache (StreamableHTTP uses sync context)
-                    # First-Party
-                    from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
+                elif user_email:
+                    if cached_team_ids is not None:
+                        final_teams = cached_team_ids
+                    elif batched_auth_ctx is not None:
+                        final_teams = list(batched_auth_ctx.get("team_ids") or [])
+                        if auth_cache is not None:
+                            try:
+                                await auth_cache.set_user_teams(f"{user_email}:True", final_teams)
+                            except Exception as cache_set_error:
+                                logger.debug("Failed to cache MCP teams list for %s: %s", user_email, cache_set_error)
+                    else:
+                        # Resolve teams synchronously with L1 cache (StreamableHTTP uses sync context)
+                        # First-Party
+                        from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
 
-                    final_teams = _resolve_teams_from_db_sync(user_email_for_teams, is_admin=False)
+                        final_teams = _resolve_teams_from_db_sync(user_email, is_admin=False)
+                        if auth_cache is not None and final_teams is not None:
+                            try:
+                                await auth_cache.set_user_teams(f"{user_email}:True", final_teams)
+                            except Exception as cache_set_error:
+                                logger.debug("Failed to cache MCP teams list for %s: %s", user_email, cache_set_error)
                 else:
                     final_teams = []  # No email — public-only
             else:
@@ -3109,8 +3220,6 @@ class _StreamableHttpAuthHandler:
             # SECURITY: Validate team membership for team-scoped tokens
             # Users removed from a team should lose MCP access immediately, not at token expiry
             # ═══════════════════════════════════════════════════════════════════════════
-            is_admin = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
-
             # Only validate membership for team-scoped tokens (non-empty teams list)
             # Skip for: public-only tokens ([]), admin unrestricted tokens (None)
             if final_teams and len(final_teams) > 0 and user_email:
