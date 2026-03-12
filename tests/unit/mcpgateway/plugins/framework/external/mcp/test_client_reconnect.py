@@ -2,10 +2,10 @@
 """Location: ./tests/unit/mcpgateway/plugins/framework/external/mcp/test_client_reconnect.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: AI Assistant
+Authors: Mohan Lakshmaiah
 
 Unit tests for MCP external plugin client reconnection logic.
-Tests for session recovery, exponential backoff, and error handling.
+Tests for session recovery, linear backoff, and error handling.
 """
 
 # Standard
@@ -190,8 +190,8 @@ class TestReconnectSession:
                 )
 
     @pytest.mark.asyncio
-    async def test_reconnect_exponential_backoff(self, mock_http_plugin_config):
-        """Test that reconnection uses exponential backoff."""
+    async def test_reconnect_linear_backoff(self, mock_http_plugin_config):
+        """Test that reconnection uses linear backoff."""
         plugin = ExternalPlugin(mock_http_plugin_config)
         plugin._config.mcp.reconnect_attempts = 3
         plugin._config.mcp.reconnect_delay = 0.1
@@ -209,7 +209,7 @@ class TestReconnectSession:
                 with patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
                     await plugin._reconnect_session()
 
-                    # Verify exponential backoff delays
+                    # Verify linear backoff delays
                     assert mock_sleep.call_count == 2  # 2 retries before success
                     calls = mock_sleep.call_args_list
                     assert calls[0][0][0] == 0.1  # First retry: 0.1 * 1
@@ -359,3 +359,131 @@ class TestInvokeHookWithReconnection:
 
                 # Verify error is about connection, not reconnection
                 assert "Connection lost" in str(exc_info.value.error.message) or "Reconnection failed" in str(exc_info.value.error.message)
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_session_terminated_reconnect_failure_reraises_original(self, mock_http_plugin_config, mock_plugin_context):
+        """Test that original PluginError is re-raised when session-terminated reconnection fails."""
+        plugin = ExternalPlugin(mock_http_plugin_config)
+
+        mock_session = AsyncMock()
+        plugin._session = mock_session
+
+        async def mock_call_tool(*args, **kwargs):
+            raise PluginError(error=PluginErrorModel(message="Session terminated by server", plugin_name="TestHTTPPlugin"))
+
+        mock_session.call_tool = mock_call_tool
+
+        with patch("mcpgateway.plugins.framework.external.mcp.client.get_hook_registry") as mock_registry:
+            mock_registry.return_value.get_result_type.return_value = ToolPreInvokePayload
+            with patch.object(
+                plugin,
+                "_reconnect_session",
+                new_callable=AsyncMock,
+                side_effect=PluginError(error=PluginErrorModel(message="Reconnection failed", plugin_name="TestHTTPPlugin")),
+            ):
+                payload = ToolPreInvokePayload(name="test", args={})
+
+                with pytest.raises(PluginError) as exc_info:
+                    await plugin.invoke_hook("tool_pre_invoke", payload, mock_plugin_context)
+
+                # The original "Session terminated" error is re-raised, not the reconnection error
+                assert "Session terminated" in str(exc_info.value.error.message)
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_generic_exception_converted_to_plugin_error(self, mock_http_plugin_config, mock_plugin_context):
+        """Test that generic exceptions are converted to PluginError."""
+        plugin = ExternalPlugin(mock_http_plugin_config)
+
+        mock_session = AsyncMock()
+        plugin._session = mock_session
+
+        async def mock_call_tool(*args, **kwargs):
+            raise RuntimeError("Unexpected failure")
+
+        mock_session.call_tool = mock_call_tool
+
+        with patch("mcpgateway.plugins.framework.external.mcp.client.get_hook_registry") as mock_registry:
+            mock_registry.return_value.get_result_type.return_value = ToolPreInvokePayload
+            payload = ToolPreInvokePayload(name="test", args={})
+
+            with pytest.raises(PluginError) as exc_info:
+                await plugin.invoke_hook("tool_pre_invoke", payload, mock_plugin_context)
+
+            assert "Unexpected failure" in str(exc_info.value.error.message)
+
+
+class TestCleanupSessionStdio:
+    """Tests for _cleanup_session with STDIO transport state."""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_session_stops_stdio_task(self, mock_stdio_plugin_config):
+        """Test that _cleanup_session properly stops a running STDIO task."""
+        plugin = ExternalPlugin(mock_stdio_plugin_config)
+
+        # Simulate a running STDIO session
+        stop_event = asyncio.Event()
+        ready_event = asyncio.Event()
+        ready_event.set()
+
+        plugin._stdio_stop = stop_event
+        plugin._stdio_ready = ready_event
+        plugin._stdio_error = None
+        plugin._session = MagicMock()
+
+        # Create a task that waits on the stop event
+        async def mock_stdio_runner():
+            await stop_event.wait()
+
+        plugin._stdio_task = asyncio.create_task(mock_stdio_runner())
+        plugin._exit_stack = AsyncMock()
+
+        await plugin._cleanup_session()
+
+        # Verify STDIO state is fully reset
+        assert plugin._stdio_task is None
+        assert plugin._stdio_ready is None
+        assert plugin._stdio_stop is None
+        assert plugin._stdio_error is None
+        assert plugin._session is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_session_handles_stdio_task_exception(self, mock_stdio_plugin_config):
+        """Test that _cleanup_session handles exceptions from STDIO task gracefully."""
+        plugin = ExternalPlugin(mock_stdio_plugin_config)
+
+        stop_event = asyncio.Event()
+        plugin._stdio_stop = stop_event
+        plugin._stdio_ready = asyncio.Event()
+        plugin._stdio_error = None
+        plugin._session = MagicMock()
+
+        async def failing_stdio_runner():
+            await stop_event.wait()
+            raise RuntimeError("stdio crash")
+
+        plugin._stdio_task = asyncio.create_task(failing_stdio_runner())
+        plugin._exit_stack = AsyncMock()
+
+        # Should not raise despite task exception
+        await plugin._cleanup_session()
+
+        assert plugin._stdio_task is None
+        assert plugin._stdio_ready is None
+        assert plugin._stdio_stop is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_session_no_stdio_task_skips_task_cleanup(self, mock_http_plugin_config):
+        """Test that _cleanup_session works when no STDIO task exists (HTTP transport)."""
+        plugin = ExternalPlugin(mock_http_plugin_config)
+
+        plugin._session = MagicMock()
+        plugin._exit_stack = AsyncMock()
+        # No stdio_task, no stdio_exit_stack
+        plugin._stdio_task = None
+        plugin._stdio_exit_stack = None
+
+        await plugin._cleanup_session()
+
+        assert plugin._session is None
+        assert plugin._stdio_ready is None
+        assert plugin._stdio_stop is None
