@@ -2057,8 +2057,8 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
 
     if _should_enforce_streamable_rbac(user_context):
         # Layer 1: Token scope cap
-        # MCP spec-compliant logging endpoint requires servers.use (not admin.system_config)
-        # because this controls MCP server logging level, not platform-wide config.
+        # MCP logging/setLevel is a standard MCP capability invoked by clients during
+        # initialization; servers.use (not admin.system_config) keeps the handshake working.
         if not _check_scoped_permission(user_context, "servers.use"):
             raise PermissionError(_ACCESS_DENIED_MSG)
         # Layer 2: RBAC check
