@@ -1,8 +1,72 @@
 # Rust MCP Runtime Status
 
-Last updated: March 11, 2026
+Last updated: March 12, 2026
 
 Status focus in this update:
+
+- the Python Streamable HTTP MCP auth path now reuses the existing shared auth
+  cache and batched auth lookup instead of bypassing it:
+  - `AUTH_CACHE_ENABLED`
+  - `AUTH_CACHE_BATCH_QUERIES`
+  - `AUTH_CACHE_TEAMS_ENABLED`
+  - `AUTH_CACHE_*_TTL`
+  - no new MCP-specific auth-cache env vars were introduced
+- this matters for all MCP runtime modes because public MCP auth still runs in
+  Python first:
+  - `RUST_MCP_MODE=off`
+  - `RUST_MCP_MODE=edge`
+  - `RUST_MCP_MODE=full`
+- `.env.example` and the Rust MCP README now explicitly document that the
+  existing shared auth cache also affects Rust MCP performance and how to
+  disable or tune it safely
+- current rebuilt-stack validation for this auth-cache slice passed:
+  - targeted Streamable HTTP auth unit tests for:
+    - cached auth-context hit
+    - cached revoked auth-context deny path
+    - batched auth-context hit
+  - `make test-mcp-cli` -> `23 passed`
+  - `make test-mcp-rbac` -> `40 passed`
+- new same-codebase mode comparison after enabling MCP auth-cache reuse:
+  - `off`:
+    - mixed `1009.22 RPS`, `13.30 ms` avg
+    - tools `1466.80 RPS`, `24.84 ms` avg
+  - `edge`:
+    - mixed `1062.58 RPS`, `8.68 ms` avg
+    - tools `1821.29 RPS`, `8.03 ms` avg
+  - `full`:
+    - mixed `989.49 RPS`, `9.15 ms` avg
+    - tools `1673.68 RPS`, `9.34 ms` avg
+- compared to the earlier profiling baseline on the same branch, MCP auth-cache
+  reuse improved all modes:
+  - `off`:
+    - mixed `724.69 -> 1009.22` (`+39.3%`)
+    - tools `695.79 -> 1466.80` (`+110.8%`)
+  - `edge`:
+    - mixed `839.36 -> 1062.58` (`+26.6%`)
+    - tools `1045.62 -> 1821.29` (`+74.2%`)
+  - `full`:
+    - mixed `894.18 -> 989.49` (`+10.7%`)
+    - tools `1016.57 -> 1673.68` (`+64.6%`)
+- sustained current full-Rust numbers with auth cache enabled are materially
+  better than the earlier short-run results:
+  - mixed, `120 users / 60s`:
+    - `1084.04 RPS`
+    - `9.64 ms` avg
+    - `17 ms` p95
+    - `0%` failures
+  - tools-only, `125 users / 180s`, explicit `MCPToolCallerUser`:
+    - `1868.45 RPS` overall
+    - `MCP tools/call [rapid]` -> `1778.7 RPS`
+    - `9.10 ms` avg
+    - `14 ms` p95
+    - `18 ms` p99
+    - `0%` failures
+- current conclusion after this pass:
+  - the earlier profiling diagnosis was correct
+  - the dominant shared bottleneck was Python auth/revocation/user lookup
+    overhead before Rust
+  - fixing that materially lifts Python-only mode and both Rust modes without
+    any new Rust-side micro-optimization
 
 - Rust session-affinity forwarding is now implemented behind a separate
   feature-flagged slice:
@@ -2148,6 +2212,80 @@ Python integration:
 - `docker-entrypoint.sh`
 - `Containerfile.lite`
 - `docker-compose.yml`
+
+## Latest Profiling Summary
+
+Detailed output for this pass is in:
+
+- `todo/profiling-output.md`
+
+Current same-codebase mode comparison on this branch after the MCP auth-cache
+reuse change:
+
+| Mode | Mixed RPS | Mixed Avg | Tools RPS | Tools Avg |
+|---|---:|---:|---:|---:|
+| `off` | `1009.22` | `13.30 ms` | `1466.80` | `24.84 ms` |
+| `edge` | `1062.58` | `8.68 ms` | `1821.29` | `8.03 ms` |
+| `full` | `989.49` | `9.15 ms` | `1673.68` | `9.34 ms` |
+
+What the latest profiling pass changed:
+
+- the current branch is materially faster in Rust mode than in pure Python mode
+  on the same codebase
+- the MCP auth-context cache reuse fixed the largest shared hotspot identified
+  by profiling:
+  - Python auth DB work before Rust
+  - per-request revocation and user lookup churn
+- the newer full-Rust session/event/resume/live-stream/affinity slices are not
+  the main explanation for the current ceiling
+- the dominant remaining cost on mixed traffic is now more concentrated in the
+  remaining Python-owned read handlers and the Python pre-Rust seam
+
+The clearest current hotspots are:
+
+- remaining Python auth/seam work:
+  - `streamable_http_auth` / `_auth_jwt`
+  - `mcpgateway/transports/rust_mcp_runtime_proxy.py`
+- Python DB/session plumbing:
+  - `execute (mcpgateway/db.py:499)`
+  - `get_db (mcpgateway/db.py:5622)`
+- remaining Python-owned mixed-workload read handlers:
+  - `resources/list`
+  - `resources/read`
+  - `prompts/list`
+  - `prompts/get`
+  - `resources/templates/list`
+
+The most important runtime split from the latest pass:
+
+- on a direct single-gateway tools-only run, interval CPU averaged about:
+  - Rust sidecar: `49.9%`
+  - gunicorn workers combined: `749.9%`
+
+That means the current throughput ceiling is still mostly Python CPU, not Rust
+CPU.
+
+Pool/cache findings:
+
+- PgBouncer was busy but not queueing:
+  - `cl_waiting = 0`
+  - `total_wait_time` stayed flat during load snapshots
+- Redis remained active but low CPU
+
+### Recommended next steps
+
+1. Reduce Python MCP auth overhead first.
+   - add a short-lived safe cache/shortcut for revocation and user lookup on
+     the Streamable HTTP auth path
+2. Reduce the Python pre-Rust transport seam.
+   - shrink proxy/request-stream handling cost in
+     `rust_mcp_runtime_proxy.py`
+3. Move the remaining read-only MCP handlers out of Python.
+   - `resources/list`
+   - `prompts/list`
+   - `resources/templates/list`
+   - then `resources/read` and `prompts/get`
+4. Re-profile after those steps before doing more Rust micro-optimization.
 
 ## Bottom Line
 

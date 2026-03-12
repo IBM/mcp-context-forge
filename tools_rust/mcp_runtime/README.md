@@ -305,6 +305,94 @@ Behavior in this mode:
   - fallback compatibility methods
   - remaining business execution behind narrow internal routes
 
+## Shared auth cache behavior
+
+Rust MCP does **not** currently own authentication or RBAC. Public MCP requests
+still authenticate in Python first, before they reach the Rust sidecar.
+
+That means the Python auth path is still part of the hot path for:
+
+- `RUST_MCP_MODE=off`
+- `RUST_MCP_MODE=edge`
+- `RUST_MCP_MODE=full`
+
+The Streamable HTTP MCP auth path now reuses the existing shared auth cache and
+batched auth lookup logic instead of bypassing it. No new MCP-specific auth
+cache settings were introduced.
+
+What this means operationally:
+
+- `AUTH_CACHE_*` tuning affects Python-only MCP and Rust MCP
+- disabling auth cache affects the Rust MCP path too, because Python still
+  authenticates first
+- short warm-up effects are expected because the auth cache starts cold after a
+  restart and then fills quickly under load
+
+The relevant existing settings are:
+
+- `AUTH_CACHE_ENABLED=true|false`
+- `AUTH_CACHE_BATCH_QUERIES=true|false`
+- `AUTH_CACHE_TEAMS_ENABLED=true|false`
+- `AUTH_CACHE_USER_TTL`
+- `AUTH_CACHE_REVOCATION_TTL`
+- `AUTH_CACHE_TEAM_TTL`
+- `AUTH_CACHE_ROLE_TTL`
+- `AUTH_CACHE_TEAMS_TTL`
+
+Recommended default stance:
+
+- leave `AUTH_CACHE_ENABLED=true`
+- leave `AUTH_CACHE_BATCH_QUERIES=true`
+- keep `AUTH_CACHE_REVOCATION_TTL` short
+
+Reason:
+
+- the cache removes repeated Python DB work for token revocation checks and
+  user lookup
+- the batched lookup keeps cache misses to one DB round-trip instead of several
+- revocation TTL is the security-sensitive knob, so that one should stay
+  conservative
+
+If you want to disable the shared auth cache entirely:
+
+```env
+AUTH_CACHE_ENABLED=false
+```
+
+If you want behavior closest to the older per-request MCP auth path:
+
+```env
+AUTH_CACHE_ENABLED=false
+AUTH_CACHE_BATCH_QUERIES=false
+AUTH_CACHE_TEAMS_ENABLED=false
+```
+
+If you want to keep caching but reduce staleness windows:
+
+```env
+AUTH_CACHE_USER_TTL=30
+AUTH_CACHE_REVOCATION_TTL=10
+AUTH_CACHE_TEAM_TTL=30
+AUTH_CACHE_TEAMS_TTL=30
+```
+
+Security notes:
+
+- revocation checks are still performed; cache only short-circuits repeated
+  lookups for a short TTL
+- account disable and user lookup results are also cached for a short TTL
+- there is no MCP-specific long-lived trust shortcut here; this is reuse of the
+  existing platform auth cache
+
+Performance notes:
+
+- this shared auth cache helps Python and Rust modes both
+- in local load testing on the same codebase, enabling the MCP path to reuse
+  the existing auth cache materially improved `off`, `edge`, and `full`
+  throughput
+- longer steady-state runs tend to look better than cold `30s` runs because the
+  cache fills during the first part of the benchmark
+
 ## Container integration
 
 `Containerfile.lite` now includes the runtime behind the simple build flag:
