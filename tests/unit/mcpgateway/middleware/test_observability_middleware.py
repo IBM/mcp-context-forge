@@ -286,7 +286,7 @@ async def test_observability_middleware_creates_request_scoped_session(mock_requ
     def mock_session_local():
         session = MagicMock()
         session.is_active = True
-        session.in_transaction.return_value = False
+        session.in_transaction.return_value = True  # Session has uncommitted changes
         session_instances.append(session)
         return session
     
@@ -420,7 +420,7 @@ async def test_single_session_per_request_integration():
     def mock_session_local():
         session = MagicMock()
         session.is_active = True
-        session.in_transaction.return_value = False
+        session.in_transaction.return_value = True  # Session has uncommitted changes
         session_instances.append(session)
         return session
     
