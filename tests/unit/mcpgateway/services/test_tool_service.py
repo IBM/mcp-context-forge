@@ -2067,6 +2067,7 @@ class TestToolService:
         mock_tool.request_type = "POST"
         mock_tool.jsonpath_filter = ""
         mock_tool.auth_value = None  # No auth
+        mock_tool.query_mapping = {}  # No query mapping
 
         # Mock DB to return the tool and GlobalConfig
         setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
@@ -2154,6 +2155,7 @@ class TestToolService:
         mock_tool.jsonpath_filter = ""
         mock_tool.auth_value = None  # No auth
         mock_tool.url = "http://example.com/resource/{id}/detail/{type}"
+        mock_tool.query_mapping = {}  # No query mapping
 
         payload = {"id": 123, "type": "summary", "other_param": "value"}
 
