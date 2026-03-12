@@ -180,12 +180,12 @@ services:
 ```bash
 # Run container with Gunicorn (default)
 make container-run
-make container-run-gunicorn
-make container-run-gunicorn-ssl
+make container-run CONTAINER_HTTP_SERVER=gunicorn
+make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn
 
 # Run container with Granian (alternative)
-make container-run-granian
-make container-run-granian-ssl
+make container-run CONTAINER_HTTP_SERVER=granian
+make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian
 
 # Or pass HTTP_SERVER directly
 docker run mcpgateway/mcpgateway                         # Gunicorn (default)

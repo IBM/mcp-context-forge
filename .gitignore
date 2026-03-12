@@ -191,7 +191,8 @@ packages.json
 .aider*
 aider*
 .ai*
-.claude
+.claude/*
+!.claude/skills/
 CLAUDE.local.md
 .continue
 

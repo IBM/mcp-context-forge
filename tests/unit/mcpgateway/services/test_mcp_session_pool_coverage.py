@@ -570,6 +570,79 @@ class TestReleaseEdgeCases:
         mock_close.assert_awaited_once()
         assert pool_key not in pool._semaphores
 
+    @pytest.mark.asyncio
+    async def test_release_discard_closes_session_and_releases_semaphore(self):
+        """release(discard=True) should close the session, release semaphore, and increment evictions."""
+        pool = MCPSessionPool()
+        url = "http://test:8080"
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+        await pool._get_or_create_pool(pool_key)
+
+        pooled = PooledSession(
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+
+        evictions_before = pool._evictions
+
+        with patch.object(pool, "_close_session", new_callable=AsyncMock) as mock_close:
+            await pool.release(pooled, discard=True)
+
+        mock_close.assert_awaited_once_with(pooled)
+        assert pool._evictions == evictions_before + 1
+
+    @pytest.mark.asyncio
+    async def test_release_discard_handles_missing_semaphore(self):
+        """release(discard=True) should not crash when semaphore was already evicted."""
+        pool = MCPSessionPool()
+        url = "http://test:8080"
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+        await pool._get_or_create_pool(pool_key)
+
+        pooled = PooledSession(
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+
+        # Remove semaphore to simulate concurrent eviction
+        pool._semaphores.pop(pool_key, None)
+
+        with patch.object(pool, "_close_session", new_callable=AsyncMock) as mock_close:
+            await pool.release(pooled, discard=True)
+
+        mock_close.assert_awaited_once_with(pooled)
+        assert pool._evictions == 1
+
+    @pytest.mark.asyncio
+    async def test_release_discard_does_not_return_session_to_pool(self):
+        """release(discard=True) should NOT put session back in the pool queue."""
+        pool = MCPSessionPool()
+        url = "http://test:8080"
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+        queue = await pool._get_or_create_pool(pool_key)
+
+        pooled = PooledSession(
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+
+        with patch.object(pool, "_close_session", new_callable=AsyncMock):
+            await pool.release(pooled, discard=True)
+
+        assert queue.empty(), "Discarded session should not be in pool queue"
+
 
 # ---------------------------------------------------------------------------
 # Lines 910, 935, 937->925, 946->939, 950-953, 956->925: _maybe_evict_idle_pool_keys
@@ -2078,7 +2151,7 @@ class TestSessionContextManagerEdgeCases:
 
     @pytest.mark.asyncio
     async def test_session_context_manager_releases_on_exception(self):
-        """Session should be released even if body raises."""
+        """Session should be released with discard=True when body raises."""
         pool = MCPSessionPool()
 
         mock_session = PooledSession(
@@ -2093,7 +2166,26 @@ class TestSessionContextManagerEdgeCases:
                     async with pool.session("http://test:8080") as pooled:
                         raise ValueError("test error")
 
-        mock_release.assert_awaited_once_with(mock_session)
+        mock_release.assert_awaited_once_with(mock_session, discard=True)
+        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_session_context_manager_releases_without_discard_on_success(self):
+        """Session should be released with discard=False on normal exit."""
+        pool = MCPSessionPool()
+
+        mock_session = PooledSession(
+            session=MagicMock(), transport_context=MagicMock(),
+            url="http://test:8080", identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+        )
+
+        with patch.object(pool, "_create_session", new_callable=AsyncMock, return_value=mock_session):
+            with patch.object(pool, "release", new_callable=AsyncMock) as mock_release:
+                async with pool.session("http://test:8080") as pooled:
+                    pass  # no error
+
+        mock_release.assert_awaited_once_with(mock_session, discard=False)
         await pool.close_all()
 
 
