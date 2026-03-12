@@ -712,9 +712,6 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
             logger.warning("RPC permission denied (token scope): method=%s, required=%s", method, permission)
             raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
-    if _is_permission_admin_user(user):
-        return
-
     # Layer 2: RBAC check
     # Session tokens have no explicit team_id, so check across all team-scoped roles.
     # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
@@ -754,6 +751,20 @@ def _serialize_mcp_tool_definition(tool: Any) -> Dict[str, Any]:
 def _serialize_mcp_tool_definitions(tools: List[Any]) -> List[Dict[str, Any]]:
     """Serialize tool records to MCP tool definitions."""
     return [_serialize_mcp_tool_definition(tool) for tool in tools]
+
+
+def _serialize_legacy_tool_payloads(tools: List[Any]) -> List[Dict[str, Any]]:
+    """Serialize tool records using the legacy JSON-RPC shape."""
+    payloads: List[Dict[str, Any]] = []
+    for tool in tools:
+        if hasattr(tool, "model_dump"):
+            payload = tool.model_dump(by_alias=True, exclude_none=True)
+        elif isinstance(tool, dict):
+            payload = dict(tool)
+        else:
+            payload = {}
+        payloads.append(payload)
+    return payloads
 
 
 def _enforce_scoped_resource_access(request: Request, db: Session, user, resource_path: str) -> None:
@@ -6330,7 +6341,7 @@ async def handle_internal_mcp_rpc(request: Request):
         if db.is_active and db.in_transaction() is not None:
             db.commit()
         return response
-    except Exception as exc:
+    except Exception:
         try:
             db.rollback()
         except Exception:
@@ -6338,7 +6349,7 @@ async def handle_internal_mcp_rpc(request: Request):
                 db.invalidate()
             except Exception:
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": str(exc)})
+        raise
     finally:
         db.close()
 
@@ -6643,6 +6654,15 @@ async def handle_internal_mcp_tools_list(request: Request):
             token_teams=token_teams,
         )
         return ORJSONResponse(content={"tools": tools})
+    except HTTPException:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
     except JSONRPCError as exc:
         return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
     except Exception as exc:
@@ -8261,7 +8281,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 )
                 db.commit()
                 db.close()
-                result = {"tools": _serialize_mcp_tool_definitions(tools)}
+                result = {"tools": _serialize_legacy_tool_payloads(tools)}
             else:
                 tools, next_cursor = await tool_service.list_tools(
                     db,
@@ -8275,7 +8295,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 )
                 db.commit()
                 db.close()
-                result = {"tools": _serialize_mcp_tool_definitions(tools)}
+                result = {"tools": _serialize_legacy_tool_payloads(tools)}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "list_gateways":
