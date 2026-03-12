@@ -1,6 +1,6 @@
 use rmcp::{
     ClientHandler, ServiceExt,
-    model::*,
+    model::CallToolRequestParams,
     transport::{ConfigureCommandExt, TokioChildProcess},
 };
 use std::env;
@@ -34,22 +34,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let tools = client.list_all_tools().await?;
     println!("{tools:?}");
-    if !tools.iter().any(|t| t.name == "fast-time-get-system-time") {
-        panic!("Tool not found");
-    }
+    assert!(
+        tools.iter().any(|t| t.name == "fast-time-get-system-time"),
+        "Tool not found"
+    );
 
     let args = rmcp::object!({ "timezone": "UTC" });
 
-    let out = client
-        .call_tool(
-            CallToolRequestParams::new("fast-time-get-system-time").with_arguments(args), // Consumes the object
-        )
-        .await?;
+    for _ in 0..42 {
+        let out = client
+            .call_tool(
+                CallToolRequestParams::new("fast-time-get-system-time")
+                    .with_arguments(args.clone()),
+            )
+            .await?;
 
-    println!("{out:?}");
-
-    client.cancel().await?;
-    Ok(())
+        println!("{out:?}");
+        if !out.is_error.unwrap() {
+            client.cancel().await?;
+            return Ok(());
+        }
+    }
+    panic!("Fail");
 }
 
 async fn check_fast_time_server() -> Result<(), reqwest::Error> {
@@ -60,6 +66,6 @@ async fn check_fast_time_server() -> Result<(), reqwest::Error> {
         .text()
         .await?;
 
-    println!("{}", body);
+    println!("{body}");
     Ok(())
 }
