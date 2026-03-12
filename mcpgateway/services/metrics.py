@@ -265,7 +265,7 @@ def setup_metrics(app):
         from mcpgateway.utils.verify_credentials import require_auth
 
         @app.get("/metrics/prometheus", include_in_schema=True, tags=["Metrics"])
-        def prometheus_metrics(request: Request, current_user_ctx=Depends(require_auth)):
+        def prometheus_metrics(request: Request, current_user_ctx=Depends(require_auth)): # pylint: disable=unused-argument
             """Prometheus metrics endpoint (requires authentication).
 
             Args:
