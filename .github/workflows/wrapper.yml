@@ -38,12 +38,28 @@ jobs:
                       venv-${{ runner.os }}-python-3.12-
                       venv-${{ runner.os }}-
 
-            - uses: actions-rust-lang/setup-rust-toolchain@v1
+            - name: Cache Rust Toolchain
+              uses: actions/cache@v4
               with:
-                  toolchain: stable
-                  cache: true
-                  profile: minimal
-                  cache-workspaces: "tools_rust/wrapper -> target"
+                  path: |
+                      ~/.cargo/bin/
+                      ~/.cargo/registry/index/
+                      ~/.cargo/registry/cache/
+                      ~/.cargo/git/db/
+                      ~/.rustup/
+                  key: ${{ runner.os }}-rust-stable-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-rust-stable-
+
+            - name: Install Rust Toolchain (Manual)
+              run: |
+                  if [ ! -f "$HOME/.cargo/bin/rustc" ]; then
+                    echo "Rustc not found, installing..."
+                    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path
+                  else
+                    echo "Rustc found in cache: $(rustc --version)"
+                  fi
+                  echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
             - name: Secrets
               run: |
