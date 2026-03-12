@@ -25,6 +25,7 @@ import uuid
 
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape, Template
+import orjson
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -164,6 +165,41 @@ class PromptValidationError(PromptError):
     """Raised when prompt validation fails."""
 
 
+class PromptArgumentsJSONError(PromptError):
+    """Raised when prompt arguments JSON is invalid.
+
+    Attributes:
+        field_name: Name of the field containing invalid JSON
+        raw_value: First 200 characters of the invalid JSON string
+        json_error: The original JSON parsing error message
+    """
+
+    def __init__(self, field_name: str, json_error: str, raw_value: str = "", context: str = "") -> None:
+        """Initialize the error with JSON parsing details.
+
+        Args:
+            field_name: Name of the field (e.g., "arguments")
+            json_error: The JSON parsing error message
+            raw_value: First 200 characters of the invalid JSON (for logging)
+            context: Optional context about where the error occurred (e.g., "prompt abc-123")
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+            >>> error = PromptArgumentsJSONError("arguments", "unexpected character: line 1 column 5")
+            >>> error.field_name
+            'arguments'
+            >>> str(error)
+            'Invalid JSON in arguments field: unexpected character: line 1 column 5'
+        """
+        self.field_name = field_name
+        self.json_error = json_error
+        self.raw_value = raw_value[:200] if raw_value else ""
+        self.context = context
+        context_str = f" for {context}" if context else ""
+        message = f"Invalid JSON in {field_name} field{context_str}: {json_error}"
+        super().__init__(message)
+
+
 class PromptLockConflictError(PromptError):
     """Raised when a prompt row is locked by another transaction.
 
@@ -207,6 +243,66 @@ class PromptService(BaseService):
         # Use the module-level singleton for template caching
         self._jinja_env = _get_jinja_env()
         self._plugin_manager: PluginManager | None = get_plugin_manager()
+
+    @staticmethod
+    def validate_arguments_json(args_value: Any, context: str = "") -> List[Dict[str, Any]]:
+        """Validate and parse prompt arguments JSON.
+
+        Args:
+            args_value: The raw arguments value from form data
+            context: Additional context for error messages (e.g., "prompt 123", "new prompt")
+
+        Returns:
+            Parsed arguments as a list of dictionaries
+
+        Raises:
+            PromptArgumentsJSONError: If the JSON is invalid
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> PromptService.validate_arguments_json('[]')
+            []
+            >>> PromptService.validate_arguments_json('[{"name": "test"}]')
+            [{'name': 'test'}]
+            >>> PromptService.validate_arguments_json(None)
+            []
+            >>> try:
+            ...     PromptService.validate_arguments_json('invalid json')
+            ... except PromptArgumentsJSONError as e:
+            ...     print(e.field_name)
+            arguments
+        """
+        # Handle None or empty values
+        if args_value is None or args_value == "":
+            return []
+
+        # Ensure it's a string
+        if not isinstance(args_value, str):
+            args_value = str(args_value)
+
+        # Strip whitespace
+        args_value = args_value.strip()
+
+        # If still empty after strip, return empty list
+        if not args_value:
+            return []
+
+        # Parse JSON
+        try:
+            arguments = orjson.loads(args_value)
+
+            # Ensure the result is a list (JSON array)
+            if not isinstance(arguments, list):
+                error_msg = f"Arguments must be a JSON array, got {type(arguments).__name__}"
+                logger.error(f"Invalid arguments type{' for ' + context if context else ''}: {error_msg}. " f"Raw value (first 200 chars): {args_value[:200]!r}")
+                raise PromptArgumentsJSONError(field_name="arguments", json_error=error_msg, raw_value=args_value, context=context)
+
+            return arguments
+        except orjson.JSONDecodeError as json_err:
+            # Log the error with context
+            logger.error(f"Invalid JSON in arguments field{' for ' + context if context else ''}: {json_err}. " f"Raw value (first 200 chars): {args_value[:200]!r}")
+            # Raise custom exception
+            raise PromptArgumentsJSONError(field_name="arguments", json_error=str(json_err), raw_value=args_value, context=context) from json_err
 
     async def initialize(self) -> None:
         """Initialize the service."""

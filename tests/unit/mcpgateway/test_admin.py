@@ -23,6 +23,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.testclient import TestClient
 import jwt
+import orjson
 from pydantic import ValidationError
 from pydantic_core import InitErrorDetails
 from pydantic_core import ValidationError as CoreValidationError
@@ -2629,7 +2630,7 @@ class TestAdminPromptRoutes:
 
     @patch.object(PromptService, "register_prompt")
     async def test_admin_add_prompt_with_invalid_arguments_json(self, mock_register_prompt, mock_request, mock_db):
-        """Test adding prompt with invalid arguments JSON."""
+        """Test adding prompt with invalid arguments JSON returns 422."""
         form_data = FakeForm(
             {
                 "name": "Bad-JSON-Prompt",  # Valid prompt name
@@ -2641,8 +2642,12 @@ class TestAdminPromptRoutes:
 
         result = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
-        assert result.status_code == 500
-        assert b"json" in result.body.lower() or b"decode" in result.body.lower() or b"invalid" in result.body.lower() or b"expecting value" in result.body.lower()
+        assert result.status_code == 422
+        response_body = result.body.decode("utf-8").lower()
+        assert "json" in response_body or "invalid" in response_body or "arguments" in response_body
+        # Verify the response includes the field name
+        assert b"arguments" in result.body.lower()
+        mock_register_prompt.assert_not_called()
 
     @patch.object(PromptService, "register_prompt")
     async def test_admin_add_prompt_error_handlers(self, mock_register_prompt, mock_request, mock_db, monkeypatch):
@@ -2674,6 +2679,17 @@ class TestAdminPromptRoutes:
         mock_register_prompt.side_effect = PromptNameConflictError("conflict")
         resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert resp.status_code == 409
+
+        # Test PromptArgumentsJSONError handler (covers line 12310)
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        mock_register_prompt.side_effect = PromptArgumentsJSONError(field_name="arguments", json_error="test error", raw_value="bad json", context="test prompt")
+        resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert resp.status_code == 422
+        response_data = orjson.loads(resp.body)
+        assert response_data["field"] == "arguments"
+        assert not response_data["success"]
 
         mock_register_prompt.side_effect = RuntimeError("boom")
         resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
@@ -2711,10 +2727,52 @@ class TestAdminPromptRoutes:
         assert mock_update_prompt.call_args[0][1] == "old-prompt-name"
 
     @patch.object(PromptService, "update_prompt")
+    async def test_admin_edit_prompt_with_invalid_arguments_json(self, mock_update_prompt, mock_request, mock_db):
+        """Test editing prompt with invalid arguments JSON returns 422."""
+        form_data = FakeForm(
+            {
+                "name": "Updated-Prompt",
+                "template": "Updated template",
+                "arguments": "{invalid json here",  # Malformed JSON
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_prompt("prompt-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        response_body = result.body.decode("utf-8").lower()
+        assert "json" in response_body or "invalid" in response_body or "arguments" in response_body
+        # Verify the response includes the field name
+        assert b"arguments" in result.body.lower()
+        mock_update_prompt.assert_not_called()
+
+    @patch.object(PromptService, "update_prompt")
+    async def test_admin_edit_prompt_missing_arguments_preserves_existing(self, mock_update_prompt, mock_request, mock_db):
+        """Test editing prompt without arguments field preserves existing arguments."""
+        form_data = FakeForm(
+            {
+                "name": "Updated-Prompt",
+                "template": "Updated template",
+                # arguments key intentionally omitted
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_update_prompt.return_value = MagicMock()
+
+        result = await admin_edit_prompt("prompt-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        # Verify update_prompt was called with arguments=None (preserving existing)
+        call_args = mock_update_prompt.call_args
+        prompt_update = call_args[0][2]  # Third positional arg is the PromptUpdate
+        assert prompt_update.arguments is None
+
+    @patch.object(PromptService, "update_prompt")
     async def test_admin_edit_prompt_error_handlers(self, mock_update_prompt, mock_request, mock_db, monkeypatch):
-        """Cover admin_edit_prompt error branches (permission, validation, integrity, conflict, generic)."""
+        """Cover admin_edit_prompt error branches (permission, validation, integrity, conflict, generic, json)."""
         # First-Party
-        from mcpgateway.services.prompt_service import PromptNameConflictError
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
@@ -2743,6 +2801,18 @@ class TestAdminPromptRoutes:
         mock_update_prompt.side_effect = PromptNameConflictError("conflict")
         response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 409
+
+        # Test PromptArgumentsJSONError handler
+        # Create a real orjson.JSONDecodeError by trying to parse invalid JSON
+        try:
+            orjson.loads(b"{bad json")
+        except orjson.JSONDecodeError as e:
+            json_error = e
+
+        mock_update_prompt.side_effect = PromptArgumentsJSONError(field_name="arguments", json_error=json_error, raw_value="{bad json", context="edit_prompt")
+        response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert response.status_code == 422
+        assert b"arguments" in response.body.lower()
 
         mock_update_prompt.side_effect = Exception("boom")
         response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
@@ -10437,6 +10507,7 @@ def test_normalize_int_query_supports_fastapi_query_default_and_fallback():
     assert admin_module._normalize_int_query(7, fallback=1) == 7
     assert admin_module._normalize_int_query(Query(default=8), fallback=1) == 8
     assert admin_module._normalize_int_query("9", fallback=1) == 9
+
     assert admin_module._normalize_int_query(None, fallback=3) == 3
 
 
