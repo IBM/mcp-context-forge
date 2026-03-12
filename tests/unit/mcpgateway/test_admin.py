@@ -23,6 +23,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.testclient import TestClient
 import jwt
+import orjson
 from pydantic import ValidationError
 from pydantic_core import InitErrorDetails
 from pydantic_core import ValidationError as CoreValidationError
@@ -1220,7 +1221,7 @@ class TestAdminToolRoutes:
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_invalid_json(self, mock_register_tool, mock_request, mock_db):
-        """Test adding tool with invalid JSON in form fields."""
+        """Test adding tool with invalid JSON in form fields returns 422."""
         # Override form with invalid JSON
         form_data = FakeForm(
             {
@@ -1232,9 +1233,69 @@ class TestAdminToolRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        # Should handle JSON decode error
-        with pytest.raises(json.JSONDecodeError):
-            await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        # Should return 422 for JSON decode error
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        response_body = json.loads(result.body)
+        assert "success" in response_body
+        assert response_body["success"] is False
+        assert "Invalid JSON" in response_body["message"]
+
+    @patch.object(ToolService, "register_tool")
+    async def test_admin_add_tool_with_invalid_query_mapping_json(self, mock_register_tool, mock_request, mock_db):
+        """Test adding tool with invalid JSON in query_mapping field returns 422."""
+        # Override form with invalid query_mapping JSON
+        form_data = FakeForm(
+            {
+                "name": "test_tool_invalid_query",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "query_mapping": "{theMessage: message}",  # Invalid JSON - missing quotes
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        response_body = json.loads(result.body)
+        assert "success" in response_body
+        assert response_body["success"] is False
+        assert "Invalid JSON" in response_body["message"]
+
+    @patch.object(ToolService, "register_tool")
+    async def test_admin_add_tool_with_invalid_header_mapping_json(self, mock_register_tool, mock_request, mock_db):
+        """Test adding tool with invalid JSON in header_mapping field returns 422."""
+        # Override form with invalid header_mapping JSON
+        form_data = FakeForm(
+            {
+                "name": "test_tool_invalid_header",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{}",
+                "header_mapping": "{Authorization: token}",  # Invalid JSON - missing quotes
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        response_body = json.loads(result.body)
+        assert "success" in response_body
+        assert response_body["success"] is False
+        assert "Invalid JSON" in response_body["message"]
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_tool_error(self, mock_register_tool, mock_request, mock_db):
@@ -1548,6 +1609,58 @@ class TestAdminToolRoutes:
         assert call_tool.auth is not None
         assert call_tool.auth.auth_type == "authheaders"
         assert call_tool.auth.auth_value is not None
+
+    @patch.object(ToolService, "update_tool")
+    async def test_admin_edit_tool_with_invalid_headers_json(self, mock_update_tool, mock_request, mock_db):
+        """Test editing tool with invalid JSON in headers field returns 422."""
+        form_data = FakeForm(
+            {
+                "name": "test_tool_edit",
+                "customName": "test_tool_edit",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{invalid: json}",  # Invalid JSON - missing quotes
+                "input_schema": "{}",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        response_body = json.loads(result.body)
+        assert "success" in response_body
+        assert response_body["success"] is False
+        assert "Invalid JSON" in response_body["message"]
+
+    @patch.object(ToolService, "update_tool")
+    async def test_admin_edit_tool_with_invalid_input_schema_json(self, mock_update_tool, mock_request, mock_db):
+        """Test editing tool with invalid JSON in input_schema field returns 422."""
+        form_data = FakeForm(
+            {
+                "name": "test_tool_edit",
+                "customName": "test_tool_edit",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "headers": "{}",
+                "input_schema": "{broken json",  # Invalid JSON
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        response_body = json.loads(result.body)
+        assert "success" in response_body
+        assert response_body["success"] is False
+        assert "Invalid JSON" in response_body["message"]
 
     @patch.object(ToolService, "update_tool")
     async def test_admin_edit_tool_with_basic_auth(self, mock_update_tool, mock_request, mock_db):
@@ -2517,7 +2630,7 @@ class TestAdminPromptRoutes:
 
     @patch.object(PromptService, "register_prompt")
     async def test_admin_add_prompt_with_invalid_arguments_json(self, mock_register_prompt, mock_request, mock_db):
-        """Test adding prompt with invalid arguments JSON."""
+        """Test adding prompt with invalid arguments JSON returns 422."""
         form_data = FakeForm(
             {
                 "name": "Bad-JSON-Prompt",  # Valid prompt name
@@ -2529,8 +2642,12 @@ class TestAdminPromptRoutes:
 
         result = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
-        assert result.status_code == 500
-        assert b"json" in result.body.lower() or b"decode" in result.body.lower() or b"invalid" in result.body.lower() or b"expecting value" in result.body.lower()
+        assert result.status_code == 422
+        response_body = result.body.decode("utf-8").lower()
+        assert "json" in response_body or "invalid" in response_body or "arguments" in response_body
+        # Verify the response includes the field name
+        assert b"arguments" in result.body.lower()
+        mock_register_prompt.assert_not_called()
 
     @patch.object(PromptService, "register_prompt")
     async def test_admin_add_prompt_error_handlers(self, mock_register_prompt, mock_request, mock_db, monkeypatch):
@@ -2562,6 +2679,17 @@ class TestAdminPromptRoutes:
         mock_register_prompt.side_effect = PromptNameConflictError("conflict")
         resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert resp.status_code == 409
+
+        # Test PromptArgumentsJSONError handler (covers line 12310)
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        mock_register_prompt.side_effect = PromptArgumentsJSONError(field_name="arguments", json_error="test error", raw_value="bad json", context="test prompt")
+        resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert resp.status_code == 422
+        response_data = orjson.loads(resp.body)
+        assert response_data["field"] == "arguments"
+        assert not response_data["success"]
 
         mock_register_prompt.side_effect = RuntimeError("boom")
         resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
@@ -2599,10 +2727,52 @@ class TestAdminPromptRoutes:
         assert mock_update_prompt.call_args[0][1] == "old-prompt-name"
 
     @patch.object(PromptService, "update_prompt")
+    async def test_admin_edit_prompt_with_invalid_arguments_json(self, mock_update_prompt, mock_request, mock_db):
+        """Test editing prompt with invalid arguments JSON returns 422."""
+        form_data = FakeForm(
+            {
+                "name": "Updated-Prompt",
+                "template": "Updated template",
+                "arguments": "{invalid json here",  # Malformed JSON
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_prompt("prompt-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        response_body = result.body.decode("utf-8").lower()
+        assert "json" in response_body or "invalid" in response_body or "arguments" in response_body
+        # Verify the response includes the field name
+        assert b"arguments" in result.body.lower()
+        mock_update_prompt.assert_not_called()
+
+    @patch.object(PromptService, "update_prompt")
+    async def test_admin_edit_prompt_missing_arguments_preserves_existing(self, mock_update_prompt, mock_request, mock_db):
+        """Test editing prompt without arguments field preserves existing arguments."""
+        form_data = FakeForm(
+            {
+                "name": "Updated-Prompt",
+                "template": "Updated template",
+                # arguments key intentionally omitted
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_update_prompt.return_value = MagicMock()
+
+        result = await admin_edit_prompt("prompt-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        # Verify update_prompt was called with arguments=None (preserving existing)
+        call_args = mock_update_prompt.call_args
+        prompt_update = call_args[0][2]  # Third positional arg is the PromptUpdate
+        assert prompt_update.arguments is None
+
+    @patch.object(PromptService, "update_prompt")
     async def test_admin_edit_prompt_error_handlers(self, mock_update_prompt, mock_request, mock_db, monkeypatch):
-        """Cover admin_edit_prompt error branches (permission, validation, integrity, conflict, generic)."""
+        """Cover admin_edit_prompt error branches (permission, validation, integrity, conflict, generic, json)."""
         # First-Party
-        from mcpgateway.services.prompt_service import PromptNameConflictError
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
@@ -2631,6 +2801,18 @@ class TestAdminPromptRoutes:
         mock_update_prompt.side_effect = PromptNameConflictError("conflict")
         response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 409
+
+        # Test PromptArgumentsJSONError handler
+        # Create a real orjson.JSONDecodeError by trying to parse invalid JSON
+        try:
+            orjson.loads(b"{bad json")
+        except orjson.JSONDecodeError as e:
+            json_error = e
+
+        mock_update_prompt.side_effect = PromptArgumentsJSONError(field_name="arguments", json_error=json_error, raw_value="{bad json", context="edit_prompt")
+        response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert response.status_code == 422
+        assert b"arguments" in response.body.lower()
 
         mock_update_prompt.side_effect = Exception("boom")
         response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
@@ -4728,6 +4910,7 @@ class TestA2AAgentManagement:
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_exception_handler(self, monkeypatch, mock_request, mock_db, allow_permission):
+        """Test generic exception returns 500 with error_type field."""
         service = MagicMock()
         service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="custom", endpoint_url="http://agent.example.com/api"))
         service.invoke_agent = AsyncMock(side_effect=RuntimeError("boom"))
@@ -4739,6 +4922,125 @@ class TestA2AAgentManagement:
         assert result.status_code == 500
         body = json.loads(result.body)
         assert body["success"] is False
+        assert body["error_type"] == "internal_error"
+        assert "boom" in body["error"]
+
+    @pytest.mark.asyncio
+    async def test_admin_test_a2a_agent_not_found_error(self, monkeypatch, mock_request, mock_db, allow_permission):
+        """Test A2AAgentNotFoundError returns 404 with error_type."""
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+
+        service = MagicMock()
+        service.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent 'test-agent' not found"))
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+
+        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 404
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert body["error_type"] == "not_found"
+        assert "not found" in body["error"].lower()
+        assert body["agent_id"] == "agent-1"
+
+    @pytest.mark.asyncio
+    async def test_admin_test_a2a_agent_access_denied_returns_404(self, monkeypatch, mock_request, mock_db, allow_permission):
+        """Test access denied returns 404 (not 403) to avoid leaking agent existence."""
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+
+        service = MagicMock()
+        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service.invoke_agent = AsyncMock(side_effect=A2AAgentNotFoundError("A2A Agent not found with name: private-agent"))
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin._read_request_json", AsyncMock(return_value={"query": "test"}), raising=True)
+
+        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 404
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert body["error_type"] == "not_found"
+
+    @pytest.mark.asyncio
+    async def test_admin_test_a2a_agent_disabled_error(self, monkeypatch, mock_request, mock_db, allow_permission):
+        """Test disabled agent returns 502 with agent_error type."""
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentError
+
+        service = MagicMock()
+        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service.invoke_agent = AsyncMock(side_effect=A2AAgentError("A2A Agent 'test-agent' is disabled"))
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin._read_request_json", AsyncMock(return_value={"query": "test"}), raising=True)
+
+        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 502
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert body["error_type"] == "agent_error"
+        assert "disabled" in body["error"].lower()
+        assert body["agent_id"] == "agent-1"
+
+    @pytest.mark.asyncio
+    async def test_admin_test_a2a_agent_http_error(self, monkeypatch, mock_request, mock_db, allow_permission):
+        """Test HTTP error from agent endpoint returns 502."""
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentError
+
+        service = MagicMock()
+        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service.invoke_agent = AsyncMock(side_effect=A2AAgentError("HTTP 503: Service Unavailable"))
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin._read_request_json", AsyncMock(return_value={"query": "test"}), raising=True)
+
+        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 502
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert body["error_type"] == "agent_error"
+        assert "503" in body["error"] or "unavailable" in body["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_admin_test_a2a_agent_validation_error(self, monkeypatch, mock_request, mock_db, allow_permission):
+        """Test ValidationError returns 422 with validation_error type."""
+        service = MagicMock()
+        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        # Simulate validation error during parameter processing
+        service.invoke_agent = AsyncMock(side_effect=ValidationError.from_exception_data("test", []))
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin._read_request_json", AsyncMock(return_value={"query": "test"}), raising=True)
+
+        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 422
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert body["error_type"] == "validation_error"
+        assert body["agent_id"] == "agent-1"
+
+    @pytest.mark.asyncio
+    async def test_admin_test_a2a_agent_connection_error(self, monkeypatch, mock_request, mock_db, allow_permission):
+        """Test connection error returns 502 as agent_error."""
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentError
+
+        service = MagicMock()
+        service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
+        service.invoke_agent = AsyncMock(side_effect=A2AAgentError("Failed to invoke A2A agent: Connection refused"))
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin._read_request_json", AsyncMock(return_value={"query": "test"}), raising=True)
+
+        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 502
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert body["error_type"] == "agent_error"
+        assert "connection" in body["error"].lower() or "invoke" in body["error"].lower()
 
 
 class TestExportImportEndpoints:
@@ -10205,6 +10507,7 @@ def test_normalize_int_query_supports_fastapi_query_default_and_fallback():
     assert admin_module._normalize_int_query(7, fallback=1) == 7
     assert admin_module._normalize_int_query(Query(default=8), fallback=1) == 8
     assert admin_module._normalize_int_query("9", fallback=1) == 9
+
     assert admin_module._normalize_int_query(None, fallback=3) == 3
 
 

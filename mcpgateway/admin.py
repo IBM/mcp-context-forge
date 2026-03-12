@@ -138,7 +138,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
-from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
+from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
@@ -10946,6 +10946,25 @@ async def admin_add_tool(
     input_schema_raw = form.get("input_schema")
     output_schema_raw = form.get("output_schema")
     annotations_raw = form.get("annotations")
+
+    # Parse JSON fields with validation
+    try:
+        headers = orjson.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}")
+        input_schema = orjson.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}")
+        output_schema = orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None
+        annotations = orjson.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}")
+        query_mapping = orjson.loads(form.get("query_mapping") or "{}")
+        header_mapping = orjson.loads(form.get("header_mapping") or "{}")
+        allowlist = orjson.loads(form.get("allowlist") or "[]")
+        plugin_chain_pre = orjson.loads(form.get("plugin_chain_pre") or "[]")
+        plugin_chain_post = orjson.loads(form.get("plugin_chain_post") or "[]")
+    except orjson.JSONDecodeError as ex:
+        LOGGER.error(f"Invalid JSON in form field: {str(ex)}")
+        return ORJSONResponse(
+            content={"message": f"Invalid JSON in form field: {str(ex)}", "success": False},
+            status_code=422,
+        )
+
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
         "displayName": form.get("displayName"),
@@ -10953,23 +10972,23 @@ async def admin_add_tool(
         "description": form.get("description"),
         "request_type": request_type,
         "integration_type": integration_type,
-        "headers": orjson.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}"),
-        "input_schema": orjson.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}"),
-        "output_schema": (orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None),
-        "annotations": orjson.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}"),
+        "headers": headers,
+        "input_schema": input_schema,
+        "output_schema": output_schema,
+        "annotations": annotations,
         "jsonpath_filter": form.get("jsonpath_filter", ""),
         "auth": auth_obj,
         "tags": tags,
         "visibility": visibility,
         "team_id": team_id,
         "owner_email": user_email,
-        "query_mapping": orjson.loads(form.get("query_mapping") or "{}"),
-        "header_mapping": orjson.loads(form.get("header_mapping") or "{}"),
+        "query_mapping": query_mapping,
+        "header_mapping": header_mapping,
         "timeout_ms": int(form.get("timeout_ms")) if form.get("timeout_ms") and form.get("timeout_ms").strip() else None,
         "expose_passthrough": form.get("expose_passthrough", "true"),
-        "allowlist": orjson.loads(form.get("allowlist") or "[]"),
-        "plugin_chain_pre": orjson.loads(form.get("plugin_chain_pre") or "[]"),
-        "plugin_chain_post": orjson.loads(form.get("plugin_chain_post") or "[]"),
+        "allowlist": allowlist,
+        "plugin_chain_pre": plugin_chain_pre,
+        "plugin_chain_post": plugin_chain_post,
     }
     LOGGER.debug(f"Tool data built: {tool_data}")
     try:
@@ -11087,16 +11106,29 @@ async def admin_edit_tool(
     output_schema_raw2 = form.get("output_schema")
     annotations_raw2 = form.get("annotations")
 
+    # Parse JSON fields with validation
+    try:
+        headers = orjson.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}")
+        input_schema = orjson.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}")
+        output_schema = orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None
+        annotations = orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}")
+    except orjson.JSONDecodeError as ex:
+        LOGGER.error(f"Invalid JSON in form field: {str(ex)}")
+        return ORJSONResponse(
+            content={"message": f"Invalid JSON in form field: {str(ex)}", "success": False},
+            status_code=422,
+        )
+
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
         "displayName": form.get("displayName"),
         "custom_name": form.get("customName"),
         "url": form.get("url"),
         "description": form.get("description"),
-        "headers": orjson.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}"),
-        "input_schema": orjson.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}"),
-        "output_schema": (orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None),
-        "annotations": orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}"),
+        "headers": headers,
+        "input_schema": input_schema,
+        "output_schema": output_schema,
+        "annotations": annotations,
         "jsonpath_filter": form.get("jsonpathFilter", ""),
         "auth": auth_obj,
         "tags": tags,
@@ -12270,11 +12302,8 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
-        args_json = "[]"
-        args_value = form.get("arguments")
-        if isinstance(args_value, str) and args_value.strip():
-            args_json = args_value
-        arguments = orjson.loads(args_json)
+        # Validate arguments JSON using prompt service
+        arguments: List[Dict[str, Any]] = prompt_service.validate_arguments_json(args_value=form.get("arguments"), context="new prompt")
         prompt = PromptCreate(
             name=str(form["name"]),
             display_name=str(form.get("display_name") or form["name"]),
@@ -12317,6 +12346,9 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
         if isinstance(ex, PromptNameConflictError):
             LOGGER.error(f"PromptNameConflictError in admin_add_prompt: {ex}")
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
+        if isinstance(ex, PromptArgumentsJSONError):
+            LOGGER.error(f"PromptArgumentsJSONError in admin_add_prompt: {ex}")
+            return ORJSONResponse(status_code=422, content={"message": str(ex), "success": False, "field": ex.field_name})
         LOGGER.error(f"Error in admin_add_prompt: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -12368,12 +12400,13 @@ async def admin_edit_prompt(
     team_id = await team_service.verify_team_for_user(user_email, team_id)
     LOGGER.info(f"Verifying team for user {user_email} with team_id {team_id}")
 
-    args_json: str = str(form.get("arguments")) or "[]"
-    arguments = orjson.loads(args_json)
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     try:
+        # Validate arguments JSON using prompt service; preserve existing when field absent
+        args_value = form.get("arguments")
+        arguments = prompt_service.validate_arguments_json(args_value, context="prompt update") if args_value is not None else None
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         prompt = PromptUpdate(
             custom_name=str(form.get("customName") or form.get("name")),
@@ -12414,6 +12447,9 @@ async def admin_edit_prompt(
         if isinstance(ex, PromptNameConflictError):
             LOGGER.error(f"PromptNameConflictError in admin_edit_prompt: {ex}")
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
+        if isinstance(ex, PromptArgumentsJSONError):
+            LOGGER.error(f"PromptArgumentsJSONError in admin_edit_prompt: {ex}")
+            return ORJSONResponse(status_code=422, content={"message": str(ex), "success": False, "field": ex.field_name})
         LOGGER.error(f"Error in admin_edit_prompt: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -15030,6 +15066,13 @@ async def admin_test_a2a_agent(
 ) -> JSONResponse:
     """Test A2A agent via admin UI.
 
+    Invokes the specified A2A agent with a test message and returns the result.
+    Returns appropriate HTTP status codes based on the failure type:
+    - 404: Agent not found or user lacks access
+    - 502: Agent disabled, unreachable, or returning errors
+    - 422: Invalid test parameters
+    - 500: Unexpected system errors
+
     Args:
         agent_id: Agent ID
         request: FastAPI request object containing optional 'query' field
@@ -15037,10 +15080,24 @@ async def admin_test_a2a_agent(
         user: Authenticated user
 
     Returns:
-        JSON response with test results
+        JSON response with test results. On success, includes:
+        - success: True
+        - result: Agent response
+        - agent_name: Name of the tested agent
+        - test_timestamp: Unix timestamp of the test
+
+        On failure, includes:
+        - success: False
+        - error: Error message (sanitized to prevent credential leakage)
+        - error_type: Type of error (not_found, agent_error, validation_error, internal_error)
+        - agent_id: ID of the agent that was tested
 
     Raises:
-        HTTPException: If A2A features are disabled
+        HTTPException: If A2A features are disabled (403)
+
+    Note:
+        Error messages are sanitized by a2a_service to prevent credential leakage.
+        Returns 404 (not 403) for access denied to avoid leaking agent existence.
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         return ORJSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
@@ -15090,9 +15147,30 @@ async def admin_test_a2a_agent(
 
         return ORJSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
 
+    except A2AAgentNotFoundError as e:
+        LOGGER.warning(f"A2A agent not found or access denied for {agent_id}: {e}")
+        return ORJSONResponse(
+            content={"success": False, "error": str(e), "error_type": "not_found", "agent_id": agent_id},
+            status_code=404,
+        )
+    except A2AAgentError as e:
+        LOGGER.error(f"A2A agent error for {agent_id}: {e}")
+        return ORJSONResponse(
+            content={"success": False, "error": str(e), "error_type": "agent_error", "agent_id": agent_id},
+            status_code=502,
+        )
+    except ValidationError as e:
+        LOGGER.warning(f"Validation error testing A2A agent {agent_id}: {e}")
+        return ORJSONResponse(
+            content={"success": False, "error": str(e), "error_type": "validation_error", "agent_id": agent_id},
+            status_code=422,
+        )
     except Exception as e:
-        LOGGER.error(f"Error testing A2A agent {agent_id}: {e}")
-        return ORJSONResponse(content={"success": False, "error": str(e), "agent_id": agent_id}, status_code=500)
+        LOGGER.error(f"Unexpected error testing A2A agent {agent_id}: {e}")
+        return ORJSONResponse(
+            content={"success": False, "error": str(e), "error_type": "internal_error", "agent_id": agent_id},
+            status_code=500,
+        )
 
 
 # gRPC Service Management Endpoints
