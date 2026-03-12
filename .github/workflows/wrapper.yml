@@ -258,7 +258,7 @@ jobs:
                   retention-days: 7
 
             - name: Keep server running for debug - set true
-              if: true
+              if: false
               run: |
                   echo "Keeping server running for debugging..."
                   sleep 3600
