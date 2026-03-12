@@ -58,7 +58,8 @@ async def policy_engine_root():
 
 
 if __name__ == "__main__":
-    print("""
+    print(
+        """
     ╔════════════════════════════════════════════════════════════╗
     ║        Policy Engine - Standalone Server                   ║
     ╠════════════════════════════════════════════════════════════╣
@@ -74,7 +75,8 @@ if __name__ == "__main__":
     ║  → http://localhost:8001/docs                              ║
     ║                                                            ║
     ╚════════════════════════════════════════════════════════════╝
-    """)
+    """
+    )
 
     uvicorn.run(
         "plugins.policy_engine.server:app",

@@ -5,9 +5,11 @@ Tests the orchestrator that coordinates policy evaluation,
 scoring, and decision making.
 """
 
+# Third-Party
 import pytest
-from ..models import Policy, Severity
+# Local
 from ..evaluator import PolicyEvaluator
+from ..models import Policy
 from ..waivers import WaiverManager
 
 
@@ -172,10 +174,7 @@ class TestPolicyEvaluator:
         assert result.passed is True
 
         # Find the waived rule
-        critical_rule = next(
-            r for r in result.rule_results
-            if r.rule_name == "max_critical_vulnerabilities"
-        )
+        critical_rule = next(r for r in result.rule_results if r.rule_name == "max_critical_vulnerabilities")
         assert critical_rule.waived is True
         assert critical_rule.waiver_id == waiver["id"]
         assert waiver["id"] in result.waivers_applied
@@ -190,23 +189,17 @@ class TestPolicyEvaluator:
         )
 
         # Test with 'findings' key
-        assessment = {
-            "findings": {"summary": {"error_count": 5}}
-        }
+        assessment = {"findings": {"summary": {"error_count": 5}}}
         result = evaluator.evaluate(assessment, policy)
         assert result.passed is True
 
         # Test with 'results' key
-        assessment = {
-            "results": {"summary": {"error_count": 5}}
-        }
+        assessment = {"results": {"summary": {"error_count": 5}}}
         result = evaluator.evaluate(assessment, policy)
         assert result.passed is True
 
         # Test with direct structure
-        assessment = {
-            "summary": {"error_count": 5}
-        }
+        assessment = {"summary": {"error_count": 5}}
         result = evaluator.evaluate(assessment, policy)
         assert result.passed is True
 
@@ -252,6 +245,7 @@ class TestPolicyCreatedAt:
 
     def test_policy_created_at_can_be_set(self):
         """Test that created_at can be set on creation."""
+        # Standard
         from datetime import datetime
 
         ts = datetime(2026, 3, 10, 12, 0, 0)
@@ -260,6 +254,7 @@ class TestPolicyCreatedAt:
 
     def test_policy_created_at_preserved_through_evaluation(self, sample_policy, sample_assessment):
         """Test that created_at on a policy is not mutated during evaluation."""
+        # Standard
         from datetime import datetime
 
         ts = datetime(2026, 1, 1, 0, 0, 0)

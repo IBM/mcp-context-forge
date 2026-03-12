@@ -4,8 +4,11 @@ test_waivers.py - Unit tests for waiver management
 Tests waiver creation, approval, expiration, and active waiver lookup.
 """
 
-import pytest
+# Standard
 from datetime import datetime, timedelta
+# Third-Party
+import pytest
+# Local
 from ..waivers import WaiverManager
 
 
@@ -116,14 +119,14 @@ class TestWaiverApproval:
         )
 
         new_expiry = "2027-06-30T00:00:00"
-        approved = waiver_manager.approve_waiver(
-            waiver["id"], approved_by="admin", expires_at=new_expiry
-        )
+        approved = waiver_manager.approve_waiver(waiver["id"], approved_by="admin", expires_at=new_expiry)
 
         assert approved["status"] == "approved"
         assert approved["approved"] is True
         # expires_at is stored as datetime after parsing the ISO string
+        # Standard
         from datetime import datetime
+
         assert approved["expires_at"] == datetime.fromisoformat(new_expiry)
 
     def test_approve_waiver_without_expires_at_preserves_original(self, waiver_manager):
@@ -184,7 +187,7 @@ class TestActiveWaiverLookup:
 
     def test_get_active_waiver_returns_none_for_pending(self, waiver_manager):
         """Test that pending waivers are not returned as active."""
-        waiver = waiver_manager.create_waiver(
+        waiver_manager.create_waiver(
             server_id="server-1",
             rule_name="test_rule",
             reason="Test",
@@ -217,7 +220,7 @@ class TestActiveWaiverLookup:
 
     def test_get_active_waiver_wrong_server(self, waiver_manager):
         """Test that waivers for different servers are not matched."""
-        waiver = waiver_manager.create_waiver(
+        waiver_manager.create_waiver(
             server_id="server-1",
             rule_name="test_rule",
             reason="Test",
@@ -232,7 +235,7 @@ class TestActiveWaiverLookup:
 
     def test_get_active_waiver_wrong_rule(self, waiver_manager):
         """Test that waivers for different rules are not matched."""
-        waiver = waiver_manager.create_waiver(
+        waiver_manager.create_waiver(
             server_id="server-1",
             rule_name="rule_a",
             reason="Test",
@@ -276,12 +279,8 @@ class TestWaiverListing:
 
     def test_list_all_waivers(self, waiver_manager):
         """Test listing all waivers."""
-        waiver1 = waiver_manager.create_waiver(
-            server_id="server-1", rule_name="rule1", reason="Test", requested_by="dev"
-        )
-        waiver2 = waiver_manager.create_waiver(
-            server_id="server-2", rule_name="rule2", reason="Test", requested_by="dev"
-        )
+        waiver1 = waiver_manager.create_waiver(server_id="server-1", rule_name="rule1", reason="Test", requested_by="dev")
+        waiver2 = waiver_manager.create_waiver(server_id="server-2", rule_name="rule2", reason="Test", requested_by="dev")
 
         waivers = waiver_manager.list_waivers()
 
@@ -291,12 +290,8 @@ class TestWaiverListing:
 
     def test_list_waivers_by_server(self, waiver_manager):
         """Test filtering waivers by server ID."""
-        waiver1 = waiver_manager.create_waiver(
-            server_id="server-1", rule_name="rule1", reason="Test", requested_by="dev"
-        )
-        waiver2 = waiver_manager.create_waiver(
-            server_id="server-2", rule_name="rule2", reason="Test", requested_by="dev"
-        )
+        waiver1 = waiver_manager.create_waiver(server_id="server-1", rule_name="rule1", reason="Test", requested_by="dev")
+        waiver_manager.create_waiver(server_id="server-2", rule_name="rule2", reason="Test", requested_by="dev")
 
         waivers = waiver_manager.list_waivers(server_id="server-1")
 
@@ -313,9 +308,7 @@ class TestWaiverListing:
             approved=True,
             approved_by="admin",
         )
-        pending = waiver_manager.create_waiver(
-            server_id="server-2", rule_name="rule2", reason="Test", requested_by="dev"
-        )
+        pending = waiver_manager.create_waiver(server_id="server-2", rule_name="rule2", reason="Test", requested_by="dev")
 
         approved_waivers = waiver_manager.list_waivers(status="approved")
         pending_waivers = waiver_manager.list_waivers(status="pending")

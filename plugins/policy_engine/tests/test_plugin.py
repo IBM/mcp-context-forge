@@ -4,9 +4,11 @@ test_plugin.py - Unit tests for plugin integration
 Tests plugin initialization and basic functionality.
 """
 
+# Third-Party
 import pytest
-from ..plugin import PolicyEnginePlugin, get_plugin
+# Local
 from ..models import Policy
+from ..plugin import get_plugin, PolicyEnginePlugin
 
 
 @pytest.fixture
@@ -28,12 +30,12 @@ class TestPluginInitialization:
     def test_plugin_has_methods(self):
         """Test plugin has required methods."""
         plugin = PolicyEnginePlugin()
-        assert hasattr(plugin, 'list_policies')
-        assert hasattr(plugin, 'create_policy')
-        assert hasattr(plugin, 'get_policy')
-        assert hasattr(plugin, 'delete_policy')
-        assert hasattr(plugin, 'evaluate_assessment')
-        assert hasattr(plugin, 'create_waiver')
+        assert hasattr(plugin, "list_policies")
+        assert hasattr(plugin, "create_policy")
+        assert hasattr(plugin, "get_policy")
+        assert hasattr(plugin, "delete_policy")
+        assert hasattr(plugin, "evaluate_assessment")
+        assert hasattr(plugin, "create_waiver")
 
     def test_get_plugin_singleton(self):
         """Test get_plugin returns plugin instances."""
@@ -54,11 +56,7 @@ class TestPluginPolicies:
 
     def test_create_policy_with_policy_object(self, policy_plugin):
         """Test creating a policy with a Policy object."""
-        policy = Policy(
-            name="TestPolicy",
-            environment="test",
-            rules={"max_critical_vulnerabilities": 5}
-        )
+        policy = Policy(name="TestPolicy", environment="test", rules={"max_critical_vulnerabilities": 5})
         result = policy_plugin.create_policy(policy)
         assert result is not None
 
@@ -94,11 +92,10 @@ class TestPluginConfiguration:
     def test_plugin_has_policies_storage(self):
         """Test plugin has internal policies storage."""
         plugin = PolicyEnginePlugin()
-        assert hasattr(plugin, '_policies')
+        assert hasattr(plugin, "_policies")
         assert isinstance(plugin._policies, dict)
 
     def test_plugin_has_waiver_manager(self):
         """Test plugin has waiver manager."""
         plugin = PolicyEnginePlugin()
         assert plugin.waiver_manager is not None
-

@@ -5,16 +5,18 @@ Tests individual rule evaluators to ensure they correctly
 evaluate findings against thresholds.
 """
 
-import pytest
+# Third-Party
+
+# Local
+from ..models import Severity
 from ..rules import (
     MaxCriticalVulnerabilitiesEvaluator,
     MaxHighVulnerabilitiesEvaluator,
-    SbomRequiredEvaluator,
     MinTrustScoreEvaluator,
     NoRootExecutionEvaluator,
     RuleEvaluatorFactory,
+    SbomRequiredEvaluator,
 )
-from ..models import Severity
 
 
 class TestMaxCriticalVulnerabilitiesEvaluator:
@@ -302,13 +304,13 @@ class TestSbomRequiredEvaluatorComprehensive:
     def test_message_contains_sbom_requirement_status(self):
         """Test that message conveys SBOM requirement status."""
         evaluator = SbomRequiredEvaluator()
-        
+
         # Required and provided
         findings = {"sbom_present": True}
         result = evaluator.evaluate(True, findings)
         assert "required" in result.message.lower()
         assert "provided" in result.message.lower()
-        
+
         # Required but missing
         findings = {"sbom_present": False}
         result = evaluator.evaluate(True, findings)
@@ -413,12 +415,12 @@ class TestNoRootExecutionEvaluatorComprehensive:
     def test_message_indicates_execution_context(self):
         """Test message indicates whether running as root or non-root."""
         evaluator = NoRootExecutionEvaluator()
-        
+
         # Running as root
         findings = {"runs_as_root": True}
         result = evaluator.evaluate(True, findings)
         assert "root" in result.message.lower()
-        
+
         # Running as non-root
         findings = {"runs_as_root": False}
         result = evaluator.evaluate(True, findings)
