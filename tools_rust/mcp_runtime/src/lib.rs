@@ -3,7 +3,7 @@ pub mod config;
 use axum::{
     Json, Router,
     body::{Body, Bytes},
-    extract::State,
+    extract::{Path as AxumPath, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{
         IntoResponse, Response,
@@ -79,6 +79,7 @@ pub enum RuntimeError {
 #[derive(Clone)]
 pub struct AppState {
     backend_rpc_url: Arc<str>,
+    backend_authenticate_url: Arc<str>,
     backend_initialize_url: Arc<str>,
     backend_notifications_initialized_url: Arc<str>,
     backend_notifications_message_url: Arc<str>,
@@ -132,6 +133,7 @@ pub struct AppState {
     tools_call_plan_ttl: Duration,
     upstream_session_ttl: Duration,
     session_ttl: Duration,
+    public_ingress_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -189,6 +191,23 @@ struct InternalAuthContext {
     teams: Option<Vec<String>>,
     #[serde(default)]
     is_admin: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InternalAuthenticateRequest {
+    method: String,
+    path: String,
+    query_string: String,
+    headers: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_ip: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InternalAuthenticateResponse {
+    auth_context: Value,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -386,6 +405,9 @@ impl AppState {
 
         Ok(Self {
             backend_rpc_url: Arc::from(config.backend_rpc_url.clone()),
+            backend_authenticate_url: Arc::from(derive_backend_authenticate_url(
+                &config.backend_rpc_url,
+            )),
             backend_initialize_url: Arc::from(derive_backend_initialize_url(
                 &config.backend_rpc_url,
             )),
@@ -487,11 +509,16 @@ impl AppState {
             tools_call_plan_ttl: Duration::from_secs(config.tools_call_plan_ttl_seconds),
             upstream_session_ttl: Duration::from_secs(config.upstream_session_ttl_seconds),
             session_ttl: Duration::from_secs(config.session_ttl_seconds),
+            public_ingress_enabled: config.public_listen_http.is_some(),
         })
     }
 
     pub fn backend_rpc_url(&self) -> &str {
         &self.backend_rpc_url
+    }
+
+    pub fn backend_authenticate_url(&self) -> &str {
+        &self.backend_authenticate_url
     }
 
     pub fn backend_initialize_url(&self) -> &str {
@@ -712,6 +739,10 @@ impl AppState {
     fn session_ttl(&self) -> Duration {
         self.session_ttl
     }
+
+    fn public_ingress_enabled(&self) -> bool {
+        self.public_ingress_enabled
+    }
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -733,6 +764,18 @@ pub fn build_router(state: AppState) -> Router {
             "/mcp/",
             get(transport_get).delete(transport_delete).post(rpc),
         )
+        .route(
+            "/servers/{server_id}/mcp",
+            get(transport_get_server_scoped)
+                .delete(transport_delete_server_scoped)
+                .post(rpc_server_scoped),
+        )
+        .route(
+            "/servers/{server_id}/mcp/",
+            get(transport_get_server_scoped)
+                .delete(transport_delete_server_scoped)
+                .post(rpc_server_scoped),
+        )
         .with_state(state)
 }
 
@@ -740,22 +783,41 @@ pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
     let state = AppState::new(&config)?;
     let app = build_router(state);
 
-    match config.listen_target().map_err(RuntimeError::Config)? {
-        ListenTarget::Http(addr) => {
-            info!("starting Rust MCP runtime on http://{addr}");
-            let listener = tokio::net::TcpListener::bind(addr).await?;
-            axum::serve(listener, app).await?;
+    let primary_target = config.listen_target().map_err(RuntimeError::Config)?;
+    let public_http_addr = config.public_listen_addr().map_err(RuntimeError::Config)?;
+
+    match (primary_target, public_http_addr) {
+        (ListenTarget::Http(addr), None) => {
+            serve_http(app, addr).await?;
         }
-        ListenTarget::Uds(path) => {
-            if Path::new(&path).exists() {
-                std::fs::remove_file(&path)?;
-            }
-            info!("starting Rust MCP runtime on unix://{}", path.display());
-            let listener = tokio::net::UnixListener::bind(&path)?;
-            axum::serve(listener, app).await?;
+        (ListenTarget::Http(addr), Some(public_addr)) => {
+            tokio::try_join!(serve_http(app.clone(), addr), serve_http(app, public_addr))?;
+        }
+        (ListenTarget::Uds(path), None) => {
+            serve_uds(app, path).await?;
+        }
+        (ListenTarget::Uds(path), Some(public_addr)) => {
+            tokio::try_join!(serve_uds(app.clone(), path), serve_http(app, public_addr))?;
         }
     }
 
+    Ok(())
+}
+
+async fn serve_http(app: Router, addr: std::net::SocketAddr) -> Result<(), RuntimeError> {
+    info!("starting Rust MCP runtime on http://{addr}");
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+async fn serve_uds(app: Router, path: std::path::PathBuf) -> Result<(), RuntimeError> {
+    if Path::new(&path).exists() {
+        std::fs::remove_file(&path)?;
+    }
+    info!("starting Rust MCP runtime on unix://{}", path.display());
+    let listener = tokio::net::UnixListener::bind(&path)?;
+    axum::serve(listener, app).await?;
     Ok(())
 }
 
@@ -782,7 +844,7 @@ async fn transport_get(
     headers: HeaderMap,
     uri: axum::http::Uri,
 ) -> Response {
-    forward_transport_request(&state, reqwest::Method::GET, headers, uri).await
+    transport_get_inner(state, headers, uri, None).await
 }
 
 async fn transport_delete(
@@ -790,7 +852,67 @@ async fn transport_delete(
     headers: HeaderMap,
     uri: axum::http::Uri,
 ) -> Response {
-    forward_transport_request(&state, reqwest::Method::DELETE, headers, uri).await
+    transport_delete_inner(state, headers, uri, None).await
+}
+
+async fn transport_get_server_scoped(
+    State(state): State<AppState>,
+    AxumPath(server_id): AxumPath<String>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+) -> Response {
+    transport_get_inner(state, headers, uri, Some(server_id)).await
+}
+
+async fn transport_delete_server_scoped(
+    State(state): State<AppState>,
+    AxumPath(server_id): AxumPath<String>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+) -> Response {
+    transport_delete_inner(state, headers, uri, Some(server_id)).await
+}
+
+async fn transport_get_inner(
+    state: AppState,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+    server_id: Option<String>,
+) -> Response {
+    let (headers, path) = match authenticate_public_request_if_needed(
+        &state,
+        "GET",
+        headers,
+        &uri,
+        server_id.as_deref(),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    forward_transport_request(&state, reqwest::Method::GET, headers, path, uri).await
+}
+
+async fn transport_delete_inner(
+    state: AppState,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+    server_id: Option<String>,
+) -> Response {
+    let (headers, path) = match authenticate_public_request_if_needed(
+        &state,
+        "DELETE",
+        headers,
+        &uri,
+        server_id.as_deref(),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    forward_transport_request(&state, reqwest::Method::DELETE, headers, path, uri).await
 }
 
 async fn store_event_endpoint(
@@ -855,6 +977,39 @@ async fn rpc(
     uri: axum::http::Uri,
     body: Bytes,
 ) -> Response {
+    rpc_inner(state, headers, uri, body, None).await
+}
+
+async fn rpc_server_scoped(
+    State(state): State<AppState>,
+    AxumPath(server_id): AxumPath<String>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+    body: Bytes,
+) -> Response {
+    rpc_inner(state, headers, uri, body, Some(server_id)).await
+}
+
+async fn rpc_inner(
+    state: AppState,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+    body: Bytes,
+    server_id: Option<String>,
+) -> Response {
+    let (headers, path) = match authenticate_public_request_if_needed(
+        &state,
+        "POST",
+        headers,
+        &uri,
+        server_id.as_deref(),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+
     if let Err(response) = validate_protocol_version(&state, &headers) {
         return response;
     }
@@ -944,7 +1099,7 @@ async fn rpc(
             &state,
             request_session_id.as_deref().unwrap_or_default(),
             reqwest::Method::POST,
-            uri.path(),
+            path.as_str(),
             uri.query().unwrap_or_default(),
             &effective_headers,
             &body,
@@ -1755,6 +1910,25 @@ fn derive_backend_tools_call_resolve_url(backend_rpc_url: &str) -> String {
     )
 }
 
+fn derive_backend_authenticate_url(backend_rpc_url: &str) -> String {
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
+        return format!("{prefix}/_internal/mcp/authenticate");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
+        return format!("{prefix}/_internal/mcp/authenticate");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
+        return format!("{prefix}/_internal/mcp/authenticate");
+    }
+    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
+        return format!("{prefix}/_internal/mcp/authenticate");
+    }
+    format!(
+        "{}/_internal/mcp/authenticate",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
 fn build_db_pool(config: &RuntimeConfig) -> Result<Option<Pool>, RuntimeError> {
     let Some(database_url) = config.database_url.as_deref() else {
         return Ok(None);
@@ -1821,6 +1995,148 @@ fn can_use_direct_prompts_get(params: &Value) -> bool {
     };
 
     has_name && arguments_are_empty && !params.contains_key("_meta")
+}
+
+fn public_mcp_path(uri: &axum::http::Uri, server_id: Option<&str>) -> String {
+    match server_id {
+        Some(server_id) if uri.path().ends_with('/') => format!("/servers/{server_id}/mcp/"),
+        Some(server_id) => format!("/servers/{server_id}/mcp"),
+        None => uri.path().to_string(),
+    }
+}
+
+fn build_public_auth_headers(incoming_headers: &HeaderMap) -> HashMap<String, String> {
+    let mut headers = HashMap::new();
+    for (name, value) in incoming_headers {
+        if matches!(
+            name.as_str(),
+            "host"
+                | "content-length"
+                | "connection"
+                | "transfer-encoding"
+                | "keep-alive"
+                | RUNTIME_HEADER
+                | SESSION_VALIDATED_HEADER
+                | INTERNAL_AFFINITY_FORWARDED_HEADER
+                | "x-contextforge-auth-context"
+        ) {
+            continue;
+        }
+
+        if let Ok(value) = value.to_str() {
+            headers.insert(name.as_str().to_string(), value.to_string());
+        }
+    }
+    headers
+}
+
+fn public_client_ip(incoming_headers: &HeaderMap) -> Option<String> {
+    if let Some(value) = incoming_headers
+        .get("x-real-ip")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(value.to_string());
+    }
+
+    incoming_headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn encode_internal_auth_context_header(auth_context: &Value) -> Result<HeaderValue, Response> {
+    let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(auth_context).map_err(|err| {
+        json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "detail": format!("Internal MCP auth context serialization failed: {err}"),
+            }),
+        )
+    })?);
+
+    HeaderValue::from_str(&encoded).map_err(|err| {
+        json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "detail": format!("Internal MCP auth context header encoding failed: {err}"),
+            }),
+        )
+    })
+}
+
+async fn authenticate_public_request_if_needed(
+    state: &AppState,
+    method: &str,
+    mut incoming_headers: HeaderMap,
+    uri: &axum::http::Uri,
+    server_id: Option<&str>,
+) -> Result<(HeaderMap, String), Response> {
+    if let Some(server_id) = server_id {
+        inject_server_id_header(&mut incoming_headers, server_id.to_string());
+    }
+
+    let public_path = public_mcp_path(uri, server_id);
+    if !state.public_ingress_enabled() {
+        return Ok((incoming_headers, public_path));
+    }
+    if incoming_headers.contains_key("x-contextforge-auth-context") {
+        return Ok((incoming_headers, public_path));
+    }
+
+    let request_body = InternalAuthenticateRequest {
+        method: method.to_string(),
+        path: public_path.clone(),
+        query_string: uri.query().unwrap_or_default().to_string(),
+        headers: build_public_auth_headers(&incoming_headers),
+        client_ip: public_client_ip(&incoming_headers),
+    };
+
+    let backend_response = state
+        .client
+        .post(state.backend_authenticate_url())
+        .header(RUNTIME_HEADER, RUNTIME_NAME)
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|err| {
+            error!("backend MCP authenticate failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "detail": "Backend MCP authenticate failed",
+                    "error": err.to_string(),
+                }),
+            )
+        })?;
+
+    if !backend_response.status().is_success() {
+        return Err(response_from_backend(backend_response));
+    }
+
+    let response_body: InternalAuthenticateResponse =
+        backend_response.json().await.map_err(|err| {
+            error!("backend MCP authenticate decode failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "detail": "Backend MCP authenticate decode failed",
+                    "error": err.to_string(),
+                }),
+            )
+        })?;
+
+    let encoded_auth_context = encode_internal_auth_context_header(&response_body.auth_context)?;
+    incoming_headers.insert(
+        HeaderName::from_static("x-contextforge-auth-context"),
+        encoded_auth_context,
+    );
+
+    Ok((incoming_headers, public_path))
 }
 
 fn decode_request(body: &[u8]) -> Result<JsonRpcRequest, Response> {
@@ -3328,6 +3644,7 @@ async fn forward_transport_request(
     state: &AppState,
     method: reqwest::Method,
     mut incoming_headers: HeaderMap,
+    public_path: String,
     uri: axum::http::Uri,
 ) -> Response {
     let session_id = if state.session_core_enabled() {
@@ -3404,7 +3721,7 @@ async fn forward_transport_request(
             state,
             session_id.as_deref().unwrap_or_default(),
             method.clone(),
-            uri.path(),
+            public_path.as_str(),
             uri.query().unwrap_or_default(),
             &incoming_headers,
             &[],
@@ -6534,6 +6851,11 @@ fn should_forward_header(name: &HeaderName) -> bool {
             | "connection"
             | "transfer-encoding"
             | "keep-alive"
+            | "x-real-ip"
+            | "x-forwarded-for"
+            | "x-forwarded-proto"
+            | "x-forwarded-host"
+            | "forwarded"
             | "x-forwarded-internally"
             | "x-mcp-session-id"
             | INTERNAL_AFFINITY_FORWARDED_HEADER

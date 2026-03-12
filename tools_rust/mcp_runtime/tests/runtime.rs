@@ -39,6 +39,7 @@ fn test_runtime_config() -> RuntimeConfig {
         backend_rpc_url: "http://127.0.0.1:4444/rpc".to_string(),
         listen_http: "127.0.0.1:8787".to_string(),
         listen_uds: None,
+        public_listen_http: None,
         protocol_version: "2025-11-25".to_string(),
         supported_protocol_versions: vec![],
         server_name: "ContextForge".to_string(),
@@ -245,6 +246,117 @@ async fn health_alias_is_available_for_gateway_style_probes() {
             .iter()
             .any(|value| value == "2025-03-26")
     );
+}
+
+#[tokio::test]
+async fn server_scoped_public_initialize_authenticates_before_backend_dispatch() {
+    let auth_calls = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let initialize_calls =
+        Arc::new(Mutex::new(Vec::<(Option<String>, Option<String>)>::new()));
+
+    let backend = {
+        let auth_calls = auth_calls.clone();
+        let initialize_calls = initialize_calls.clone();
+        Router::new()
+            .route(
+                "/_internal/mcp/authenticate",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let auth_calls = auth_calls.clone();
+                    async move {
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-mcp-runtime")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("rust")
+                        );
+                        auth_calls.lock().expect("lock").push(body.clone());
+                        Json(json!({
+                            "authContext": {
+                                "email": "user@example.com",
+                                "teams": ["team-a"],
+                                "is_authenticated": true,
+                                "is_admin": false,
+                                "permission_is_admin": false,
+                                "token_use": "session"
+                            }
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/initialize",
+                post(move |headers: HeaderMap, Json(_body): Json<Value>| {
+                    let initialize_calls = initialize_calls.clone();
+                    async move {
+                        initialize_calls.lock().expect("lock").push((
+                            headers
+                                .get("x-contextforge-server-id")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
+                            headers
+                                .get("x-contextforge-auth-context")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
+                        ));
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "result": {
+                                "protocolVersion": "2025-11-25",
+                                "capabilities": {},
+                                "serverInfo": {"name": "ContextForge", "version": "0.1.0"}
+                            }
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/rpc"),
+            public_listen_http: Some("127.0.0.1:8788".to_string()),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/servers/server-1/mcp"))
+        .header("authorization", "Bearer test-token")
+        .header("x-forwarded-for", "203.0.113.10")
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}}
+        }))
+        .send()
+        .await
+        .expect("initialize response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-contextforge-mcp-runtime")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
+
+    let auth_call = auth_calls.lock().expect("lock");
+    assert_eq!(auth_call.len(), 1);
+    assert_eq!(auth_call[0]["path"], "/servers/server-1/mcp");
+    assert_eq!(auth_call[0]["clientIp"], "203.0.113.10");
+    assert_eq!(auth_call[0]["headers"]["authorization"], "Bearer test-token");
+
+    let initialize_call = initialize_calls.lock().expect("lock");
+    assert_eq!(initialize_call.len(), 1);
+    assert_eq!(initialize_call[0].0.as_deref(), Some("server-1"));
+    assert!(initialize_call[0].1.is_some());
 }
 
 #[tokio::test]
@@ -4245,6 +4357,9 @@ async fn internal_only_headers_are_not_forwarded_to_backend() {
                 "id": 1,
                 "result": {
                     "x_forwarded_internally": headers.get("x-forwarded-internally").and_then(|value| value.to_str().ok()),
+                    "x_forwarded_for": headers.get("x-forwarded-for").and_then(|value| value.to_str().ok()),
+                    "x_real_ip": headers.get("x-real-ip").and_then(|value| value.to_str().ok()),
+                    "x_forwarded_proto": headers.get("x-forwarded-proto").and_then(|value| value.to_str().ok()),
                     "x_mcp_session_id": headers.get("x-mcp-session-id").and_then(|value| value.to_str().ok()),
                     "runtime_header": headers.get("x-contextforge-mcp-runtime").and_then(|value| value.to_str().ok()),
                 }
@@ -4276,6 +4391,9 @@ async fn internal_only_headers_are_not_forwarded_to_backend() {
     let response = reqwest::Client::new()
         .post(format!("{runtime_url}/mcp"))
         .header("x-forwarded-internally", "true")
+        .header("x-forwarded-for", "198.51.100.10")
+        .header("x-real-ip", "198.51.100.10")
+        .header("x-forwarded-proto", "https")
         .header("x-mcp-session-id", "internal-only")
         .header("x-contextforge-mcp-runtime", "spoofed")
         .json(&json!({
@@ -4291,6 +4409,9 @@ async fn internal_only_headers_are_not_forwarded_to_backend() {
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value = response.json().await.expect("json body");
     assert_eq!(body["result"]["x_forwarded_internally"], Value::Null);
+    assert_eq!(body["result"]["x_forwarded_for"], Value::Null);
+    assert_eq!(body["result"]["x_real_ip"], Value::Null);
+    assert_eq!(body["result"]["x_forwarded_proto"], Value::Null);
     assert_eq!(body["result"]["x_mcp_session_id"], Value::Null);
     assert_eq!(body["result"]["runtime_header"], "rust");
 }

@@ -21,6 +21,9 @@ pub struct RuntimeConfig {
     #[arg(long, env = "MCP_RUST_LISTEN_UDS")]
     pub listen_uds: Option<PathBuf>,
 
+    #[arg(long, env = "MCP_RUST_PUBLIC_LISTEN_HTTP")]
+    pub public_listen_http: Option<String>,
+
     #[arg(long, env = "MCP_RUST_PROTOCOL_VERSION", default_value = "2025-11-25")]
     pub protocol_version: String,
 
@@ -195,5 +198,20 @@ impl RuntimeConfig {
             .parse::<SocketAddr>()
             .map(ListenTarget::Http)
             .map_err(|err| format!("invalid listen address '{}': {err}", self.listen_http))
+    }
+
+    pub fn public_listen_addr(&self) -> Result<Option<SocketAddr>, String> {
+        let Some(addr) = self.public_listen_http.as_deref() else {
+            return Ok(None);
+        };
+
+        let parsed = addr
+            .parse::<SocketAddr>()
+            .map_err(|err| format!("invalid public listen address '{}': {err}", addr))?;
+
+        match self.listen_target()? {
+            ListenTarget::Http(existing) if existing == parsed => Ok(None),
+            _ => Ok(Some(parsed)),
+        }
     }
 }

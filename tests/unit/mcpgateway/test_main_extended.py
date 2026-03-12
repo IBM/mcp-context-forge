@@ -39,12 +39,14 @@ from mcpgateway.main import (
     InternalTrustedMCPTransportBridge,
     MCPRuntimeHeaderTransportWrapper,
     MCPPathRewriteMiddleware,
+    _build_internal_mcp_auth_scope,
     _build_internal_mcp_forwarded_user,
     _decode_internal_mcp_auth_context,
     _enforce_internal_mcp_server_scope,
     _ensure_rpc_permission,
     _extract_scoped_permissions,
     _is_permission_admin_user,
+    _run_internal_mcp_authentication,
     _serialize_mcp_tool_definition,
     _serialize_legacy_tool_payloads,
     app,
@@ -59,6 +61,7 @@ from mcpgateway.main import (
     get_a2a_agent,
     handle_internal_mcp_initialize,
     handle_internal_mcp_completion_complete,
+    handle_internal_mcp_authenticate,
     handle_internal_mcp_logging_set_level,
     handle_internal_mcp_notifications_cancelled,
     handle_internal_mcp_notifications_initialized,
@@ -515,6 +518,101 @@ class TestInternalTrustedMcpTransportBridge:
         await bridge.handle_streamable_http(scope, receive, send)
 
         assert events[0]["status"] == 400
+
+    def test_build_internal_mcp_auth_scope_uses_public_request_shape(self):
+        """Synthetic auth scope should preserve the public MCP path and client IP."""
+        scope = _build_internal_mcp_auth_scope(
+            method="post",
+            path="/servers/server-1/mcp",
+            query_string="session_id=abc123",
+            headers={"Authorization": "Bearer token", "X-Test": "value"},
+            client_ip="203.0.113.10",
+        )
+
+        assert scope["type"] == "http"
+        assert scope["method"] == "POST"
+        assert scope["path"] == "/servers/server-1/mcp"
+        assert scope["raw_path"] == b"/servers/server-1/mcp"
+        assert scope["query_string"] == b"session_id=abc123"
+        assert scope["client"] == ("203.0.113.10", 0)
+        assert (b"authorization", b"Bearer token") in scope["headers"]
+        assert (b"x-test", b"value") in scope["headers"]
+
+    @pytest.mark.asyncio
+    async def test_run_internal_mcp_authentication_returns_forwarded_user_context(self, monkeypatch):
+        """Successful internal MCP auth should surface the forwarded auth context."""
+
+        async def _fake_streamable_http_auth(_scope, _receive, _send):
+            user_context_var.set(
+                {
+                    "email": "user@example.com",
+                    "teams": ["team-a"],
+                    "is_authenticated": True,
+                }
+            )
+            return True
+
+        monkeypatch.setattr("mcpgateway.main.settings.email_auth_enabled", False)
+        monkeypatch.setattr("mcpgateway.main.streamable_http_auth", _fake_streamable_http_auth)
+
+        error_response, auth_context = await _run_internal_mcp_authentication(
+            method="POST",
+            path="/mcp",
+            query_string="",
+            headers={"authorization": "Bearer token"},
+            client_ip="203.0.113.10",
+        )
+
+        assert error_response is None
+        assert auth_context["email"] == "user@example.com"
+        assert auth_context["teams"] == ["team-a"]
+        assert auth_context["is_authenticated"] is True
+
+    @pytest.mark.asyncio
+    async def test_handle_internal_mcp_authenticate_returns_auth_context(self, monkeypatch):
+        """Trusted Rust authenticate requests should return the derived auth context."""
+        request = MagicMock(spec=Request)
+        request.json = AsyncMock(
+            return_value={
+                "method": "POST",
+                "path": "/servers/server-1/mcp",
+                "queryString": "session_id=abc123",
+                "headers": {"authorization": "Bearer token"},
+                "clientIp": "203.0.113.10",
+            }
+        )
+
+        monkeypatch.setattr("mcpgateway.main._is_trusted_internal_mcp_runtime_request", lambda _request: True)
+        monkeypatch.setattr(
+            "mcpgateway.main._run_internal_mcp_authentication",
+            AsyncMock(
+                return_value=(
+                    None,
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                    },
+                )
+            ),
+        )
+
+        response = await handle_internal_mcp_authenticate(request)
+
+        assert response.status_code == 200
+        assert orjson.loads(response.body)["authContext"]["email"] == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_handle_internal_mcp_authenticate_rejects_untrusted_requests(self, monkeypatch):
+        """The authenticate bridge should remain trusted-runtime only."""
+        request = MagicMock(spec=Request)
+
+        monkeypatch.setattr("mcpgateway.main._is_trusted_internal_mcp_runtime_request", lambda _request: False)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await handle_internal_mcp_authenticate(request)
+
+        assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_bridge_rejects_non_http_scopes(self):

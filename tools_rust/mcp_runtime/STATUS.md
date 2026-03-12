@@ -4,69 +4,81 @@ Last updated: March 12, 2026
 
 Status focus in this update:
 
-- the Python Streamable HTTP MCP auth path now reuses the existing shared auth
-  cache and batched auth lookup instead of bypassing it:
-  - `AUTH_CACHE_ENABLED`
-  - `AUTH_CACHE_BATCH_QUERIES`
-  - `AUTH_CACHE_TEAMS_ENABLED`
-  - `AUTH_CACHE_*_TTL`
-  - no new MCP-specific auth-cache env vars were introduced
-- this matters for all MCP runtime modes because public MCP auth still runs in
-  Python first:
-  - `RUST_MCP_MODE=off`
-  - `RUST_MCP_MODE=edge`
-  - `RUST_MCP_MODE=full`
-- `.env.example` and the Rust MCP README now explicitly document that the
-  existing shared auth cache also affects Rust MCP performance and how to
-  disable or tune it safely
-- current rebuilt-stack validation for this auth-cache slice passed:
-  - targeted Streamable HTTP auth unit tests for:
-    - cached auth-context hit
-    - cached revoked auth-context deny path
-    - batched auth-context hit
+- public `/mcp` ingress is now routed directly from nginx to the Rust runtime
+  when Rust mode is enabled, instead of entering Python first and then hopping
+  to the sidecar
+- the Rust runtime now exposes a dedicated public listener:
+  - `MCP_RUST_PUBLIC_LISTEN_HTTP`
+  - this is wired by `RUST_MCP_MODE=edge|full` through `docker-entrypoint.sh`
+- direct public Rust ingress authenticates through the new trusted Python
+  endpoint:
+  - `POST /_internal/mcp/authenticate`
+  - Rust forwards the derived auth context on subsequent internal MCP calls
+- the public-auth handshake is only enabled when the Rust public listener is
+  configured, so the older internal Python -> Rust path still works unchanged
+- Rust now strips proxy-chain headers on trusted internal Rust -> Python hops:
+  - `x-real-ip`
+  - `x-forwarded-for`
+  - `x-forwarded-proto`
+  - `x-forwarded-host`
+  - `forwarded`
+  - this fixed the live nginx regression where Python rejected Rust internal
+    dispatch as non-local because it saw the external client IP
+- rebuilt-image validation on the current tree passed:
+  - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
+    -> `44 passed`
+  - `make flake8` -> passed
+  - `make bandit` -> passed
+  - `make interrogate` -> passed
+  - `make pylint` -> `10.00/10`
   - `make test-mcp-cli` -> `23 passed`
   - `make test-mcp-rbac` -> `40 passed`
-- new same-codebase mode comparison after enabling MCP auth-cache reuse:
-  - `off`:
-    - mixed `1009.22 RPS`, `13.30 ms` avg
-    - tools `1466.80 RPS`, `24.84 ms` avg
-  - `edge`:
-    - mixed `1062.58 RPS`, `8.68 ms` avg
-    - tools `1821.29 RPS`, `8.03 ms` avg
-  - `full`:
-    - mixed `989.49 RPS`, `9.15 ms` avg
-    - tools `1673.68 RPS`, `9.34 ms` avg
-- compared to the earlier profiling baseline on the same branch, MCP auth-cache
-  reuse improved all modes:
-  - `off`:
-    - mixed `724.69 -> 1009.22` (`+39.3%`)
-    - tools `695.79 -> 1466.80` (`+110.8%`)
-  - `edge`:
-    - mixed `839.36 -> 1062.58` (`+26.6%`)
-    - tools `1045.62 -> 1821.29` (`+74.2%`)
-  - `full`:
-    - mixed `894.18 -> 989.49` (`+10.7%`)
-    - tools `1016.57 -> 1673.68` (`+64.6%`)
-- sustained current full-Rust numbers with auth cache enabled are materially
-  better than the earlier short-run results:
-  - mixed, `120 users / 60s`:
-    - `1084.04 RPS`
-    - `9.64 ms` avg
-    - `17 ms` p95
+- live rebuilt-image proof is explicit:
+  - `GET /health` returns:
+    - `x-contextforge-mcp-runtime-mode: rust-managed`
+    - `x-contextforge-mcp-transport-mounted: rust`
+    - `x-contextforge-rust-build-included: true`
+    - `x-contextforge-mcp-session-core-mode: rust`
+    - `x-contextforge-mcp-event-store-mode: rust`
+    - `x-contextforge-mcp-resume-core-mode: rust`
+    - `x-contextforge-mcp-live-stream-core-mode: rust`
+    - `x-contextforge-mcp-affinity-core-mode: rust`
+  - a live public `tools/call` on `/servers/<id>/mcp` returns:
+    - `x-contextforge-mcp-runtime: rust`
+    - `x-contextforge-mcp-upstream-client: rmcp`
+- rebuilt-image benchmark results on `Fast Time Server`
+  (`9779b6698cbd4b4995ee04a4fab38737`) are currently:
+  - mixed MCP, `150 users / 30s`:
+    - `1376.87 RPS`
+    - `6.02 ms` avg
+    - `13 ms` p95
+    - `30 ms` p99
     - `0%` failures
-  - tools-only, `125 users / 180s`, explicit `MCPToolCallerUser`:
-    - `1868.45 RPS` overall
-    - `MCP tools/call [rapid]` -> `1778.7 RPS`
-    - `9.10 ms` avg
-    - `14 ms` p95
-    - `18 ms` p99
+  - mixed MCP, `300 users / 30s`:
+    - `2618.22 RPS`
+    - `9.08 ms` avg
+    - `19 ms` p95
+    - `40 ms` p99
     - `0%` failures
-- current conclusion after this pass:
-  - the earlier profiling diagnosis was correct
-  - the dominant shared bottleneck was Python auth/revocation/user lookup
-    overhead before Rust
-  - fixing that materially lifts Python-only mode and both Rust modes without
-    any new Rust-side micro-optimization
+  - tools-only, `125 users / 30s`, explicit `MCPToolCallerUser`:
+    - `1915.77 RPS` overall
+    - `MCP tools/call [rapid]` -> `1821.8 RPS`
+    - `4.45 ms` avg
+    - `6 ms` p95
+    - `15 ms` p99
+    - `0%` failures
+  - tools-only, `300 users / 30s`, explicit `MCPToolCallerUser`:
+    - `3727.96 RPS` overall
+    - `MCP tools/call [rapid]` -> `3545.5 RPS`
+    - `13.44 ms` avg
+    - `23 ms` p95
+    - `39 ms` p99
+    - `0%` failures
+- current conclusion after the direct-ingress cut:
+  - the Python pre-Rust ingress/proxy hop is no longer the main steady-state
+    cost on the public MCP path
+  - the remaining high-value work is now session-bound auth reuse and trimming
+    the remaining Python control/auth calls that still happen per request
 
 - Rust session-affinity forwarding is now implemented behind a separate
   feature-flagged slice:
@@ -1329,9 +1341,18 @@ Integrated in the main application:
 - Python mounts a hybrid MCP transport app
 - `GET /mcp`, `POST /mcp`, and `DELETE /mcp` are proxied to the Rust runtime
   when enabled
+- nginx now routes public `/mcp` and `/servers/<id>/mcp` traffic directly to
+  the Rust public listener when Rust mode is enabled, with the Python gateway
+  listener kept as backup
+- the Rust runtime can listen for direct public ingress on
+  `MCP_RUST_PUBLIC_LISTEN_HTTP`
 - `/servers/<id>/mcp` requests preserve semantics by carrying `server_id` across the Python -> Rust -> Python seam via `x-contextforge-server-id`
 - Python can connect to the managed Rust runtime over `EXPERIMENTAL_RUST_MCP_RUNTIME_UDS`
 - the managed Rust runtime can listen on `MCP_RUST_LISTEN_UDS`
+- Rust can authenticate direct public ingress through
+  `/_internal/mcp/authenticate`
+- the direct public-auth handshake is only enabled on the public-listener path;
+  internal Python -> Rust calls do not pay that extra step
 - Rust now forwards backend calls to `/_internal/mcp/rpc` instead of the public `/rpc` route
 - Rust now forwards `initialize` to `/_internal/mcp/initialize` instead of the
   generic internal JSON-RPC switch
@@ -1342,6 +1363,10 @@ Integrated in the main application:
 - Rust can call `/_internal/mcp/tools/call` to preserve Python execution while bypassing the generic JSON-RPC backend switch for the hottest MCP method
 - Python forwards a trusted internal MCP auth blob via `x-contextforge-auth-context`
 - the proxy strips forwarded-chain headers like `x-forwarded-for` before the internal Rust -> Python hop so loopback trust stays real
+- the direct-ingress runtime also strips proxy-chain headers on trusted internal
+  Rust -> Python requests so `_is_trusted_internal_mcp_runtime_request(...)`
+  continues to see the call as loopback even when nginx adds client-forwarding
+  headers to the public request
 - the internal Rust-backed MCP route now creates its own `SessionLocal()` session instead of using FastAPI `Depends(get_db)`
 - trusted internal dispatch now lazily materializes lowered request headers only for branches that actually need them
 - token-scoping middleware now explicitly bypasses trusted loopback `/_internal/mcp/*` Rust sidecar hops so scoped tokens do not get re-denied on the private internal path
@@ -1381,8 +1406,10 @@ This is the cleanest proof that live requests are actually traversing Rust.
 
 ### Rust-owned today
 
+- public `/mcp` and `/servers/<id>/mcp` ingress when Rust mode is enabled
 - outer HTTP MCP runtime shell for `GET /mcp`, `POST /mcp`, and `DELETE /mcp`
 - optional UDS listener for the managed sidecar
+- optional public HTTP listener for direct nginx -> Rust MCP ingress
 - protocol-version compatibility checks
 - JSON-RPC envelope validation
 - notification response semantics
@@ -1396,7 +1423,8 @@ This is the cleanest proof that live requests are actually traversing Rust.
 
 ### Python-owned today
 
-- authentication and token verification on the public MCP transport
+- authentication authority and token verification for public MCP transport,
+  reached through trusted internal auth calls from Rust
 - token scoping normalization
 - RBAC decision-making
 - creation of the forwarded internal auth context
@@ -1693,20 +1721,21 @@ But they do make debugging noisier than it should be.
 
 ## Recommended Next Steps
 
-### Phase 1: continue transport/session parity
+### Phase 1: reduce per-request Python control-path cost further
 
 Immediate priorities:
 
-- keep the new Rust-fronted `GET`/`DELETE` transport boundary under broader
-  suite coverage
-- add explicit live validation for server-scoped `GET /servers/<id>/mcp` and
-  `DELETE /servers/<id>/mcp`
-- move the next transport internals behind the same Rust seam:
-  - session-lifecycle state ownership
-  - resumable event-store behavior
-  - multi-worker session-affinity / owner checks
-- keep the public mount shape stable while shrinking Python's transport-specific
-  internals behind `/_internal/mcp/transport`
+- bind the authenticated user/token scope to the Rust MCP session after
+  `initialize` so steady-state session traffic does not need to call Python
+  auth on every request
+- reuse that session-bound auth context for `POST`, `GET`, and `DELETE /mcp`
+  follow-ups wherever the session id is already known
+- keep the current Python fallback in place for sessionless requests and for
+  any auth-refresh edge cases
+- add narrow counters for:
+  - public auth handshakes
+  - session-bound auth-context reuse
+  - internal Python auth fallbacks
 
 ### Phase 2: remove the remaining generic dispatcher coupling
 
