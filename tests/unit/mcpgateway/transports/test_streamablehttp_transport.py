@@ -215,6 +215,152 @@ async def test_rust_event_store_store_and_replay(monkeypatch):
     }
 
 
+@pytest.mark.asyncio
+async def test_rust_event_store_store_rejects_invalid_event_id(monkeypatch):
+    """RustEventStore should reject empty or invalid event ids from the sidecar."""
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"eventId": ""}
+
+    class FakeClient:
+        async def post(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(tr, "_get_rust_event_store_client", AsyncMock(return_value=FakeClient()))
+
+    store = tr.RustEventStore()
+    with pytest.raises(RuntimeError, match="invalid eventId"):
+        await store.store_event("stream-1", {"id": 1})
+
+
+@pytest.mark.asyncio
+async def test_rust_event_store_replay_skips_invalid_entries(monkeypatch):
+    """Replay should skip malformed entries and return None for invalid stream ids."""
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def post(self, *_args, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return FakeResponse({"streamId": "", "events": []})
+            return FakeResponse({"streamId": "stream-1", "events": ["bad", {"message": {"id": 2}}]})
+
+    client = FakeClient()
+    monkeypatch.setattr(tr, "_get_rust_event_store_client", AsyncMock(return_value=client))
+
+    store = tr.RustEventStore()
+    assert await store.replay_events_after("event-1", AsyncMock()) is None
+
+    replayed = []
+
+    async def collector(msg):
+        replayed.append(msg)
+
+    assert await store.replay_events_after("event-2", collector) == "stream-1"
+    assert replayed == [{"id": 2}]
+
+
+@pytest.mark.asyncio
+async def test_get_rust_event_store_client_uses_shared_http_client_without_uds(monkeypatch):
+    """Without UDS configured, the Rust event-store client should use the shared HTTP client."""
+    shared_client = AsyncMock()
+    monkeypatch.setattr(tr, "_rust_event_store_client", None)
+    monkeypatch.setattr(tr.settings, "experimental_rust_mcp_runtime_uds", None)
+    monkeypatch.setattr(tr, "get_http_client", AsyncMock(return_value=shared_client))
+
+    assert await tr._get_rust_event_store_client() is shared_client
+
+
+@pytest.mark.asyncio
+async def test_get_rust_event_store_client_reuses_uds_client(monkeypatch):
+    """UDS-backed Rust event-store client should be created once and then reused."""
+    constructed = {"count": 0}
+
+    class FakeAsyncClient:
+        def __init__(self, **_kwargs):
+            constructed["count"] += 1
+
+    monkeypatch.setattr(tr, "_rust_event_store_client", None)
+    monkeypatch.setattr(tr.settings, "experimental_rust_mcp_runtime_uds", "/tmp/contextforge-mcp-rust.sock")
+    monkeypatch.setattr(tr, "httpx", MagicMock(AsyncClient=FakeAsyncClient, AsyncHTTPTransport=httpx.AsyncHTTPTransport, Timeout=httpx.Timeout))
+
+    first = await tr._get_rust_event_store_client()
+    second = await tr._get_rust_event_store_client()
+
+    assert first is second
+    assert constructed["count"] == 1
+
+
+def test_get_streamable_http_auth_context_returns_empty_for_non_dict_context():
+    """Non-dict auth contexts should not be forwarded to trusted internal hops."""
+    token = tr.user_context_var.set("not-a-dict")
+    try:
+        assert tr.get_streamable_http_auth_context() == {}
+    finally:
+        tr.user_context_var.reset(token)
+
+
+def test_get_streamable_http_auth_context_copies_supported_keys_and_lists():
+    """Forwarded auth context should copy supported keys and clone list values."""
+    original = {
+        "email": "user@example.com",
+        "teams": ["team-a"],
+        "is_authenticated": True,
+        "is_admin": False,
+        "token_use": "session",
+        "permission_is_admin": True,
+        "scoped_permissions": ["tools.read"],
+        "scoped_server_id": "srv-1",
+        "ignored": "value",
+    }
+    token = tr.user_context_var.set(original)
+    try:
+        forwarded = tr.get_streamable_http_auth_context()
+    finally:
+        tr.user_context_var.reset(token)
+
+    assert forwarded == {
+        "email": "user@example.com",
+        "teams": ["team-a"],
+        "is_authenticated": True,
+        "is_admin": False,
+        "token_use": "session",
+        "permission_is_admin": True,
+        "scoped_permissions": ["tools.read"],
+        "scoped_server_id": "srv-1",
+    }
+    assert forwarded["teams"] is not original["teams"]
+    assert forwarded["scoped_permissions"] is not original["scoped_permissions"]
+
+
+def test_record_mcp_auth_cache_event_swallows_metrics_errors(monkeypatch):
+    """Metrics failures must not break MCP auth cache instrumentation."""
+
+    class BrokenCounter:
+        def labels(self, **_kwargs):
+            raise RuntimeError("metrics down")
+
+    monkeypatch.setattr(tr, "mcp_auth_cache_events_counter", BrokenCounter())
+
+    tr._record_mcp_auth_cache_event("cache_miss")
+
+
 # ---------------------------------------------------------------------------
 # get_db, call_tool & list_tools tests
 # ---------------------------------------------------------------------------
@@ -5444,6 +5590,33 @@ async def test_session_manager_wrapper_rust_event_store(monkeypatch):
     assert isinstance(captured_config["event_store"], tr.RustEventStore)
     assert captured_config["event_store"].max_events_per_stream == 75
     assert captured_config["event_store"].ttl == 2700
+
+
+@pytest.mark.asyncio
+async def test_session_manager_wrapper_redis_event_store_when_rust_event_store_disabled(monkeypatch):
+    """SessionManagerWrapper should fall back to RedisEventStore when Rust event store is disabled."""
+
+    captured_config = {}
+
+    def capture_manager(**kwargs):
+        captured_config.update(kwargs)
+        dummy = MagicMock()
+        dummy.run = MagicMock(return_value=asynccontextmanager(lambda: (yield dummy))())
+        return dummy
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.json_response_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.experimental_rust_mcp_runtime_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.experimental_rust_mcp_event_store_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "redis")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.redis_url", "redis://localhost:6379/0")
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", capture_manager)
+
+    SessionManagerWrapper()
+
+    from mcpgateway.transports.redis_event_store import RedisEventStore
+
+    assert isinstance(captured_config["event_store"], RedisEventStore)
 
 
 # ---------------------------------------------------------------------------
@@ -11590,6 +11763,239 @@ async def test_auth_jwt_scoped_permissions_in_user_context(monkeypatch):
     assert ctx["email"] == "user@example.com"
 
 
+@pytest.mark.asyncio
+async def test_auth_jwt_uses_cached_auth_context_and_cached_teams(monkeypatch):
+    """Cached auth context and cached teams should avoid fallback lookups and preserve scoped server ids."""
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler, user_context_var
+
+    jwt_payload = {
+        "sub": "user@example.com",
+        "is_admin": False,
+        "token_use": "session",
+        "scopes": {"server_id": "srv-1"},
+    }
+    cached_ctx = MagicMock()
+    cached_ctx.is_token_revoked = False
+    cached_ctx.user = {"is_active": True, "is_admin": True}
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=cached_ctx)
+    auth_cache.get_user_teams = AsyncMock(return_value=["team-a"])
+    auth_cache.get_team_membership_valid_sync = MagicMock(return_value=True)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", False)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+
+    handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
+
+    result = await handler._auth_jwt(token="fake-token")
+
+    assert result is True
+    ctx = user_context_var.get()
+    assert ctx["teams"] == ["team-a"]
+    assert ctx["permission_is_admin"] is True
+    assert ctx["scoped_server_id"] == "srv-1"
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_falls_back_after_cache_errors_and_tolerates_cache_set_failure(monkeypatch):
+    """Fallback auth flow should survive cache lookup/set failures and revocation-check exceptions."""
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler, user_context_var
+
+    jwt_payload = {
+        "sub": "user@example.com",
+        "is_admin": False,
+        "token_use": "session",
+    }
+    user_record = MagicMock()
+    user_record.email = "user@example.com"
+    user_record.password_hash = "hash"
+    user_record.full_name = "User"
+    user_record.is_admin = True
+    user_record.is_active = True
+    user_record.auth_provider = "local"
+    user_record.password_change_required = False
+    user_record.email_verified_at = None
+    user_record.created_at = None
+    user_record.updated_at = None
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(side_effect=RuntimeError("cache down"))
+    auth_cache.set_auth_context = AsyncMock(side_effect=RuntimeError("cache set failed"))
+    auth_cache.set_user_teams = AsyncMock(return_value=None)
+    auth_cache.get_team_membership_valid_sync = MagicMock(return_value=True)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", False)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", MagicMock(side_effect=RuntimeError("revocation down")))
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", MagicMock(return_value=user_record))
+    monkeypatch.setattr("mcpgateway.auth._resolve_teams_from_db_sync", MagicMock(return_value=["team-a"]))
+
+    handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
+
+    result = await handler._auth_jwt(token="fake-token")
+
+    assert result is True
+    ctx = user_context_var.get()
+    assert ctx["teams"] == ["team-a"]
+    assert ctx["permission_is_admin"] is True
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_uses_batched_auth_context_and_caches_team_list(monkeypatch):
+    """Batched auth lookups should populate context and tolerate team-cache write failures."""
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler, user_context_var
+
+    jwt_payload = {
+        "sub": "user@example.com",
+        "is_admin": False,
+        "token_use": "session",
+    }
+    batched_auth_ctx = {
+        "user": {"is_active": True, "is_admin": True},
+        "personal_team_id": None,
+        "is_token_revoked": False,
+        "team_ids": ["team-a"],
+    }
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    auth_cache.set_auth_context = AsyncMock(return_value=None)
+    auth_cache.set_user_teams = AsyncMock(side_effect=RuntimeError("team cache down"))
+    auth_cache.get_team_membership_valid_sync = MagicMock(return_value=True)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", True)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr("mcpgateway.auth._get_auth_context_batched_sync", MagicMock(return_value=batched_auth_ctx))
+
+    handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
+
+    result = await handler._auth_jwt(token="fake-token")
+
+    assert result is True
+    ctx = user_context_var.get()
+    assert ctx["teams"] == ["team-a"]
+    assert ctx["permission_is_admin"] is True
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_cached_context_requires_user_when_db_user_missing(monkeypatch):
+    """Cached auth contexts without a DB user should reject when REQUIRE_USER_IN_DB is enabled."""
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler
+
+    jwt_payload = {"sub": "user@example.com", "is_admin": False, "token_use": "session"}
+    cached_ctx = MagicMock()
+    cached_ctx.is_token_revoked = False
+    cached_ctx.user = None
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=cached_ctx)
+
+    send_error = AsyncMock(return_value=False)
+    monkeypatch.setattr(_StreamableHttpAuthHandler, "_send_error", send_error)
+    handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.require_user_in_db", True)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+
+    assert await handler._auth_jwt(token="fake-token") is False
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_returns_invalid_credentials_when_cache_lookup_raises_http_exception(monkeypatch):
+    """HTTPException from auth cache lookup should be surfaced as invalid credentials."""
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler
+
+    jwt_payload = {"sub": "user@example.com", "is_admin": False, "token_use": "session"}
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(side_effect=HTTPException(status_code=401, detail="bad"))
+
+    send_error = AsyncMock(return_value=False)
+    monkeypatch.setattr(_StreamableHttpAuthHandler, "_send_error", send_error)
+    handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", False)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+
+    assert await handler._auth_jwt(token="fake-token") is False
+    send_error.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_batched_context_requires_user_when_db_user_missing(monkeypatch):
+    """Batched auth lookups without a DB user should reject when REQUIRE_USER_IN_DB is enabled."""
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler
+
+    jwt_payload = {"sub": "user@example.com", "is_admin": False, "token_use": "session"}
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+
+    send_error = AsyncMock(return_value=False)
+    monkeypatch.setattr(_StreamableHttpAuthHandler, "_send_error", send_error)
+    handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.require_user_in_db", True)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr("mcpgateway.auth._get_auth_context_batched_sync", MagicMock(return_value={"user": None, "team_ids": [], "is_token_revoked": False}))
+
+    assert await handler._auth_jwt(token="fake-token") is False
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_records_batch_team_cache_hit_on_success(monkeypatch):
+    """Successful batched team caching should preserve the resolved team list."""
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler, user_context_var
+
+    jwt_payload = {"sub": "user@example.com", "is_admin": False, "token_use": "session"}
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    auth_cache.set_auth_context = AsyncMock(return_value=None)
+    auth_cache.set_user_teams = AsyncMock(return_value=None)
+    auth_cache.get_team_membership_valid_sync = MagicMock(return_value=True)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", True)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr("mcpgateway.auth._get_auth_context_batched_sync", MagicMock(return_value={"user": {"is_active": True, "is_admin": False}, "team_ids": ["team-a"], "is_token_revoked": False}))
+
+    handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
+    assert await handler._auth_jwt(token="fake-token") is True
+    assert user_context_var.get()["teams"] == ["team-a"]
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_returns_invalid_credentials_when_batched_lookup_raises_http_exception(monkeypatch):
+    """HTTPException from the batched auth lookup should be surfaced as invalid credentials."""
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler
+
+    jwt_payload = {"sub": "user@example.com", "is_admin": False, "token_use": "session"}
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+
+    send_error = AsyncMock(return_value=False)
+    monkeypatch.setattr(_StreamableHttpAuthHandler, "_send_error", send_error)
+    handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", True)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr("mcpgateway.auth._get_auth_context_batched_sync", MagicMock(side_effect=HTTPException(status_code=401, detail="bad")))
+
+    assert await handler._auth_jwt(token="fake-token") is False
+    send_error.assert_awaited_once()
 @pytest.mark.asyncio
 async def test_complete_denied_by_token_scope(monkeypatch):
     """Token without tools.read should be denied completion/complete."""

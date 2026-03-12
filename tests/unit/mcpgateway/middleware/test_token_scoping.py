@@ -189,6 +189,50 @@ class TestTokenScopingMiddleware:
         call_next.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_internal_mcp_request_without_runtime_header_does_not_bypass(self, middleware, mock_request):
+        """Missing the Rust runtime marker must not bypass token scoping."""
+        mock_request.url.path = "/_internal/mcp/rpc"
+        mock_request.scope["path"] = "/_internal/mcp/rpc"
+        mock_request.method = "POST"
+        mock_request.headers = {
+            "Authorization": "Bearer scoped-token",
+            "x-contextforge-auth-context": "trusted-payload",
+        }
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", new=AsyncMock(return_value={"sub": "user@example.com", "scopes": {"permissions": ["tools.read"]}})),
+            patch.object(middleware, "_check_server_restriction", return_value=True),
+            patch.object(middleware, "_check_permission_restrictions", return_value=False),
+        ):
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_internal_mcp_request_without_auth_context_does_not_bypass(self, middleware, mock_request):
+        """Missing the trusted auth-context header must not bypass token scoping."""
+        mock_request.url.path = "/_internal/mcp/rpc"
+        mock_request.scope["path"] = "/_internal/mcp/rpc"
+        mock_request.method = "POST"
+        mock_request.headers = {
+            "Authorization": "Bearer scoped-token",
+            "x-contextforge-mcp-runtime": "rust",
+        }
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", new=AsyncMock(return_value={"sub": "user@example.com", "scopes": {"permissions": ["tools.read"]}})),
+            patch.object(middleware, "_check_server_restriction", return_value=True),
+            patch.object(middleware, "_check_permission_restrictions", return_value=False),
+        ):
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        call_next.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_canonical_permissions_used_in_map(self, middleware):
         """Test that permission map uses canonical Permissions constants (Issue 5 fix)."""
         # Test tools permissions use canonical constants

@@ -12,6 +12,7 @@ import orjson
 import pytest
 
 # First-Party
+import mcpgateway.transports.rust_mcp_runtime_proxy as proxy_mod
 from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy
 
 
@@ -469,6 +470,132 @@ async def test_unsupported_methods_fall_back_to_python_transport():
     )
 
     fallback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_non_http_scopes_fall_back_to_python_transport():
+    """Non-HTTP ASGI scopes should be forwarded to the Python fallback app."""
+    fallback = AsyncMock()
+    proxy = RustMCPRuntimeProxy(fallback)
+
+    async def receive():
+        return {"type": "websocket.disconnect"}
+
+    async def send(_message):
+        return None
+
+    await proxy.handle_streamable_http(
+        {
+            "type": "websocket",
+            "path": "/mcp/",
+        },
+        receive,
+        send,
+    )
+
+    fallback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stream_request_body_skips_non_request_messages_and_disconnects():
+    """Request-body streaming should ignore non-request frames and stop on disconnect."""
+
+    async def receive():
+        if not hasattr(receive, "calls"):
+            receive.calls = 0
+        receive.calls += 1
+        if receive.calls == 1:
+            return {"type": "lifespan.startup"}
+        if receive.calls == 2:
+            return {"type": "http.request", "body": b"abc", "more_body": True}
+        if receive.calls == 3:
+            return {"type": "http.disconnect"}
+        return {"type": "http.request", "body": b"ignored", "more_body": False}
+
+    chunks = []
+    async for chunk in proxy_mod._stream_request_body(receive):
+        chunks.append(chunk)
+
+    assert chunks == [b"abc"]
+
+
+def test_build_runtime_mcp_url_handles_empty_and_prefixed_base_paths(monkeypatch):
+    """The Rust runtime target URL should normalize base paths consistently."""
+    scope = {"query_string": b"session_id=sess-1"}
+
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
+    assert proxy_mod._build_runtime_mcp_url(scope) == "http://127.0.0.1:8787/mcp/?session_id=sess-1"
+
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787/base")
+    assert proxy_mod._build_runtime_mcp_url(scope) == "http://127.0.0.1:8787/base/mcp/?session_id=sess-1"
+
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787/base/mcp")
+    assert proxy_mod._build_runtime_mcp_url(scope) == "http://127.0.0.1:8787/base/mcp/?session_id=sess-1"
+
+
+def test_build_forward_headers_skips_malformed_and_non_bytes_headers(monkeypatch):
+    """Malformed header tuples and non-bytes headers should be ignored safely."""
+    monkeypatch.setattr(
+        "mcpgateway.transports.rust_mcp_runtime_proxy.get_streamable_http_auth_context",
+        lambda: {},
+    )
+
+    headers = proxy_mod._build_forward_headers(
+        {
+            "headers": [
+                ("authorization", "bad-types"),
+                (b"authorization", b"Bearer token"),
+                (b"x-forwarded-for", b"203.0.113.10"),
+                (b"x-contextforge-server-id", b"spoofed"),
+                (b"cookie", b"jwt_token=cookie-token"),
+                (b"broken",),
+            ],
+            "modified_path": "/servers/123e4567-e89b-12d3-a456-426614174000/mcp",
+        }
+    )
+
+    assert ("authorization", "Bearer token") in headers
+    assert ("cookie", "jwt_token=cookie-token") in headers
+    assert ("x-contextforge-server-id", "123e4567-e89b-12d3-a456-426614174000") in headers
+    assert not any(name == "x-forwarded-for" for name, _value in headers)
+
+
+def test_build_forward_headers_marks_affinity_forwarded_for_loopback_internal_requests(monkeypatch):
+    """Loopback requests forwarded internally should be marked for Rust affinity handling."""
+    monkeypatch.setattr(
+        "mcpgateway.transports.rust_mcp_runtime_proxy.get_streamable_http_auth_context",
+        lambda: {},
+    )
+
+    headers = proxy_mod._build_forward_headers(
+        {
+            "headers": [(b"x-forwarded-internally", b"true")],
+            "client": ("127.0.0.1", 4444),
+            "modified_path": "/mcp/",
+        }
+    )
+
+    assert ("x-contextforge-affinity-forwarded", "rust") in headers
+
+
+@pytest.mark.asyncio
+async def test_get_runtime_client_reuses_uds_client(monkeypatch):
+    """Configured UDS clients should be constructed once and reused."""
+    constructed = {"count": 0}
+
+    class FakeAsyncClient:
+        def __init__(self, **_kwargs):
+            constructed["count"] += 1
+
+    proxy = RustMCPRuntimeProxy(AsyncMock())
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_uds", "/tmp/contextforge-mcp-rust.sock")
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.httpx.AsyncClient", FakeAsyncClient)
+
+    first = await proxy._get_runtime_client()
+    second = await proxy._get_runtime_client()
+
+    assert first is second
+    assert constructed["count"] == 1
 
 
 @pytest.mark.asyncio

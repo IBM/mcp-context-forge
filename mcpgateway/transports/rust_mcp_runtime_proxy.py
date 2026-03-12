@@ -240,7 +240,11 @@ def _build_forward_headers(scope: Scope) -> list[tuple[str, str]]:
     client_host = client[0] if isinstance(client, (tuple, list)) and client else None
     from_loopback = client_host in ("127.0.0.1", "::1")
     incoming_headers = {
-        name.decode("latin-1").lower(): value.decode("latin-1") for name, value in scope.get("headers") or [] if isinstance(name, (bytes, bytearray)) and isinstance(value, (bytes, bytearray))
+        name.decode("latin-1").lower(): value.decode("latin-1")
+        for item in scope.get("headers") or []
+        if isinstance(item, (tuple, list)) and len(item) == 2
+        for name, value in [item]
+        if isinstance(name, (bytes, bytearray)) and isinstance(value, (bytes, bytearray))
     }
     if from_loopback and incoming_headers.get("x-forwarded-internally") == "true":
         headers.append((_CONTEXTFORGE_AFFINITY_FORWARDED_HEADER, "rust"))

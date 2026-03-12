@@ -1067,6 +1067,19 @@ def test_experimental_rust_mcp_runtime_uds_accepts_absolute_path(tmp_path: Path)
     assert s.experimental_rust_mcp_runtime_uds == str(uds_path)
 
 
+def test_experimental_rust_mcp_runtime_uds_rejects_relative_path():
+    """The Rust runtime UDS path must be absolute."""
+    with pytest.raises(ValueError, match="must be an absolute path"):
+        Settings(experimental_rust_mcp_runtime_uds="relative.sock", _env_file=None)
+
+
+def test_experimental_rust_mcp_runtime_uds_rejects_missing_parent(tmp_path: Path):
+    """The Rust runtime UDS parent directory must already exist."""
+    missing_parent = tmp_path / "missing" / "contextforge-rust.sock"
+    with pytest.raises(ValueError, match="parent directory does not exist"):
+        Settings(experimental_rust_mcp_runtime_uds=str(missing_parent), _env_file=None)
+
+
 def test_auth_required_true_with_explicit_mcp_permissive_warns(caplog):
     """AUTH_REQUIRED=true with explicit MCP_REQUIRE_AUTH=false should warn."""
     caplog.set_level("WARNING", logger="mcpgateway.config")
