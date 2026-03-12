@@ -15066,7 +15066,7 @@ async def admin_test_a2a_agent(
     Returns appropriate HTTP status codes based on the failure type:
     - 404: Agent not found or user lacks access
     - 502: Agent disabled, unreachable, or returning errors
-    - 400: Invalid test parameters
+    - 422: Invalid test parameters
     - 500: Unexpected system errors
 
     Args:
@@ -15159,7 +15159,7 @@ async def admin_test_a2a_agent(
         LOGGER.warning(f"Validation error testing A2A agent {agent_id}: {e}")
         return ORJSONResponse(
             content={"success": False, "error": str(e), "error_type": "validation_error", "agent_id": agent_id},
-            status_code=400,
+            status_code=422,
         )
     except Exception as e:
         LOGGER.error(f"Unexpected error testing A2A agent {agent_id}: {e}")

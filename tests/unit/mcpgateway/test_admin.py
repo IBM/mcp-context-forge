@@ -4936,7 +4936,7 @@ class TestA2AAgentManagement:
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_validation_error(self, monkeypatch, mock_request, mock_db, allow_permission):
-        """Test ValidationError returns 400 with validation_error type."""
+        """Test ValidationError returns 422 with validation_error type."""
         service = MagicMock()
         service.get_agent = AsyncMock(return_value=SimpleNamespace(name="Agent", agent_type="generic", endpoint_url="http://agent.example.com/"))
         # Simulate validation error during parameter processing
@@ -4946,7 +4946,7 @@ class TestA2AAgentManagement:
         monkeypatch.setattr("mcpgateway.admin._read_request_json", AsyncMock(return_value={"query": "test"}), raising=True)
 
         result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        assert result.status_code == 400
+        assert result.status_code == 422
         body = json.loads(result.body)
         assert body["success"] is False
         assert body["error_type"] == "validation_error"
