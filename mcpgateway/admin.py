@@ -3769,17 +3769,23 @@ async def admin_login_page(request: Request) -> Response:
     root_path = settings.app_root_path
 
     # Check if user is already authenticated via JWT cookie
-    jwt_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
-    if jwt_token:
-        try:
-            # Verify the token is valid
-            payload = await verify_jwt_token_cached(jwt_token, request)
-            if payload:
-                # User is authenticated, redirect to dashboard
-                return RedirectResponse(url=f"{root_path}/admin", status_code=303)
-        except (HTTPException, jwt.PyJWTError):
-            # Token is invalid or expired, continue to show login page
-            pass
+    # Skip redirect when an error param is present — the user was sent here
+    # intentionally (e.g. admin_required, account_disabled).
+    if not request.query_params.get("error"):
+        jwt_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+        if jwt_token:
+            try:
+                payload = await verify_jwt_token_cached(jwt_token, request)
+                if payload:
+                    # Only redirect if the token indicates admin privileges;
+                    # otherwise the middleware will reject and redirect back here,
+                    # creating an infinite redirect loop.
+                    is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
+                    if is_admin:
+                        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+            except (HTTPException, jwt.PyJWTError):
+                # Token is invalid or expired, continue to show login page
+                pass
 
     # Only show secure cookie warning if there's a login error AND problematic config
     secure_cookie_warning = None
