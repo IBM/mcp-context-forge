@@ -5604,11 +5604,12 @@ async function viewPrompt(promptName) {
 
             const argsEl = promptDetailsDiv.querySelector(".prompt-arguments");
             if (argsEl) {
-                argsEl.textContent = JSON.stringify(
-                    prompt.arguments || {},
-                    null,
-                    2,
-                );
+                const args = prompt.arguments;
+                if (!args || args.length === 0) {
+                    argsEl.textContent = "No arguments";
+                } else {
+                    argsEl.textContent = JSON.stringify(args, null, 2);
+                }
             }
 
             if (prompt.metrics) {
@@ -5845,7 +5846,7 @@ async function editPrompt(promptId) {
 
         // Validate arguments JSON
         const argsValidation = validateJson(
-            JSON.stringify(prompt.arguments || {}),
+            JSON.stringify(prompt.arguments || []),
             "Arguments",
         );
         if (argsField && argsValidation.valid) {

@@ -1055,6 +1055,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     existing.display_name = prompt.name
                     existing.description = prompt.description
                     existing.template = prompt.template if hasattr(prompt, "template") else ""
+                    existing.argument_schema = self._build_prompt_argument_schema(prompt)
                     existing.federation_source = gateway.name
                     existing.modified_by = created_by
                     existing.modified_from_ip = created_from_ip
@@ -1074,7 +1075,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             display_name=prompt.name,
                             description=prompt.description,
                             template=prompt.template if hasattr(prompt, "template") else "",
-                            argument_schema={},  # Use argument_schema instead of arguments
+                            argument_schema=self._build_prompt_argument_schema(prompt),
                             # Federation metadata
                             created_by=created_by or "system",
                             created_from_ip=created_from_ip,
@@ -4246,6 +4247,33 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return resources_to_add
 
+    @staticmethod
+    def _build_prompt_argument_schema(prompt: Any) -> Dict[str, Any]:
+        """Build a JSON-schema-compatible argument_schema dict from a PromptCreate's arguments list.
+
+        The MCP protocol's ``prompts/list`` response includes argument metadata
+        (name, description, required) on each prompt.  This helper converts that
+        list into the internal ``argument_schema`` structure expected by
+        ``DbPrompt`` so that the UI and API can surface the arguments correctly.
+
+        Args:
+            prompt: A PromptCreate (or any object with an ``arguments`` attribute
+                    whose items have ``name``, optional ``description``, and
+                    optional ``required`` fields).
+
+        Returns:
+            Dict with ``type``, ``properties``, and ``required`` keys.
+        """
+        schema: Dict[str, Any] = {"type": "object", "properties": {}, "required": []}
+        for arg in getattr(prompt, "arguments", []) or []:
+            prop: Dict[str, Any] = {"type": "string"}
+            if getattr(arg, "description", None):
+                prop["description"] = arg.description
+            schema["properties"][arg.name] = prop
+            if getattr(arg, "required", False):
+                schema["required"].append(arg.name)
+        return schema
+
     def _update_or_create_prompts(self, db: Session, prompts: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbPrompt]:
         """Helper to handle update-or-create logic for prompts from MCP server.
 
@@ -4286,16 +4314,19 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Update existing prompt if there are changes
                     fields_to_update = False
 
+                    new_argument_schema = self._build_prompt_argument_schema(prompt)
                     if (
                         existing_prompt.description != prompt.description
                         or existing_prompt.template != (prompt.template if hasattr(prompt, "template") else "")
                         or (update_visibility and existing_prompt.visibility != gateway.visibility)
+                        or (existing_prompt.argument_schema or {}) != new_argument_schema
                     ):
                         fields_to_update = True
 
                     if fields_to_update:
                         existing_prompt.description = prompt.description
                         existing_prompt.template = prompt.template if hasattr(prompt, "template") else ""
+                        existing_prompt.argument_schema = new_argument_schema
                         if update_visibility:
                             existing_prompt.visibility = gateway.visibility
                         logger.debug(f"Updated existing prompt: {prompt.name}")
@@ -4308,7 +4339,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         display_name=prompt.name,
                         description=prompt.description,
                         template=prompt.template if hasattr(prompt, "template") else "",
-                        argument_schema={},  # Use argument_schema instead of arguments
+                        argument_schema=self._build_prompt_argument_schema(prompt),
                         gateway_id=gateway.id,
                         created_by="system",
                         created_via=created_via,
