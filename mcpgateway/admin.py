@@ -495,7 +495,7 @@ async def get_hidden_sections_for_user(
                 user_email=user_email,
                 permission=required_permission,
                 token_teams=token_teams,
-                allow_admin_bypass=True,  # Admins can see all sections
+                allow_admin_bypass=False,  # UI visibility matches API permissions
                 check_any_team=True,  # Check across all user's teams
             )
 
@@ -523,7 +523,7 @@ UI_ACTION_PERMISSIONS = {
     "can_create_prompt": "prompts.create",
     "can_create_gateway": "gateways.create",
     "can_create_user": "admin.user_management",
-    "can_create_token": "tokens.read",  # Token creation uses tokens.read
+    "can_create_token": "tokens.read",  # Token creation uses tokens.read, setting nosec cause this is false positive as router uses this permission key.  # nosec B105
     "can_create_agent": "a2a.create",
 }
 
@@ -556,12 +556,12 @@ async def get_user_action_permissions(
         >>> result = asyncio.run(get_user_action_permissions(db, "admin@example.com", True, None))
         >>> result["can_create_team"]
         True
-        >>> result["can_delete_server"]
+        >>> result["can_create_server"]
         True
     """
     # Platform admins with unrestricted tokens bypass all checks
     if is_admin and token_teams is None:
-        return {flag: True for flag in UI_ACTION_PERMISSIONS.keys()}
+        return {flag: True for flag in UI_ACTION_PERMISSIONS}
 
     # Initialize permission service
     permission_service = PermissionService(db, audit_enabled=False)
@@ -574,7 +574,7 @@ async def get_user_action_permissions(
                 user_email=user_email,
                 permission=permission,
                 token_teams=token_teams,
-                allow_admin_bypass=True,
+                allow_admin_bypass=False,  # UI visibility matches API permissions
                 check_any_team=True,
             )
             result[flag] = has_permission
@@ -3457,21 +3457,41 @@ async def admin_ui(
     hidden_header_items = set(ui_visibility_config["hidden_header_items"])
 
     # --------------------------------------------------------------------------------
+    # Determine team loading requirements BEFORE permission-based hiding
+    # This ensures teams load based on query-param visibility, not permission restrictions
+    # --------------------------------------------------------------------------------
+    sections_requiring_user_teams = {
+        "teams",
+        "tokens",
+        "users",
+        "tools",
+        "servers",
+        "resources",
+        "prompts",
+        "gateways",
+        "agents",
+    }
+    # Check visibility based on query-param/static hidden sections only
+    any_data_section_visible = any(section not in hidden_sections for section in sections_requiring_user_teams)
+
+    # --------------------------------------------------------------------------------
     # Add permission-based hiding (merge with static config)
+    # Only apply permission-based hiding when email auth is enabled
     # --------------------------------------------------------------------------------
     is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
     token_teams = user.get("token_teams") if isinstance(user, dict) else getattr(user, "token_teams", None)
 
-    permission_hidden_sections = await get_hidden_sections_for_user(
-        db=db,
-        user_email=user_email,
-        is_admin=is_admin_user,
-        token_teams=token_teams,
-        static_hidden=hidden_sections,
-    )
+    if getattr(settings, "email_auth_enabled", False):
+        permission_hidden_sections = await get_hidden_sections_for_user(
+            db=db,
+            user_email=user_email,
+            is_admin=is_admin_user,
+            token_teams=token_teams,
+            static_hidden=hidden_sections,
+        )
 
-    # Merge permission-based hiding with static config
-    hidden_sections = permission_hidden_sections
+        # Merge permission-based hiding with query-param and static config
+        hidden_sections = hidden_sections | permission_hidden_sections
 
     # --------------------------------------------------------------------------------
     # Get user action permissions for UI button visibility
@@ -3488,20 +3508,8 @@ async def admin_ui(
     # --------------------------------------------------------------------------------
     user_teams = []
     team_service = None
-    sections_requiring_user_teams = {
-        "teams",
-        "tokens",
-        "users",
-        "tools",
-        "servers",
-        "resources",
-        "prompts",
-        "gateways",
-        "agents",
-    }
-    should_load_user_teams = getattr(settings, "email_auth_enabled", False) and (
-        team_id is not None or "team_selector" not in hidden_header_items or bool(sections_requiring_user_teams - hidden_sections)
-    )
+    # Load teams if: team_id is specified, team_selector is visible, OR any data section is visible
+    should_load_user_teams = getattr(settings, "email_auth_enabled", False) and (team_id is not None or "team_selector" not in hidden_header_items or any_data_section_visible)
     if should_load_user_teams:
         try:
             team_service = TeamManagementService(db)
@@ -3677,33 +3685,21 @@ async def admin_ui(
         # item may be a pydantic model or dict-like
         # check common fields for team membership
         candidates = []
-        try:
-            # If it's an object with attributes
-            candidates.extend(
-                [
-                    getattr(item, "team_id", None),
-                    getattr(item, "teamId", None),
-                    getattr(item, "team_ids", None),
-                    getattr(item, "teamIds", None),
-                    getattr(item, "teams", None),
-                ]
-            )
-        except Exception:
-            pass  # nosec B110 - Intentionally ignore errors when extracting team IDs from objects
-        try:
-            # If it's a dict-like model_dump output (we'll check keys later after model_dump)
-            if isinstance(item, dict):
-                candidates.extend(
-                    [
-                        item.get("team_id"),
-                        item.get("teamId"),
-                        item.get("team_ids"),
-                        item.get("teamIds"),
-                        item.get("teams"),
-                    ]
-                )
-        except Exception:
-            pass  # nosec B110 - Intentionally ignore errors when extracting team IDs from dict objects
+        # Extract team IDs from object attributes, catching exceptions from each property
+        for attr_name in ["team_id", "teamId", "team_ids", "teamIds", "teams"]:
+            try:
+                val = getattr(item, attr_name, None)
+                candidates.append(val)
+            except Exception:
+                pass  # nosec B110 - Intentionally ignore errors when extracting team IDs from properties
+        # Extract team IDs from dict keys, catching exceptions from each .get() call
+        if isinstance(item, dict):
+            for key_name in ["team_id", "teamId", "team_ids", "teamIds", "teams"]:
+                try:
+                    val = item.get(key_name)
+                    candidates.append(val)
+                except Exception:
+                    pass  # nosec B110 - Intentionally ignore errors when extracting team IDs from dict .get() calls
 
         for c in candidates:
             if c is None:
