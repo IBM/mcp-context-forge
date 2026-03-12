@@ -416,7 +416,7 @@ class ExternalPlugin(Plugin):
             context: The plugin context passed to the run.
 
         Raises:
-            PluginError: error passed from external plugin server.
+            PluginError: Error passed from external plugin server, or if reconnection fails.
 
         Returns:
             The resulting payload from the plugin.
@@ -472,8 +472,8 @@ class ExternalPlugin(Plugin):
                     return await _execute_call()
                 except Exception as reconn_err:
                     logger.exception("Reconnection failed for plugin %s: %s", self.name, reconn_err)
-                    # Re-raise the original error, not the reconnection error
-                    raise pe
+                    # Fall through to re-raise the original PluginError
+            # Log and re-raise the original PluginError
             logger.exception(pe)
             raise
         except Exception as e:
