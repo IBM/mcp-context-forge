@@ -921,6 +921,16 @@ class GatewaysPage(BasePage):
         """Response display area in test modal."""
         return self.page.locator("#gateway-test-response")
 
+    @property
+    def test_modal_result(self) -> Locator:
+        """Result container (hidden until test runs) in test modal."""
+        return self.page.locator("#gateway-test-result")
+
+    @property
+    def test_modal_response_json(self) -> Locator:
+        """Response JSON display area in test modal."""
+        return self.page.locator("#gateway-test-response-json")
+
     # ==================== View Gateway Modal Elements ====================
 
     @property

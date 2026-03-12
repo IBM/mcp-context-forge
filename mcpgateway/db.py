@@ -989,9 +989,13 @@ class UserRole(Base):
         Returns:
             True if assignment has expired, False otherwise
         """
-        if not self.expires_at:
+        if self.expires_at is None:
             return False
-        return utc_now() > self.expires_at
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        return utc_now() > expires_at
 
 
 class PermissionAuditLog(Base):
@@ -1591,7 +1595,13 @@ class PasswordResetToken(Base):
         Returns:
             bool: True when `expires_at` is in the past.
         """
-        return self.expires_at <= utc_now()
+        if self.expires_at is None:
+            return False
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        return expires_at <= utc_now()
 
     def is_used(self) -> bool:
         """Return whether the reset token was already consumed.
@@ -4705,7 +4715,7 @@ class A2AAgent(Base):
 
     # Authorizations
     auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param" or None
-    auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
+    auth_value: Mapped[Optional[str]] = mapped_column(Text)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
         nullable=True,
@@ -5188,7 +5198,10 @@ class EmailApiToken(Base):
         """
         if not self.expires_at:
             return False
-        return utc_now() > self.expires_at
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return utc_now() > expires_at
 
     def is_valid(self) -> bool:
         """Check if token is valid (active and not expired).
