@@ -17,20 +17,20 @@ jobs:
         name: Rust Checks
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v6
 
             - name: Setup Python
-              uses: actions/setup-python@v5
+              uses: actions/setup-python@v6
               with:
                   python-version: "3.12"
 
             - name: Install uv
-              uses: astral-sh/setup-uv@v5
+              uses: astral-sh/setup-uv@v7
               with:
                   enable-cache: true
 
             - name: Cache uv virtual environment
-              uses: actions/cache@v4
+              uses: actions/cache@v5
               with:
                   path: .venv
                   key: venv-${{ runner.os }}-python-3.12-${{ hashFiles('uv.lock') }}
@@ -39,7 +39,7 @@ jobs:
                       venv-${{ runner.os }}-
 
             - name: Cache Rust Toolchain
-              uses: actions/cache@v4
+              uses: actions/cache@v5
               with:
                   path: |
                       ~/.cargo/bin/
@@ -109,9 +109,9 @@ jobs:
                   -H "Content-Type: application/json"
 
             - name: Setup Go
-              uses: actions/setup-go@v5
+              uses: actions/setup-go@v6
               with:
-                  go-version: "1.21"
+                  go-version: "1.23"
                   cache-dependency-path: mcp-servers/go/fast-time-server/go.sum
                   cache: true
 
@@ -249,7 +249,7 @@ jobs:
 
             - name: Upload Wrapper Test Artifacts
               if: failure()
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: wrapper-test-logs
                   path: |
