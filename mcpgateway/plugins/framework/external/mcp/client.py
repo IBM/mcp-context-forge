@@ -434,6 +434,14 @@ class ExternalPlugin(Plugin):
 
         # Helper to execute the actual call
         async def _execute_call():
+            """Execute the MCP tool call and parse the response.
+
+            Returns:
+                The validated plugin result.
+
+            Raises:
+                PluginError: If the response is invalid or contains an error.
+            """
             result = await self._session.call_tool(INVOKE_HOOK, {HOOK_TYPE: hook_type, PLUGIN_NAME: self.name, PAYLOAD: payload, CONTEXT: context})
             for content in result.content:
                 if not isinstance(content, TextContent):
