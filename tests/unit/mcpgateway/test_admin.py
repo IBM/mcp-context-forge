@@ -47,6 +47,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _get_timeseries_metrics_python,
     _get_user_team_ids,
     _get_user_team_roles,
+    _merge_select_all_ids,
     _normalize_search_query,
     _normalize_team_id,
     _normalize_ui_hide_values,
@@ -606,9 +607,10 @@ class TestAdminServerRoutes:
         assert result.status_code == 200
 
         server_create = mock_register_server.call_args.args[1]
-        assert server_create.associated_tools == ["tool-1", "tool-2"]
-        assert server_create.associated_resources == ["res-1"]
-        assert server_create.associated_prompts == ["prompt-1", "prompt-2"]
+        # Merge of allToolIds + associatedTools (public items from UI are preserved)
+        assert set(server_create.associated_tools) == {"tool-1", "tool-2", "tool-x"}
+        assert set(server_create.associated_resources) == {"res-1", "res-x"}
+        assert set(server_create.associated_prompts) == {"prompt-1", "prompt-2", "prompt-x"}
         assert server_create.oauth_enabled is True
         assert server_create.oauth_config["authorization_servers"] == ["https://idp.example.com"]
         assert server_create.oauth_config["scopes_supported"] == ["openid", "profile"]
@@ -880,9 +882,10 @@ class TestAdminServerRoutes:
         assert result.status_code == 200
 
         server_update = mock_update_server.call_args[0][2]
-        assert server_update.associated_tools == ["tool-1", "tool-2"]
-        assert server_update.associated_resources == ["res-1"]
-        assert server_update.associated_prompts == ["prompt-1", "prompt-2"]
+        # Merge of allToolIds + associatedTools (public items from UI are preserved)
+        assert set(server_update.associated_tools) == {"tool-1", "tool-2", "tool-x"}
+        assert set(server_update.associated_resources) == {"res-1", "res-x"}
+        assert set(server_update.associated_prompts) == {"prompt-1", "prompt-2", "prompt-x"}
 
     @patch.object(ServerService, "update_server")
     async def test_admin_edit_server_select_all_json_decode_error(self, mock_update_server, mock_request, mock_db, monkeypatch):
@@ -10321,6 +10324,166 @@ async def test_admin_get_all_tool_ids_gateway_and_team_filters(monkeypatch, mock
     mock_db.execute.return_value.all.return_value = []
     result = await admin_get_all_tool_ids(include_inactive=False, gateway_id=None, team_id="team-x", db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_admin_get_all_tool_ids_team_scoped_includes_public(monkeypatch, mock_db):
+    """When team_id is set, the SQL query must include a standalone visibility='public'
+    condition (not gated by team_id) so that platform-public tools from public MCP
+    servers appear in team-scoped Select All fetches and can be associated with
+    team-owned virtual servers.  Regression test for issue #3446."""
+    # Standard
+    import re
+
+    # Third-Party
+    from sqlalchemy.dialects import sqlite as sqlite_dialect
+
+    setup_team_service(monkeypatch, ["team-1"])
+    mock_db.execute.return_value.all.return_value = []
+
+    await admin_get_all_tool_ids(
+        include_inactive=False,
+        gateway_id=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    executed_query = mock_db.execute.call_args[0][0]
+    sql = str(executed_query.compile(dialect=sqlite_dialect.dialect(), compile_kwargs={"literal_binds": True}))
+
+    # A standalone `visibility = 'public'` condition must be present as a top-level
+    # OR alternative — not wrapped inside `team_id = '...' AND visibility IN (...)`.
+    # This is what makes platform-public tools visible to team-scoped queries.
+    assert re.search(r"tools\.visibility\s*=\s*'public'", sql), (
+        "Expected a standalone visibility='public' condition in team-scoped tool IDs query. " "Platform-public tools must be accessible when associating with team-owned virtual servers."
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_get_all_prompt_ids_team_scoped_includes_public(monkeypatch, mock_db):
+    """When team_id is set, the SQL query must include a standalone visibility='public'
+    condition so platform-public prompts appear in team-scoped Select All fetches.
+    Regression test for issue #3446."""
+    # Standard
+    import re
+
+    # Third-Party
+    from sqlalchemy.dialects import sqlite as sqlite_dialect
+
+    setup_team_service(monkeypatch, ["team-1"])
+    mock_db.execute.return_value.all.return_value = []
+
+    await admin_get_all_prompt_ids(
+        include_inactive=False,
+        gateway_id=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    executed_query = mock_db.execute.call_args[0][0]
+    sql = str(executed_query.compile(dialect=sqlite_dialect.dialect(), compile_kwargs={"literal_binds": True}))
+
+    assert re.search(r"prompts\.visibility\s*=\s*'public'", sql), (
+        "Expected a standalone visibility='public' condition in team-scoped prompt IDs query. " "Platform-public prompts must be accessible when associating with team-owned virtual servers."
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_get_all_resource_ids_team_scoped_includes_public(monkeypatch, mock_db):
+    """When team_id is set, the SQL query must include a standalone visibility='public'
+    condition so platform-public resources appear in team-scoped Select All fetches.
+    Regression test for issue #3446."""
+    # Standard
+    import re
+
+    # Third-Party
+    from sqlalchemy.dialects import sqlite as sqlite_dialect
+
+    setup_team_service(monkeypatch, ["team-1"])
+    mock_db.execute.return_value.all.return_value = []
+
+    await admin_get_all_resource_ids(
+        include_inactive=False,
+        gateway_id=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    executed_query = mock_db.execute.call_args[0][0]
+    sql = str(executed_query.compile(dialect=sqlite_dialect.dialect(), compile_kwargs={"literal_binds": True}))
+
+    assert re.search(r"resources\.visibility\s*=\s*'public'", sql), (
+        "Expected a standalone visibility='public' condition in team-scoped resource IDs query. " "Platform-public resources must be accessible when associating with team-owned virtual servers."
+    )
+
+
+class TestMergeSelectAllIds:
+    """Direct unit tests for the _merge_select_all_ids helper."""
+
+    def test_flag_not_set_returns_checked_list_unchanged(self):
+        """When the select-all flag is absent, return the checked list as-is."""
+        form = FakeForm({"otherField": "value"})
+        result = _merge_select_all_ids(form, "selectAllTools", "allToolIds", ["t1", "t2"])
+        assert result == ["t1", "t2"]
+
+    def test_flag_false_returns_checked_list_unchanged(self):
+        """When the select-all flag is 'false', return the checked list as-is."""
+        form = FakeForm({"selectAllTools": "false"})
+        result = _merge_select_all_ids(form, "selectAllTools", "allToolIds", ["t1"])
+        assert result == ["t1"]
+
+    def test_merge_union_of_server_and_checked_ids(self):
+        """When select-all is active, return the union of server IDs and checked IDs."""
+        form = FakeForm(
+            {
+                "selectAllTools": "true",
+                "allToolIds": json.dumps(["s1", "s2"]),
+            }
+        )
+        result = _merge_select_all_ids(form, "selectAllTools", "allToolIds", ["c1", "s2"])
+        assert set(result) == {"s1", "s2", "c1"}
+
+    def test_int_ids_normalised_to_str(self):
+        """Integer IDs from JSON should be stringified to avoid int/str duplicates."""
+        form = FakeForm(
+            {
+                "selectAllTools": "true",
+                "allToolIds": json.dumps([1, 2, 3]),
+            }
+        )
+        result = _merge_select_all_ids(form, "selectAllTools", "allToolIds", ["2", "4"])
+        assert set(result) == {"1", "2", "3", "4"}
+
+    def test_invalid_json_falls_back_to_checked_list(self):
+        """If the JSON payload is malformed, fall back to checked list."""
+        form = FakeForm(
+            {
+                "selectAllTools": "true",
+                "allToolIds": "not-json",
+            }
+        )
+        result = _merge_select_all_ids(form, "selectAllTools", "allToolIds", ["t1"])
+        assert result == ["t1"]
+
+    def test_missing_all_ids_key_uses_empty_default(self):
+        """If the all-IDs field is missing, treat as empty server list."""
+        form = FakeForm({"selectAllTools": "true"})
+        result = _merge_select_all_ids(form, "selectAllTools", "allToolIds", ["t1"])
+        assert set(result) == {"t1"}
+
+    def test_empty_checked_list_returns_server_ids_only(self):
+        """When no checkboxes were checked, return only server-fetched IDs."""
+        form = FakeForm(
+            {
+                "selectAllTools": "true",
+                "allToolIds": json.dumps(["s1", "s2"]),
+            }
+        )
+        result = _merge_select_all_ids(form, "selectAllTools", "allToolIds", [])
+        assert set(result) == {"s1", "s2"}
 
 
 @pytest.mark.asyncio
