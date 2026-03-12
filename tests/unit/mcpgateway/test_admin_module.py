@@ -1565,7 +1565,9 @@ async def test_admin_list_servers_returns_paginated(monkeypatch):
 async def test_admin_get_server_success(monkeypatch):
     mock_db = MagicMock()
     mock_server = MagicMock()
-    mock_server.model_dump.return_value = {"id": "server-1"}
+    mock_masked = MagicMock()
+    mock_masked.model_dump.return_value = {"id": "server-1"}
+    mock_server.masked.return_value = mock_masked
 
     async def _fake_get_server(_db, _server_id):
         return mock_server
@@ -1574,6 +1576,8 @@ async def test_admin_get_server_success(monkeypatch):
 
     result = await admin.admin_get_server("server-1", db=mock_db, user={"email": "user@example.com"})
     assert result == {"id": "server-1"}
+    mock_server.masked.assert_called_once()
+    mock_masked.model_dump.assert_called_once_with(by_alias=True)
 
 
 @pytest.mark.asyncio
