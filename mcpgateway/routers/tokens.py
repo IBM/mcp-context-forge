@@ -14,6 +14,7 @@ from typing import List, Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -29,18 +30,18 @@ router = APIRouter(prefix="/tokens", tags=["tokens"])
 
 
 def _require_authenticated_session(current_user: dict) -> None:
-    """Block anonymous and unauthenticated access to token management endpoints.
+    """Block anonymous, unauthenticated, and API-token access to token management endpoints.
 
-    Rejects requests where authentication could not be determined or where
-    the caller is anonymous. All authenticated methods (JWT, API tokens,
-    OAuth, SSO, proxy, etc.) are allowed — RBAC permission checks and
-    scope containment (via _get_caller_permissions) handle authorization.
+    Enforces Management Plane isolation: only interactive sessions (JWT from web
+    login, SSO, or OAuth) may create, list, or revoke tokens.  API tokens are
+    Data Plane credentials and must never be able to manage other tokens
+    (token-chaining attack vector).
 
     Args:
         current_user: User context from get_current_user_with_permissions
 
     Raises:
-        HTTPException: 403 if auth_method is None or anonymous
+        HTTPException: 403 if auth_method is None, anonymous, or api_token
     """
     auth_method = current_user.get("auth_method")
 
@@ -57,6 +58,16 @@ def _require_authenticated_session(current_user: dict) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Token management requires authentication. Anonymous access is not permitted.",
+        )
+
+    # Block API tokens from managing other tokens (Management Plane isolation).
+    # Token CRUD endpoints require an interactive session (JWT from web login or SSO).
+    # Allowing API tokens here would let a compromised token create new long-lived
+    # tokens and escalate persistence — a token-chaining attack.
+    if auth_method == "api_token":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=("Token management requires an interactive session (JWT from web login or SSO). " "API tokens cannot create, list, or revoke other tokens."),
         )
 
 
@@ -113,12 +124,24 @@ async def create_token(
     """
     _require_authenticated_session(current_user)
 
+    # Auto-inherit team_id from the caller's single team when not explicitly provided.
+    # This prevents tokens from being silently scoped to public-only (team_id=None)
+    # when the user belongs to exactly one team, maintaining RBAC context at token level.
+    # Multi-team users must specify team_id explicitly to avoid ambiguity.
+    # Admins with teams=null are exempt and may still create global-scope tokens.
+    effective_team_id = request.team_id
+    if effective_team_id is None and not current_user.get("is_admin"):
+        user_teams = current_user.get("token_teams") or []
+        if len(user_teams) == 1:
+            effective_team_id = user_teams[0]
+            logger.debug("Auto-inherited team_id=%s for token creation by %s", effective_team_id, current_user["email"])
+
     service = TokenCatalogService(db)
 
     # Get caller permissions for scope containment (if custom scope requested)
     caller_permissions = None
     if request.scope and request.scope.permissions:
-        caller_permissions = await _get_caller_permissions(db, current_user, request.team_id)
+        caller_permissions = await _get_caller_permissions(db, current_user, effective_team_id)
 
     # Convert request to TokenScope if provided
     scope = None
@@ -139,7 +162,7 @@ async def create_token(
             scope=scope,
             expires_in_days=request.expires_in_days,
             tags=request.tags,
-            team_id=request.team_id,
+            team_id=effective_team_id,
             caller_permissions=caller_permissions,
             is_active=request.is_active,
         )
@@ -171,6 +194,22 @@ async def create_token(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except IntegrityError as e:
+        db.rollback()
+        err_str = str(e.orig) if hasattr(e, "orig") and e.orig else str(e)
+        # Match the specific name constraint: PostgreSQL reports the constraint name
+        # (either the db.py name or the Alembic migration name); SQLite reports column paths.
+        if (
+            "uq_email_api_tokens_user_name_team" in err_str
+            or "uq_email_api_tokens_user_name" in err_str
+            or "uq_email_api_tokens_user_email_name" in err_str
+            or ("email_api_tokens.user_email" in err_str and "email_api_tokens.name" in err_str)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
+            )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Token creation failed due to a conflict. Please try again.")
 
 
 @router.get("", response_model=TokenListResponse)
@@ -683,6 +722,22 @@ async def create_team_token(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except IntegrityError as e:
+        db.rollback()
+        err_str = str(e.orig) if hasattr(e, "orig") and e.orig else str(e)
+        # Match the specific name constraint: PostgreSQL reports the constraint name
+        # (either the db.py name or the Alembic migration name); SQLite reports column paths.
+        if (
+            "uq_email_api_tokens_user_name_team" in err_str
+            or "uq_email_api_tokens_user_name" in err_str
+            or "uq_email_api_tokens_user_email_name" in err_str
+            or ("email_api_tokens.user_email" in err_str and "email_api_tokens.name" in err_str)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
+            )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Token creation failed due to a conflict. Please try again.")
 
 
 @router.get("/teams/{team_id}", response_model=TokenListResponse)

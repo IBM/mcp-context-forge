@@ -126,6 +126,12 @@
       "title": "Auth Required",
       "type": "boolean"
     },
+    "allow_unauthenticated_admin": {
+      "default": false,
+      "description": "Allow unauthenticated requests to receive platform-admin context when AUTH_REQUIRED=false (dangerous; development-only override).",
+      "title": "Allow Unauthenticated Admin",
+      "type": "boolean"
+    },
     "token_expiry": {
       "default": 10080,
       "title": "Token Expiry",
@@ -814,15 +820,28 @@
       "type": "boolean"
     },
     "mcp_require_auth": {
-      "default": false,
-      "description": "Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only. If true, all /mcp requests must include a valid Bearer token.",
-      "title": "Mcp Require Auth",
-      "type": "boolean"
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Require authentication for /mcp endpoints. When unset, inherits AUTH_REQUIRED. Set false explicitly to allow unauthenticated access to public items only; set true to require a valid Bearer token for all /mcp requests.",
+      "title": "Mcp Require Auth"
     },
     "trust_proxy_auth": {
       "default": false,
       "description": "Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",
       "title": "Trust Proxy Auth",
+      "type": "boolean"
+    },
+    "trust_proxy_auth_dangerously": {
+      "default": false,
+      "description": "Acknowledge and allow trusted proxy headers when MCP_CLIENT_AUTH_ENABLED=false (dangerous; only for strictly trusted proxy deployments).",
+      "title": "Trust Proxy Auth Dangerously",
       "type": "boolean"
     },
     "proxy_user_header": {
@@ -1006,6 +1025,12 @@
       "default": false,
       "description": "Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",
       "title": "Public Registration Enabled",
+      "type": "boolean"
+    },
+    "allow_public_visibility": {
+      "default": true,
+      "description": "When false, creating or updating any entity with public visibility is blocked in team scope.",
+      "title": "Allow Public Visibility",
       "type": "boolean"
     },
     "protect_all_admins": {
@@ -1289,7 +1314,7 @@
       "type": "boolean"
     },
     "personal_team_prefix": {
-      "default": "personal",
+      "default": "",
       "description": "Personal team naming prefix",
       "title": "Personal Team Prefix",
       "type": "string"
@@ -1316,6 +1341,24 @@
       "default": true,
       "description": "Require email verification for team invitations",
       "title": "Require Email Verification For Invites",
+      "type": "boolean"
+    },
+    "allow_team_creation": {
+      "default": true,
+      "description": "Allow users to create organizational teams. Admins can always create teams.",
+      "title": "Allow Team Creation",
+      "type": "boolean"
+    },
+    "allow_team_join_requests": {
+      "default": true,
+      "description": "Allow users to request to join public teams",
+      "title": "Allow Team Join Requests",
+      "type": "boolean"
+    },
+    "allow_team_invitations": {
+      "default": true,
+      "description": "Allow team owners to send invitations",
+      "title": "Allow Team Invitations",
       "type": "boolean"
     },
     "default_admin_role": {
@@ -1758,10 +1801,22 @@
       "title": "Llmchat Enabled",
       "type": "boolean"
     },
+    "mcpgateway_stdio_transport_enabled": {
+      "default": false,
+      "description": "Enable stdio transport for MCP chat client configuration. Disabled by default; set true only in trusted environments that intentionally need stdio process execution.",
+      "title": "Mcpgateway Stdio Transport Enabled",
+      "type": "boolean"
+    },
     "toolops_enabled": {
       "default": false,
       "description": "Enable ToolOps feature",
       "title": "Toolops Enabled",
+      "type": "boolean"
+    },
+    "plugins_can_override_rbac": {
+      "default": false,
+      "description": "Allow HTTP_AUTH_CHECK_PERMISSION plugins to short-circuit built-in RBAC grants. Disabled by default so plugin grant decisions are audit-only unless explicitly enabled.",
+      "title": "Plugins Can Override Rbac",
       "type": "boolean"
     },
     "poll_interval": {
@@ -2828,14 +2883,14 @@
     },
     "allowed_mime_types": {
       "default": [
-        "text/plain",
-        "image/jpeg",
-        "text/html",
-        "application/xml",
+        "text/markdown",
         "image/png",
-        "image/gif",
         "application/json",
-        "text/markdown"
+        "image/jpeg",
+        "text/plain",
+        "image/gif",
+        "application/xml",
+        "text/html"
       ],
       "items": {
         "type": "string"
@@ -3304,42 +3359,6 @@
       "title": "Streamable Http Event Ttl",
       "type": "integer"
     },
-    "plugins_enabled": {
-      "default": false,
-      "description": "Enable the plugin framework",
-      "title": "Plugins Enabled",
-      "type": "boolean"
-    },
-    "plugin_config_file": {
-      "default": "plugins/config.yaml",
-      "description": "Path to main plugin configuration file",
-      "title": "Plugin Config File",
-      "type": "string"
-    },
-    "plugins_cli_completion": {
-      "default": false,
-      "description": "Enable auto-completion for plugins CLI",
-      "title": "Plugins Cli Completion",
-      "type": "boolean"
-    },
-    "plugins_cli_markup_mode": {
-      "anyOf": [
-        {
-          "enum": [
-            "markdown",
-            "rich",
-            "disabled"
-          ],
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Set markup mode for plugins CLI",
-      "title": "Plugins Cli Markup Mode"
-    },
     "dev_mode": {
       "default": false,
       "title": "Dev Mode",
@@ -3533,7 +3552,7 @@
       "type": "array"
     },
     "validation_name_pattern": {
-      "default": "^[a-zA-Z0-9_.\\-\\s]+$",
+      "default": "^[a-zA-Z0-9_.\\- ]+$",
       "title": "Validation Name Pattern",
       "type": "string"
     },
@@ -3798,8 +3817,8 @@
       "type": "string"
     },
     "ENABLE_METRICS": {
-      "default": true,
-      "description": "Enable Prometheus metrics instrumentation",
+      "default": false,
+      "description": "Enable Prometheus metrics endpoint at /metrics/prometheus (requires authentication)",
       "title": "Enable Metrics",
       "type": "boolean"
     },

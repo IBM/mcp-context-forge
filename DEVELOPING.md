@@ -217,6 +217,43 @@ make doctest test htmlcov smoketest
 make flake8 bandit interrogate pylint verify
 ```
 
+### Nginx Cache Management
+
+The nginx cache in docker-compose is **ephemeral** (not persisted to a volume) for local development. This means the cache is automatically cleared when containers are removed (via `compose-down` / `compose-up`), eliminating stale content issues after rebuilding the gateway.
+
+```bash
+# Standard development workflow (cache clears on container removal)
+make docker-prod                    # Rebuild gateway image
+make compose-down                   # Remove containers (ephemeral cache cleared)
+make compose-up                     # Start with fresh cache
+
+# Manual cache clearing while containers are running
+make compose-cache-clear            # Clears cache inside running nginx container
+
+# For development without nginx proxy
+# Use port 4444 directly (bypasses nginx and cache entirely)
+# Uncomment in docker-compose.yml:
+#   gateway:
+#     ports:
+#       - "4444:4444"
+```
+
+**Cache behavior:**
+
+- **Ephemeral storage**: Cache exists only in the container's writable layer
+- **Auto-cleared**: Removed when containers are destroyed (`compose-down` / `compose-up`)
+- **Static assets**: Cached for 30 days (while container runs)
+- **API responses**: Cached for 5 minutes
+- **Admin UI pages**: Cached for 5 seconds
+
+**For production deployments:**
+Uncomment the `nginx_cache` volume in `docker-compose.yml` to persist cache across restarts:
+
+```yaml
+volumes:
+  - nginx_cache:/var/cache/nginx # Persistent cache storage
+```
+
 ## Code Quality
 
 ### Style Guidelines

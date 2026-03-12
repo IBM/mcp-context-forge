@@ -347,11 +347,11 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   -e SECURE_COOKIES=false \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 
 # Tail logs and generate API key
 docker logs -f mcpgateway
-docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1 \
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2 \
   python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
 ```
 
@@ -369,7 +369,7 @@ Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and log
       -e MCPGATEWAY_UI_ENABLED=true -e MCPGATEWAY_ADMIN_API_ENABLED=true \
       -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key \
       -e PLATFORM_ADMIN_EMAIL=admin@example.com -e PLATFORM_ADMIN_PASSWORD=changeme \
-      ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+      ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
     ```
 
     **Host networking** (access local MCP servers):
@@ -378,7 +378,7 @@ Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and log
     docker run -d --name mcpgateway --network=host \
       -v $(pwd)/data:/data -e DATABASE_URL=sqlite:////data/mcp.db \
       -e MCPGATEWAY_UI_ENABLED=true -e HOST=0.0.0.0 -e PORT=4444 \
-      ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+      ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
     ```
 
     **Airgapped deployment** (no internet):
@@ -396,7 +396,7 @@ Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and log
 ```bash
 podman run -d --name mcpgateway \
   -p 4444:4444 -e HOST=0.0.0.0 -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
 
 ---
@@ -572,7 +572,7 @@ ContextForge can be deployed to any major cloud platform:
 | **AWS** | [ECS/EKS Deployment](deployment/aws.md) |
 | **Azure** | [AKS Deployment](deployment/azure.md) |
 | **Google Cloud** | [Cloud Run](deployment/google-cloud-run.md) |
-| **IBM Cloud** | [Code Engine](deployment/ibm-code-engine.md) |
+| **IBM Cloud** | [Code Engine](howto/ibm-cloud-code-engine.md) |
 | **Kubernetes** | [Helm Charts](deployment/minikube.md) |
 | **OpenShift** | [OpenShift Deployment](deployment/openshift.md) |
 

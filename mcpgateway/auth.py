@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
@@ -453,28 +454,31 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
         result = db.execute(select(EmailApiToken).where(EmailApiToken.token_hash == token_hash, EmailApiToken.is_active.is_(True)))
         api_token = result.scalar_one_or_none()
 
-        if api_token:
-            # Check expiration
-            if api_token.expires_at and api_token.expires_at < datetime.now(timezone.utc):
+        if not api_token:
+            return None
+
+        # Check expiration
+        if api_token.expires_at:
+            expires_at = api_token.expires_at.replace(tzinfo=timezone.utc) if api_token.expires_at.tzinfo is None else api_token.expires_at
+            if utc_now() > expires_at:
                 return {"expired": True}
 
-            # Check revocation
-            # First-Party
-            from mcpgateway.db import TokenRevocation  # pylint: disable=import-outside-toplevel
+        # Check revocation
+        # First-Party
+        from mcpgateway.db import TokenRevocation  # pylint: disable=import-outside-toplevel
 
-            revoke_result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == api_token.jti))
-            if revoke_result.scalar_one_or_none() is not None:
-                return {"revoked": True}
+        revoke_result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == api_token.jti))
+        if revoke_result.scalar_one_or_none() is not None:
+            return {"revoked": True}
 
-            # Update last_used timestamp
-            api_token.last_used = utc_now()
-            db.commit()
+        # Update last_used timestamp
+        api_token.last_used = utc_now()
+        db.commit()
 
-            return {
-                "user_email": api_token.user_email,
-                "jti": api_token.jti,
-            }
-        return None
+        return {
+            "user_email": api_token.user_email,
+            "jti": api_token.jti,
+        }
 
 
 def _get_sync_redis_client():
@@ -680,6 +684,49 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
                 updated_at=user.updated_at,
             )
         return None
+
+
+def _resolve_plugin_authenticated_user_sync(user_dict: Dict[str, Any]) -> Optional[EmailUser]:
+    """Resolve plugin-authenticated user against database-backed identity state.
+
+    Plugin hooks may authenticate a request and return identity claims. This
+    helper enforces that admin status is always derived from the database record.
+
+    Behavior:
+    - Existing DB user: return DB user (authoritative for is_admin/is_active).
+    - Missing DB user and REQUIRE_USER_IN_DB=true: reject (None).
+    - Missing DB user and REQUIRE_USER_IN_DB=false: allow a non-admin virtual
+      user built from non-privileged plugin claims.
+
+    Args:
+        user_dict: Identity claims returned by plugin auth hook.
+
+    Returns:
+        EmailUser when identity is accepted, otherwise None.
+    """
+    email = str(user_dict.get("email") or "").strip()
+    if not email:
+        return None
+
+    db_user = _get_user_by_email_sync(email)
+    if db_user:
+        return db_user
+
+    if settings.require_user_in_db:
+        return None
+
+    return EmailUser(
+        email=email,
+        password_hash=user_dict.get("password_hash", ""),
+        full_name=user_dict.get("full_name"),
+        is_admin=False,
+        is_active=user_dict.get("is_active", True),
+        auth_provider=user_dict.get("auth_provider", "local"),
+        password_change_required=user_dict.get("password_change_required", False),
+        email_verified_at=user_dict.get("email_verified_at"),
+        created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
+        updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
+    )
 
 
 def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dict[str, Any]:
@@ -932,20 +979,24 @@ async def get_current_user(
             # If plugin successfully authenticated user, return it
             if auth_result.modified_payload and isinstance(auth_result.modified_payload, dict):
                 logger.info("User authenticated via plugin hook")
-                # Create EmailUser from dict returned by plugin
+                # Resolve plugin claims against DB state so admin flags are authoritative.
                 user_dict = auth_result.modified_payload
-                user = EmailUser(
-                    email=user_dict.get("email"),
-                    password_hash=user_dict.get("password_hash", ""),
-                    full_name=user_dict.get("full_name"),
-                    is_admin=user_dict.get("is_admin", False),
-                    is_active=user_dict.get("is_active", True),
-                    auth_provider=user_dict.get("auth_provider", "local"),
-                    password_change_required=user_dict.get("password_change_required", False),
-                    email_verified_at=user_dict.get("email_verified_at"),
-                    created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
-                    updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
-                )
+                user = await asyncio.to_thread(_resolve_plugin_authenticated_user_sync, user_dict)
+
+                if user is None:
+                    logger.warning("Plugin auth rejected: user identity could not be resolved against DB policy")
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="User not found in database",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                if not user.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Account disabled",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
 
                 # Store auth_method in request.state so it can be accessed by RBAC middleware
                 if request and auth_result.metadata:
@@ -968,7 +1019,7 @@ async def get_current_user(
 
     except PluginViolationError as e:
         # Plugin explicitly denied authentication with custom message
-        logger.warning(f"Authentication denied by plugin: {e.message}")
+        logger.warning(f"Authentication denied by plugin: {SecurityValidator.sanitize_log_message(e.message)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=e.message,  # Use plugin's custom error message
@@ -979,7 +1030,7 @@ async def get_current_user(
         raise
     except Exception as e:
         # Log but don't fail on plugin errors - fall back to standard auth
-        logger.warning(f"HTTP_AUTH_RESOLVE_USER hook failed, falling back to standard auth: {e}")
+        logger.warning(f"HTTP_AUTH_RESOLVE_USER hook failed, falling back to standard auth: {SecurityValidator.sanitize_log_message(str(e))}")
 
     # EXISTING: Standard authentication (JWT, API tokens)
     if not credentials:
@@ -1239,8 +1290,17 @@ async def get_current_user(
             except HTTPException:
                 raise
             except Exception as revoke_check_error:
-                # Log the error but don't fail authentication for admin tokens
-                logger.warning(f"Token revocation check failed for JTI {jti}: {revoke_check_error}")
+                # Fail-secure: if the revocation check itself errors, reject the token.
+                # Allowing through on error would let revoked tokens bypass enforcement
+                # when the DB is unreachable or the table is missing.
+                logger.warning(
+                    f"Token revocation check failed for JTI {SecurityValidator.sanitize_log_message(jti)} — denying access (fail-secure): {SecurityValidator.sanitize_log_message(str(revoke_check_error))}"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token validation failed",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
         # Resolve teams based on token_use
         token_use = payload.get("token_use")
@@ -1324,7 +1384,7 @@ async def get_current_user(
             raise
         except Exception as e:
             # Neither JWT nor API token validation worked
-            logger.debug(f"Database API token validation failed with exception: {e}")
+            logger.debug(f"Database API token validation failed with exception: {SecurityValidator.sanitize_log_message(str(e))}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authentication credentials",

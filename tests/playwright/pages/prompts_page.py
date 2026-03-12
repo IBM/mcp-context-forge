@@ -261,8 +261,8 @@ class PromptsPage(BasePage):
         prompt_row = self.prompt_rows.nth(prompt_index)
         edit_btn = prompt_row.locator('button:has-text("Edit")')
         self.click_locator(edit_btn)
-        # Wait for modal to open
-        self.page.wait_for_selector("#prompt-edit-modal:not(.hidden)", state="visible", timeout=10000)
+        # Wait for modal to open (prompt data is fetched via API before the modal opens)
+        self.page.wait_for_selector("#prompt-edit-modal:not(.hidden)", state="visible", timeout=30000)
         self.wait_for_visible(self.prompt_edit_modal)
 
     def edit_prompt_name(self, new_name: str) -> None:

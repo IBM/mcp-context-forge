@@ -1,0 +1,58 @@
+# ===============================================================
+# Container Registry Cleanup
+# ===============================================================
+#
+# Prunes old container image versions from GHCR.
+# Calls .github/tools/cleanup-ghcr-versions.sh which:
+#   - Keeps "latest", release tags (v*), and semver tags
+#   - Keeps images younger than KEEP_DAYS (default 7)
+#   - Deletes everything else (old SHA-tagged images, untagged)
+#   - Dry-run by default on manual dispatch
+#
+# No third-party actions required — uses only gh CLI.
+# ---------------------------------------------------------------
+
+name: GHCR Cleanup
+
+on:
+  schedule:
+    - cron: "30 4 * * 0"  # Sunday 04:30 UTC
+  workflow_dispatch:
+    inputs:
+      keep-days:
+        description: "Keep images younger than N days"
+        required: false
+        default: "7"
+        type: string
+      dry-run:
+        description: "Dry run (log what would be deleted, but don't delete)"
+        required: false
+        default: "true"
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup:
+    name: Prune old container images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/tools
+          fetch-depth: 1
+
+      - name: Run GHCR cleanup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP_DAYS: ${{ inputs.keep-days || '7' }}
+          DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || (inputs.dry-run != false && 'true' || 'false') }}
+        run: bash .github/tools/cleanup-ghcr-versions.sh --yes

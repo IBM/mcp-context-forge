@@ -2,7 +2,7 @@
 
 > An open source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability. Optimizes Agent & Tool calling, and supports plugins.
 
-![](docs/docs/images/contextforge-banner.png)
+![ContextForge Banner](docs/docs/images/contextforge-logo_horizontal_black.png)
 
 <!-- === CI / Security / Build Badges === -->
 [![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml)&nbsp;
@@ -10,7 +10,6 @@
 [![Bandit Security](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml)&nbsp;
 [![Dependency Review](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml)&nbsp;
 [![Tests & Coverage](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml)&nbsp;
-[![Coverage %](docs/docs/images/coverage.svg)](https://ibm.github.io/mcp-context-forge/coverage/)&nbsp;
 [![Lint & Static Analysis](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml)
 
 <!-- === Container Build & Deploy === -->
@@ -525,11 +524,11 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   -e SECURE_COOKIES=false \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 
 # Tail logs and generate API key
 docker logs -f mcpgateway
-docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1 \
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2 \
   python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
 ```
 
@@ -547,7 +546,7 @@ docker run -d --name mcpgateway --restart unless-stopped \
   -e MCPGATEWAY_UI_ENABLED=true -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com -e PLATFORM_ADMIN_PASSWORD=changeme \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
 
 **Host networking** (access local MCP servers):
@@ -555,7 +554,7 @@ docker run -d --name mcpgateway --restart unless-stopped \
 docker run -d --name mcpgateway --network=host \
   -v $(pwd)/data:/data -e DATABASE_URL=sqlite:////data/mcp.db \
   -e MCPGATEWAY_UI_ENABLED=true -e HOST=0.0.0.0 -e PORT=4444 \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
 
 **Airgapped deployment** (no internet):
@@ -576,7 +575,7 @@ docker run -d --name mcpgateway -p 4444:4444 \
 ```bash
 podman run -d --name mcpgateway \
   -p 4444:4444 -e HOST=0.0.0.0 -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
 
 <details>
@@ -588,14 +587,14 @@ mkdir -p $(pwd)/data && chmod 777 $(pwd)/data
 podman run -d --name mcpgateway --restart=on-failure \
   -p 4444:4444 -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
 
 **Host networking:**
 ```bash
 podman run -d --name mcpgateway --network=host \
   -v $(pwd)/data:/data -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
 
 </details>
@@ -606,7 +605,7 @@ podman run -d --name mcpgateway --network=host \
 <summary><strong>✏️ Docker/Podman tips</strong></summary>
 
 * **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) for reference.
-* **Pinned tags** - Use an explicit version (e.g. `1.0.0-RC-1`) instead of `latest` for reproducible builds.
+* **Pinned tags** - Use an explicit version (e.g. `1.0.0-RC-2`) instead of `latest` for reproducible builds.
 * **JWT tokens** - Generate one in the running container:
 
   ```bash
@@ -652,7 +651,7 @@ docker run --rm -i \
   -e MCP_SERVER_URL=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1 \
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -984,7 +983,7 @@ Licensed under the **Apache License 2.0** - see [LICENSE](./LICENSE)
 Special thanks to our contributors for helping us improve ContextForge:
 
 <a href="https://github.com/ibm/mcp-context-forge/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=ibm/mcp-context-forge&max=100&anon=0&columns=10" />
+  <img src="https://contrib.rocks/image?repo=ibm/mcp-context-forge&max=100&anon=0&columns=10" alt="Contributors to the mcp-context-forge repository" />
 </a>
 
 ## Star History and Project Activity

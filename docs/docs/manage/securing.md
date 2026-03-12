@@ -4,7 +4,7 @@ This guide provides essential security configurations and best practices for dep
 
 ## ⚠️ Critical Security Notice
 
-**ContextForge is currently in beta (v1.0.0-RC-1)** and requires careful security configuration for production use:
+**ContextForge is currently in beta (v1.0.0-RC-2)** and requires careful security configuration for production use:
 
 - The **Admin UI is development-only** and must be disabled in production
 - Expect **breaking changes** between versions until 1.0 release
@@ -227,12 +227,16 @@ Tokens can be scoped to specific teams using the `teams` JWT claim:
 
 | Token Configuration | Admin User | Non-Admin User |
 |---------------------|------------|----------------|
-| No `teams` key | Unrestricted | Public-only |
-| `teams: null` | Unrestricted | Public-only |
+| No `teams` key | Public-only | Public-only |
+| `teams: null` | Admin bypass (unrestricted) | Public-only |
 | `teams: []` | Public-only | Public-only |
 | `teams: ["team-id"]` | Team + Public | Team + Public |
 
 **Security Default**: Non-admin tokens without explicit team scope default to public-only access (principle of least privilege).
+
+!!! note "Session Tokens vs API Tokens"
+    For `token_use: "session"` (Admin UI login), teams are resolved server-side from DB/cache on each request.
+    For `token_use: "api"` or legacy tokens, teams are interpreted from the JWT `teams` claim using `normalize_token_teams()`.
 
 #### Server-Scoped Tokens
 
@@ -533,6 +537,9 @@ DOCS_ALLOW_BASIC_AUTH=false              # Keep disabled (use JWT instead)
 MCPGATEWAY_BULK_IMPORT_ENABLED=false
 MCPGATEWAY_A2A_ENABLED=false
 PUBLIC_REGISTRATION_ENABLED=false        # Disable user self-registration
+ALLOW_TEAM_CREATION=false               # Disable self-service team creation
+ALLOW_TEAM_JOIN_REQUESTS=false          # Disable self-service team joining
+ALLOW_TEAM_INVITATIONS=false            # Disable team invitations
 
 # Token Security
 REQUIRE_TOKEN_EXPIRATION=true            # Reject tokens without exp claim
@@ -601,6 +608,7 @@ LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
    - Confirm `REQUIRE_JTI=true` for token tracking
    - Confirm `REQUIRE_TOKEN_EXPIRATION=true`
    - Confirm `PUBLIC_REGISTRATION_ENABLED=false`
+   - Confirm team governance flags are set appropriately
 
 3. **Test Security Controls**
 

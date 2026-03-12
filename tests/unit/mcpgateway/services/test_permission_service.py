@@ -152,6 +152,14 @@ async def test_check_permission_admin_bypass(svc):
 
 
 @pytest.mark.asyncio
+async def test_check_permission_public_only_token_blocks_admin_permissions(svc):
+    """Public-only token scope must deny admin.* permissions even for admin identities."""
+    with patch.object(svc, "_is_user_admin", return_value=True):
+        result = await svc.check_permission("admin@test.com", "admin.system_config", token_teams=[])
+    assert result is False
+
+
+@pytest.mark.asyncio
 async def test_check_permission_has_exact_perm(svc):
     """User with exact permission gets access."""
     with patch.object(svc, "_is_user_admin", return_value=False):
@@ -269,6 +277,24 @@ async def test_has_admin_permission_exception(svc):
     """Exception defaults to not admin."""
     with patch.object(svc, "_is_user_admin", side_effect=RuntimeError("err")):
         assert await svc.has_admin_permission("user@test.com") is False
+
+
+@pytest.mark.asyncio
+async def test_has_admin_permission_with_team_id(svc):
+    """Team-scoped admin.dashboard grants admin when team_id is provided."""
+    with patch.object(svc, "_is_user_admin", return_value=False):
+        with patch.object(svc, "get_user_permissions", return_value={"admin.dashboard", "tools.read"}) as mock_get_perms:
+            assert await svc.has_admin_permission("user@test.com", team_id="team-123") is True
+            mock_get_perms.assert_awaited_once_with("user@test.com", team_id="team-123")
+
+
+@pytest.mark.asyncio
+async def test_has_admin_permission_no_team_id_no_admin_perm(svc):
+    """Without team_id, team-scoped permissions are not checked (global only)."""
+    with patch.object(svc, "_is_user_admin", return_value=False):
+        with patch.object(svc, "get_user_permissions", return_value={"tools.read"}) as mock_get_perms:
+            assert await svc.has_admin_permission("user@test.com") is False
+            mock_get_perms.assert_awaited_once_with("user@test.com", team_id=None)
 
 
 # ---------- get_user_permissions ----------

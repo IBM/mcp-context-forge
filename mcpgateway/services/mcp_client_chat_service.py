@@ -91,6 +91,7 @@ except ImportError:
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.logging_service import LoggingService
@@ -124,7 +125,8 @@ class MCPServerConfig(BaseModel):
         >>> config.transport
         'streamable_http'
 
-        >>> # Stdio transport
+        >>> # Stdio transport (requires explicit feature flag)
+        >>> settings.mcpgateway_stdio_transport_enabled = True
         >>> config = MCPServerConfig(
         ...     command="python",
         ...     args=["server.py"],
@@ -181,64 +183,26 @@ class MCPServerConfig(BaseModel):
 
         return values
 
-    @field_validator("url")
-    @classmethod
-    def validate_url_for_transport(cls, v: Optional[str], info) -> Optional[str]:
-        """
-        Validate that URL is provided for HTTP-based transports.
-
-        Args:
-            v: The URL value to validate.
-            info: Validation context containing other field values.
+    @model_validator(mode="after")
+    def validate_transport_requirements(self):
+        """Validate transport-specific requirements and feature flags.
 
         Returns:
-            Optional[str]: The validated URL.
+            MCPServerConfig: Validated config instance.
 
         Raises:
-            ValueError: If URL is missing for streamable_http or sse transport.
-
-        Examples:
-            >>> # Valid case
-            >>> MCPServerConfig(
-            ...     url="https://example.com",
-            ...     transport="streamable_http"
-            ... ).url
-            'https://example.com'
+            ValueError: If transport requirements or feature flags are violated.
         """
-        transport = info.data.get("transport")
-        if transport in ["streamable_http", "sse"] and not v:
-            raise ValueError(f"URL is required for {transport} transport")
-        return v
+        if self.transport in ["streamable_http", "sse"] and not self.url:
+            raise ValueError(f"URL is required for {self.transport} transport")
 
-    @field_validator("command")
-    @classmethod
-    def validate_command_for_stdio(cls, v: Optional[str], info) -> Optional[str]:
-        """
-        Validate that command is provided for stdio transport.
+        if self.transport == "stdio":
+            if not settings.mcpgateway_stdio_transport_enabled:
+                raise ValueError("stdio transport is disabled by default; set MCPGATEWAY_STDIO_TRANSPORT_ENABLED=true to enable it")
+            if not self.command:
+                raise ValueError("Command is required for stdio transport")
 
-        Args:
-            v: The command value to validate.
-            info: Validation context containing other field values.
-
-        Returns:
-            Optional[str]: The validated command.
-
-        Raises:
-            ValueError: If command is missing for stdio transport.
-
-        Examples:
-            >>> config = MCPServerConfig(
-            ...     command="python",
-            ...     args=["server.py"],
-            ...     transport="stdio"
-            ... )
-            >>> config.command
-            'python'
-        """
-        transport = info.data.get("transport")
-        if transport == "stdio" and not v:
-            raise ValueError("Command is required for stdio transport")
-        return v
+        return self
 
     model_config = {
         "json_schema_extra": {
@@ -1939,10 +1903,10 @@ class ChatHistoryManager:
                     return []
                 return orjson.loads(data)
             except orjson.JSONDecodeError:
-                logger.warning(f"Failed to decode chat history for user {user_id}")
+                logger.warning(f"Failed to decode chat history for user {SecurityValidator.sanitize_log_message(user_id)}")
                 return []
             except Exception as e:
-                logger.error(f"Error retrieving chat history from Redis for user {user_id}: {e}")
+                logger.error(f"Error retrieving chat history from Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
                 return []
         else:
             return self._memory_store.get(user_id, [])
@@ -1974,7 +1938,7 @@ class ChatHistoryManager:
             try:
                 await self.redis_client.set(self._history_key(user_id), orjson.dumps(trimmed), ex=self.ttl)
             except Exception as e:
-                logger.error(f"Error saving chat history to Redis for user {user_id}: {e}")
+                logger.error(f"Error saving chat history to Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
         else:
             self._memory_store[user_id] = trimmed
 
@@ -2024,7 +1988,7 @@ class ChatHistoryManager:
             try:
                 await self.redis_client.delete(self._history_key(user_id))
             except Exception as e:
-                logger.error(f"Error clearing chat history from Redis for user {user_id}: {e}")
+                logger.error(f"Error clearing chat history from Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
         else:
             self._memory_store.pop(user_id, None)
 

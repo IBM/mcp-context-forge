@@ -38,7 +38,7 @@ theme:
         name: Switch to light mode
   font: false
   favicon: "favicon.ico"
-  logo: "logo.png"
+  logo: "contextforge-icon_white.svg"
 
 # hide:
 #   - navigation         # Hide left navigation

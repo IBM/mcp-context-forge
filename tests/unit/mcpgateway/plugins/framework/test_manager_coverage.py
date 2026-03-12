@@ -362,3 +362,182 @@ class TestPermissiveBlocking:
         result = await executor.execute_plugin(hook_ref, payload, context, False)
         assert result.continue_processing is False
         assert result.violation.plugin_name == "test"
+
+
+# ===========================================================================
+# Cross-type payload: unexpected type warning (manager.py line 251)
+# ===========================================================================
+
+
+class TestCrossTypeUnexpectedPayload:
+    """When a plugin returns a modified_payload of an unexpected type (not
+    PluginPayload or dict) under an explicit policy, the modification is
+    silently ignored with a warning."""
+
+    @pytest.mark.asyncio
+    async def test_unexpected_type_ignored_with_policy(self):
+        from mcpgateway.plugins.framework.hooks.policies import HookPayloadPolicy
+
+        class WeirdResultPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                # Return an unexpected type (list) as modified_payload
+                return PluginResult(continue_processing=True, modified_payload=["unexpected", "list"])
+
+        config = _make_config(name="weird")
+        plugin = WeirdResultPlugin(config)
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+
+        policies = {"test_hook": HookPayloadPolicy(writable_fields=frozenset({"name"}))}
+        executor = PluginExecutor(hook_policies=policies)
+
+        payload = PluginPayload()
+        global_ctx = GlobalContext(request_id="1")
+
+        result, _ = await executor.execute(
+            [hook_ref], payload, global_ctx, hook_type="test_hook",
+        )
+        # The unexpected type should be ignored — modified_payload stays None
+        assert result.modified_payload is None
+
+
+# ===========================================================================
+# PluginManager Borg: hook_policies injection paths (lines 581-596)
+# ===========================================================================
+
+
+class TestBorgHookPoliciesInjection:
+    @pytest.fixture(autouse=True)
+    def reset_manager(self):
+        PluginManager.reset()
+        yield
+        PluginManager.reset()
+
+    def test_second_instantiation_injects_policies(self):
+        """When the first PluginManager had no policies but a second one
+        provides them, the policies are injected into the shared executor."""
+        from mcpgateway.plugins.framework.hooks.policies import HookPayloadPolicy
+
+        # First instantiation — no policies
+        pm1 = PluginManager()
+        assert pm1._executor is not None
+        assert not pm1._executor.hook_policies
+
+        # Second instantiation — provides policies
+        policies = {"test_hook": HookPayloadPolicy(writable_fields=frozenset({"name"}))}
+        pm2 = PluginManager(hook_policies=policies)
+
+        # Borg pattern: both share state
+        assert pm1._executor.hook_policies == policies
+        assert pm2._executor.hook_policies == policies
+
+    def test_second_instantiation_updates_timeout(self):
+        """When the second instantiation provides a non-default timeout,
+        it updates the shared executor's timeout."""
+        from mcpgateway.plugins.framework.hooks.policies import HookPayloadPolicy
+
+        pm1 = PluginManager()
+        original_timeout = pm1._executor.timeout
+
+        policies = {"test_hook": HookPayloadPolicy(writable_fields=frozenset())}
+        pm2 = PluginManager(timeout=120, hook_policies=policies)
+
+        assert pm2._executor.timeout == 120
+
+    def test_second_instantiation_warns_on_different_policies(self, caplog):
+        """When policies are already set and a different set is provided,
+        a warning is logged and the new policies are ignored."""
+        from mcpgateway.plugins.framework.hooks.policies import HookPayloadPolicy
+
+        policies_a = {"hook_a": HookPayloadPolicy(writable_fields=frozenset({"x"}))}
+        policies_b = {"hook_b": HookPayloadPolicy(writable_fields=frozenset({"y"}))}
+
+        pm1 = PluginManager(hook_policies=policies_a)
+        pm2 = PluginManager(hook_policies=policies_b)
+
+        assert "already set" in caplog.text
+        # Original policies are retained
+        assert pm2._executor.hook_policies == policies_a
+
+    def test_second_instantiation_injects_observability(self):
+        """When observability is not yet set and a second instantiation
+        provides it, the executor is updated."""
+        from mcpgateway.plugins.framework.hooks.policies import HookPayloadPolicy
+
+        pm1 = PluginManager()
+        assert pm1._executor.observability is None
+
+        mock_obs = MagicMock()
+        policies = {"test_hook": HookPayloadPolicy(writable_fields=frozenset())}
+        pm2 = PluginManager(hook_policies=policies, observability=mock_obs)
+
+        assert pm2._executor.observability is mock_obs
+
+    def test_defensive_executor_init_when_none(self):
+        """When shared state exists but _executor is None (unusual test
+        scenario), the defensive path creates a new PluginExecutor."""
+        pm = PluginManager()
+        # Simulate unusual state: shared state populated but executor nulled
+        pm._executor = None
+
+        # Re-instantiate without hook_policies — triggers defensive path
+        pm2 = PluginManager()
+        assert pm2._executor is not None
+        assert isinstance(pm2._executor, PluginExecutor)
+
+
+# ===========================================================================
+# PluginManager executor property and setter (lines 605, 615, 620)
+# ===========================================================================
+
+
+class TestExecutorPropertySetter:
+    @pytest.fixture(autouse=True)
+    def reset_manager(self):
+        PluginManager.reset()
+        yield
+        PluginManager.reset()
+
+    def test_executor_property_returns_executor(self):
+        pm = PluginManager()
+        executor = pm.executor
+        assert isinstance(executor, PluginExecutor)
+
+    def test_executor_property_lazy_creates(self):
+        """When _executor is None, the property lazily creates one."""
+        pm = PluginManager()
+        pm._executor = None
+        executor = pm.executor
+        assert isinstance(executor, PluginExecutor)
+
+    def test_executor_setter(self):
+        pm = PluginManager()
+        new_executor = PluginExecutor()
+        pm.executor = new_executor
+        assert pm._executor is new_executor
+
+
+# ===========================================================================
+# PluginManager.shutdown lazy async_lock (line 810)
+# ===========================================================================
+
+
+class TestShutdownLazyAsyncLock:
+    @pytest.fixture(autouse=True)
+    def reset_manager(self):
+        PluginManager.reset()
+        yield
+        PluginManager.reset()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_creates_async_lock_lazily(self):
+        """shutdown() should lazily create _async_lock if it is None."""
+        pm = PluginManager()
+        # Ensure _async_lock starts as None (fresh Borg state)
+        assert pm._async_lock is None
+
+        # shutdown on uninitialized manager should still create the lock
+        await pm.shutdown()
+
+        assert pm._async_lock is not None
+        assert isinstance(pm._async_lock, asyncio.Lock)
