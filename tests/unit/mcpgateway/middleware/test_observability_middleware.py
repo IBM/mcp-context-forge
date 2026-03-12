@@ -476,6 +476,94 @@ async def test_single_session_per_request_integration():
     # Verify response
     assert response.status_code == 200
 
+@pytest.mark.asyncio
+async def test_dispatch_trace_setup_rollback_and_invalidate_failure():
+    """Test that trace setup handles both rollback and invalidate failures gracefully."""
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    
+    mock_request = MagicMock(spec=Request)
+    mock_request.url.path = "/rpc"
+    mock_request.url.query = ""
+    mock_request.url = MagicMock()
+    mock_request.url.__str__ = MagicMock(return_value="http://test.com/rpc")
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.headers = {"user-agent": "test-agent"}
+    mock_request.state = MagicMock()
+    
+    # Mock SessionLocal to return a session that fails on both rollback and invalidate
+    db_mock = MagicMock()
+    db_mock.rollback.side_effect = Exception("rollback failed")
+    db_mock.invalidate.side_effect = Exception("invalidate failed")
+    db_mock.close.return_value = None
+    
+    async def mock_call_next(request):
+        return Response(content="OK", status_code=200)
+    
+    with patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=db_mock), \
+         patch.object(middleware.service, "start_trace", side_effect=Exception("trace setup failed")), \
+         patch("mcpgateway.middleware.observability_middleware.logger.debug") as mock_debug, \
+         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
+        response = await middleware.dispatch(mock_request, mock_call_next)
+        
+        # Verify rollback was attempted
+        db_mock.rollback.assert_called_once()
+        
+        # Verify invalidate was attempted (even though it failed)
+        db_mock.invalidate.assert_called_once()
+        
+        # Verify debug log was called for rollback failure
+        mock_debug.assert_any_call("Failed to rollback during cleanup: rollback failed")
+        
+        # Verify response is still returned (graceful degradation)
+        assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_dispatch_exception_handler_invalidate_failure():
+    """Test that main exception handler handles invalidate failure gracefully."""
+    async def failing_call_next(request):
+        raise RuntimeError("Request failed")
+    
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    
+    mock_request = MagicMock(spec=Request)
+    mock_request.url.path = "/rpc"
+    mock_request.url.query = ""
+    mock_request.url = MagicMock()
+    mock_request.url.__str__ = MagicMock(return_value="http://test.com/rpc")
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.headers = {"user-agent": "test-agent"}
+    mock_request.state = MagicMock()
+    
+    # Mock SessionLocal to return a session that fails on both rollback and invalidate
+    db_mock = MagicMock()
+    db_mock.is_active = True
+    db_mock.rollback.side_effect = Exception("rollback failed")
+    db_mock.invalidate.side_effect = Exception("invalidate failed")
+    
+    with patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=db_mock), \
+         patch.object(middleware.service, "start_trace", return_value="trace123"), \
+         patch.object(middleware.service, "start_span", return_value="span123"), \
+         patch.object(middleware.service, "end_span"), \
+         patch.object(middleware.service, "add_event"), \
+         patch.object(middleware.service, "end_trace"), \
+         patch("mcpgateway.middleware.observability_middleware.logger.warning") as mock_warning, \
+         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
+        with pytest.raises(RuntimeError, match="Request failed"):
+            await middleware.dispatch(mock_request, failing_call_next)
+        
+        # Verify rollback was attempted
+        db_mock.rollback.assert_called_once()
+        
+        # Verify invalidate was attempted (even though it failed)
+        db_mock.invalidate.assert_called_once()
+        
+        # Verify warning log was called for rollback failure
+        mock_warning.assert_any_call("Failed to rollback database session: rollback failed")
+
+
 
 @pytest.mark.asyncio
 async def test_dispatch_rollback_failure_logs_warning(mock_request):
