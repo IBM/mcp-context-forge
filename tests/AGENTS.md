@@ -32,6 +32,8 @@ tests/
 ```bash
 # Core testing
 make test                         # Run unit tests
+make test <name>                  # Run only tests matching <name> (e.g. make test a2a_service)
+make test TEST=<name>             # Same as above using variable
 make doctest                      # Run doctests in modules
 make doctest test                 # Doctests then unit tests
 make htmlcov                      # Coverage HTML → docs/docs/coverage/index.html

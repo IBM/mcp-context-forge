@@ -26,24 +26,31 @@ ENV PATH="/root/.cargo/bin:$PATH"
 
 WORKDIR /build
 
-# Copy only Rust plugin files (only if ENABLE_RUST=true)
-COPY plugins_rust/ /build/plugins_rust/
+# Copy workspace and crates (only if ENABLE_RUST=true)
+COPY Cargo.toml Cargo.lock /build/
+COPY crates/ /build/crates/
 
-# Build each Rust plugin independently using Python 3.12 from manylinux image
-# Each plugin has its own Cargo.toml and is built separately
+# Build each maturin crate (any dir under crates/ with Cargo.toml + pyproject.toml)
+# Use find | while read to avoid $$(...) command substitution parsing issues in Docker RUN
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         mkdir -p /build/rust-wheels && \
         /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin && \
-        for plugin_dir in /build/plugins_rust/*/; do \
-            if [ -f "$plugin_dir/Cargo.toml" ]; then \
-                plugin_name=$(basename "$plugin_dir"); \
-                echo "🦀 Building Rust plugin: $plugin_name"; \
-                (cd "$plugin_dir" && /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 --out /build/rust-wheels) || exit 1; \
-            fi; \
+        find /build/crates -type d 2>/dev/null | while read -r d; do \
+            [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] || continue; \
+            plugin_name="$${d##*/}"; \
+            echo "🦀 Building Rust crate: $$plugin_name"; \
+            /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 \
+                --manifest-path "$$d/Cargo.toml" --out /build/rust-wheels; \
         done && \
-        echo "✅ Rust plugins built successfully"; \
+        echo "✅ Rust crates built successfully"; \
     else \
         echo "⏭️  Skipping Rust plugin build"; \
+    fi
+
+# Fail if ENABLE_RUST=true but no wheels were produced (do not skip Rust without error)
+RUN if [ "$ENABLE_RUST" = "true" ] && ! ls /build/rust-wheels/*.whl 1>/dev/null 2>&1; then \
+        echo "ERROR: ENABLE_RUST=true but no Rust wheels were produced. Check that crates/ contains maturin crates (Cargo.toml + pyproject.toml)." >&2; \
+        exit 1; \
     fi
 
 FROM rust-builder-base AS rust-builder

@@ -26,13 +26,17 @@ try:
     import os
     import sys
 
-    # Temporarily remove current directory from path if it contains plugins_rust source
+    # For this import only: drop crate source dirs from path so the installed wheel is used.
     original_path = sys.path.copy()
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     plugins_rust_src = os.path.join(project_root, "plugins_rust")
+    crates_plugins_src = os.path.join(project_root, "crates", "plugins", "pii_filter")
 
-    # Remove source directory from path temporarily
-    filtered_path = [p for p in sys.path if not p.startswith(plugins_rust_src)]
+    # Drop crate source dirs so import resolves to the installed wheel
+    filtered_path = [
+        p for p in sys.path
+        if not p.startswith(plugins_rust_src) and not p.startswith(crates_plugins_src)
+    ]
     sys.path = filtered_path
 
     try:

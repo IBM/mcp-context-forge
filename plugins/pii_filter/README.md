@@ -120,31 +120,31 @@ config:
 ### Run All Tests
 ```bash
 # Run all PII filter tests
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py -v
 
 # Run with coverage
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py --cov=plugins.pii_filter --cov-report=term-missing
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py --cov=plugins.pii_filter --cov-report=term-missing
 ```
 
 ### Run Specific Test Classes
 ```bash
 # Test only the detector functionality
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIDetector -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIDetector -v
 
 # Test only the plugin integration
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIFilterPlugin -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIFilterPlugin -v
 ```
 
 ### Run Individual Tests
 ```bash
 # Test SSN detection
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIDetector::test_ssn_detection -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIDetector::test_ssn_detection -v
 
 # Test masking strategies
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIDetector::test_masking_strategies -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIDetector::test_masking_strategies -v
 
 # Test blocking mode
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIFilterPlugin::test_prompt_pre_fetch_blocking -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIFilterPlugin::test_prompt_pre_fetch_blocking -v
 ```
 
 ### Manual Testing with the Gateway
