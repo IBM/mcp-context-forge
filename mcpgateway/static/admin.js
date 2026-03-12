@@ -20311,13 +20311,17 @@ async function toggleInputMask(inputOrId, button) {
 
     // SECURITY: Check if this is a stored secret (isMasked=true but no realValue)
     const hasStoredSecret = input.dataset.isMasked === "true";
+    // Caching: the fetched value is stored in data-real-value after the first reveal, so the
+    // backend is only called once per session. Subsequent Show/Hide clicks skip this block.
     const hasRevealableValue =
         input.dataset.realValue && input.dataset.realValue.trim() !== "";
 
     if (hasStoredSecret && !hasRevealableValue) {
         const gatewayId = input.dataset.gatewayId;
         if (gatewayId) {
-            // Fetch plaintext credentials via the reveal endpoint (audit-logged server-side)
+            // Fetch plaintext credentials via the reveal endpoint (audit-logged server-side).
+            // The button is disabled for the duration of the request, preventing duplicate
+            // calls if the user clicks multiple times before the response arrives.
             const originalText = button.textContent;
             button.disabled = true;
             button.textContent = "Loading…";
