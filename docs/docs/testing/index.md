@@ -12,7 +12,9 @@ This section covers the testing strategy and tools for ContextForge.
 | **Integration tests** | pytest | `tests/integration/` | Implemented |
 | **End-to-end tests** | pytest | `tests/e2e/` | Implemented |
 | **UI automation** | Playwright | `tests/playwright/` | Implemented |
+| **Security / DAST** | Playwright + OWASP ZAP | `tests/playwright/security/` | Implemented |
 | **Load testing** | Locust | `tests/loadtest/` | Implemented |
+| **Concurrency tests** | Manual (asyncio) | `tests/manual/concurrency/` | Implemented |
 | **JS unit tests** | - | - | Not yet implemented |
 
 ---
@@ -105,6 +107,48 @@ make eslint        # lint JavaScript
 make lint-web      # ESLint + HTMLHint + Stylelint
 make format-web    # Prettier formatting
 ```
+
+---
+
+## 🔒 Security Testing (OWASP & DAST)
+
+Two-layer coverage for OWASP A01:2021 – Broken Access Control:
+
+```bash
+make test-owasp   # Layer 1: direct Playwright access-control tests (no ZAP needed)
+make test-zap     # Layer 2: ZAP DAST scan (requires make testing-zap-up)
+```
+
+See [Security Testing](security.md) for the full guide including environment
+variables, authentication setup, ZAP target URL configuration, and report
+locations.
+
+---
+
+## 🔀 Concurrency Testing
+
+Manual concurrency tests validate data consistency under concurrent access. These require a live ContextForge instance backed by PostgreSQL and Redis — they are **not** part of automated CI.
+
+| Test ID | Makefile Target | What it validates |
+|---------|-----------------|-------------------|
+| CONC-02 | `make conc-02-gateways` | No 5xx errors, no malformed payloads, and valid final read when concurrent readers and writers hit `GET/PUT /gateways/{id}` |
+
+**Quick start:**
+
+```bash
+# Prerequisites: PostgreSQL + Redis + gateway + translator running
+# (see tests/manual/README.md for full infrastructure setup)
+
+# Generate token and run
+export CONC_TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 120 --secret my-test-key)"
+make conc-02-gateways
+
+# Custom parameters
+CONC_RW_DURATION_SEC=30 CONC_RW_READERS=10 CONC_RW_WRITERS=2 make conc-02-gateways
+```
+
+Full runbook, environment variable reference, and results template: [`tests/manual/concurrency/conc_02_gateways_results.md`](https://github.com/IBM/mcp-context-forge/blob/main/tests/manual/concurrency/conc_02_gateways_results.md).
 
 ---
 

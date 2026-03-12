@@ -124,6 +124,11 @@ class ToolsPage(BasePage):
         return self.page.locator("#tool-test-form")
 
     @property
+    def tool_test_result(self) -> Locator:
+        """Tool test result display area."""
+        return self.tool_test_modal.locator("#tool-test-result")
+
+    @property
     def tool_test_close_btn(self) -> Locator:
         """Close button in tool test modal."""
         return self.tool_test_modal.locator('button:has-text("Close")')

@@ -198,6 +198,57 @@ class TestGatewayTestModal:
 
         gateways_page.close_test_modal()
 
+    def test_test_modal_result_hidden_on_open(self, gateways_page: GatewaysPage):
+        """Regression: result container must be hidden when test modal first opens."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+        _skip_if_no_gateways(gateways_page)
+
+        gateways_page.open_test_modal(0)
+
+        expect(gateways_page.test_modal_result).to_be_hidden()
+
+        gateways_page.close_test_modal()
+
+    def test_test_modal_result_cleared_on_reopen(self, gateways_page: GatewaysPage):
+        """Regression: opening test modal for a different gateway must not show stale results.
+
+        This verifies the fix for the bug where closing a test modal and opening
+        it for another gateway would display the previous gateway's test response.
+        """
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        count = gateways_page.get_gateway_count()
+        if count < 2:
+            pytest.skip("Need at least 2 gateways to test stale result clearing")
+
+        # Open test modal for first gateway and inject fake result content
+        gateways_page.open_test_modal(0)
+        gateways_page.page.evaluate(
+            """() => {
+                const resultDiv = document.getElementById('gateway-test-result');
+                const responseDiv = document.getElementById('gateway-test-response-json');
+                if (resultDiv) resultDiv.classList.remove('hidden');
+                if (responseDiv) responseDiv.textContent = 'STALE_GATEWAY_RESULT_MARKER';
+            }"""
+        )
+        gateways_page.close_test_modal()
+
+        # Open test modal for second gateway
+        gateways_page.open_test_modal(1)
+
+        # Result container should be hidden (no stale results visible)
+        expect(gateways_page.test_modal_result).to_be_hidden()
+
+        # Also verify the response text is cleared
+        response_text = gateways_page.test_modal_response_json.text_content().strip()
+        assert "STALE_GATEWAY_RESULT_MARKER" not in response_text, (
+            "Gateway test result should not contain stale data from previous gateway"
+        )
+
+        gateways_page.close_test_modal()
+
 
 # ---------------------------------------------------------------------------
 # View Gateway Modal

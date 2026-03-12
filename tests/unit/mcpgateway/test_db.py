@@ -2851,3 +2851,142 @@ def test_slug_listeners_gateway_a2a_agent_email_team(monkeypatch):
     team_with_slug.slug = "workspace-alice-example-com"
     db.set_email_team_slug(None, None, team_with_slug)
     assert team_with_slug.slug == "workspace-alice-example-com"
+
+
+def test_password_reset_is_expired_naive_expired():
+    """Naive datetime in the past is detected as expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        token = db.PasswordResetToken(
+            user_email="user@example.com",
+            token_hash="a" * 64,
+            expires_at=datetime(2026, 3, 8, 12, 0, 0),
+        )
+        assert token.is_expired() is True
+
+
+def test_password_reset_is_expired_naive_not_expired():
+    """Naive datetime in the future is detected as not expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        token = db.PasswordResetToken(
+            user_email="user@example.com",
+            token_hash="a" * 64,
+            expires_at=datetime(2026, 3, 10, 12, 0, 0),
+        )
+        assert token.is_expired() is False
+
+
+def test_password_reset_is_expired_aware():
+    """Aware datetime comparison works without normalization."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        token = db.PasswordResetToken(
+            user_email="user@example.com",
+            token_hash="a" * 64,
+            expires_at=datetime(2026, 3, 8, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        assert token.is_expired() is True
+
+
+def test_password_reset_is_expired_none():
+    """None expires_at is treated as not expired."""
+    token = db.PasswordResetToken(
+        user_email="user@example.com",
+        token_hash="a" * 64,
+        expires_at=None,
+    )
+    assert token.is_expired() is False
+
+
+def test_user_role_is_expired_naive_expired():
+    """Naive datetime in the past is detected as expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        user_role = db.UserRole(
+            user_email="user@example.com",
+            role_id="role_id",
+            scope="scope",
+            granted_by="user1@example.com",
+            granted_at=datetime(2026, 3, 7, 12, 0, 0),
+            expires_at=datetime(2026, 3, 8, 12, 0, 0),
+        )
+        assert user_role.is_expired() is True
+
+
+def test_user_role_is_expired_aware_not_expired():
+    """Aware datetime in the future is detected as not expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        user_role = db.UserRole(
+            user_email="user@example.com",
+            role_id="role_id",
+            scope="scope",
+            granted_by="user1@example.com",
+            granted_at=datetime(2026, 3, 7, 12, 0, 0),
+            expires_at=datetime(2026, 3, 10, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        assert user_role.is_expired() is False
+
+
+def test_user_role_is_expired_none():
+    """None expires_at means role never expires."""
+    user_role = db.UserRole(
+        user_email="user@example.com",
+        role_id="role_id",
+        scope="scope",
+        granted_by="user1@example.com",
+        granted_at=datetime(2026, 3, 7, 12, 0, 0),
+        expires_at=None,
+    )
+    assert user_role.is_expired() is False
+
+
+def test_email_api_token_is_expired_naive_expired():
+    """Naive datetime in the past is detected as expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        token = db.EmailApiToken(
+            user_email="alice@example.com",
+            name="Production API Access",
+            server_id="prod-server-123",
+            resource_scopes=["tools.read", "resources.read"],
+            description="Read-only access to production tools",
+            expires_at=datetime(2026, 3, 8, 12, 0, 0),
+        )
+        assert token.is_expired() is True
+
+
+def test_email_api_token_is_expired_naive_not_expired():
+    """Naive datetime in the future is detected as not expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        token = db.EmailApiToken(
+            user_email="alice@example.com",
+            name="Production API Access",
+            server_id="prod-server-123",
+            resource_scopes=["tools.read", "resources.read"],
+            description="Read-only access to production tools",
+            expires_at=datetime(2026, 3, 13, 12, 0, 0),
+        )
+        assert token.is_expired() is False
+
+
+def test_email_api_token_is_expired_aware_not_expired():
+    """Aware datetime in the future is detected as not expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        token = db.EmailApiToken(
+            user_email="alice@example.com",
+            name="Production API Access",
+            server_id="prod-server-123",
+            resource_scopes=["tools.read", "resources.read"],
+            description="Read-only access to production tools",
+            expires_at=datetime(2026, 3, 10, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        assert token.is_expired() is False
+
+
+def test_email_api_token_is_expired_none():
+    """None expires_at means token never expires."""
+    token = db.EmailApiToken(
+        user_email="alice@example.com",
+        name="Production API Access",
+        server_id="prod-server-123",
+        resource_scopes=["tools.read", "resources.read"],
+        description="Read-only access to production tools",
+        expires_at=None,
+    )
+    assert token.is_expired() is False
