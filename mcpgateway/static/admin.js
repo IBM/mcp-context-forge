@@ -6975,6 +6975,111 @@ async function viewServer(serverId) {
 
             container.appendChild(associatedDiv);
 
+            // OAuth Configuration section
+            if (server.oauthEnabled) {
+                const oauthDiv = document.createElement("div");
+                oauthDiv.className = "mt-6 border-t pt-4";
+
+                const oauthTitle = document.createElement("strong");
+                oauthTitle.textContent = "OAuth 2.0 Configuration:";
+                oauthTitle.className =
+                    "block text-gray-900 dark:text-gray-100 mb-3";
+                oauthDiv.appendChild(oauthTitle);
+
+                // OAuth Config details
+                const oauthConfig = server.oauthConfig || server.oauth_config;
+                if (oauthConfig) {
+                    const oauthConfigDiv = document.createElement("div");
+                    oauthConfigDiv.className =
+                        "mt-3 space-y-2 bg-gray-50 dark:bg-gray-800 p-3 rounded-md";
+
+                    // Authorization Servers
+                    if (
+                        oauthConfig.authorization_servers &&
+                        oauthConfig.authorization_servers.length > 0
+                    ) {
+                        const authServersP = document.createElement("p");
+                        authServersP.className = "text-sm";
+                        const authServersStrong =
+                            document.createElement("strong");
+                        authServersStrong.textContent =
+                            "Authorization Servers: ";
+                        authServersStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        authServersP.appendChild(authServersStrong);
+
+                        const serversList = document.createElement("ul");
+                        serversList.className =
+                            "mt-1 ml-4 list-disc list-inside";
+                        oauthConfig.authorization_servers.forEach(
+                            (serverUrl) => {
+                                const li = document.createElement("li");
+                                li.className =
+                                    "text-gray-600 dark:text-gray-400 text-sm";
+                                li.textContent = serverUrl;
+                                serversList.appendChild(li);
+                            },
+                        );
+                        authServersP.appendChild(serversList);
+                        oauthConfigDiv.appendChild(authServersP);
+                    }
+
+                    // Token Endpoint
+                    if (oauthConfig.token_endpoint) {
+                        const tokenEndpointP = document.createElement("p");
+                        tokenEndpointP.className = "text-sm";
+                        const tokenEndpointStrong =
+                            document.createElement("strong");
+                        tokenEndpointStrong.textContent = "Token Endpoint: ";
+                        tokenEndpointStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        tokenEndpointP.appendChild(tokenEndpointStrong);
+
+                        const tokenEndpointSpan =
+                            document.createElement("span");
+                        tokenEndpointSpan.className =
+                            "text-gray-600 dark:text-gray-400 break-all";
+                        tokenEndpointSpan.textContent =
+                            oauthConfig.token_endpoint;
+                        tokenEndpointP.appendChild(tokenEndpointSpan);
+                        oauthConfigDiv.appendChild(tokenEndpointP);
+                    }
+
+                    // Scopes Supported
+                    if (
+                        oauthConfig.scopes_supported &&
+                        oauthConfig.scopes_supported.length > 0
+                    ) {
+                        const scopesP = document.createElement("p");
+                        scopesP.className = "text-sm";
+                        const scopesStrong = document.createElement("strong");
+                        scopesStrong.textContent = "Supported Scopes: ";
+                        scopesStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        scopesP.appendChild(scopesStrong);
+
+                        const scopesSpan = document.createElement("span");
+                        scopesSpan.className =
+                            "text-gray-600 dark:text-gray-400";
+                        scopesSpan.textContent =
+                            oauthConfig.scopes_supported.join(", ");
+                        scopesP.appendChild(scopesSpan);
+                        oauthConfigDiv.appendChild(scopesP);
+                    }
+
+                    oauthDiv.appendChild(oauthConfigDiv);
+                } else {
+                    const noConfigP = document.createElement("p");
+                    noConfigP.className =
+                        "mt-2 text-sm text-gray-500 dark:text-gray-400";
+                    noConfigP.textContent =
+                        "OAuth is enabled but no configuration details are available.";
+                    oauthDiv.appendChild(noConfigP);
+                }
+
+                container.appendChild(oauthDiv);
+            }
+
             // Add metadata section
             const metadataDiv = document.createElement("div");
             metadataDiv.className = "mt-6 border-t pt-4";

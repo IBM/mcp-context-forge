@@ -2471,7 +2471,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
     try:
         LOGGER.debug(f"User {get_user_email(user)} requested details for server ID {server_id}")
         server = await server_service.get_server(db, server_id)
-        return server.model_dump(by_alias=True)
+        return server.masked().model_dump(by_alias=True)
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

@@ -469,11 +469,15 @@ class TestAdminServerRoutes:
         """Test getting server with edge cases."""
         # Test with non-string ID (should work)
         mock_server = MagicMock()
-        mock_server.model_dump.return_value = {"id": 123, "name": "Numeric ID Server"}
+        mock_masked = MagicMock()
+        mock_masked.model_dump.return_value = {"id": 123, "name": "Numeric ID Server"}
+        mock_server.masked.return_value = mock_masked
         mock_get_server.return_value = mock_server
 
         result = await admin_get_server(123, mock_db, user={"email": "test-user", "db": mock_db})
         assert result["id"] == 123
+        mock_server.masked.assert_called_once()
+        mock_masked.model_dump.assert_called_once_with(by_alias=True)
 
         # Test with generic exception
         mock_get_server.side_effect = RuntimeError("Database connection lost")
