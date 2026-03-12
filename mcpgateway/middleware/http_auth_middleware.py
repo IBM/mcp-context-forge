@@ -15,6 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpHookType, HttpPostRequestPayload, HttpPreRequestPayload, PluginManager
 from mcpgateway.utils.correlation_id import generate_correlation_id, get_correlation_id
 
@@ -129,12 +130,16 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
                     # headers that were already present on the inbound request.
                     # Plugins MAY create new auth headers (e.g. x-api-key → authorization
                     # transform) but MUST NOT replace values the client already sent.
+                    #
+                    # This guard can be disabled with PLUGINS_CAN_OVERRIDE_AUTH_HEADERS=true
+                    # for deployments that require plugin-driven token exchange (e.g. WXO auth).
                     original_headers = dict(request.headers)
-                    _auth_protected_headers = {"authorization", "cookie", "x-api-key", "proxy-authorization"}
-                    overridden = {k for k in modified_headers_dict if k.lower() in _auth_protected_headers and k.lower() in original_headers}
-                    if overridden:
-                        logger.warning("Pre-request hook attempted to override existing auth headers (stripped): %s", overridden)
-                        modified_headers_dict = {k: v for k, v in modified_headers_dict.items() if k.lower() not in overridden}
+                    if not settings.plugins_can_override_auth_headers:
+                        _auth_protected_headers = {"authorization", "cookie", "x-api-key", "proxy-authorization"}
+                        overridden = {k for k in modified_headers_dict if k.lower() in _auth_protected_headers and k.lower() in original_headers}
+                        if overridden:
+                            logger.warning("Pre-request hook attempted to override existing auth headers (stripped): %s", overridden)
+                            modified_headers_dict = {k: v for k, v in modified_headers_dict.items() if k.lower() not in overridden}
 
                     # Merge modified headers with original headers (modified headers take precedence)
                     merged_headers = {**original_headers, **modified_headers_dict}
