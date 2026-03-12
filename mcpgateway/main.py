@@ -6711,8 +6711,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Catch-all for other completion/* methods (currently unsupported)
             result = {}
         elif method == "logging/setLevel":
-            # MCP spec-compliant logging endpoint
-            await _ensure_rpc_permission(user, db, "admin.system_config", method, request=request)
+            # MCP spec-compliant logging endpoint requires servers.use (not admin.system_config)
+            # because this controls MCP server logging level, not platform-wide config.
+            await _ensure_rpc_permission(user, db, "servers.use", method, request=request)
             level = LogLevel(params.get("level"))
             await logging_service.set_level(level)
             result = {}

@@ -2057,14 +2057,16 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
 
     if _should_enforce_streamable_rbac(user_context):
         # Layer 1: Token scope cap
-        if not _check_scoped_permission(user_context, "admin.system_config"):
+        # MCP spec-compliant logging endpoint requires servers.use (not admin.system_config)
+        # because this controls MCP server logging level, not platform-wide config.
+        if not _check_scoped_permission(user_context, "servers.use"):
             raise PermissionError(_ACCESS_DENIED_MSG)
         # Layer 2: RBAC check
-        has_admin_permission = await _check_streamable_permission(
+        has_permission = await _check_streamable_permission(
             user_context=user_context,
-            permission="admin.system_config",
+            permission="servers.use",
         )
-        if not has_admin_permission:
+        if not has_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
 
     try:
