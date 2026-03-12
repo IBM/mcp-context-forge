@@ -3040,6 +3040,11 @@ class Tool(Base):
 
     # Relationship with ToolMetric records
     metrics: Mapped[List["ToolMetric"]] = relationship("ToolMetric", back_populates="tool", cascade="all, delete-orphan")
+    metrics_hourly: Mapped[List["ToolMetricsHourly"]] = relationship(
+        "ToolMetricsHourly",
+        primaryjoin="Tool.id == foreign(ToolMetricsHourly.tool_id)",
+        viewonly=True,
+    )
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
@@ -3302,8 +3307,14 @@ class Tool(Base):
                 - total_executions, successful_executions, failed_executions
                 - failure_rate, min/max/avg_response_time, last_execution_time
         """
-        # If metrics are loaded, compute everything in a single pass
+        # If metrics are loaded, compute everything in a single pass from both raw and hourly metrics
+        # To prevent double-counting, only include raw metrics from the current incomplete hour
         if self._metrics_loaded():
+            # Calculate current hour boundary using UTC
+            # Use timezone-aware datetime to match database timestamps
+            now = datetime.now(timezone.utc)
+            current_hour_start = now.replace(minute=0, second=0, microsecond=0)
+
             total = 0
             successful = 0
             min_rt: Optional[float] = None
@@ -3311,7 +3322,14 @@ class Tool(Base):
             sum_rt = 0.0
             last_time: Optional[datetime] = None
 
+            # Process raw metrics from current hour only (not yet rolled up)
             for m in self.metrics:
+                # Skip metrics from completed hours (already in hourly aggregates)
+                # Make timestamps comparable by ensuring both are timezone-aware
+                metric_ts = m.timestamp if m.timestamp.tzinfo is not None else m.timestamp.replace(tzinfo=timezone.utc)
+                if metric_ts < current_hour_start:
+                    continue
+
                 total += 1
                 if m.is_success:
                     successful += 1
@@ -3323,6 +3341,31 @@ class Tool(Base):
                 sum_rt += rt
                 if last_time is None or m.timestamp > last_time:
                     last_time = m.timestamp
+
+            # Process hourly aggregated metrics (historical data from completed hours)
+            try:
+                for h in self.metrics_hourly:
+                    total += h.total_count
+                    successful += h.success_count
+                    # Update min/max response times
+                    if h.min_response_time is not None:
+                        if min_rt is None or h.min_response_time < min_rt:
+                            min_rt = h.min_response_time
+                    if h.max_response_time is not None:
+                        if max_rt is None or h.max_response_time > max_rt:
+                            max_rt = h.max_response_time
+                    # Add weighted sum for average calculation
+                    if h.avg_response_time is not None and h.total_count > 0:
+                        sum_rt += h.avg_response_time * h.total_count
+                    # Update last execution time (hourly buckets represent hour start)
+                    from datetime import timedelta  # pylint: disable=import-outside-toplevel
+
+                    hourly_end = h.hour_start + timedelta(hours=1)
+                    if last_time is None or hourly_end > last_time:
+                        last_time = hourly_end
+            except AttributeError:
+                # metrics_hourly relationship might not be loaded; this is fine for in-memory path
+                pass
 
             failed = total - successful
             return {
@@ -3336,7 +3379,10 @@ class Tool(Base):
                 "last_execution_time": last_time,
             }
 
-        # Use single SQL query with full aggregation
+        # Query both raw metrics AND hourly aggregated metrics
+        # To prevent double-counting:
+        # - Hourly table: all completed hours (already rolled up)
+        # - Raw table: ONLY current incomplete hour (not yet rolled up)
         # Third-Party
         from sqlalchemy import case  # pylint: disable=import-outside-toplevel
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
@@ -3354,32 +3400,107 @@ class Tool(Base):
                 "last_execution_time": None,
             }
 
-        result = (
+        # Calculate current hour boundary to avoid double-counting
+        # Only query raw metrics from the current incomplete hour
+        now = datetime.now(timezone.utc)
+        current_hour_start = now.replace(minute=0, second=0, microsecond=0)
+
+        # Query raw metrics from current hour only (not yet rolled up)
+        raw_result = (
             session.query(
                 func.count(ToolMetric.id),  # pylint: disable=not-callable
                 func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)),
                 func.min(ToolMetric.response_time),  # pylint: disable=not-callable
                 func.max(ToolMetric.response_time),  # pylint: disable=not-callable
-                func.avg(ToolMetric.response_time),  # pylint: disable=not-callable
+                func.sum(ToolMetric.response_time),  # pylint: disable=not-callable
                 func.max(ToolMetric.timestamp),  # pylint: disable=not-callable
             )
             .filter(ToolMetric.tool_id == self.id)
+            .filter(ToolMetric.timestamp >= current_hour_start)  # Only current incomplete hour
             .one()
         )
 
-        total = result[0] or 0
-        successful = result[1] or 0
+        # Query hourly aggregated metrics (historical data)
+        hourly_result = (
+            session.query(
+                func.sum(ToolMetricsHourly.total_count),  # pylint: disable=not-callable
+                func.sum(ToolMetricsHourly.success_count),  # pylint: disable=not-callable
+                func.min(ToolMetricsHourly.min_response_time),  # pylint: disable=not-callable
+                func.max(ToolMetricsHourly.max_response_time),  # pylint: disable=not-callable
+                func.sum(ToolMetricsHourly.avg_response_time * ToolMetricsHourly.total_count),  # weighted sum for avg
+                func.max(ToolMetricsHourly.hour_start),  # pylint: disable=not-callable
+            )
+            .filter(ToolMetricsHourly.tool_id == self.id)
+            .one()
+        )
+
+        # Combine raw and hourly metrics
+        raw_total = raw_result[0] or 0
+        raw_successful = raw_result[1] or 0
+        raw_min_rt = raw_result[2]
+        raw_max_rt = raw_result[3]
+        raw_sum_rt = raw_result[4] or 0.0
+        raw_last_time = raw_result[5]
+
+        hourly_total = hourly_result[0] or 0
+        hourly_successful = hourly_result[1] or 0
+        hourly_min_rt = hourly_result[2]
+        hourly_max_rt = hourly_result[3]
+        hourly_weighted_sum_rt = hourly_result[4] or 0.0
+        hourly_last_bucket = hourly_result[5]
+
+        # Aggregate totals
+        total = raw_total + hourly_total
+        successful = raw_successful + hourly_successful
         failed = total - successful
+
+        # Compute min/max response times across both sources
+        min_rt = None
+        if raw_min_rt is not None and hourly_min_rt is not None:
+            min_rt = min(raw_min_rt, hourly_min_rt)
+        elif raw_min_rt is not None:
+            min_rt = raw_min_rt
+        elif hourly_min_rt is not None:
+            min_rt = hourly_min_rt
+
+        max_rt = None
+        if raw_max_rt is not None and hourly_max_rt is not None:
+            max_rt = max(raw_max_rt, hourly_max_rt)
+        elif raw_max_rt is not None:
+            max_rt = raw_max_rt
+        elif hourly_max_rt is not None:
+            max_rt = hourly_max_rt
+
+        # Weighted average response time
+        avg_rt = None
+        if total > 0:
+            total_sum_rt = raw_sum_rt + hourly_weighted_sum_rt
+            avg_rt = total_sum_rt / total
+
+        # Last execution time: use the most recent between raw metrics and hourly buckets
+        last_time = None
+        if raw_last_time is not None and hourly_last_bucket is not None:
+            # Hourly bucket represents the START of the hour; assume data could be up to 1 hour later
+            from datetime import timedelta  # pylint: disable=import-outside-toplevel
+
+            hourly_end = hourly_last_bucket + timedelta(hours=1)
+            last_time = max(raw_last_time, hourly_end)
+        elif raw_last_time is not None:
+            last_time = raw_last_time
+        elif hourly_last_bucket is not None:
+            from datetime import timedelta  # pylint: disable=import-outside-toplevel
+
+            last_time = hourly_last_bucket + timedelta(hours=1)
 
         return {
             "total_executions": total,
             "successful_executions": successful,
             "failed_executions": failed,
             "failure_rate": failed / total if total > 0 else 0.0,
-            "min_response_time": result[2],
-            "max_response_time": result[3],
-            "avg_response_time": float(result[4]) if result[4] is not None else None,
-            "last_execution_time": result[5],
+            "min_response_time": min_rt,
+            "max_response_time": max_rt,
+            "avg_response_time": avg_rt,
+            "last_execution_time": last_time,
         }
 
 
