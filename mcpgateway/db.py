@@ -978,6 +978,7 @@ class UserRole(Base):
     granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    grant_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)
 
     # Relationships
     role: Mapped["Role"] = relationship("Role", back_populates="user_assignments")
@@ -988,9 +989,13 @@ class UserRole(Base):
         Returns:
             True if assignment has expired, False otherwise
         """
-        if not self.expires_at:
+        if self.expires_at is None:
             return False
-        return utc_now() > self.expires_at
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        return utc_now() > expires_at
 
 
 class PermissionAuditLog(Base):
@@ -1273,7 +1278,11 @@ class EmailUser(Base):
         """
         if self.locked_until is None:
             return False
-        if utc_now() >= self.locked_until:
+        locked_until = self.locked_until
+        if locked_until.tzinfo is None:
+            # Treat naive datetimes as UTC (SQLite strips timezone info)
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+        if utc_now() >= locked_until:
             # Lockout expired: reset counters so users get a fresh attempt window.
             self.failed_login_attempts = 0
             self.locked_until = None
@@ -1586,7 +1595,13 @@ class PasswordResetToken(Base):
         Returns:
             bool: True when `expires_at` is in the past.
         """
-        return self.expires_at <= utc_now()
+        if self.expires_at is None:
+            return False
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        return expires_at <= utc_now()
 
     def is_used(self) -> bool:
         """Return whether the reset token was already consumed.
@@ -4700,7 +4715,7 @@ class A2AAgent(Base):
 
     # Authorizations
     auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param" or None
-    auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
+    auth_value: Mapped[Optional[str]] = mapped_column(Text)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
         nullable=True,
@@ -5183,7 +5198,10 @@ class EmailApiToken(Base):
         """
         if not self.expires_at:
             return False
-        return utc_now() > self.expires_at
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return utc_now() > expires_at
 
     def is_valid(self) -> bool:
         """Check if token is valid (active and not expired).

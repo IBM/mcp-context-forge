@@ -104,6 +104,7 @@ async def test_discover_keycloak_endpoints_rewrites_authorization_url_to_public_
     )
 
     assert endpoints["authorization_url"].startswith("http://localhost:8180/")
+    assert endpoints["issuer"].startswith("http://localhost:8180/")
     assert endpoints["token_url"].startswith("http://keycloak:8080/")
     assert endpoints["userinfo_url"].startswith("http://keycloak:8080/")
     assert endpoints["jwks_uri"].startswith("http://keycloak:8080/")
@@ -235,6 +236,7 @@ def test_discover_keycloak_endpoints_sync_rewrites_authorization_url_to_public_b
     )
 
     assert endpoints["authorization_url"].startswith("http://localhost:8180/")
+    assert endpoints["issuer"].startswith("http://localhost:8180/")
     assert endpoints["token_url"].startswith("http://keycloak:8080/")
     assert endpoints["userinfo_url"].startswith("http://keycloak:8080/")
     assert endpoints["jwks_uri"].startswith("http://keycloak:8080/")

@@ -130,14 +130,18 @@ class _PassthroughMasked:
         self._obj = obj
 
     def masked(self):
-        return self._obj
+        return self  # Keep wrapper active; don't unwrap
 
     def model_dump(self, **kw):
         if hasattr(self._obj, "model_dump"):
             return self._obj.model_dump(**kw)
-        return vars(self._obj)
+        return vars(self._obj) if not isinstance(self._obj, dict) else self._obj
 
     def __getattr__(self, name):
+        # If the wrapped object is a dict, try to access as a key first
+        if isinstance(self._obj, dict) and name in self._obj:
+            return self._obj[name]
+        # Otherwise try normal attribute access
         return getattr(self._obj, name)
 
 
@@ -1057,6 +1061,56 @@ class TestGatewayService:
             await gateway_service.update_gateway(test_db, 1, gateway_update)
 
         assert mock_gateway.url == url
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_visibility_propagates_when_init_fails(self, gateway_service, mock_gateway, test_db):
+        """Visibility change must propagate to linked tools/prompts/resources even when gateway init fails."""
+        # Set up linked items with old visibility
+        mock_tool = MagicMock(spec=DbTool)
+        mock_tool.visibility = "public"
+        mock_resource = MagicMock(spec=DbResource)
+        mock_resource.visibility = "public"
+        mock_prompt = MagicMock(spec=DbPrompt)
+        mock_prompt.visibility = "public"
+
+        mock_gateway.visibility = "public"
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.oauth_config = None
+        mock_gateway.auth_query_params = None
+        mock_gateway.slug = "test_gateway"
+        mock_gateway.tools = [mock_tool]
+        mock_gateway.resources = [mock_resource]
+        mock_gateway.prompts = [mock_prompt]
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_query.all.return_value = []
+        test_db.query = Mock(return_value=mock_query)
+
+        # Gateway is unreachable
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("Connection failed"))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        gateway_update = GatewayUpdate(visibility="team")
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        # Gateway visibility updated
+        assert mock_gateway.visibility == "team"
+        # Linked items must also be updated even though init failed
+        assert mock_tool.visibility == "team", "Tool visibility not propagated when gateway init failed"
+        assert mock_resource.visibility == "team", "Resource visibility not propagated when gateway init failed"
+        assert mock_prompt.visibility == "team", "Prompt visibility not propagated when gateway init failed"
+        # Visibility changes must be persisted
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -3800,24 +3854,28 @@ class TestHandleGatewayFailure:
 
 
 # ---------------------------------------------------------------------------
-# _prepare_gateway_for_read tests (deprecated but still exercised)
+# convert_gateway_to_read tests
 # ---------------------------------------------------------------------------
 
 
-class TestPrepareGatewayForRead:
-    def test_prepare_gateway_encodes_dict_auth(self, gateway_service, mock_gateway):
+class TestConvertGatewayToRead:
+    def test_encodes_dict_auth_without_mutating_orm(self, gateway_service, mock_gateway):
         mock_gateway.auth_value = {"Authorization": "Bearer token"}
         mock_gateway.tags = []
-        result = gateway_service._prepare_gateway_for_read(mock_gateway)
-        # Auth value should be encoded as string now
+        result = gateway_service.convert_gateway_to_read(mock_gateway)
+        # Auth value should be encoded as string in the result
         assert isinstance(result.auth_value, str)
+        # ORM object must NOT be mutated (core invariant of convert_gateway_to_read)
+        assert isinstance(mock_gateway.auth_value, dict)
 
-    def test_prepare_gateway_converts_string_tags(self, gateway_service, mock_gateway):
+    def test_converts_string_tags_without_mutating_orm(self, gateway_service, mock_gateway):
         mock_gateway.tags = ["tag1", "tag2"]
         mock_gateway.auth_value = None
-        result = gateway_service._prepare_gateway_for_read(mock_gateway)
-        # Tags should be converted from List[str] to List[Dict]
+        result = gateway_service.convert_gateway_to_read(mock_gateway)
+        # Tags should be converted from List[str] to List[Dict] in the result
         assert isinstance(result.tags[0], dict)
+        # ORM object must NOT be mutated
+        assert isinstance(mock_gateway.tags[0], str)
 
 
 # ---------------------------------------------------------------------------
@@ -5625,8 +5683,7 @@ class TestUpdateGatewayAdvanced:
         monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [])))
 
         result = await gateway_service.update_gateway(db, mock_gateway.id, update_data)
-        # auth_value gets encoded by _prepare_gateway_for_read; verify it's a non-empty encoded string
-        assert isinstance(mock_gateway.auth_value, str) and len(mock_gateway.auth_value) > 0
+        assert isinstance(mock_gateway.auth_value, dict) and len(mock_gateway.auth_value) > 0
 
     @pytest.mark.asyncio
     async def test_update_stale_tools_cleaned_up(self, gateway_service, mock_gateway, monkeypatch):

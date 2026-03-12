@@ -19,6 +19,7 @@ underlying data.
 
 # Standard
 import asyncio
+import base64
 import binascii
 from collections import defaultdict
 import csv
@@ -48,6 +49,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 import httpx
+import jwt
 import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
@@ -78,7 +80,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_any_permission, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_any_permission, require_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -136,7 +138,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
-from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
+from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
@@ -153,7 +155,7 @@ from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
-from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.validate_signature import sign_data
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
@@ -696,16 +698,18 @@ def _get_user_team_roles(db: Session, user_email: str) -> Dict[str, str]:
     return get_user_team_roles(db, user_email)
 
 
-def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", failed_count: int) -> None:
+def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", failed_count: int, rendered_count: int) -> None:
     """Adjust pagination metadata to account for DB-to-Pydantic conversion failures.
 
     When items on the current page fail to convert, the "Showing X of Y" display
     would otherwise count items that aren't actually displayed. This adjusts
     total_items and recomputes derived fields (total_pages, has_next, has_prev).
+    Also sets page_items to the actual number of successfully rendered items.
 
     Args:
         pagination: The PaginationMeta object to adjust (modified in-place).
         failed_count: Number of items that failed conversion on the current page.
+        rendered_count: Number of items successfully converted and rendered on the current page.
     """
     if failed_count > 0:
         pagination.total_items = max(0, pagination.total_items - failed_count)
@@ -714,6 +718,8 @@ def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", fai
         # so the page number must match the displayed data.
         pagination.has_next = pagination.page < pagination.total_pages
         pagination.has_prev = pagination.page > 1
+    # Always set page_items to reflect actual rendered count (even if failed_count == 0)
+    pagination.page_items = rendered_count
 
 
 def _get_span_entity_performance(
@@ -1080,16 +1086,20 @@ def _normalize_origin_parts(scheme: str, netloc: str) -> tuple[str, str, int]:
 def _request_origin_matches(request: Request) -> bool:
     """Return ``True`` when Origin/Referer matches this request origin.
 
+    The function first performs an exact same-origin comparison using the
+    request's forwarded headers (``X-Forwarded-Proto`` / ``X-Forwarded-Host``).
+    When that fails — common behind layered reverse proxies where forwarded
+    headers reflect internal hops rather than the external scheme — it falls
+    back to checking whether the candidate origin is explicitly listed in
+    ``settings.allowed_origins``.  Wildcard entries (``*``, ``null``, ``""``)
+    are excluded from the fallback to preserve fail-closed behavior.
+
     Args:
         request: Incoming request carrying Origin/Referer and host headers.
 
     Returns:
-        ``True`` when candidate origin exactly matches request origin; otherwise ``False``.
-
-    Note:
-        When the service is deployed behind a reverse proxy, this check relies on
-        ``X-Forwarded-Proto`` / ``X-Forwarded-Host`` values emitted by that proxy.
-        The deployment boundary must sanitize and overwrite forwarded headers.
+        ``True`` when candidate origin matches either the request origin or an
+        entry in ``settings.allowed_origins``; otherwise ``False``.
     """
     origin = request.headers.get("origin")
     referer = request.headers.get("referer")
@@ -1117,7 +1127,29 @@ def _request_origin_matches(request: Request) -> bool:
 
     candidate_parts = _normalize_origin_parts(parsed_candidate.scheme, parsed_candidate.netloc)
     request_parts = _normalize_origin_parts(request_scheme, request_netloc)
-    return candidate_parts == request_parts
+    if candidate_parts == request_parts:
+        return True
+
+    # Fallback: accept origins explicitly listed in settings.allowed_origins.
+    # Handles reverse-proxy deployments where forwarded headers may not
+    # accurately reflect the external scheme/host.
+    for allowed in settings.allowed_origins:
+        # Normalize each allowed origin to avoid config surprises such as
+        # ["https://a.com "] or [" null "], which could otherwise be
+        # mis-parsed or skipped.
+        allowed_normalized = str(allowed).strip()
+        if not allowed_normalized or allowed_normalized == "*" or allowed_normalized.casefold() == "null":
+            continue
+        try:
+            allowed_parsed = urllib.parse.urlparse(allowed_normalized if "://" in allowed_normalized else f"https://{allowed_normalized}")
+            if not allowed_parsed.scheme or not allowed_parsed.netloc:
+                continue
+            if candidate_parts == _normalize_origin_parts(allowed_parsed.scheme, allowed_parsed.netloc):
+                return True
+        except Exception:  # nosec B112 - malformed allowed_origins entry should not crash
+            continue
+
+    return False
 
 
 def _set_admin_csrf_cookie(request: Request, response: Response) -> str:
@@ -2359,7 +2391,7 @@ async def admin_servers_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(servers_pydantic))
     data = jsonable_encoder(servers_pydantic)
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
@@ -3138,6 +3170,9 @@ async def admin_ui(
     Returns:
         Any: Rendered HTML template for the admin dashboard.
 
+    Raises:
+        HTTPException: 403 if a non-admin user supplies a team_id they do not belong to.
+
     Examples:
         >>> callable(admin_ui)
         True
@@ -3201,22 +3236,34 @@ async def admin_ui(
             user_teams = []
 
     # --------------------------------------------------------------------------------
-    # Validate team_id if provided (only when email-based teams are enabled)
-    # If invalid, we currently *ignore* it and fall back to default behavior.
-    # Optionally you can raise HTTPException(403) if you prefer strict rejection.
+    # Validate team_id if provided (only when email-based teams are enabled).
+    # Platform admins with unrestricted tokens (is_admin AND token_teams is None)
+    # bypass the membership check. Team-scoped admin tokens can still view any
+    # team for governance. Non-admins get their team filter reset when they
+    # supply a team_id they do not belong to.
     # --------------------------------------------------------------------------------
     selected_team_id = team_id
     user_email = get_user_email(user)
+    is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    admin_viewing_non_member_team = False
+
     if team_id and getattr(settings, "email_auth_enabled", False):
-        # If team list failed to load for some reason, be conservative and drop selection
-        if not user_teams:
-            LOGGER.warning("team_id requested but user_teams not available; ignoring team filter")
-            selected_team_id = None
-        else:
+        _token_teams = user.get("token_teams") if isinstance(user, dict) else getattr(user, "token_teams", None)
+        if not (is_admin_user and _token_teams is None):
+            if not user_teams:
+                LOGGER.warning("team_id requested but user_teams not available; rejecting (team_id=%s)", team_id)
+                raise HTTPException(status_code=403, detail="Unable to verify team membership")
+
             valid_team_ids = {t["id"] for t in user_teams if t.get("id")}
             if str(team_id) not in valid_team_ids:
-                LOGGER.warning("Requested team_id is not in user's teams; ignoring team filter (team_id=%s)", team_id)
-                selected_team_id = None
+                if not is_admin_user:
+                    LOGGER.warning("Non-admin requested team_id not in their teams; ignoring team filter (team_id=%s)", team_id)
+                    selected_team_id = None
+                else:
+                    # Admin selected a team they don't belong to; show banner and default content to All Teams
+                    LOGGER.info("Admin viewing non-member team for governance (team_id=%s)", team_id)
+                    admin_viewing_non_member_team = True
+                    selected_team_id = None
 
     # --------------------------------------------------------------------------------
     # Helper: attempt to call a listing function with team_id if it supports it.
@@ -3565,6 +3612,7 @@ async def admin_ui(
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "allow_public_visibility": settings.allow_public_visibility,
             "selected_team_id": selected_team_id,
+            "admin_viewing_non_member_team": admin_viewing_non_member_team,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "ui_hidden_sections": ui_visibility_config["hidden_sections"],
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
@@ -3685,6 +3733,7 @@ async def admin_login_page(request: Request) -> Response:
 
     This endpoint serves the login form for email-based authentication.
     If email auth is disabled, redirects to the main admin page.
+    If user is already authenticated, redirects to the dashboard.
 
     Args:
         request (Request): FastAPI request object.
@@ -3718,6 +3767,19 @@ async def admin_login_page(request: Request) -> Response:
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     root_path = settings.app_root_path
+
+    # Check if user is already authenticated via JWT cookie
+    jwt_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+    if jwt_token:
+        try:
+            # Verify the token is valid
+            payload = await verify_jwt_token_cached(jwt_token, request)
+            if payload:
+                # User is authenticated, redirect to dashboard
+                return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        except (HTTPException, jwt.PyJWTError):
+            # Token is invalid or expired, continue to show login page
+            pass
 
     # Only show secure cookie warning if there's a login error AND problematic config
     secure_cookie_warning = None
@@ -4071,13 +4133,15 @@ async def _admin_logout(request: Request) -> Response:
     """
     Handle admin logout by clearing authentication cookies.
 
-    Supports both GET and POST methods:
-    - POST: User-initiated logout from the UI (redirects to login page)
-    - GET: OIDC front-channel logout from identity provider (returns 200 OK)
+    Supports three logout scenarios:
+    - POST: User-initiated logout from the UI (redirects to login page or Keycloak logout)
+    - GET with browser headers: Browser navigation to /admin/logout (redirects to login page)
+    - GET without browser headers: OIDC front-channel logout callback from IdP (returns 200 OK)
 
-    For OIDC front-channel logout, Microsoft Entra ID sends GET requests to notify
-    the application that the user has logged out from the IdP. The application
-    should clear the session and return HTTP 200.
+    For OIDC front-channel logout (per OpenID Connect Front-Channel Logout 1.0 spec),
+    identity providers like Microsoft Entra ID send GET requests to notify the application
+    that the user has logged out from the IdP. The application should clear the session
+    and return HTTP 200.
 
     Args:
         request (Request): FastAPI request object.
@@ -4219,10 +4283,27 @@ async def _admin_logout(request: Request) -> Response:
     LOGGER.info(f"Admin user logging out (method: {request.method})")
     root_path = _resolve_root_path(request)
 
-    # For GET requests (OIDC front-channel logout), return 200 OK per OIDC spec.
+    # For GET requests, distinguish between browser navigation and OIDC front-channel logout
     if request.method == "GET":
-        response = Response(content="Logged out", status_code=200)
+        # Check if request is from a browser (Accept: text/html, HX-Request header, or admin referer)
+        # Detection must match auth_middleware.py and rbac.py patterns to ensure consistent behavior
+        # Browser navigation should redirect to login, OIDC callbacks should return 200 OK
+        accept_header = request.headers.get("accept", "")
+        is_htmx = request.headers.get("hx-request") == "true"
+        referer = request.headers.get("referer", "")
+        is_browser_request = "text/html" in accept_header or is_htmx or "/admin" in referer
+
+        if is_browser_request:
+            # Browser navigation - redirect to login (cookies cleared below)
+            response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+        else:
+            # OIDC front-channel logout from IdP - return 200 OK per OIDC spec
+            # Reference: OpenID Connect Front-Channel Logout 1.0
+            # https://openid.net/specs/openid-connect-frontchannel-1_0.html
+            # The RP must clear the session and return HTTP 200 to acknowledge logout
+            response = Response(content="Logged out", status_code=200)
     else:
+        # POST requests (user-initiated) - redirect to login (cookies cleared below)
         response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
 
         auth_provider = await _extract_auth_provider_from_jwt_cookie()
@@ -4704,7 +4785,8 @@ async def admin_get_all_team_ids(
 
     # Check admin
     if current_user.is_admin:
-        team_ids = await team_service.get_all_team_ids(include_inactive=include_inactive, visibility_filter=visibility, include_personal=True, search_query=q)
+        # Admin sees all non-personal teams plus their own personal team (single query)
+        team_ids = await team_service.get_all_team_ids(include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=q, personal_owner_email=user_email)
     else:
         # For non-admins, get user's teams + public teams logic?
         # get_user_teams gets all teams user is in.
@@ -4775,7 +4857,10 @@ async def admin_search_teams(
     # The CALLER (admin.py) distinguishes.
 
     if current_user.is_admin:
-        result = await team_service.list_teams(page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=True, search_query=search_query)
+        # Admin sees all non-personal teams plus their own personal team (single query)
+        result = await team_service.list_teams(
+            page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=search_query, personal_owner_email=user_email
+        )
         # Result is dict {data, pagination...} (since page provided)
         teams = result["data"]
     else:
@@ -4876,9 +4961,9 @@ async def admin_teams_partial_html(
     pending_requests = team_service.get_pending_join_requests_batch(user_email, list(public_team_ids))
 
     if current_user.is_admin and not relationship:
-        # Admin sees all teams when no relationship filter
+        # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
         paginated_result = await team_service.list_teams(
-            page=page, per_page=per_page, include_inactive=include_inactive, visibility_filter=visibility, base_url=base_url, include_personal=True, search_query=q
+            page=page, per_page=per_page, include_inactive=include_inactive, visibility_filter=visibility, base_url=base_url, include_personal=False, search_query=q, personal_owner_email=user_email
         )
         data = paginated_result["data"]
         pagination = paginated_result["pagination"]
@@ -5081,7 +5166,8 @@ async def admin_list_teams(
             if q:
                 base_url += f"?q={urllib.parse.quote(q, safe='')}"
 
-            paginated_result = await team_service.list_teams(page=page, per_page=per_page, base_url=base_url, include_personal=True, search_query=q)
+            # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
+            paginated_result = await team_service.list_teams(page=page, per_page=per_page, base_url=base_url, include_personal=False, search_query=q, personal_owner_email=user_email)
             data = paginated_result["data"]
             pagination = paginated_result["pagination"]
             links = paginated_result["links"]
@@ -5153,6 +5239,10 @@ async def admin_create_team(
         slug = form.get("slug") or None
         description = form.get("description") or None
         visibility = form.get("visibility", "private")
+        max_members_val = form.get("max_members")
+        max_members: Optional[int] = None
+        if max_members_val and str(max_members_val).strip().isdigit():
+            max_members = int(str(max_members_val).strip()) or None
 
         if not name:
             response = HTMLResponse(
@@ -5167,13 +5257,15 @@ async def admin_create_team(
 
         team_service = TeamManagementService(db)
 
-        team_data = TeamCreateRequest(name=name, slug=slug, description=description, visibility=visibility)
+        team_data = TeamCreateRequest(name=name, slug=slug, description=description, visibility=visibility, max_members=max_members)
 
         # Extract user email from user dict
         user_email = get_user_email(user)
 
         is_admin = isinstance(user, dict) and user.get("is_admin")
-        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, skip_limits=bool(is_admin))
+        await team_service.create_team(
+            name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, max_members=team_data.max_members, skip_limits=bool(is_admin)
+        )
 
         response = HTMLResponse(content="", status_code=201)
         return response
@@ -5540,6 +5632,10 @@ async def admin_get_team_edit(
         if not team:
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
+        # Personal teams cannot be updated (service rejects all personal team updates)
+        if team.is_personal:
+            return HTMLResponse(content='<div class="text-red-500">Personal teams cannot be edited</div>', status_code=403)
+
         safe_team_name = html.escape(team.name, quote=True)
         safe_description = html.escape(team.description or "")
         edit_form = rf"""
@@ -5571,6 +5667,12 @@ async def admin_get_team_edit(
                         <option value="private" {"selected" if team.visibility == "private" else ""}>Private</option>
                         <option value="public" {"selected" if team.visibility == "public" else ""}>Public</option>
                     </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Maximum Members</label>
+                    <input type="number" name="max_members" min="1" max="1000" value="{team.max_members if team.max_members else ''}"
+                           class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty to keep current value</p>
                 </div>
                 <div class="flex justify-end space-x-3">
                     <button type="button" onclick="hideTeamEditModal()"
@@ -5624,10 +5726,14 @@ async def admin_update_team(
         name_val = form.get("name")
         desc_val = form.get("description")
         vis_val = form.get("visibility", "private")
+        max_members_val = form.get("max_members")
         # Trim before presence check for consistent error messages
         name = name_val.strip() if isinstance(name_val, str) else None
         description = desc_val.strip() if isinstance(desc_val, str) and desc_val.strip() != "" else None
         visibility = vis_val if isinstance(vis_val, str) else "private"
+        max_members: Optional[int] = None
+        if max_members_val and str(max_members_val).strip().isdigit():
+            max_members = int(str(max_members_val).strip()) or None
 
         if not name:
             is_htmx = request.headers.get("HX-Request") == "true"
@@ -5679,7 +5785,18 @@ async def admin_update_team(
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
-        await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, updated_by=user_email)
+        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members, updated_by=user_email)
+
+        if not updated:
+            is_htmx = request.headers.get("HX-Request") == "true"
+            error_html = '<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">Team cannot be updated</div>'
+            if is_htmx:
+                response = HTMLResponse(content=error_html, status_code=400)
+                response.headers["HX-Retarget"] = "#edit-team-error"
+                response.headers["HX-Reswap"] = "innerHTML"
+                return response
+            error_msg = urllib.parse.quote("Team cannot be updated")
+            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
         # Check if this is an HTMX request
         is_htmx = request.headers.get("HX-Request") == "true"
@@ -5740,7 +5857,10 @@ async def admin_delete_team(
 
         # Delete team (get user email from JWT payload)
         user_email = get_user_email(user)
-        await team_service.delete_team(team_id, deleted_by=user_email)
+        deleted = await team_service.delete_team(team_id, deleted_by=user_email)
+
+        if not deleted:
+            return HTMLResponse(content='<div class="text-red-500">Team cannot be deleted</div>', status_code=400)
 
         # Return success message with script to refresh teams list
         safe_team_name = html.escape(team_name)
@@ -6560,8 +6680,8 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
 
     is_current_user = user_obj.email == current_user_email
     is_last_admin = bool(user_obj.is_admin and user_obj.is_active and admin_count == 1)
+    is_locked = user_obj.is_account_locked()
     locked_until = getattr(user_obj, "locked_until", None)
-    is_locked = bool(locked_until and locked_until > utc_now())
     failed_attempts = int(getattr(user_obj, "failed_login_attempts", 0) or 0)
     lock_until_text = locked_until.strftime("%Y-%m-%d %H:%M") if locked_until else "N/A"
 
@@ -6792,9 +6912,9 @@ async def admin_users_partial_html(
                     "auth_provider": user_obj.auth_provider,
                     "created_at": user_obj.created_at,
                     "password_change_required": user_obj.password_change_required,
+                    "is_locked": user_obj.is_account_locked(),
                     "failed_login_attempts": int(getattr(user_obj, "failed_login_attempts", 0) or 0),
                     "locked_until": getattr(user_obj, "locked_until", None),
-                    "is_locked": bool(getattr(user_obj, "locked_until", None) and getattr(user_obj, "locked_until", None) > utc_now()),
                     "is_current_user": is_current_user,
                     "is_last_admin": is_last_admin,
                 }
@@ -7933,7 +8053,7 @@ async def admin_tools_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert tool {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(tools_pydantic))
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
@@ -8507,7 +8627,7 @@ async def admin_prompts_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert prompt {getattr(p, 'id', 'unknown')} ({getattr(p, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(prompts_pydantic))
 
     data = jsonable_encoder(prompts_pydantic)
 
@@ -8712,7 +8832,7 @@ async def admin_gateways_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert gateway {getattr(g, 'id', 'unknown')} ({getattr(g, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(gateways_pydantic))
     data = jsonable_encoder(gateways_pydantic)
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
@@ -9292,7 +9412,7 @@ async def admin_resources_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert resource {getattr(r, 'id', 'unknown')} ({getattr(r, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(resources_pydantic))
 
     data = jsonable_encoder(resources_pydantic)
 
@@ -10174,7 +10294,7 @@ async def admin_a2a_partial_html(
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert a2a agent {getattr(a, 'id', 'unknown')} ({getattr(a, 'name', 'unknown')}): {e}")
-    _adjust_pagination_for_conversion_failures(pagination, failed_count)
+    _adjust_pagination_for_conversion_failures(pagination, failed_count, len(a2a_agents_pydantic))
     data = jsonable_encoder(a2a_agents_pydantic)
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
@@ -10464,7 +10584,7 @@ async def admin_unified_search(
         if not can_search_users:
             selected_entity_types = [entity_type for entity_type in selected_entity_types if entity_type != "users"]
             if users_explicitly_requested and not selected_entity_types:
-                raise HTTPException(status_code=403, detail="Insufficient permissions. Required: admin.user_management")
+                raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
 
     if not selected_entity_types:
         raise HTTPException(status_code=400, detail="No valid entity_types requested")
@@ -10699,6 +10819,53 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         raise e  # Re-raise for now, or return a 500 JSONResponse if preferred for API consistency
 
 
+def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
+    """Parse auth fields from a form and return a serialized auth object, or None.
+
+    Args:
+        form: Multipart form data containing auth_type and credential fields.
+
+    Returns:
+        A dict with auth_type and encrypted auth_value, or None if no valid auth provided.
+    """
+    auth_headers_json = form.get("auth_headers") or ""
+    auth_headers: list[dict[str, Any]] = []
+    if auth_headers_json:
+        try:
+            auth_headers = orjson.loads(auth_headers_json)
+        except (orjson.JSONDecodeError, ValueError):
+            auth_headers = []
+
+    auth_type = form.get("auth_type", "")
+    auth_obj: Optional[dict[str, Any]] = None
+    if auth_type:
+        if auth_type == "basic":
+            username = form.get("auth_username", "")
+            password = form.get("auth_password", "")
+            if username and password:
+                creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
+                auth_value = encode_auth({"Authorization": f"Basic {creds}"})
+                auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+        elif auth_type == "bearer":
+            token = form.get("auth_token", "")
+            if token:
+                auth_value = encode_auth({"Authorization": f"Bearer {token}"})
+                auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+        elif auth_type == "authheaders":
+            if auth_headers:
+                header_dict = {h.get("key"): h.get("value", "") for h in auth_headers if h.get("key")}
+                if header_dict:
+                    auth_value = encode_auth(header_dict)
+                    auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+            else:
+                header_key = form.get("auth_header_key", "")
+                header_value = form.get("auth_header_value", "")
+                if header_key and header_value:
+                    auth_value = encode_auth({header_key: header_value})
+                    auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+    return auth_obj
+
+
 @admin_router.post("/tools/")
 @admin_router.post("/tools")
 @require_permission("tools.create", allow_admin_bypass=False)
@@ -10770,11 +10937,34 @@ async def admin_add_tool(
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
+    # Build auth object from form fields
+    auth_obj = _build_auth_obj_from_form(form)
+
     # Safely parse potential JSON strings from form
     headers_raw = form.get("headers")
     input_schema_raw = form.get("input_schema")
     output_schema_raw = form.get("output_schema")
     annotations_raw = form.get("annotations")
+
+    # Parse JSON fields with validation
+    try:
+        headers = orjson.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}")
+        input_schema = orjson.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}")
+        output_schema = orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None
+        annotations = orjson.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}")
+        query_mapping = orjson.loads(form.get("query_mapping") or "{}")
+        header_mapping = orjson.loads(form.get("header_mapping") or "{}")
+        allowlist = orjson.loads(form.get("allowlist") or "[]")
+        plugin_chain_pre = orjson.loads(form.get("plugin_chain_pre") or "[]")
+        plugin_chain_post = orjson.loads(form.get("plugin_chain_post") or "[]")
+    except orjson.JSONDecodeError as ex:
+        LOGGER.error(f"Invalid JSON in form field: {str(ex)}")
+        return ORJSONResponse(
+            content={"message": f"Invalid JSON in form field: {str(ex)}", "success": False},
+            status_code=422,
+        )
+
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
         "displayName": form.get("displayName"),
@@ -10782,28 +10972,23 @@ async def admin_add_tool(
         "description": form.get("description"),
         "request_type": request_type,
         "integration_type": integration_type,
-        "headers": orjson.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}"),
-        "input_schema": orjson.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}"),
-        "output_schema": (orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None),
-        "annotations": orjson.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}"),
+        "headers": headers,
+        "input_schema": input_schema,
+        "output_schema": output_schema,
+        "annotations": annotations,
         "jsonpath_filter": form.get("jsonpath_filter", ""),
-        "auth_type": form.get("auth_type", ""),
-        "auth_username": form.get("auth_username", ""),
-        "auth_password": form.get("auth_password", ""),
-        "auth_token": form.get("auth_token", ""),
-        "auth_header_key": form.get("auth_header_key", ""),
-        "auth_header_value": form.get("auth_header_value", ""),
+        "auth": auth_obj,
         "tags": tags,
         "visibility": visibility,
         "team_id": team_id,
         "owner_email": user_email,
-        "query_mapping": orjson.loads(form.get("query_mapping") or "{}"),
-        "header_mapping": orjson.loads(form.get("header_mapping") or "{}"),
+        "query_mapping": query_mapping,
+        "header_mapping": header_mapping,
         "timeout_ms": int(form.get("timeout_ms")) if form.get("timeout_ms") and form.get("timeout_ms").strip() else None,
         "expose_passthrough": form.get("expose_passthrough", "true"),
-        "allowlist": orjson.loads(form.get("allowlist") or "[]"),
-        "plugin_chain_pre": orjson.loads(form.get("plugin_chain_pre") or "[]"),
-        "plugin_chain_post": orjson.loads(form.get("plugin_chain_post") or "[]"),
+        "allowlist": allowlist,
+        "plugin_chain_pre": plugin_chain_pre,
+        "plugin_chain_post": plugin_chain_post,
     }
     LOGGER.debug(f"Tool data built: {tool_data}")
     try:
@@ -10902,6 +11087,10 @@ async def admin_edit_tool(
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
+    # Build auth object from form fields
+    auth_obj = _build_auth_obj_from_form(form)
+
     visibility = str(form.get("visibility", "private"))
     _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
@@ -10917,23 +11106,31 @@ async def admin_edit_tool(
     output_schema_raw2 = form.get("output_schema")
     annotations_raw2 = form.get("annotations")
 
+    # Parse JSON fields with validation
+    try:
+        headers = orjson.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}")
+        input_schema = orjson.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}")
+        output_schema = orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None
+        annotations = orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}")
+    except orjson.JSONDecodeError as ex:
+        LOGGER.error(f"Invalid JSON in form field: {str(ex)}")
+        return ORJSONResponse(
+            content={"message": f"Invalid JSON in form field: {str(ex)}", "success": False},
+            status_code=422,
+        )
+
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
         "displayName": form.get("displayName"),
         "custom_name": form.get("customName"),
         "url": form.get("url"),
         "description": form.get("description"),
-        "headers": orjson.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}"),
-        "input_schema": orjson.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}"),
-        "output_schema": (orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None),
-        "annotations": orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}"),
+        "headers": headers,
+        "input_schema": input_schema,
+        "output_schema": output_schema,
+        "annotations": annotations,
         "jsonpath_filter": form.get("jsonpathFilter", ""),
-        "auth_type": form.get("auth_type", ""),
-        "auth_username": form.get("auth_username", ""),
-        "auth_password": form.get("auth_password", ""),
-        "auth_token": form.get("auth_token", ""),
-        "auth_header_key": form.get("auth_header_key", ""),
-        "auth_header_value": form.get("auth_header_value", ""),
+        "auth": auth_obj,
         "tags": tags,
         "visibility": visibility,
         "owner_email": user_email,
@@ -11166,7 +11363,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         # Parse auth_headers JSON if present
-        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers_json = form.get("auth_headers") or ""
         auth_headers: list[dict[str, Any]] = []
         if auth_headers_json:
             try:
@@ -11430,7 +11627,7 @@ async def admin_edit_gateway(
         _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
 
         # Parse auth_headers JSON if present
-        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers_json = form.get("auth_headers") or ""
         auth_headers = []
         if auth_headers_json:
             try:
@@ -12105,11 +12302,8 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
-        args_json = "[]"
-        args_value = form.get("arguments")
-        if isinstance(args_value, str) and args_value.strip():
-            args_json = args_value
-        arguments = orjson.loads(args_json)
+        # Validate arguments JSON using prompt service
+        arguments: List[Dict[str, Any]] = prompt_service.validate_arguments_json(args_value=form.get("arguments"), context="new prompt")
         prompt = PromptCreate(
             name=str(form["name"]),
             display_name=str(form.get("display_name") or form["name"]),
@@ -12152,6 +12346,9 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
         if isinstance(ex, PromptNameConflictError):
             LOGGER.error(f"PromptNameConflictError in admin_add_prompt: {ex}")
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
+        if isinstance(ex, PromptArgumentsJSONError):
+            LOGGER.error(f"PromptArgumentsJSONError in admin_add_prompt: {ex}")
+            return ORJSONResponse(status_code=422, content={"message": str(ex), "success": False, "field": ex.field_name})
         LOGGER.error(f"Error in admin_add_prompt: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -12203,12 +12400,13 @@ async def admin_edit_prompt(
     team_id = await team_service.verify_team_for_user(user_email, team_id)
     LOGGER.info(f"Verifying team for user {user_email} with team_id {team_id}")
 
-    args_json: str = str(form.get("arguments")) or "[]"
-    arguments = orjson.loads(args_json)
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     try:
+        # Validate arguments JSON using prompt service; preserve existing when field absent
+        args_value = form.get("arguments")
+        arguments = prompt_service.validate_arguments_json(args_value, context="prompt update") if args_value is not None else None
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         prompt = PromptUpdate(
             custom_name=str(form.get("customName") or form.get("name")),
@@ -12249,6 +12447,9 @@ async def admin_edit_prompt(
         if isinstance(ex, PromptNameConflictError):
             LOGGER.error(f"PromptNameConflictError in admin_edit_prompt: {ex}")
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
+        if isinstance(ex, PromptArgumentsJSONError):
+            LOGGER.error(f"PromptArgumentsJSONError in admin_edit_prompt: {ex}")
+            return ORJSONResponse(status_code=422, content={"message": str(ex), "success": False, "field": ex.field_name})
         LOGGER.error(f"Error in admin_edit_prompt: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -12829,9 +13030,15 @@ async def admin_test_gateway(
     LOGGER.debug(f"User {get_user_email(user)} testing server at {validated_base_url}.")
     headers = request.headers or {}
 
-    # Attempt to find a registered gateway matching this URL and team
+    # Attempt to find a registered gateway matching this URL and team.
+    # Query the raw DB object directly so we get the unmasked auth_value
+    # (get_first_gateway_by_url returns a masked GatewayRead where
+    # auth_value="*****", which cannot be decoded).
     try:
-        gateway = gateway_service.get_first_gateway_by_url(db, validated_base_url, team_id=team_id)
+        query = select(DbGateway).where(DbGateway.url == validated_base_url, DbGateway.enabled)
+        if team_id:
+            query = query.where(DbGateway.team_id == team_id)
+        gateway = db.execute(query).scalars().first()
     except Exception:
         gateway = None
 
@@ -12877,8 +13084,11 @@ async def admin_test_gateway(
                 except Exception as e:
                     LOGGER.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
                     response_body = {"error": f"OAuth token retrieval failed for gateway: {str(e)}"}
-        else:
-            headers: dict = decode_auth(gateway.auth_value if gateway else None)
+        elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
+            if isinstance(gateway.auth_value, dict):
+                headers.update(gateway.auth_value)
+            elif isinstance(gateway.auth_value, str):
+                headers.update(decode_auth(gateway.auth_value))
 
         # Prepare request based on content type
         content_type = getattr(request, "content_type", "application/json")
@@ -13661,7 +13871,7 @@ async def admin_get_log_file(
             file_path = file_path.resolve()
             log_dir_resolved = log_dir.resolve()
             if not str(file_path).startswith(str(log_dir_resolved)):
-                raise HTTPException(403, "Access denied")
+                raise HTTPException(403, _ACCESS_DENIED_MSG)
         except Exception:
             raise HTTPException(400, "Invalid file path")
 
@@ -14356,7 +14566,7 @@ async def admin_add_a2a_agent(
         tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         # Parse auth_headers JSON if present
-        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers_json = form.get("auth_headers") or ""
         auth_headers: list[dict[str, Any]] = []
         if auth_headers_json:
             try:
@@ -14600,7 +14810,7 @@ async def admin_edit_a2a_agent(
                 config = {}
 
         # Parse auth_headers JSON if present
-        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers_json = form.get("auth_headers") or ""
         auth_headers = []
         if auth_headers_json:
             try:
@@ -14856,6 +15066,13 @@ async def admin_test_a2a_agent(
 ) -> JSONResponse:
     """Test A2A agent via admin UI.
 
+    Invokes the specified A2A agent with a test message and returns the result.
+    Returns appropriate HTTP status codes based on the failure type:
+    - 404: Agent not found or user lacks access
+    - 502: Agent disabled, unreachable, or returning errors
+    - 422: Invalid test parameters
+    - 500: Unexpected system errors
+
     Args:
         agent_id: Agent ID
         request: FastAPI request object containing optional 'query' field
@@ -14863,10 +15080,24 @@ async def admin_test_a2a_agent(
         user: Authenticated user
 
     Returns:
-        JSON response with test results
+        JSON response with test results. On success, includes:
+        - success: True
+        - result: Agent response
+        - agent_name: Name of the tested agent
+        - test_timestamp: Unix timestamp of the test
+
+        On failure, includes:
+        - success: False
+        - error: Error message (sanitized to prevent credential leakage)
+        - error_type: Type of error (not_found, agent_error, validation_error, internal_error)
+        - agent_id: ID of the agent that was tested
 
     Raises:
-        HTTPException: If A2A features are disabled
+        HTTPException: If A2A features are disabled (403)
+
+    Note:
+        Error messages are sanitized by a2a_service to prevent credential leakage.
+        Returns 404 (not 403) for access denied to avoid leaking agent existence.
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         return ORJSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
@@ -14916,9 +15147,30 @@ async def admin_test_a2a_agent(
 
         return ORJSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
 
+    except A2AAgentNotFoundError as e:
+        LOGGER.warning(f"A2A agent not found or access denied for {agent_id}: {e}")
+        return ORJSONResponse(
+            content={"success": False, "error": str(e), "error_type": "not_found", "agent_id": agent_id},
+            status_code=404,
+        )
+    except A2AAgentError as e:
+        LOGGER.error(f"A2A agent error for {agent_id}: {e}")
+        return ORJSONResponse(
+            content={"success": False, "error": str(e), "error_type": "agent_error", "agent_id": agent_id},
+            status_code=502,
+        )
+    except ValidationError as e:
+        LOGGER.warning(f"Validation error testing A2A agent {agent_id}: {e}")
+        return ORJSONResponse(
+            content={"success": False, "error": str(e), "error_type": "validation_error", "agent_id": agent_id},
+            status_code=422,
+        )
     except Exception as e:
-        LOGGER.error(f"Error testing A2A agent {agent_id}: {e}")
-        return ORJSONResponse(content={"success": False, "error": str(e), "agent_id": agent_id}, status_code=500)
+        LOGGER.error(f"Unexpected error testing A2A agent {agent_id}: {e}")
+        return ORJSONResponse(
+            content={"success": False, "error": str(e), "error_type": "internal_error", "agent_id": agent_id},
+            status_code=500,
+        )
 
 
 # gRPC Service Management Endpoints

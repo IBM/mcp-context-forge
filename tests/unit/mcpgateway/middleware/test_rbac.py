@@ -299,6 +299,39 @@ async def test_permission_checker_has_permission_passes_token_teams(monkeypatch)
     assert mock_perm_service.check_permission.call_args.kwargs["token_teams"] == []
 
 
+@pytest.mark.asyncio
+async def test_permission_checker_has_permission_forwards_check_any_team(monkeypatch):
+    """has_permission forwards check_any_team=True to PermissionService (db_session path)."""
+    mock_db = MagicMock()
+    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    checker = rbac.PermissionChecker(mock_user)
+    result = await checker.has_permission("tools.execute", check_any_team=True)
+
+    assert result is True
+    assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+
+@pytest.mark.asyncio
+async def test_permission_checker_has_permission_forwards_check_any_team_fresh_db(monkeypatch):
+    """has_permission forwards check_any_team=True to PermissionService (fresh_db_session path)."""
+    mock_user = {"email": "user@example.com"}  # No 'db' key
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    mock_db = MagicMock()
+    with patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+        checker = rbac.PermissionChecker(mock_user)
+        result = await checker.has_permission("tools.execute", check_any_team=True)
+
+    assert result is True
+    assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+
 # ============================================================================
 # Tests for has_hooks_for optimization (Issue #1778)
 # ============================================================================

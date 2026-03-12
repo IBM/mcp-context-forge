@@ -21,6 +21,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import jwt
+import orjson
 from pydantic import BaseModel, SecretStr, ValidationError
 import pytest
 import sqlalchemy as sa
@@ -28,14 +29,20 @@ from starlette.requests import Request
 from starlette.websockets import WebSocketDisconnect
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
+from mcpgateway.config import settings
 import mcpgateway.db as db_mod
+from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING
 from mcpgateway.schemas import (
+    A2AAgentAggregateMetrics,
     GatewayRead,
+    PromptMetrics,
     PromptRead,
+    ResourceMetrics,
     ResourceRead,
+    ServerMetrics,
     ServerRead,
+    ToolMetrics,
     ToolRead,
 )
 
@@ -322,8 +329,6 @@ def test_client(app_with_temp_db):
     # Third-Party
     from fastapi import HTTPException, status
 
-    # First-Party
-
     # Mock security_logger to prevent database access
     mock_sec_logger = MagicMock()
     mock_sec_logger.log_authentication_attempt = MagicMock(return_value=None)
@@ -534,11 +539,12 @@ class TestHealthAndInfrastructure:
             assert response.status_code == 303
             assert response.headers["location"] == f"{settings.app_root_path}/admin/"
         else:
-            # When UI is disabled, should return API info
+            # When UI is disabled, should return API info (no version/admin status)
             assert response.status_code == 200
             data = response.json()
             assert data["name"] == "ContextForge"
-            assert data["ui_enabled"] is False
+            assert "version" not in data
+            assert "admin_api_enabled" not in data
 
     def test_static_files(self, test_client):
         """Test static file serving (when files don't exist)."""
@@ -856,6 +862,7 @@ class TestServerEndpoints:
     @patch("mcpgateway.main.server_service.get_server")
     def test_delete_server_not_found(self, mock_get, test_client, auth_headers):
         """Test deleting a non-existent server returns 404."""
+        # First-Party
         from mcpgateway.services.server_service import ServerNotFoundError
 
         mock_get.side_effect = ServerNotFoundError("Server not found: nonexistent-id")
@@ -1100,6 +1107,7 @@ class TestResourceEndpoints:
     def test_read_resource_endpoint(self, mock_read_resource, test_client, auth_headers):
         """Test reading resource content."""
         # Clear the resource cache to avoid stale/cached values
+        # First-Party
         from mcpgateway import main as mcpgateway_main
 
         mcpgateway_main.resource_cache.clear()
@@ -1175,12 +1183,39 @@ class TestResourceEndpoints:
     @patch("mcpgateway.main.resource_service.subscribe_events")
     def test_subscribe_resource_events(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to resource change events via SSE."""
-        mock_subscribe.return_value = iter(["data: test\n\n"])
-        resource_id = MOCK_RESOURCE_READ["id"]
+
+        async def mock_generator():
+            yield {"type": "resource_updated", "data": {"id": "1", "uri": "file:///test"}}
+
+        mock_subscribe.return_value = mock_generator()
         response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
         mock_subscribe.assert_called_once_with(user_email=None, token_teams=None)
+
+    @patch("mcpgateway.main.resource_service.subscribe_events")
+    def test_subscribe_resource_events_sse_format(self, mock_subscribe, test_client, auth_headers):
+        """Test that SSE endpoint yields properly formatted 'data: {...}\\n\\n' strings, not raw dicts."""
+
+        async def mock_generator():
+            yield {"type": "resource_updated", "data": {"id": "1", "uri": "file:///config/settings.json"}}
+            yield {"type": "resource_deleted", "data": {"id": "2", "uri": "file:///old"}}
+
+        mock_subscribe.return_value = mock_generator()
+        response = test_client.post("/resources/subscribe", headers=auth_headers)
+        assert response.status_code == 200
+
+        # Collect the streamed body
+        body = response.text
+        lines = [line for line in body.split("\n") if line.startswith("data: ")]
+        assert len(lines) == 2
+
+        # Verify each line is valid SSE with JSON payload
+        for line in lines:
+            assert line.startswith("data: ")
+            payload = orjson.loads(line[len("data: ") :])
+            assert "type" in payload
+            assert "data" in payload
 
 
 # ----------------------------------------------------- #
@@ -1675,6 +1710,7 @@ class TestRootEndpoints:
 
     def test_list_roots_endpoint_requires_admin_permission(self, test_client, auth_headers):
         """Root listing should require admin.system_config permission."""
+        # First-Party
         from mcpgateway.main import app
         from mcpgateway.middleware.rbac import get_current_user_with_permissions
 
@@ -1702,6 +1738,7 @@ class TestRootEndpoints:
         ],
     )
     def test_root_management_endpoints_require_admin_permission(self, method, path, payload, auth_headers):
+        # First-Party
         from mcpgateway.main import app
         from mcpgateway.middleware.rbac import get_current_user_with_permissions
 
@@ -1790,7 +1827,7 @@ class TestRPCEndpoints:
     def test_rpc_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
         req = {"jsonrpc": "2.0", "id": "test-id-deny", "method": "tools/call", "params": {"name": "test_tool", "arguments": {"param": "value"}}}
 
-        async def _has_permission(_self, permission):
+        async def _has_permission(_self, permission, **kwargs):
             return permission != "tools.execute"
 
         with patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission):
@@ -1799,12 +1836,12 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["error"]["code"] == -32003
-        assert "tools.execute" in body["error"]["message"]
+        assert "Access denied" in body["error"]["message"]
 
     def test_rpc_legacy_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
         req = {"jsonrpc": "2.0", "id": "test-id-legacy-deny", "method": "legacy_tool", "params": {"param": "value"}}
 
-        async def _has_permission(_self, permission):
+        async def _has_permission(_self, permission, **kwargs):
             return permission != "tools.execute"
 
         with patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission):
@@ -1813,7 +1850,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["error"]["code"] == -32003
-        assert "tools.execute" in body["error"]["message"]
+        assert "Access denied" in body["error"]["message"]
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     # @patch("mcpgateway.main.validate_request")
@@ -2080,7 +2117,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["error"]["code"] == -32003
-        assert "admin.system_config" in body["error"]["message"]
+        assert "Access denied" in body["error"]["message"]
 
     @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
     @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
@@ -2677,16 +2714,17 @@ class TestRealtimeEndpoints:
 class TestMetricsEndpoints:
     """Tests for metrics collection, aggregation, and reset functionality."""
 
-    @patch("mcpgateway.main.prompt_service.aggregate_metrics")
-    @patch("mcpgateway.main.server_service.aggregate_metrics")
-    @patch("mcpgateway.main.resource_service.aggregate_metrics")
-    @patch("mcpgateway.main.tool_service.aggregate_metrics")
+    @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.aggregate_metrics", new_callable=AsyncMock)
     def test_get_metrics(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
         """Test retrieving aggregated metrics for all entity types."""
-        mock_tool.return_value = {"total": 5}
-        mock_resource.return_value = {"total": 3}
-        mock_server.return_value = {"total": 2}
-        mock_prompt.return_value = {"total": 1}
+
+        mock_tool.return_value = ToolMetrics(total_executions=5, successful_executions=5, failed_executions=0, failure_rate=0.0)
+        mock_resource.return_value = ResourceMetrics(total_executions=3, successful_executions=3, failed_executions=0, failure_rate=0.0)
+        mock_server.return_value = ServerMetrics(total_executions=2, successful_executions=2, failed_executions=0, failure_rate=0.0)
+        mock_prompt.return_value = PromptMetrics(total_executions=1, successful_executions=1, failed_executions=0, failure_rate=0.0)
 
         response = test_client.get("/metrics", headers=auth_headers)
         assert response.status_code == 200
@@ -2695,22 +2733,107 @@ class TestMetricsEndpoints:
         assert "servers" in data and "prompts" in data
         # A2A agents may or may not be present based on configuration
 
-    @patch("mcpgateway.main.prompt_service.aggregate_metrics")
-    @patch("mcpgateway.main.server_service.aggregate_metrics")
-    @patch("mcpgateway.main.resource_service.aggregate_metrics")
-    @patch("mcpgateway.main.tool_service.aggregate_metrics")
+    @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.aggregate_metrics", new_callable=AsyncMock)
     def test_get_metrics_returns_service_dicts(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
         """Metrics endpoint should return service metric dicts faithfully."""
-        mock_tool.return_value = {"total": 4}
-        mock_resource.return_value = {"total": 3}
-        mock_server.return_value = {"total": 2}
-        mock_prompt.return_value = {"total": 1}
+        mock_tool.return_value = ToolMetrics(total_executions=4, successful_executions=4, failed_executions=0, failure_rate=0.0)
+        mock_resource.return_value = ResourceMetrics(total_executions=3, successful_executions=3, failed_executions=0, failure_rate=0.0)
+        mock_server.return_value = ServerMetrics(total_executions=2, successful_executions=2, failed_executions=0, failure_rate=0.0)
+        mock_prompt.return_value = PromptMetrics(total_executions=1, successful_executions=1, failed_executions=0, failure_rate=0.0)
 
         response = test_client.get("/metrics", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        assert data["tools"] == {"total": 4}
-        assert data["prompts"] == {"total": 1}
+        assert data["tools"]["totalExecutions"] == 4
+        assert data["prompts"]["totalExecutions"] == 1
+
+    @patch("mcpgateway.main.a2a_service", None)
+    @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.aggregate_metrics", new_callable=AsyncMock)
+    def test_get_metrics_omits_a2a_when_disabled(self, mock_tool, mock_resource, mock_server, mock_prompt, test_client, auth_headers):
+        """When A2A is disabled, a2aAgents key should be absent (not null)."""
+        mock_tool.return_value = ToolMetrics(total_executions=1, successful_executions=1, failed_executions=0, failure_rate=0.0)
+        mock_resource.return_value = ResourceMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0)
+        mock_server.return_value = ServerMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0)
+        mock_prompt.return_value = PromptMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0)
+
+        response = test_client.get("/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert "a2aAgents" not in data, "a2aAgents should be absent when A2A is disabled, not null"
+        assert "tools" in data
+        assert "resources" in data
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.aggregate_metrics", new_callable=AsyncMock)
+    def test_get_metrics_with_a2a_agents_camelcase(self, mock_tool, mock_resource, mock_server, mock_prompt, mock_a2a_service, test_client, auth_headers):
+        """Test that A2A agent metrics are returned with consistent camelCase keys."""
+        mock_tool.return_value = ToolMetrics(total_executions=10, successful_executions=9, failed_executions=1, failure_rate=0.1)
+        mock_resource.return_value = ResourceMetrics(total_executions=5, successful_executions=5, failed_executions=0, failure_rate=0.0)
+        mock_server.return_value = ServerMetrics(total_executions=3, successful_executions=3, failed_executions=0, failure_rate=0.0)
+        mock_prompt.return_value = PromptMetrics(total_executions=2, successful_executions=2, failed_executions=0, failure_rate=0.0)
+
+        # Mock A2A service to return A2AAgentAggregateMetrics
+        mock_a2a_metrics = A2AAgentAggregateMetrics(
+            total_agents=5,
+            active_agents=3,
+            total_interactions=100,
+            successful_interactions=90,
+            failed_interactions=10,
+            success_rate=90.0,
+            avg_response_time=1.5,
+            min_response_time=0.5,
+            max_response_time=3.0,
+        )
+        mock_a2a_service.aggregate_metrics = AsyncMock(return_value=mock_a2a_metrics)
+
+        response = test_client.get("/metrics", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify all sections use camelCase
+        assert "tools" in data
+        assert "resources" in data
+        assert "servers" in data
+        assert "prompts" in data
+        assert "a2aAgents" in data, "A2A agents key should be camelCase 'a2aAgents'"
+        assert "a2a_agents" not in data, "A2A agents key should not be snake_case 'a2a_agents'"
+
+        # Verify tools section uses camelCase
+        assert "totalExecutions" in data["tools"]
+        assert "successfulExecutions" in data["tools"]
+        assert "failedExecutions" in data["tools"]
+
+        # Verify A2A agents section uses camelCase (not snake_case)
+        a2a_data = data["a2aAgents"]
+        assert "totalAgents" in a2a_data, "A2A metrics should use camelCase 'totalAgents'"
+        assert "activeAgents" in a2a_data, "A2A metrics should use camelCase 'activeAgents'"
+        assert "totalInteractions" in a2a_data, "A2A metrics should use camelCase 'totalInteractions'"
+        assert "successfulInteractions" in a2a_data, "A2A metrics should use camelCase 'successfulInteractions'"
+        assert "failedInteractions" in a2a_data, "A2A metrics should use camelCase 'failedInteractions'"
+        assert "successRate" in a2a_data, "A2A metrics should use camelCase 'successRate'"
+        assert "avgResponseTime" in a2a_data, "A2A metrics should use camelCase 'avgResponseTime'"
+        assert "minResponseTime" in a2a_data, "A2A metrics should use camelCase 'minResponseTime'"
+        assert "maxResponseTime" in a2a_data, "A2A metrics should use camelCase 'maxResponseTime'"
+
+        # Verify no snake_case keys exist
+        assert "total_agents" not in a2a_data, "A2A metrics should not have snake_case 'total_agents'"
+        assert "active_agents" not in a2a_data, "A2A metrics should not have snake_case 'active_agents'"
+        assert "total_interactions" not in a2a_data, "A2A metrics should not have snake_case 'total_interactions'"
+
+        # Verify values
+        assert a2a_data["totalAgents"] == 5
+        assert a2a_data["activeAgents"] == 3
+        assert a2a_data["totalInteractions"] == 100
+        assert a2a_data["successRate"] == 90.0
 
     #    @patch("mcpgateway.main.a2a_service")
     #    @patch("mcpgateway.main.prompt_service.reset_metrics")
@@ -3021,6 +3144,7 @@ def test_jsonpath_modifier_invalid_expressions(sample_people):
 # ----------------------------------------------------- #
 class TestTransformDataWithMappings:
     def test_transform_data_with_mappings_valid_mapping(self, sample_people):
+        # First-Party
         from mcpgateway.main import transform_data_with_mappings
 
         mapping = {"n": "$.name"}
@@ -3028,6 +3152,7 @@ class TestTransformDataWithMappings:
         assert result == [{"n": "Ada"}, {"n": "Bob"}]
 
     def test_transform_data_with_mappings_invalid_mapping(self, sample_people):
+        # First-Party
         from mcpgateway.main import transform_data_with_mappings
 
         with pytest.raises(HTTPException):
@@ -3041,7 +3166,11 @@ class TestPluginExceptionHandlers:
     """Tests for plugin exception handlers: PluginViolationError and PluginError."""
 
     def test_plugin_violation_exception_handler_with_full_violation(self):
-        """Test plugin_violation_exception_handler with complete violation details."""
+        """Test plugin_violation_exception_handler with complete violation details.
+
+        Updated to verify backward compatibility with new http_status_code and http_headers fields.
+        This test verifies that the code mapping (PROHIBITED_CONTENT -> 422) still works.
+        """
         # Standard
         import asyncio
 
@@ -3061,7 +3190,8 @@ class TestPluginExceptionHandlers:
 
         result = asyncio.run(plugin_violation_exception_handler(None, exc))
 
-        assert result.status_code == 200
+        # Verify code mapping works (PROHIBITED_CONTENT -> 422 in PLUGIN_VIOLATION_CODE_MAPPING)
+        assert result.status_code == PLUGIN_VIOLATION_CODE_MAPPING["PROHIBITED_CONTENT"].code  # Uses mapping
         content = json.loads(result.body.decode())
         assert "error" in content
         assert content["error"]["code"] == -32602
@@ -3094,7 +3224,7 @@ class TestPluginExceptionHandlers:
 
         result = asyncio.run(plugin_violation_exception_handler(None, exc))
 
-        assert result.status_code == 200
+        assert result.status_code == 429
         content = json.loads(result.body.decode())
         assert content["error"]["code"] == -32000
         assert "Too many requests from this client" in content["error"]["message"]
@@ -3138,13 +3268,319 @@ class TestPluginExceptionHandlers:
 
         exc = PluginViolationError(message="Generic plugin violation", violation=None)
 
+    def test_plugin_violation_exception_handler_with_http_status_code(self):
+        """Test that violation HTTP status code is used in response."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Rate limit exceeded",
+            description="Too many requests",
+            code="RATE_LIMIT",
+            http_status_code=429,  # NEW FIELD
+        )
+        exc = PluginViolationError(message="Rate limited", violation=violation)
+
         result = asyncio.run(plugin_violation_exception_handler(None, exc))
 
+        assert result.status_code == 429  # Should use violation's HTTP status
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+        assert "Too many requests" in content["error"]["message"]  # Uses description
+
+    def test_plugin_violation_exception_handler_with_http_headers(self):
+        """Test that violation HTTP headers are included in response."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Rate limit exceeded",
+            description="Too many requests",
+            code="RATE_LIMIT",
+            http_status_code=429,
+            http_headers={"Retry-After": "60", "X-RateLimit-Limit": "100"},  # NEW FIELD
+        )
+        exc = PluginViolationError(message="Rate limited", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 429
+        assert "Retry-After" in result.headers
+        assert result.headers["Retry-After"] == "60"
+        assert result.headers["X-RateLimit-Limit"] == "100"
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_exception_handler_with_code_mapping_fallback(self):
+        """Test that PLUGIN_VIOLATION_CODE_MAPPING is used when no explicit HTTP status."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        # Assumes PLUGIN_VIOLATION_CODE_MAPPING has {"RATE_LIMIT": 429}
+        violation = PluginViolation(
+            reason="Rate limit exceeded",
+            description="Too many requests",
+            code="RATE_LIMIT",
+            # No http_status_code field
+        )
+        exc = PluginViolationError(message="Rate limited", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 429  # Should use mapping
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_exception_handler_defaults_to_200(self):
+        """Test that response defaults to 200 when no HTTP status is provided."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Invalid input",
+            description="Bad data",
+            code="UNKNOWN_CODE",  # Not in mapping
+            # No http_status_code
+        )
+        exc = PluginViolationError(message="Violation", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 200  # JSON-RPC default
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_exception_handler_no_headers_when_none(self):
+        """Test that no headers are added when violation has none."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Error",
+            description="Something failed",
+            code="ERROR",
+            http_status_code=400,
+            # No http_headers
+        )
+        exc = PluginViolationError(message="Failed", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 400
+        # Should not crash when headers is None
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_http_status_takes_precedence_over_mapping(self):
+        """Verify that explicit http_status_code takes precedence over code mapping."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        # PLUGIN_VIOLATION_CODE_MAPPING has "RATE_LIMIT": 429
+        violation = PluginViolation(
+            reason="Rate limit",
+            description="Service unavailable",
+            code="RATE_LIMIT",
+            http_status_code=503,  # Explicit status should win
+        )
+        exc = PluginViolationError(message="Limited", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 503  # Not 429 from mapping
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_with_multiple_rate_limit_headers(self):
+        """Verify all rate limit headers are properly included."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Rate limit",
+            description="Too many requests",
+            code="RATE_LIMIT",
+            http_status_code=429,
+            http_headers={
+                "X-RateLimit-Limit": "60",
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": "1737394800",
+                "Retry-After": "35",
+            },
+        )
+        exc = PluginViolationError(message="Limited", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 429
+        assert result.headers["X-RateLimit-Limit"] == "60"
+        assert result.headers["X-RateLimit-Remaining"] == "0"
+        assert result.headers["X-RateLimit-Reset"] == "1737394800"
+        assert result.headers["Retry-After"] == "35"
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_unknown_code_defaults_to_200(self):
+        """Verify unknown codes not in mapping default to 200."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Unknown error",
+            description="Something unexpected happened",
+            code="UNKNOWN_CODE_NOT_IN_MAPPING",
+            # No explicit http_status_code
+        )
+        exc = PluginViolationError(message="Error", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        assert result.status_code == 200  # Default for JSON-RPC
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+        assert "Something unexpected happened" in content["error"]["message"]  # Uses description
+
+    def test_plugin_violation_invalid_http_status_code_below_range(self):
+        """Test that invalid HTTP status code below 100 defaults to None and uses mapping."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Invalid status",
+            description="Status code below valid range",
+            code="RATE_LIMIT",  # Has mapping to 429
+            http_status_code=99,  # Invalid: below 100
+        )
+        exc = PluginViolationError(message="Invalid status", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        # Should fall back to code mapping (RATE_LIMIT -> 429)
+        assert result.status_code == 429
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_invalid_http_status_code_above_range(self):
+        """Test that invalid HTTP status code above 511 defaults to None and uses mapping."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(reason="Invalid status", description="Status code above valid range", code="RATE_LIMIT", http_status_code=512)  # Has mapping to 429  # Invalid: above 511
+        exc = PluginViolationError(message="Invalid status", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        # Should fall back to code mapping (RATE_LIMIT -> 429)
+        assert result.status_code == 429
+        content = json.loads(result.body.decode())
+        assert content["error"]["code"] == -32602
+
+    def test_plugin_violation_invalid_http_status_code_no_mapping_fallback(self):
+        """Test that invalid HTTP status code with no mapping defaults to 200."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Invalid status",
+            description="Status code invalid, no mapping",
+            code="UNKNOWN_CODE",  # Not in mapping
+            http_status_code=1000,  # Invalid: way above 511
+        )
+        exc = PluginViolationError(message="Invalid status", violation=violation)
+
+        result = asyncio.run(plugin_violation_exception_handler(None, exc))
+
+        # Should default to 200 (no mapping available)
         assert result.status_code == 200
         content = json.loads(result.body.decode())
         assert content["error"]["code"] == -32602
-        assert "A plugin violation occurred" in content["error"]["message"]
-        assert content["error"]["data"] == {}
+
+    def test_plugin_violation_valid_http_status_code_edge_cases(self):
+        """Test that valid edge case HTTP status codes (400, 511) are accepted."""
+        # Standard
+        import asyncio
+
+        # First-Party
+        from mcpgateway.main import plugin_violation_exception_handler
+        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.plugins.framework.models import PluginViolation
+
+        # Test lower boundary (400)
+        violation_400 = PluginViolation(
+            reason="Continue",
+            description="Valid status 400",
+            code="INFO",
+            http_status_code=400,  # Valid: exactly 400
+        )
+        exc_400 = PluginViolationError(message="Status 400", violation=violation_400)
+        result_400 = asyncio.run(plugin_violation_exception_handler(None, exc_400))
+        assert result_400.status_code == 400
+
+        # Test upper boundary (511)
+        violation_511 = PluginViolation(
+            reason="Network error",
+            description="Valid status 511",
+            code="ERROR",
+            http_status_code=511,  # Valid: exactly 511
+        )
+        exc_511 = PluginViolationError(message="Status 511", violation=violation_511)
+        result_511 = asyncio.run(plugin_violation_exception_handler(None, exc_511))
+        assert result_511.status_code == 511
 
     def test_plugin_exception_handler_with_full_error(self):
         """Test plugin_exception_handler with complete error details."""
@@ -3262,7 +3698,8 @@ class TestJsonPathCaching:
 
     def test_jsonpath_caching_works(self):
         """Verify JSONPath parsing is cached."""
-        from mcpgateway.main import jsonpath_modifier, _parse_jsonpath
+        # First-Party
+        from mcpgateway.main import _parse_jsonpath, jsonpath_modifier
 
         _parse_jsonpath.cache_clear()
 
@@ -3277,7 +3714,8 @@ class TestJsonPathCaching:
 
     def test_mappings_parsed_once_per_request(self):
         """Verify mappings are parsed once per request, not per item."""
-        from mcpgateway.main import transform_data_with_mappings, _parse_jsonpath
+        # First-Party
+        from mcpgateway.main import _parse_jsonpath, transform_data_with_mappings
 
         _parse_jsonpath.cache_clear()
 
@@ -3292,7 +3730,8 @@ class TestJsonPathCaching:
 
     def test_different_jsonpath_cached_separately(self):
         """Verify different JSONPath expressions get separate cache entries."""
-        from mcpgateway.main import jsonpath_modifier, _parse_jsonpath
+        # First-Party
+        from mcpgateway.main import _parse_jsonpath, jsonpath_modifier
 
         _parse_jsonpath.cache_clear()
 
@@ -3314,18 +3753,21 @@ class TestNormalizeTokenTeams:
 
     def test_normalize_token_teams_none(self):
         """Test that None input returns empty list."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         assert _normalize_token_teams(None) == []
 
     def test_normalize_token_teams_empty_list(self):
         """Test that empty list input returns empty list."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         assert _normalize_token_teams([]) == []
 
     def test_normalize_token_teams_string_ids(self):
         """Test that string team IDs are passed through unchanged."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         result = _normalize_token_teams(["team_a", "team_b", "team_c"])
@@ -3333,6 +3775,7 @@ class TestNormalizeTokenTeams:
 
     def test_normalize_token_teams_dict_format(self):
         """Test that dict format with id key extracts the ID."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         result = _normalize_token_teams([{"id": "team_a", "name": "Team A"}, {"id": "team_b", "name": "Team B"}])
@@ -3340,6 +3783,7 @@ class TestNormalizeTokenTeams:
 
     def test_normalize_token_teams_mixed_format(self):
         """Test that mixed string and dict formats are handled correctly."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         result = _normalize_token_teams([{"id": "t1", "name": "Team 1"}, "t2", {"id": "t3"}])
@@ -3347,6 +3791,7 @@ class TestNormalizeTokenTeams:
 
     def test_normalize_token_teams_dict_without_id(self):
         """Test that dicts without id key are skipped."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         result = _normalize_token_teams([{"name": "No ID Team"}, {"id": "valid_team"}])
@@ -3354,6 +3799,7 @@ class TestNormalizeTokenTeams:
 
     def test_normalize_token_teams_dict_with_empty_id(self):
         """Test that dicts with empty id value are skipped."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         result = _normalize_token_teams([{"id": "", "name": "Empty ID"}, {"id": "valid"}])
@@ -3361,6 +3807,7 @@ class TestNormalizeTokenTeams:
 
     def test_normalize_token_teams_preserves_order(self):
         """Test that team order is preserved."""
+        # First-Party
         from mcpgateway.main import _normalize_token_teams
 
         result = _normalize_token_teams(["z_team", "a_team", "m_team"])
@@ -3372,6 +3819,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_with_valid_cached_payload(self):
         """Test extraction of teams from cached JWT payload."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3382,6 +3830,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_with_dict_teams_payload(self):
         """Test extraction and normalization of dict format teams."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3392,6 +3841,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_no_cached_payload_returns_empty_list(self):
         """Test that missing cached payload returns [] (public-only, secure default)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3402,6 +3852,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_no_teams_in_payload_returns_empty_list(self):
         """Test that payload without teams key returns [] (public-only, secure default)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3412,6 +3863,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_empty_teams_returns_empty_list(self):
         """Test that payload with empty teams returns empty list (not None)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3422,6 +3874,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_null_teams_non_admin_returns_empty_list(self):
         """Test that payload with teams: null (non-admin) returns [] (public-only)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3432,6 +3885,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_null_teams_admin_returns_none(self):
         """Test that payload with teams: null + is_admin=true returns None (admin bypass)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3442,6 +3896,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_invalid_tuple_format_returns_empty_list(self):
         """Test that non-tuple cached payload returns [] (public-only, secure default)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3452,6 +3907,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_short_tuple_returns_empty_list(self):
         """Test that tuple with wrong length returns [] (public-only, secure default)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3462,6 +3918,7 @@ class TestGetTokenTeamsFromRequest:
 
     def test_get_token_teams_none_payload_in_tuple_returns_empty_list(self):
         """Test that None payload in tuple returns [] (public-only, secure default)."""
+        # First-Party
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
@@ -3476,6 +3933,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_dict_user(self):
         """Test with dict user containing email and is_admin."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3491,6 +3949,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_dict_user_sub_field(self):
         """Test that sub field is used if email is not present."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3505,6 +3964,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_object_user(self):
         """Test with user object having email and is_admin attributes."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3522,6 +3982,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_nested_is_admin(self):
         """Test that nested user.is_admin is extracted from token payload."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3536,6 +3997,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_empty_teams_disables_admin(self):
         """Test that empty teams array disables admin bypass even when is_admin is true."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3551,6 +4013,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_string_user(self):
         """Test with string user (fallback to str conversion)."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3565,6 +4028,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_none_user(self):
         """Test with None user."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3578,6 +4042,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_admin_not_in_dict(self):
         """Test that is_admin defaults to False if not present."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3591,6 +4056,7 @@ class TestGetRpcFilterContext:
 
     def test_get_rpc_filter_context_no_jwt_returns_empty_teams(self):
         """Test that missing JWT payload returns [] for teams (public-only, secure default)."""
+        # First-Party
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()

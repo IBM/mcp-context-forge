@@ -2127,7 +2127,7 @@ Disallow: /
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
 
     # Character validation patterns
-    validation_name_pattern: str = r"^[a-zA-Z0-9_.\-\s]+$"  # Allow spaces for names
+    validation_name_pattern: str = r"^[a-zA-Z0-9_.\- ]+$"  # Allow spaces for names (literal space, not \s to reject control chars)
     validation_identifier_pattern: str = r"^[a-zA-Z0-9_\-\.]+$"  # No spaces for IDs
     validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
     validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
@@ -2387,7 +2387,7 @@ Disallow: /
         summary = self.model_dump(exclude={"database_url", "memcached_url"})
         logger.info(f"Application settings summary: {summary}")
 
-    ENABLE_METRICS: bool = Field(True, description="Enable Prometheus metrics instrumentation")
+    ENABLE_METRICS: bool = Field(False, description="Enable Prometheus metrics endpoint at /metrics/prometheus (requires authentication)")
     METRICS_EXCLUDED_HANDLERS: str = Field("", description="Comma-separated regex patterns for paths to exclude from metrics")
     METRICS_NAMESPACE: str = Field("default", description="Prometheus metrics namespace")
     METRICS_SUBSYSTEM: str = Field("", description="Prometheus metrics subsystem")

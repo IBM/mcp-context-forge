@@ -946,6 +946,34 @@ class TestTeamManagementService:
             mock_paginate.assert_called()
 
     @pytest.mark.asyncio
+    async def test_list_teams_personal_owner_email(self):
+        """personal_owner_email includes admin's own personal team but excludes other users'."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session as OrmSession
+
+        from mcpgateway.db import Base
+
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(engine)
+        with OrmSession(engine) as db:
+            db.add_all(
+                [
+                    EmailTeam(id="id-admin-personal", name="admin-personal", slug="admin-personal", created_by="admin@example.com", is_personal=True),
+                    EmailTeam(id="id-other-personal", name="other-personal", slug="other-personal", created_by="other@example.com", is_personal=True),
+                    EmailTeam(id="id-shared", name="shared-team", slug="shared-team", created_by="admin@example.com", is_personal=False),
+                ]
+            )
+            db.commit()
+
+            svc = TeamManagementService(db)
+            teams, _ = await svc.list_teams(include_personal=False, personal_owner_email="admin@example.com")
+            names = {t.name for t in teams}
+
+        assert "admin-personal" in names
+        assert "shared-team" in names
+        assert "other-personal" not in names
+
+    @pytest.mark.asyncio
     async def test_list_teams_with_search_query_page(self, service, mock_db):
         """Test list_teams applies search_query and page-based ordering."""
         mock_page = {"data": [], "pagination": {}, "links": {}}
@@ -980,6 +1008,33 @@ class TestTeamManagementService:
 
         assert result == ["team-1", "team-2"]
         mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_all_team_ids_personal_owner_email(self):
+        """personal_owner_email includes admin's own personal team ID but excludes other users'."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session as OrmSession
+
+        from mcpgateway.db import Base
+
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(engine)
+        with OrmSession(engine) as db:
+            db.add_all(
+                [
+                    EmailTeam(id="id-admin-personal", name="admin-personal", slug="admin-personal", created_by="admin@example.com", is_personal=True),
+                    EmailTeam(id="id-other-personal", name="other-personal", slug="other-personal", created_by="other@example.com", is_personal=True),
+                    EmailTeam(id="id-shared", name="shared-team", slug="shared-team", created_by="admin@example.com", is_personal=False),
+                ]
+            )
+            db.commit()
+
+            svc = TeamManagementService(db)
+            team_ids = await svc.get_all_team_ids(include_personal=False, personal_owner_email="admin@example.com")
+
+        assert "id-admin-personal" in team_ids
+        assert "id-shared" in team_ids
+        assert "id-other-personal" not in team_ids
 
     @pytest.mark.asyncio
     async def test_get_teams_count_with_filters(self, service, mock_db):

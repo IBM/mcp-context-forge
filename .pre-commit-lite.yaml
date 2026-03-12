@@ -309,8 +309,8 @@ repos:
         types: [xml]
 
       - id: fix-byte-order-marker
-        name: ✅ Fix Byte Order Marker
-        description: Removes UTF-8 byte-order marker.
+        name: ✅ Check Byte Order Marker
+        description: Forbids files which have a UTF-8 byte-order marker.
         types: [text]
 
   - repo: https://github.com/adrienverge/yamllint
@@ -369,7 +369,7 @@ repos:
         description: Verifies test files in tests/ directories start with `test_`.
         language: python
         files: (^|/)tests/.+\.py$
-        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|loadtest|jmeter|client|populate)/.*\.py$
+        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|loadtest|jmeter|client|populate)/.*\.py$|^tests/e2e/mcp_test_helpers\.py$
         args: [--pytest-test-first] # `test_.*\.py`
 
   # - repo: https://github.com/pycqa/flake8
