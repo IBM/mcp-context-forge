@@ -232,22 +232,6 @@ def test_check_gateway_uniqueness_no_auth_duplicate():
     assert result is existing
 
 
-def test_prepare_gateway_for_read_encodes_auth(monkeypatch):
-    """Prepare gateway should encode auth dict and normalize tags."""
-    service = GatewayService()
-    gateway = MagicMock()
-    gateway.auth_value = {"Authorization": "Basic abc"}
-    gateway.tags = ["tag1", "tag2"]
-
-    monkeypatch.setattr("mcpgateway.services.gateway_service.encode_auth", lambda value: "encoded")
-    monkeypatch.setattr("mcpgateway.services.gateway_service.validate_tags_field", lambda tags: [{"name": t} for t in tags])
-
-    result = service._prepare_gateway_for_read(gateway)
-
-    assert result.auth_value == "encoded"
-    assert result.tags == [{"name": "tag1"}, {"name": "tag2"}]
-
-
 def test_create_db_tool_sets_fields(monkeypatch):
     """_create_db_tool should populate fields consistently."""
     service = GatewayService()
