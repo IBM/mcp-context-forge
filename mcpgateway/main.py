@@ -381,7 +381,7 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid trusted MCP auth context: {exc}") from exc
 
-    request.state._mcp_internal_auth_context = auth_context
+    setattr(request.state, "_mcp_internal_auth_context", auth_context)
 
     if "teams" in auth_context and (auth_context["teams"] is None or isinstance(auth_context["teams"], list)):
         request.state.token_teams = auth_context["teams"]
