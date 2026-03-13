@@ -50,6 +50,7 @@ import mcp.types as mcp_types
 import orjson
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
@@ -609,7 +610,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         # Store in local memory
         async with self._mcp_session_mapping_lock:
             self._mcp_session_mapping[mapping_key] = pool_key
-            logger.debug(f"Session affinity pre-registered (local): {mcp_session_id[:8]}... → {url}, user={user_identity}")
+            logger.debug(f"Session affinity pre-registered (local): {mcp_session_id[:8]}... → {url}, user={SecurityValidator.sanitize_log_message(user_identity)}")
 
         # Store in Redis for multi-worker support AND register ownership atomically
         # Registering ownership HERE (during mapping) instead of in acquire() prevents
@@ -837,12 +838,16 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 logger.warning(f"Failed to create session for {sanitize_url_for_logging(url)}: {e}")
             raise
 
-    async def release(self, pooled: PooledSession) -> None:
+    async def release(self, pooled: PooledSession, *, discard: bool = False) -> None:
         """
-        Return a session to the pool for reuse.
+        Return a session to the pool for reuse, or discard it.
 
         Args:
             pooled: The session to release.
+            discard: If True, close the session instead of returning it to the
+                pool.  Used when the caller detected a transport error
+                (e.g. ``ClosedResourceError``) to prevent recycling a
+                broken session.
         """
         if pooled.is_closed:
             logger.warning("Attempted to release already-closed session")
@@ -866,6 +871,15 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # eviction sees recent activity.
             self._pool_last_used[pool_key] = time.time()
             self._active.get(pool_key, set()).discard(pooled)
+
+        # Discard broken sessions instead of recycling them
+        if discard:
+            logger.debug(f"Discarding broken session for {sanitize_url_for_logging(pooled.url)}")
+            await self._close_session(pooled)
+            if pool_key in self._semaphores:
+                self._semaphores[pool_key].release()
+            self._evictions += 1
+            return
 
         # Check if session should be returned to pool
         if self._closed or pooled.age_seconds > self._session_ttl:
@@ -1127,7 +1141,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             if self._message_handler_factory:
                 try:
                     message_handler = self._message_handler_factory(url, gateway_id)
-                    logger.debug(f"Created message handler for session {sanitize_url_for_logging(url)} (gateway={gateway_id})")
+                    logger.debug(f"Created message handler for session {sanitize_url_for_logging(url)} (gateway={SecurityValidator.sanitize_log_message(gateway_id)})")
                 except Exception as e:
                     logger.warning(f"Failed to create message handler for {sanitize_url_for_logging(url)}: {e}")
 
@@ -1562,6 +1576,11 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                 )
 
+                # Treat non-2xx HTTP responses as errors
+                if not response.is_success:
+                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
+                    return {"error": {"code": -32603, "message": f"Internal request failed with HTTP {response.status_code}"}}
+
                 # Parse response
                 response_data = response.json()
 
@@ -1858,10 +1877,16 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             PooledSession ready for use.
         """
         pooled = await self.acquire(url, headers, transport_type, httpx_client_factory, timeout, user_identity, gateway_id)
+        failed = False
         try:
             yield pooled
+        except BaseException:
+            # Session encountered an error (e.g. ClosedResourceError) — evict it
+            # instead of returning a broken session to the pool.
+            failed = True
+            raise
         finally:
-            await self.release(pooled)
+            await self.release(pooled, discard=failed)
 
 
 # Global pool instance - initialized by FastAPI lifespan

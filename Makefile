@@ -104,6 +104,12 @@ XARGS_FLAGS := $(shell [ "$$(uname)" = "Darwin" ] && echo "" || echo "-r")
 .PHONY: help
 help:
 	@grep "^# help\:" Makefile | grep -v grep | sed 's/\# help\: //' | sed 's/\# help\://'
+	@if grep -q "^# deprecated:" Makefile; then \
+		printf '\n\033[33m⚠️  DEPRECATED TARGETS (still work, will be removed in stated version)\033[0m\n'; \
+		grep "^# deprecated:" Makefile | sed 's/^# deprecated: //' | while IFS= read -r line; do \
+			printf '  \033[2;33m%s\033[0m\n' "$$line"; \
+		done; \
+	fi
 
 # -----------------------------------------------------------------------------
 # 🔧 SYSTEM-LEVEL DEPENDENCIES
@@ -120,6 +126,18 @@ os-deps: $(OS_DEPS_SCRIPT)
 # -----------------------------------------------------------------------------
 # 🔧 HELPER SCRIPTS
 # -----------------------------------------------------------------------------
+
+# Boolean normalizer: returns non-empty only for explicit truth values.
+# Usage: $(if $(call is_true,$(VAR)),yes-branch,no-branch)
+is_true = $(filter 1 true yes,$(1))
+
+# Deprecation warning for aliased targets.
+# Usage: $(call deprecated_target,old-name,replacement invocation,removal-version)
+define deprecated_target
+	@printf '\n  ⚠️  WARNING: "%s" is deprecated. Use "%s" instead.\n' '$(1)' '$(2)'
+	@printf '     This alias will be removed in v%s.\n\n' '$(3)'
+endef
+
 # Helper to ensure a Python package is installed in venv (uses uv to avoid pip corruption)
 define ensure_pip_package
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
@@ -223,12 +241,13 @@ check-env-dev:
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
 # help: dev                  - Run fast-reload dev server (uvicorn)
 # help: dev-echo             - Run dev server with SQL query logging (N+1 debugging)
+# help: dev-remote           - Run dev server with remote debugging (debugpy on port 5678)
 # help: stop                 - Stop all mcpgateway server processes
 # help: stop-dev             - Stop uvicorn dev server (port 8000)
 # help: stop-serve           - Stop gunicorn production server (port 4444)
 # help: run                  - Execute helper script ./run.sh
 
-.PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev stop stop-dev stop-serve run \
+.PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev dev-remote stop stop-dev stop-serve run \
         certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check
 
 ## --- Primary servers ---------------------------------------------------------
@@ -255,6 +274,15 @@ dev-echo:                        ## Run dev server with SQL query logging enable
 	@echo "🔍 Starting dev server with SQL query logging (N+1 detection)"
 	@echo "   Docs: docs/docs/development/db-performance.md"
 	@SQLALCHEMY_ECHO=true TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+
+dev-remote: DEBUG_IP = 127.0.0.1
+dev-remote: DEBUG_WAIT = --wait-for-client
+dev-remote:                      ## Run dev server with remote debugging (debugpy on port 5678, remote: make dev-remote DEBUG_IP=0.0.0.0 DEBUG_WAIT=)
+	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/python -m debugpy \
+		--listen $(DEBUG_IP):5678 \
+		$(DEBUG_WAIT) \
+		$(VENV_DIR)/bin/uvicorn mcpgateway.main:app \
+		--host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 stop:                            ## Stop all mcpgateway server processes
 	@echo "Stopping all mcpgateway processes..."
@@ -620,6 +648,15 @@ clean:
 
 .PHONY: smoketest test-mcp-cli test-mcp-rbac test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
+# Dirs/files always excluded from standard pytest runs
+PYTEST_IGNORE := tests/fuzz tests/manual test.py \
+    tests/e2e/test_entra_id_integration.py \
+    tests/e2e/test_mcp_cli_protocol.py \
+    tests/e2e/test_mcp_rbac_transport.py
+
+# Expand to --ignore=<path> flags for pytest CLI
+PYTEST_IGNORE_FLAGS := $(foreach p,$(PYTEST_IGNORE),--ignore=$(p))
+
 ## --- Automated checks --------------------------------------------------------
 smoketest:
 	@echo "🚀 Running smoketest..."
@@ -655,9 +692,7 @@ test:
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
 		uv run --active pytest -n auto --maxfail=0 -v --durations=5 \
-			--ignore=tests/fuzz --ignore=tests/e2e/test_entra_id_integration.py \
-			--ignore=tests/e2e/test_mcp_cli_protocol.py \
-			--ignore=tests/e2e/test_mcp_rbac_transport.py"
+			$(PYTEST_IGNORE_FLAGS)"
 
 test-verbose:
 	@echo "🧪 Running tests (verbose, sequential)..."
@@ -667,7 +702,7 @@ test-verbose:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest --maxfail=0 -v --tb=short --instafail --ignore=tests/fuzz"
+		uv run --active pytest --maxfail=0 -v --tb=short --instafail $(PYTEST_IGNORE_FLAGS)"
 
 test-profile:
 	@echo "🧪 Running tests with profiling (showing slowest tests)..."
@@ -677,7 +712,7 @@ test-profile:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v --ignore=tests/fuzz"
+		uv run --active pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v $(PYTEST_IGNORE_FLAGS)"
 
 .PHONY: coverage-pytest
 coverage-pytest: install-dev
@@ -694,8 +729,7 @@ coverage-pytest: install-dev
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
 			--dist loadgroup -n auto -rA --cov-append --capture=fd -v \
 			--durations=120 --cov-report=term --cov=mcpgateway \
-			--ignore=tests/fuzz --ignore=tests/manual --ignore=test.py tests/ \
-			--ignore=tests/e2e/test_entra_id_integration.py || true"
+			$(PYTEST_IGNORE_FLAGS) tests/ || true"
 
 coverage: coverage-pytest install-dev
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
@@ -740,7 +774,7 @@ test-docs:
 			--md-report --md-report-output=$(DOCS_DIR)/docs/test/unittest.md \
 			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
 			--durations=120 --cov-report=term --cov=mcpgateway \
-			--ignore=tests/fuzz --ignore=tests/manual --ignore=test.py tests/ || true"
+			$(PYTEST_IGNORE_FLAGS) tests/ || true"
 	@printf '\n## Coverage report\n\n' >> $(DOCS_DIR)/docs/test/unittest.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		coverage report --format=markdown -m --no-skip-covered \
@@ -1246,6 +1280,8 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
 	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
 	@echo ""
+	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
+	@echo ""
 	@echo "   📝 Auto-registered:"
 	@echo "      • MCP gateway: fast_test (from fast_test_server)"
 	@echo "      • A2A agent:   a2a-echo-agent"
@@ -1256,7 +1292,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 .PHONY: testing-down
 testing-down:                              ## Stop testing stack
 	@echo "🧪 Stopping testing stack..."
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector down --remove-orphans
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile dast down --remove-orphans
 	@echo "✅ Testing stack stopped."
 
 .PHONY: testing-status
@@ -1270,6 +1306,24 @@ testing-status:                            ## Show status of testing services
 .PHONY: testing-logs
 testing-logs:                              ## Show testing stack logs
 	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector logs -f --tail=100
+
+.PHONY: testing-zap-up
+testing-zap-up:                            ## Start OWASP ZAP DAST daemon (requires testing stack)
+	@echo "🔒 Starting OWASP ZAP DAST daemon..."
+	$(COMPOSE_CMD_MONITOR) --profile dast up -d
+	@echo ""
+	@echo "✅ ZAP DAST daemon started!"
+	@echo ""
+	@echo "   OWASP ZAP API:    http://localhost:8090"
+	@echo "   OWASP ZAP API UI: http://localhost:8090/UI"
+	@echo ""
+	@echo "   Run security tests: make test-zap"
+
+.PHONY: testing-zap-down
+testing-zap-down:                          ## Stop OWASP ZAP DAST daemon
+	@echo "🔒 Stopping ZAP DAST daemon..."
+	$(COMPOSE_CMD_MONITOR) --profile dast down --remove-orphans
+	@echo "✅ ZAP stopped."
 
 # =============================================================================
 # help: 🔍 MCP INSPECTOR (Interactive MCP Client)
@@ -1501,6 +1555,7 @@ resilience-jmeter: jmeter-check            ## Run JMeter baseline test against s
 # help: benchmark-clean        - Stop and remove all benchmark data (volumes)
 # help: benchmark-status       - Show status of benchmark services
 # help: benchmark-logs         - Show benchmark stack logs
+# help: bench-compare          - Run performance comparisons for Rust plugins
 # help:
 # help: Environment variables:
 # help:   BENCHMARK_SERVER_COUNT  - Number of MCP servers to spawn (default: 10)
@@ -1549,6 +1604,9 @@ benchmark-status:                          ## Show status of benchmark services
 .PHONY: benchmark-logs
 benchmark-logs:                            ## Show benchmark stack logs
 	$(COMPOSE_CMD_MONITOR) --profile benchmark logs -f --tail=100
+
+bench-compare:                             ## Run performance comparisons for Rust plugins
+	@$(MAKE) -C plugins_rust bench-compare
 
 # =============================================================================
 # 🖼️  EMBEDDED / EMBEDDED / IFRAME STACK - iframe mode with benchmark servers
@@ -2173,6 +2231,67 @@ load-test-agentgateway-mcp-server-time:    ## Load test external MCP server (loc
 			--run-time=60s \
 			--class-picker'
 
+# --- MCP Streamable HTTP Protocol Load Test ---
+# help: load-test-mcp-protocol       - MCP-only protocol test (150 users, 2min) — measures pure MCP RPS
+# help: load-test-mcp-protocol-ui    - MCP-only protocol test with Locust Web UI (class picker)
+# help: load-test-mcp-protocol-heavy - MCP-only protocol heavy test (500 users, 5min)
+
+MCP_PROTOCOL_LOCUSTFILE ?= tests/loadtest/locustfile_mcp_protocol.py
+MCP_PROTOCOL_HOST ?= http://localhost:4444
+
+load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
+	@echo "🔬 Running MCP STREAMABLE HTTP protocol load test..."
+	@echo "   Host: $(MCP_PROTOCOL_HOST)"
+	@echo "   Users: 150, Spawn: 30/s, Duration: 2 minutes"
+	@echo "   📝 Tests ONLY MCP protocol path: /servers/{id}/mcp"
+	@echo "   💡 Requires: gateway + at least one MCP server connected"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_PROTOCOL_HOST) \
+			--users=150 \
+			--spawn-rate=30 \
+			--run-time=120s \
+			--headless \
+			--html=reports/loadtest_mcp_protocol.html \
+			--csv=reports/loadtest_mcp_protocol \
+			--processes=-1'
+
+load-test-mcp-protocol-ui:                 ## MCP Streamable HTTP protocol test with Web UI
+	@echo "🔬 Starting MCP STREAMABLE HTTP protocol load test Web UI..."
+	@echo "   🌐 Open http://localhost:8089 in your browser"
+	@echo "   🎯 Host: $(MCP_PROTOCOL_HOST)"
+	@echo "   👥 Defaults: 150 users, 30 spawn/s, 2 min"
+	@echo "   🎛️  Class picker enabled - select which MCP user types to run"
+	@echo "   📝 Tests ONLY MCP protocol path: /servers/{id}/mcp"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_PROTOCOL_HOST) \
+			--users=150 \
+			--spawn-rate=30 \
+			--run-time=120s \
+			--class-picker'
+
+load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy test (500 users, 5min)
+	@echo "🔬 Running MCP STREAMABLE HTTP protocol HEAVY load test..."
+	@echo "   Host: $(MCP_PROTOCOL_HOST)"
+	@echo "   Users: 500, Spawn: 50/s, Duration: 5 minutes"
+	@echo "   ⚠️  This will generate sustained MCP protocol load"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_PROTOCOL_HOST) \
+			--users=500 \
+			--spawn-rate=50 \
+			--run-time=300s \
+			--headless \
+			--html=reports/loadtest_mcp_protocol_heavy.html \
+			--csv=reports/loadtest_mcp_protocol_heavy \
+			--processes=-1'
+
 # =============================================================================
 # 📊 JMETER PERFORMANCE TESTING
 # =============================================================================
@@ -2708,9 +2827,9 @@ images:
 # help:   make lint-fix myfile.py      - Auto-fix formatting issues
 # help:   make lint-changed            - Lint only git-changed files
 # help: lint                 - Run the full linting suite (see targets below)
-# help: black                - Reformat code with black
+# help: black                - Reformat code with black (CHECK=1 for dry-run)
 # help: autoflake            - Remove unused imports / variables with autoflake
-# help: isort                - Organise & sort imports with isort
+# help: isort                - Organise & sort imports with isort (CHECK=1 for dry-run)
 # help: flake8               - PEP-8 style & logical errors
 # help: pylint               - Pylint static analysis
 # help: markdownlint         - Lint Markdown files with markdownlint (requires markdownlint-cli)
@@ -2719,7 +2838,7 @@ images:
 # help: pydocstyle           - Docstring style checker
 # help: pycodestyle          - Simple PEP-8 checker
 # help: pre-commit           - Run all configured pre-commit hooks
-# help: ruff                 - Ruff linter + (eventually) formatter
+# help: ruff                 - Ruff linter (RUFF_MODE=check|fix|format, RUFF_SELECT=rules)
 # help: ty                   - Ty type checker from astral
 # help: pyright              - Static type-checking with Pyright
 # help: radon                - Code complexity & maintainability metrics
@@ -2785,7 +2904,7 @@ LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle \
 FILE_AWARE_LINTERS := isort black flake8 pylint mypy bandit pydocstyle \
 	pycodestyle ruff pyright vulture unimport markdownlint
 
-.PHONY: lint $(LINTERS) black autoflake lint-py lint-yaml lint-json lint-md lint-strict \
+.PHONY: lint $(LINTERS) black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
 	lint-count-errors lint-report lint-changed lint-staged lint-commit \
 	lint-pre-commit lint-pre-push lint-parallel lint-cache-clear lint-stats \
 	lint-complexity lint-watch lint-watch-quick \
@@ -2861,9 +2980,9 @@ lint-quick:
 		actual_target="$(TARGET)"; \
 	fi; \
 	echo "⚡ Quick lint of $$actual_target (ruff + black + isort)..."; \
-	$(MAKE) --no-print-directory ruff-check TARGET="$$actual_target"; \
-	$(MAKE) --no-print-directory black-check TARGET="$$actual_target"; \
-	$(MAKE) --no-print-directory isort-check TARGET="$$actual_target"
+	$(MAKE) --no-print-directory ruff RUFF_MODE=check TARGET="$$actual_target"; \
+	$(MAKE) --no-print-directory black CHECK=1 TARGET="$$actual_target"; \
+	$(MAKE) --no-print-directory isort CHECK=1 TARGET="$$actual_target"
 
 # Fix formatting issues
 .PHONY: lint-fix
@@ -2884,7 +3003,7 @@ lint-fix:
 	echo "🔧 Fixing lint issues in $$actual_target..."; \
 	$(MAKE) --no-print-directory black TARGET="$$actual_target"; \
 	$(MAKE) --no-print-directory isort TARGET="$$actual_target"; \
-	$(MAKE) --no-print-directory ruff-fix TARGET="$$actual_target"
+	$(MAKE) --no-print-directory ruff RUFF_MODE=fix TARGET="$$actual_target"
 
 # Smart linting based on file extension
 .PHONY: lint-smart
@@ -3223,29 +3342,39 @@ autoflake:                          ## 🧹  Strip unused imports / vars
 	@$(VENV_DIR)/bin/autoflake --in-place --remove-all-unused-imports \
 		--remove-unused-variables -r $(TARGET)
 
-black:                              ## 🎨  Reformat code with black
-	@echo "🎨  black $(TARGET)..." && $(VENV_DIR)/bin/black -l 200 $(TARGET)
+CHECK ?=
 
-# Black check mode (separate target)
+black: uv                           ## 🎨  Reformat code with black (CHECK=1 for dry-run)
+	@if [ -n "$(call is_true,$(CHECK))" ]; then \
+		echo "🎨  black --check $(TARGET)..." && uv run black -l 200 --check --diff $(TARGET); \
+	else \
+		echo "🎨  black $(TARGET)..." && uv run black -l 200 $(TARGET); \
+	fi
+
+isort: uv                           ## 🔀  Sort imports (CHECK=1 for dry-run)
+	@if [ -n "$(call is_true,$(CHECK))" ]; then \
+		echo "🔀  isort --check $(TARGET)..." && uv run isort --check-only --diff $(TARGET); \
+	else \
+		echo "🔀  isort $(TARGET)..." && uv run isort $(TARGET); \
+	fi
+
+# --- Deprecated aliases (use CHECK=1 instead) ---
+# deprecated: black-check       - Use "make black CHECK=1" instead (v1.2.0)
+# deprecated: isort-check       - Use "make isort CHECK=1" instead (v1.2.0)
 black-check:
-	@echo "🎨  black --check $(TARGET)..." && $(VENV_DIR)/bin/black -l 200 --check --diff $(TARGET)
+	$(call deprecated_target,black-check,make black CHECK=1,1.2.0)
+	@$(MAKE) --no-print-directory black CHECK=1 TARGET="$(TARGET)"
 
-isort:                              ## 🔀  Sort imports
-	@echo "🔀  isort $(TARGET)..." && $(VENV_DIR)/bin/isort $(TARGET)
-
-# Isort check mode (separate target)
 isort-check:
-	@echo "🔀  isort --check $(TARGET)..." && $(VENV_DIR)/bin/isort --check-only --diff $(TARGET)
+	$(call deprecated_target,isort-check,make isort CHECK=1,1.2.0)
+	@$(MAKE) --no-print-directory isort CHECK=1 TARGET="$(TARGET)"
 
 flake8:                             ## 🐍  flake8 checks
 	@echo "🐍 flake8 $(TARGET)..." && $(VENV_DIR)/bin/flake8 $(TARGET)
 
 pylint: uv                             ## 🐛  pylint checks
 	@echo "🐛 pylint $(TARGET) (parallel)..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		PYLINTHOME=\"$(CURDIR)/.pylint-cache\" UV_CACHE_DIR=\"$(CURDIR)/.uv-cache\" \
-		uv run --active pylint -j 0 --fail-on E --fail-under 10 $(TARGET)"
+	@uv run pylint -j 0 --fail-on E --fail-under 10 $(TARGET)
 
 markdownlint:					    ## 📖  Markdown linting
 	@# Install markdownlint-cli2 if not present
@@ -3321,20 +3450,46 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 		GOCACHE='$(CURDIR)/.cache/go-build' \
 		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure"
 
-ruff:                               ## ⚡  Ruff lint + (eventually) format
-	@echo "⚡ ruff $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET)
-	#                   && $(VENV_DIR)/bin/ruff format $(TARGET)
+RUFF_MODE   ?= check
+RUFF_SELECT ?=
 
-# Separate ruff targets for different modes
+ruff: uv                            ## ⚡  Ruff linter (RUFF_MODE=check|fix|format, RUFF_SELECT=rules)
+	@ruff_cmd=""; \
+	case "$(RUFF_MODE)" in \
+		check)  ruff_cmd="check" ;; \
+		fix)    ruff_cmd="check --fix" ;; \
+		format) ruff_cmd="format" ;; \
+		*)      printf 'ERROR: RUFF_MODE must be check, fix, or format (got "%s")\n' '$(RUFF_MODE)'; exit 1 ;; \
+	esac; \
+	select_flag=""; \
+	if [ -n "$(RUFF_SELECT)" ]; then select_flag="--select $(RUFF_SELECT)"; fi; \
+	echo "⚡ ruff $$ruff_cmd $$select_flag $(TARGET)..."; \
+	uv run ruff $$ruff_cmd $$select_flag $(TARGET)
+
+# --- Deprecated aliases (use RUFF_MODE= instead) ---
+# deprecated: ruff-check        - Use "make ruff RUFF_MODE=check" instead (v1.2.0)
+# deprecated: ruff-fix          - Use "make ruff RUFF_MODE=fix" instead (v1.2.0)
+# deprecated: ruff-format       - Use "make ruff RUFF_MODE=format" instead (v1.2.0)
 ruff-check:
-	@echo "⚡ ruff check $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET)
+	$(call deprecated_target,ruff-check,make ruff RUFF_MODE=check,1.2.0)
+	@$(MAKE) --no-print-directory ruff RUFF_MODE=check TARGET="$(TARGET)"
 
 ruff-fix:
-	@echo "⚡ ruff check --fix $(TARGET)..." && $(VENV_DIR)/bin/ruff check --fix $(TARGET)
+	$(call deprecated_target,ruff-fix,make ruff RUFF_MODE=fix,1.2.0)
+	@$(MAKE) --no-print-directory ruff RUFF_MODE=fix TARGET="$(TARGET)"
 
-#  Nothing depends on this target yet, but kept for future and ad hoc use
 ruff-format:
-	@echo "⚡ ruff format $(TARGET)..." && $(VENV_DIR)/bin/ruff format $(TARGET)
+	$(call deprecated_target,ruff-format,make ruff RUFF_MODE=format,1.2.0)
+	@$(MAKE) --no-print-directory ruff RUFF_MODE=format TARGET="$(TARGET)"
+
+future-proof-ruff: uv               ## ⚡  Ruff G+BLE rules on files diverged from main
+	@changed=$$(git diff --name-only --diff-filter=ACM main -- '*.py' 2>/dev/null || true); \
+	if [ -z "$$changed" ]; then \
+		echo "ℹ️  No Python files diverged from main"; \
+	else \
+		echo "⚡ ruff check --select G,BLE on $$(echo $$changed | wc -w | tr -d ' ') file(s)..."; \
+		uv run ruff check --select G,BLE $$changed; \
+	fi
 
 ty:                                 ## ⚡  Ty type checker
 	@echo "⚡ ty $(TARGET)..." && $(VENV_DIR)/bin/ty check $(TARGET)
@@ -3495,63 +3650,41 @@ shell-lint-file:                    ## 🐚  Lint shell script
 # -----------------------------------------------------------------------------
 # 🔍 LINT CHANGED FILES (GIT INTEGRATION)
 # -----------------------------------------------------------------------------
-# help: lint-changed         - Lint only git-changed files
-# help: lint-staged          - Lint only git-staged files
-# help: lint-commit          - Lint files in specific commit (use COMMIT=hash)
+# help: lint-changed         - Lint only git-changed files (uses lint-smart per file)
+# help: lint-staged          - Lint only git-staged files (uses lint-smart per file)
+# help: lint-commit          - Lint files in specific commit (COMMIT=hash)
 .PHONY: lint-changed lint-staged lint-commit
 
-lint-changed:							## 🔍 Lint only changed files (git)
-	@echo "🔍 Linting changed files..."
-	@changed_files=$$(git diff --name-only --diff-filter=ACM HEAD 2>/dev/null || true); \
-	if [ -z "$$changed_files" ]; then \
-		echo "ℹ️  No changed files to lint"; \
+# Generic "lint files from a git command" macro.
+# $(1) = human label (e.g., "changed", "staged", "in commit abc123")
+# $(2) = shell command that produces a newline-delimited file list
+define lint_git_files
+	@echo "🔍 Linting $(1) files..."; \
+	file_list=$$($(2) 2>/dev/null || true); \
+	if [ -z "$$file_list" ]; then \
+		echo "ℹ️  No $(1) files to lint"; \
 	else \
-		echo "Changed files:"; \
-		echo "$$changed_files" | sed 's/^/  - /'; \
+		echo "$(1) files:"; \
+		printf '  - %s\n' $$file_list; \
 		echo ""; \
-		for file in $$changed_files; do \
+		for file in $$file_list; do \
 			if [ -e "$$file" ]; then \
 				echo "🎯 Linting: $$file"; \
 				$(MAKE) --no-print-directory lint-smart "$$file"; \
 			fi; \
 		done; \
 	fi
+endef
+
+lint-changed:							## 🔍 Lint only changed files (git)
+	$(call lint_git_files,changed,git diff --name-only --diff-filter=ACM HEAD)
 
 lint-staged:							## 🔍 Lint only staged files (git)
-	@echo "🔍 Linting staged files..."
-	@staged_files=$$(git diff --name-only --cached --diff-filter=ACM 2>/dev/null || true); \
-	if [ -z "$$staged_files" ]; then \
-		echo "ℹ️  No staged files to lint"; \
-	else \
-		echo "Staged files:"; \
-		echo "$$staged_files" | sed 's/^/  - /'; \
-		echo ""; \
-		for file in $$staged_files; do \
-			if [ -e "$$file" ]; then \
-				echo "🎯 Linting: $$file"; \
-				$(MAKE) --no-print-directory lint-smart "$$file"; \
-			fi; \
-		done; \
-	fi
+	$(call lint_git_files,staged,git diff --name-only --cached --diff-filter=ACM)
 
-# Lint files in specific commit (use COMMIT=hash)
 COMMIT ?= HEAD
-lint-commit:							## 🔍 Lint files changed in commit
-	@echo "🔍 Linting files changed in commit $(COMMIT)..."
-	@commit_files=$$(git diff-tree --no-commit-id --name-only -r $(COMMIT) 2>/dev/null || true); \
-	if [ -z "$$commit_files" ]; then \
-		echo "ℹ️  No files found in commit $(COMMIT)"; \
-	else \
-		echo "Files in commit $(COMMIT):"; \
-		echo "$$commit_files" | sed 's/^/  - /'; \
-		echo ""; \
-		for file in $$commit_files; do \
-			if [ -e "$$file" ]; then \
-				echo "🎯 Linting: $$file"; \
-				$(MAKE) --no-print-directory lint-smart "$$file"; \
-			fi; \
-		done; \
-	fi
+lint-commit:							## 🔍 Lint files changed in commit (COMMIT=hash)
+	$(call lint_git_files,in commit $(COMMIT),git diff-tree --no-commit-id --name-only -r $(COMMIT))
 
 # -----------------------------------------------------------------------------
 # 👁️ WATCH MODE - LINT ON FILE CHANGES
@@ -3793,9 +3926,9 @@ lint-parallel:							## 🚀 Run linters in parallel
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		uv pip install -q pytest-xdist"
 	@# Run fast linters in parallel
-	@$(MAKE) --no-print-directory ruff-check TARGET="$(TARGET)" & \
-	$(MAKE) --no-print-directory black-check TARGET="$(TARGET)" & \
-	$(MAKE) --no-print-directory isort-check TARGET="$(TARGET)" & \
+	@$(MAKE) --no-print-directory ruff RUFF_MODE=check TARGET="$(TARGET)" & \
+	$(MAKE) --no-print-directory black CHECK=1 TARGET="$(TARGET)" & \
+	$(MAKE) --no-print-directory isort CHECK=1 TARGET="$(TARGET)" & \
 	wait
 	@echo "✅ Parallel linting completed!"
 
@@ -4309,7 +4442,7 @@ dist: clean uv               ## Build wheel + sdist into ./dist (optionally incl
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust plugins..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
-		echo '🦀 Rust wheels written to ./plugins_rust/target/wheels/'; \
+		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
 	fi
@@ -4325,7 +4458,7 @@ wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
-		echo '🦀 Rust wheels written to ./plugins_rust/target/wheels/'; \
+		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
 	fi
@@ -4423,11 +4556,7 @@ endef
 # help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
 # help: container-build-rust-lite - Build lite image WITH Rust plugins
 # help: container-rust       - Build with Rust and run container (all-in-one)
-# help: container-run        - Run container using detected runtime
-# help: container-run-host   - Run container using detected runtime with host networking
-# help: container-run-ssl    - Run container with TLS using detected runtime
-# help: container-run-ssl-host - Run container with TLS and host networking
-# help: container-run-ssl-jwt - Run container with TLS and JWT asymmetric keys
+# help: container-run        - Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1 CONTAINER_HTTP_SERVER=granian|gunicorn)
 # help: container-push       - Push image (handles localhost/ prefix)
 # help: container-stop       - Stop & remove the container
 # help: container-logs       - Stream container logs
@@ -4436,6 +4565,7 @@ endef
 # help: container-health     - Check container health status
 # help: image-list           - List all matching container images
 # help: image-clean          - Remove all project images
+# help: docker-nuke          - Remove ALL containers, images, volumes, networks, and build cache (destructive!)
 # help: image-retag          - Fix image naming consistency issues
 # help: use-docker           - Switch to Docker runtime
 # help: use-podman           - Switch to Podman runtime
@@ -4511,195 +4641,89 @@ container-rust: container-build-rust
 	@echo "🦀 Building and running container with Rust plugins..."
 	$(MAKE) container-run
 
+CONTAINER_SSL        ?=
+CONTAINER_HOST_NET   ?=
+CONTAINER_JWT        ?=
+CONTAINER_HTTP_SERVER ?=
+
 .PHONY: container-run
-container-run: container-check-image
-	@echo "🚀 Running with $(CONTAINER_RUNTIME)..."
+container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1 CONTAINER_HTTP_SERVER=granian|gunicorn)
+	$(if $(call is_true,$(CONTAINER_SSL)),@test -d certs || $(MAKE) --no-print-directory certs,)
+	$(if $(call is_true,$(CONTAINER_JWT)),@test -d certs/jwt || $(MAKE) --no-print-directory certs-jwt,)
+	@printf '🚀 Running with %s%s%s%s%s...\n' \
+		'$(CONTAINER_RUNTIME)' \
+		'$(if $(call is_true,$(CONTAINER_SSL)), (TLS),)' \
+		'$(if $(call is_true,$(CONTAINER_HOST_NET)), (host network),)' \
+		'$(if $(call is_true,$(CONTAINER_JWT)), (JWT asymmetric),)' \
+		'$(if $(CONTAINER_HTTP_SERVER), + $(CONTAINER_HTTP_SERVER),)'
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		$(if $(or $(call is_true,$(CONTAINER_SSL)),$(call is_true,$(CONTAINER_JWT))),--user $(shell id -u):$(shell id -g),) \
+		$(if $(call is_true,$(CONTAINER_HOST_NET)),--network=host,) \
 		--env-file=.env \
+		$(if $(CONTAINER_HTTP_SERVER),-e HTTP_SERVER=$(CONTAINER_HTTP_SERVER),) \
+		$(if $(call is_true,$(CONTAINER_SSL)),-e SSL=true -e CERT_FILE=certs/cert.pem -e KEY_FILE=certs/key.pem,) \
+		$(if $(call is_true,$(CONTAINER_JWT)),-e JWT_ALGORITHM=RS256 -e JWT_PUBLIC_KEY_PATH=/app/certs/jwt/public.pem -e JWT_PRIVATE_KEY_PATH=/app/certs/jwt/private.pem,) \
+		$(if $(or $(call is_true,$(CONTAINER_SSL)),$(call is_true,$(CONTAINER_JWT))),-v $(PWD)/certs:/app/certs:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,),) \
 		-p 4444:4444 \
 		--restart=always \
 		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl --fail http://localhost:4444/health || exit 1" \
+		--health-cmd="curl $(if $(call is_true,$(CONTAINER_SSL)),-k,) --fail $(if $(call is_true,$(CONTAINER_SSL)),https,http)://localhost:4444/health || exit 1" \
 		--health-interval=1m --health-retries=3 \
 		--health-start-period=30s --health-timeout=10s \
 		-d $(call get_image_name)
 	@sleep 2
-	@echo "✅ Container started"
-	@echo "🔍 Health check status:"
-	@$(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{.State.Health.Status}}' 2>/dev/null || echo "No health check configured"
+	@printf '✅ Container started%s%s%s\n' \
+		'$(if $(call is_true,$(CONTAINER_SSL)), with TLS,)' \
+		'$(if $(call is_true,$(CONTAINER_JWT)), + JWT asymmetric,)' \
+		'$(if $(CONTAINER_HTTP_SERVER), ($(CONTAINER_HTTP_SERVER)),)'
+	$(if $(call is_true,$(CONTAINER_JWT)),@echo "🔐 JWT Algorithm: RS256",)
+	$(if $(call is_true,$(CONTAINER_JWT)),@echo "📁 Keys mounted: /app/certs/jwt/{private$(COMMA)public}.pem",)
 
-.PHONY: container-run-host
+# --- Deprecated container-run aliases ---
+# deprecated: container-run-host        - Use "make container-run CONTAINER_HOST_NET=1" instead (v1.2.0)
+# deprecated: container-run-ssl         - Use "make container-run CONTAINER_SSL=1" instead (v1.2.0)
+# deprecated: container-run-ssl-host    - Use "make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1" instead (v1.2.0)
+# deprecated: container-run-ssl-jwt     - Use "make container-run CONTAINER_SSL=1 CONTAINER_JWT=1" instead (v1.2.0)
+# deprecated: container-run-granian     - Use "make container-run CONTAINER_HTTP_SERVER=granian" instead (v1.2.0)
+# deprecated: container-run-gunicorn    - Use "make container-run CONTAINER_HTTP_SERVER=gunicorn" instead (v1.2.0)
+# deprecated: container-run-granian-ssl - Use "make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian" instead (v1.2.0)
+# deprecated: container-run-gunicorn-ssl - Use "make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn" instead (v1.2.0)
+.PHONY: container-run-host container-run-ssl container-run-ssl-host container-run-ssl-jwt \
+	container-run-granian container-run-gunicorn container-run-granian-ssl container-run-gunicorn-ssl
+
 container-run-host: container-check-image
-	@echo "🚀 Running with $(CONTAINER_RUNTIME)..."
-	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
-	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
-	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
-		--env-file=.env \
-		--network=host \
-		-p 4444:4444 \
-		--restart=always \
-		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl --fail http://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(call get_image_name)
-	@sleep 2
-	@echo "✅ Container started"
-	@echo "🔍 Health check status:"
-	@$(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{.State.Health.Status}}' 2>/dev/null || echo "No health check configured"
+	$(call deprecated_target,container-run-host,make container-run CONTAINER_HOST_NET=1,1.2.0)
+	@$(MAKE) --no-print-directory container-run CONTAINER_HOST_NET=1
 
+container-run-ssl: container-check-image
+	$(call deprecated_target,container-run-ssl,make container-run CONTAINER_SSL=1,1.2.0)
+	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1
 
-.PHONY: container-run-ssl
-container-run-ssl: certs container-check-image
-	@echo "🚀 Running with $(CONTAINER_RUNTIME) (TLS)..."
-	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
-	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
-	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
-		--user $(shell id -u):$(shell id -g) \
-		--env-file=.env \
-		-e SSL=true \
-		-e CERT_FILE=certs/cert.pem \
-		-e KEY_FILE=certs/key.pem \
-		-v $(PWD)/certs:/app/certs:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,) \
-		-p 4444:4444 \
-		--restart=always \
-		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(call get_image_name)
-	@sleep 2
-	@echo "✅ Container started with TLS"
+container-run-ssl-host: container-check-image
+	$(call deprecated_target,container-run-ssl-host,make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1,1.2.0)
+	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1
 
-.PHONY: container-run-ssl-host
-container-run-ssl-host: certs container-check-image
-	@echo "🚀 Running with $(CONTAINER_RUNTIME) (TLS, host network)..."
-	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
-	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
-	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
-		--user $(shell id -u):$(shell id -g) \
-		--network=host \
-		--env-file=.env \
-		-e SSL=true \
-		-e CERT_FILE=certs/cert.pem \
-		-e KEY_FILE=certs/key.pem \
-		-v $(PWD)/certs:/app/certs:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,) \
-		--restart=always \
-		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(call get_image_name)
-	@sleep 2
-	@echo "✅ Container started with TLS (host networking)"
+container-run-ssl-jwt: container-check-image
+	$(call deprecated_target,container-run-ssl-jwt,make container-run CONTAINER_SSL=1 CONTAINER_JWT=1,1.2.0)
+	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_JWT=1
 
-.PHONY: container-run-ssl-jwt
-container-run-ssl-jwt: certs certs-jwt container-check-image
-	@echo "🚀 Running with $(CONTAINER_RUNTIME) (TLS + JWT asymmetric)..."
-	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
-	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
-	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
-		--user $(shell id -u):$(shell id -g) \
-		--env-file=.env \
-		-e SSL=true \
-		-e CERT_FILE=certs/cert.pem \
-		-e KEY_FILE=certs/key.pem \
-		-e JWT_ALGORITHM=RS256 \
-		-e JWT_PUBLIC_KEY_PATH=/app/certs/jwt/public.pem \
-		-e JWT_PRIVATE_KEY_PATH=/app/certs/jwt/private.pem \
-		-v $(PWD)/certs:/app/certs:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,) \
-		-p 4444:4444 \
-		--restart=always \
-		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(call get_image_name)
-	@sleep 2
-	@echo "✅ Container started with TLS + JWT asymmetric authentication"
-	@echo "🔐 JWT Algorithm: RS256"
-	@echo "📁 Keys mounted: /app/certs/jwt/{private,public}.pem"
+container-run-granian: container-check-image
+	$(call deprecated_target,container-run-granian,make container-run CONTAINER_HTTP_SERVER=granian,1.2.0)
+	@$(MAKE) --no-print-directory container-run CONTAINER_HTTP_SERVER=granian
 
-# HTTP Server selection targets
-container-run-granian: container-check-image  ## Run container with Granian (Rust-based HTTP server)
-	@echo "🚀 Running with $(CONTAINER_RUNTIME) + Granian..."
-	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
-	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
-	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
-		--env-file=.env \
-		-e HTTP_SERVER=granian \
-		-p 4444:4444 \
-		--restart=always \
-		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl --fail http://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(call get_image_name)
-	@sleep 2
-	@echo "✅ Container started with Granian"
+container-run-gunicorn: container-check-image
+	$(call deprecated_target,container-run-gunicorn,make container-run CONTAINER_HTTP_SERVER=gunicorn,1.2.0)
+	@$(MAKE) --no-print-directory container-run CONTAINER_HTTP_SERVER=gunicorn
 
-container-run-gunicorn: container-check-image  ## Run container with Gunicorn + Uvicorn
-	@echo "🚀 Running with $(CONTAINER_RUNTIME) + Gunicorn..."
-	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
-	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
-	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
-		--env-file=.env \
-		-e HTTP_SERVER=gunicorn \
-		-p 4444:4444 \
-		--restart=always \
-		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl --fail http://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(call get_image_name)
-	@sleep 2
-	@echo "✅ Container started with Gunicorn"
+container-run-granian-ssl: container-check-image
+	$(call deprecated_target,container-run-granian-ssl,make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian,1.2.0)
+	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian
 
-container-run-granian-ssl: certs container-check-image  ## Run container with Granian + TLS
-	@echo "🚀 Running with $(CONTAINER_RUNTIME) + Granian (TLS)..."
-	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
-	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
-	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
-		--user $(shell id -u):$(shell id -g) \
-		--env-file=.env \
-		-e HTTP_SERVER=granian \
-		-e SSL=true \
-		-e CERT_FILE=certs/cert.pem \
-		-e KEY_FILE=certs/key.pem \
-		-v $(PWD)/certs:/app/certs:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,) \
-		-p 4444:4444 \
-		--restart=always \
-		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(call get_image_name)
-	@sleep 2
-	@echo "✅ Container started with Granian + TLS"
-
-container-run-gunicorn-ssl: certs container-check-image  ## Run container with Gunicorn + TLS
-	@echo "🚀 Running with $(CONTAINER_RUNTIME) + Gunicorn (TLS)..."
-	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
-	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
-	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
-		--user $(shell id -u):$(shell id -g) \
-		--env-file=.env \
-		-e HTTP_SERVER=gunicorn \
-		-e SSL=true \
-		-e CERT_FILE=certs/cert.pem \
-		-e KEY_FILE=certs/key.pem \
-		-v $(PWD)/certs:/app/certs:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,) \
-		-p 4444:4444 \
-		--restart=always \
-		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(call get_image_name)
-	@sleep 2
-	@echo "✅ Container started with Gunicorn + TLS"
+container-run-gunicorn-ssl: container-check-image
+	$(call deprecated_target,container-run-gunicorn-ssl,make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn,1.2.0)
+	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn
 
 .PHONY: container-push
 container-push: container-check-image
@@ -4836,6 +4860,29 @@ image-clean:
 		grep -E "(localhost/)?$(IMAGE_BASE)" | \
 		xargs $(XARGS_FLAGS) $(CONTAINER_RUNTIME) rmi -f 2>/dev/null
 	@echo "✅ Images cleaned"
+
+.PHONY: docker-nuke
+docker-nuke:
+	@echo "⚠️  This will remove ALL containers, images, volumes, networks, and build cache."
+	@echo "    Runtime: $(CONTAINER_RUNTIME)"
+	@printf "    Continue? [y/N] "; read ans; \
+	if [ "$$ans" = "y" ] || [ "$$ans" = "Y" ]; then \
+		echo "🛑 Stopping and removing all containers..."; \
+		$(CONTAINER_RUNTIME) ps -qa | xargs $(XARGS_FLAGS) $(CONTAINER_RUNTIME) rm -f 2>/dev/null || true; \
+		echo "🗑️  Removing all images..."; \
+		$(CONTAINER_RUNTIME) images -q | xargs $(XARGS_FLAGS) $(CONTAINER_RUNTIME) rmi -f 2>/dev/null || true; \
+		echo "💾 Removing all volumes..."; \
+		$(CONTAINER_RUNTIME) volume ls -q | xargs $(XARGS_FLAGS) $(CONTAINER_RUNTIME) volume rm -f 2>/dev/null || true; \
+		echo "🌐 Pruning networks..."; \
+		$(CONTAINER_RUNTIME) network prune -f 2>/dev/null || true; \
+		echo "🏗️  Pruning build cache..."; \
+		$(CONTAINER_RUNTIME) builder prune -af 2>/dev/null || true; \
+		echo "🧹 Running system prune..."; \
+		$(CONTAINER_RUNTIME) system prune -af 2>/dev/null || true; \
+		echo "✅ Docker environment nuked."; \
+	else \
+		echo "❌ Cancelled"; \
+	fi
 
 # Fix image naming issues
 .PHONY: image-retag
@@ -5426,6 +5473,22 @@ compose-scale:
 	@test -n "$(SERVICE)" && test -n "$(SCALE)" || { \
 		echo "Usage: make compose-scale SERVICE=worker SCALE=3"; exit 1; }
 	$(COMPOSE) up -d --scale $(SERVICE)=$(SCALE)
+
+
+# help: compose-cache-clear  - Clear nginx cache (requires running nginx container)
+.PHONY: compose-cache-clear
+compose-cache-clear:						## 🧹 Clear nginx cache
+	@echo "🧹 Clearing nginx cache..."
+	@if docker ps --format '{{.Names}}' | grep -q nginx; then \
+		echo "   Clearing cache files..."; \
+		$(COMPOSE) exec nginx sh -c "rm -rf /var/cache/nginx/*"; \
+		echo "   Reloading nginx..."; \
+		$(COMPOSE) exec nginx nginx -s reload; \
+	else \
+		echo "   ⚠️  Nginx is not running. Cache is ephemeral and will be fresh on next start."; \
+		echo "   Start the stack with: make compose-up"; \
+	fi
+	@echo "✅ Done"
 
 # Compose with validation and health check
 .PHONY: compose-up-safe
@@ -6602,8 +6665,10 @@ db-fix-head: ## Fix multiple heads issue
 # help: test-ui-record       - Run Playwright UI tests and record videos + screenshots (headless)
 # help: test-ui-update-snapshots - Update Playwright visual regression snapshots
 # help: test-ui-clean        - Clean up Playwright test artifacts
+# help: test-owasp           - Run OWASP access-control security tests (no ZAP required)
+# help: test-zap             - Run ZAP DAST security scan (requires ZAP daemon; set ZAP_BASE_URL)
 
-.PHONY: playwright-install playwright-install-all playwright-preflight test-ui test-ui-headless test-ui-headless-parallel test-ui-debug test-ui-smoke test-ui-ci-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-screenshots test-ui-record test-ui-update-snapshots test-ui-clean
+.PHONY: playwright-install playwright-install-all playwright-preflight test-ui test-ui-headless test-ui-headless-parallel test-ui-debug test-ui-smoke test-ui-ci-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-screenshots test-ui-record test-ui-update-snapshots test-ui-clean test-zap test-owasp
 
 # Playwright test variables
 PLAYWRIGHT_DIR := tests/playwright
@@ -6612,6 +6677,14 @@ PLAYWRIGHT_SCREENSHOTS := $(PLAYWRIGHT_DIR)/screenshots
 PLAYWRIGHT_VIDEOS := $(PLAYWRIGHT_DIR)/videos
 PLAYWRIGHT_SLOWMO ?= 750
 TEST_BASE_URL ?= http://localhost:8080
+ZAP_BASE_URL   ?= http://localhost:8090
+ZAP_API_KEY    ?= changeme
+# URL ZAP uses internally to spider the app. nginx exposes port 80 on mcpnet
+# (host sees it as 8080 via port mapping), so ZAP inside Docker must use port 80.
+# Works on both Linux and macOS/Windows Docker Desktop.
+# Override only if your setup differs (e.g. a standalone ZAP outside mcpnet).
+ZAP_TARGET_URL ?= http://nginx:80
+ZAP_REPORTS   := tests/reports
 # Optional install flags for Playwright browser installation (e.g. --with-deps in Linux CI)
 PLAYWRIGHT_INSTALL_FLAGS ?=
 PLAYWRIGHT_CI_SMOKE_TESTS := \
@@ -6657,135 +6730,91 @@ playwright-preflight:
 		exit 1; \
 	fi
 
-## --- UI Test Execution ------------------------------------------------------
-test-ui: playwright-install
-	@echo "🎭 Running Playwright UI tests with visible browser..."
+## --- Playwright test macro ---------------------------------------------------
+# Run a Playwright test variant.
+# $(1) = label (e.g., "headed", "headless parallel")
+# $(2) = directories to mkdir -p (space-separated, or empty for none)
+# $(3) = extra pip packages (space-separated, or empty)
+# $(4) = env var exports before pytest (e.g., "PWDEBUG=1", or empty)
+# $(5) = pytest arguments (variant-specific part)
+# $(6) = fail behavior: "fail" or "continue" (|| true)
+define run_playwright_test
+	@echo "🎭 Running Playwright UI tests ($(1))..."
 	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
+	$(if $(strip $(2)),@mkdir -p $(2),)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		$(if $(strip $(3)),uv pip install -q $(3) &&,) \
+		$(if $(strip $(4)),export $(4) &&,) \
 		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
-		python -m pytest ${PLAYWRIGHT_TEST_TARGET} -v --headed --screenshot=only-on-failure \
-		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+		pytest $(5) \
+		--browser chromium \
+		$(if $(filter fail,$(6)),|| { echo '❌ UI tests failed!'; exit 1; },|| true)"
+endef
+
+## --- UI Test Execution ------------------------------------------------------
+test-ui: playwright-install
+	$(call run_playwright_test,headed,$(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS),,,\
+		$(PLAYWRIGHT_TEST_TARGET) -v --headed --screenshot=only-on-failure,fail)
 	@echo "✅ UI tests completed!"
 
 test-ui-headless: playwright-install
-	@echo "🎭 Running Playwright UI tests in headless mode..."
-	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
-		pytest ${PLAYWRIGHT_TEST_TARGET} -v --screenshot=only-on-failure \
-		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	$(call run_playwright_test,headless,$(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS),,,\
+		$(PLAYWRIGHT_TEST_TARGET) -v --screenshot=only-on-failure,fail)
 	@echo "✅ UI tests completed!"
 
 test-ui-headless-parallel: playwright-install
-	@echo "🎭 Running Playwright UI tests headless in parallel..."
-	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pytest-xdist && \
-		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
-		pytest ${PLAYWRIGHT_TEST_TARGET} -v -n auto --dist loadscope \
-		--screenshot=only-on-failure \
-		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	$(call run_playwright_test,headless parallel,$(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS),pytest-xdist,,\
+		$(PLAYWRIGHT_TEST_TARGET) -v -n auto --dist loadscope --screenshot=only-on-failure,fail)
 	@echo "✅ UI parallel tests completed!"
 
 test-ui-debug: playwright-install
-	@echo "🎭 Running Playwright UI tests with Playwright Inspector..."
-	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		PWDEBUG=1 TEST_BASE_URL='$(TEST_BASE_URL)' pytest ${PLAYWRIGHT_TEST_TARGET} -v -s --headed \
-		--browser chromium"
+	$(call run_playwright_test,debug,$(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS),,PWDEBUG=1,\
+		$(PLAYWRIGHT_TEST_TARGET) -v -s --headed,fail)
 
 test-ui-smoke: playwright-install
-	@echo "🎭 Running Playwright UI smoke tests..."
-	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v -m smoke --headed \
-		--browser chromium || { echo '❌ UI smoke tests failed!'; exit 1; }"
+	$(call run_playwright_test,smoke,,,,\
+		$(PLAYWRIGHT_DIR)/ -v -m smoke --headed,fail)
 	@echo "✅ UI smoke tests passed!"
 
 test-ui-ci-smoke: playwright-install
-	@echo "🎭 Running Playwright CI smoke tests (headless subset)..."
-	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@mkdir -p $(PLAYWRIGHT_REPORTS)
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		TEST_BASE_URL='$(TEST_BASE_URL)' pytest -v --screenshot=only-on-failure \
-		--browser chromium $(PLAYWRIGHT_CI_SMOKE_TESTS) || { echo '❌ UI CI smoke tests failed!'; exit 1; }"
+	$(call run_playwright_test,CI smoke,$(PLAYWRIGHT_REPORTS),,,\
+		-v --screenshot=only-on-failure $(PLAYWRIGHT_CI_SMOKE_TESTS),fail)
 	@echo "✅ UI CI smoke tests passed!"
 
 test-ui-parallel: playwright-install
-	@echo "🎭 Running Playwright UI tests in parallel..."
-	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pytest-xdist && \
-		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v -n auto --dist loadscope \
-		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	$(call run_playwright_test,parallel,,pytest-xdist,,\
+		$(PLAYWRIGHT_DIR)/ -v -n auto --dist loadscope,fail)
 	@echo "✅ UI parallel tests completed!"
 
 ## --- UI Test Reporting ------------------------------------------------------
 test-ui-report: playwright-install
-	@echo "🎭 Running Playwright UI tests with HTML report..."
-	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@mkdir -p $(PLAYWRIGHT_REPORTS)
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q pytest-html && \
-		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure \
-		--html=$(PLAYWRIGHT_REPORTS)/report.html --self-contained-html \
-		--browser chromium || true"
+	$(call run_playwright_test,report,$(PLAYWRIGHT_REPORTS),pytest-html,,\
+		$(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure --html=$(PLAYWRIGHT_REPORTS)/report.html --self-contained-html,continue)
 	@echo "✅ UI test report generated: $(PLAYWRIGHT_REPORTS)/report.html"
 	@echo "   Open with: open $(PLAYWRIGHT_REPORTS)/report.html"
 
 test-ui-coverage: playwright-install
-	@echo "🎭 Running Playwright UI tests with coverage..."
-	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@mkdir -p $(PLAYWRIGHT_REPORTS)
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --cov=mcpgateway.admin \
-		--cov-report=html:$(PLAYWRIGHT_REPORTS)/coverage \
-		--cov-report=term --browser chromium || true"
+	$(call run_playwright_test,coverage,$(PLAYWRIGHT_REPORTS),,,\
+		$(PLAYWRIGHT_DIR)/ -v --cov=mcpgateway.admin --cov-report=html:$(PLAYWRIGHT_REPORTS)/coverage --cov-report=term,continue)
 	@echo "✅ UI coverage report: $(PLAYWRIGHT_REPORTS)/coverage/index.html"
 
 test-ui-screenshots: playwright-install
-	@echo "🎭 Running Playwright UI tests with always-on screenshots..."
-	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@mkdir -p $(PLAYWRIGHT_REPORTS)
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=on \
-		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	$(call run_playwright_test,screenshots,$(PLAYWRIGHT_REPORTS),,,\
+		$(PLAYWRIGHT_DIR)/ -v --screenshot=on,fail)
 	@echo "✅ Playwright screenshots captured"
 	@echo "📁 Artifacts saved to: test-results/"
 
 test-ui-record: playwright-install
-	@echo "🎭 Running Playwright UI tests with video recording + screenshots..."
-	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@mkdir -p $(PLAYWRIGHT_VIDEOS)
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --video=on --screenshot=on --slowmo $(PLAYWRIGHT_SLOWMO) \
-		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	$(call run_playwright_test,record,$(PLAYWRIGHT_VIDEOS),,,\
+		$(PLAYWRIGHT_DIR)/ -v --video=on --screenshot=on --slowmo $(PLAYWRIGHT_SLOWMO),fail)
 	@echo "✅ Playwright videos + screenshots saved"
 	@echo "📁 Artifacts saved to: test-results/"
 
 ## --- UI Test Utilities ------------------------------------------------------
 test-ui-update-snapshots: playwright-install
-	@echo "🎭 Updating Playwright visual regression snapshots..."
-	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --update-snapshots \
-		--browser chromium"
+	$(call run_playwright_test,update-snapshots,,,,\
+		$(PLAYWRIGHT_DIR)/ -v --update-snapshots,fail)
 	@echo "✅ Snapshots updated!"
 
 test-ui-clean:
@@ -6796,6 +6825,38 @@ test-ui-clean:
 	@rm -rf test-results/
 	@rm -f playwright-report-*.html test-results-*.xml
 	@echo "✅ Playwright artifacts cleaned!"
+
+## --- OWASP / ZAP Security Testing ------------------------------------------
+test-owasp: playwright-install  ## 🔒 Run OWASP access-control security tests (no ZAP required)
+	@echo "🔒 Running OWASP access-control security tests..."
+	@$(MAKE) --no-print-directory playwright-preflight
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(ZAP_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
+		uv run --active pytest tests/playwright/security/owasp/ \
+			-v -m owasp_a01 --tb=short \
+			|| { echo '❌ OWASP security tests failed!'; exit 1; }"
+	@echo "✅ OWASP security tests completed!"
+
+test-zap: playwright-install  ## 🔒 Run ZAP DAST security scan (requires ZAP daemon; set ZAP_BASE_URL)
+	@echo "🔒 Running ZAP DAST security scan against $(TEST_BASE_URL)..."
+	@if [ -z "$(ZAP_BASE_URL)" ]; then \
+		echo "❌ ZAP_BASE_URL is not set. Start the testing stack with: make testing-up"; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory playwright-preflight
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(ZAP_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
+		export ZAP_BASE_URL='$(ZAP_BASE_URL)' && \
+		export ZAP_API_KEY='$(ZAP_API_KEY)' && \
+		export ZAP_TARGET_URL='$(ZAP_TARGET_URL)' && \
+		uv run --active pytest tests/playwright/security/owasp/ \
+			-v -m owasp_a01_zap --tb=short \
+			|| { echo '❌ ZAP DAST scan failed!'; exit 1; }"
+	@echo "✅ ZAP DAST scan completed! Reports in $(ZAP_REPORTS)/"
 
 ## --- Combined Testing -------------------------------------------------------
 test-all: test test-js test-ui-headless
@@ -7779,97 +7840,128 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # 🦀 RUST PLUGIN FRAMEWORK (OPTIONAL)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # help:
-# help: Rust Plugin Framework (Optional - requires Rust toolchain)
+# help: Rust Plugin Framework (Optional - auto-installs Rust + maturin if needed)
 # help: ========================================================================================================
-# help: rust-build          - Build Rust plugins in release mode (native)
-# help: rust-dev            - Build and install Rust plugins in development mode
-# help: rust-test           - Run Rust plugin tests
-# help: rust-test-all       - Run all Rust and Python integration tests
-# help: rust-bench          - Run Rust plugin benchmarks
-# help: rust-bench-compare  - Compare Rust vs Python performance
-# help: rust-check          - Run all Rust checks (format, lint, test)
-# help: rust-clean          - Clean Rust build artifacts
-# help: rust-verify         - Verify Rust plugin installation
+# help: rust-install                          - Install all Rust plugins into venv
+# help: rust-ensure-deps                      - Ensure Rust toolchain, maturin, and all plugins are installed
+# help: rust-build                            - Build Rust plugins in release mode (native)
+# help: rust-dev                              - Build and install Rust plugins in development mode
+# help: rust-test                             - Run Rust plugin tests
+# help: rust-test-integration                 - Run Rust integration tests
+# help: rust-test-all                         - Run all Rust and Python integration tests
+# help: rust-bench                            - Run Rust plugin benchmarks
+# help: rust-bench-compare                    - Compare Rust vs Python performance (with benchmarks)
+# help: rust-compare                          - Run compare_performance.py only (skip benchmarks)
+# help: rust-check                            - Run all Rust checks (format, lint, test)
+# help: rust-verify                           - Verify Rust plugin installation
+# help: rust-verify-stubs                     - Verify stub generation and pyproject.toml for all Rust plugins
+# help: rust-clean                            - Clean Rust build artifacts
 # help:
-# help: rust-check-maturin       - Check/install maturin (auto-runs before builds)
-# help: rust-install-deps        - Install all Rust build dependencies
-# help: rust-install-targets     - Install all Rust cross-compilation targets
-# help: rust-build-x86_64        - Build for Linux x86_64
-# help: rust-build-aarch64       - Build for Linux arm64/aarch64
-# help: rust-build-armv7         - Build for Linux armv7 (32-bit ARM)
-# help: rust-build-s390x         - Build for Linux s390x (IBM mainframe)
-# help: rust-build-ppc64le       - Build for Linux ppc64le (IBM POWER)
-# help: rust-build-all-linux     - Build for all Linux architectures
-# help: rust-build-all-platforms - Build for all platforms (Linux, macOS, Windows)
-# help: rust-cross               - Install targets + build all Linux (convenience)
-# help: rust-cross-install-build - Install targets + build all platforms (one command)
+# help: rust-install-deps                     - Install all Rust build dependencies
+# help: rust-install-targets                  - Install all Rust cross-compilation targets
+# help: rust-build-<TARGET>                   - Build for specific target (use rust-build-<TARGET>)
+# help: rust-build-all-linux                  - Build for all Linux architectures
+# help: rust-build-all-platforms              - Build for all platforms (Linux, macOS, Windows)
+# help: rust-cross                            - Install targets + build all Linux (convenience)
+# help: rust-cross-install-build              - Install targets + build all platforms (one command)
 
-.PHONY: rust-build rust-dev rust-test rust-test-all rust-bench rust-bench-compare rust-check rust-clean rust-verify
-.PHONY: rust-check-maturin rust-install-deps rust-install-targets
-.PHONY: rust-build-x86_64 rust-build-aarch64 rust-build-armv7 rust-build-s390x rust-build-ppc64le
+.PHONY: rust-build rust-dev rust-test rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
+.PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
 
-rust-build: rust-check-maturin          ## Build Rust plugins (release)
-	@echo "🦀 Building Rust plugins (release mode)..."
-	@cd plugins_rust && maturin build --release
-
-rust-dev:                               ## Build and install Rust plugins (development mode)
-	@echo "🦀 Building and installing Rust plugins (development mode)..."
-	@cd plugins_rust && maturin develop --release
-
-rust-test:                              ## Run Rust plugin tests
-	@echo "🦀 Running Rust plugin tests..."
-	@cd plugins_rust && cargo test --release
-
-rust-test-integration:                  ## Run Rust integration tests
-	@echo "🦀 Running Rust integration tests..."
-	@cd plugins_rust && cargo test --test '*' --release
-
-rust-test-all: rust-test                ## Run all Rust and Python tests
-	@echo "🧪 Running Python tests for Rust plugins..."
-	pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py -v
-
-rust-bench:                             ## Run Rust benchmarks
-	@echo "🦀 Running Rust benchmarks..."
-	@cd plugins_rust && cargo bench
-
-rust-bench-compare:                     ## Compare Rust vs Python performance
-	@echo "📊 Comparing Rust vs Python performance..."
-	@cd plugins_rust/benchmarks && python3 compare_pii_filter.py
-
-rust-check:                             ## Run all Rust checks (format, lint, test)
-	@echo "🦀 Running Rust checks..."
-	@cd plugins_rust && cargo fmt --check
-	@cd plugins_rust && cargo clippy --lib -- -D warnings -A deprecated
-	@cd plugins_rust && cargo test --lib --release
-
-rust-clean:                             ## Clean Rust build artifacts
-	@echo "🧹 Cleaning Rust build artifacts..."
-	@cd plugins_rust && cargo clean
-	@rm -rf plugins_rust/target/
-
-rust-verify:                            ## Verify Rust plugin installation
-	@echo "🔍 Verifying Rust plugin installation..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -c 'from plugins_rust import PIIDetectorRust; print(\"✅ Rust PII filter available\")' || \
-		echo '❌ Rust plugins not installed'"
-
-rust-check-maturin:                     ## Check/install maturin
-	@which maturin > /dev/null 2>&1 || { \
-		echo "📦 Installing maturin..."; \
-		/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"; \
-	}
-
-rust-install-deps:                      ## Install all Rust build dependencies
-	@echo "📦 Installing Rust build dependencies..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"
-	@rustup --version > /dev/null 2>&1 || { \
-		echo "❌ Rust not installed. Install with:"; \
-		echo "   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
+rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and all plugins are installed
+	@if ! command -v rustup > /dev/null 2>&1; then \
+		echo "🦀 Rust not found. Installing Rust toolchain..."; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component rustfmt clippy; \
+		echo "✅ Rust installed successfully."; \
+		echo "⚠️  Please run 'source \"$$HOME/.cargo/env\"' or restart your shell, then run 'make' again."; \
 		exit 1; \
-	}
+	fi
+	@if ! command -v cargo > /dev/null 2>&1; then \
+		echo "⚠️  cargo not in PATH. Please run 'source \"$$HOME/.cargo/env\"' or restart your shell."; \
+		exit 1; \
+	fi
+	@rustup component add rustfmt clippy 2>/dev/null || true
+	@if ! command -v maturin > /dev/null 2>&1; then \
+		if [ -f "$(VENV_DIR)/bin/activate" ]; then \
+			echo "📦 Installing maturin into venv..."; \
+			/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"; \
+		elif command -v pip > /dev/null 2>&1; then \
+			echo "📦 Installing maturin globally (venv not found)..."; \
+			pip install maturin; \
+		else \
+			echo "⚠️  maturin not found and cannot be installed (no venv or pip available)"; \
+			echo "   For building wheels, install maturin: pip install maturin"; \
+		fi; \
+	fi
 
-rust-install-targets:                   ## Install all Rust cross-compilation targets
+rust-install: rust-ensure-deps          ## Install all Rust plugins into venv
+	@$(MAKE) -C plugins_rust install
+
+rust-build: rust-ensure-deps            ## Build Rust plugins (release)
+	@$(MAKE) -C plugins_rust build
+
+rust-dev: rust-ensure-deps              ## Build and install Rust plugins (development mode)
+	@$(MAKE) -C plugins_rust install
+
+rust-test: rust-ensure-deps             ## Run Rust plugin tests
+	@$(MAKE) -C plugins_rust test
+
+rust-python-test: rust-install          ## Run Python tests for Rust plugins (installs plugins first)
+	@$(MAKE) -C plugins_rust test-python
+
+rust-test-all: rust-test rust-python-test  ## Run all Rust and Python tests
+
+rust-bench: rust-ensure-deps            ## Run Rust benchmarks
+	@$(MAKE) -C plugins_rust bench
+
+rust-bench-compare: rust-ensure-deps    ## Compare Rust vs Python performance
+	@$(MAKE) -C plugins_rust bench-compare
+
+rust-compare: rust-ensure-deps          ## Run compare_performance.py only (skip Rust benchmarks)
+	@$(MAKE) -C plugins_rust compare
+
+rust-check: rust-ensure-deps            ## Run all Rust checks (format, lint, test)
+	@$(MAKE) -C plugins_rust check
+
+rust-doc: rust-ensure-deps              ## Build Rust documentation
+	@$(MAKE) -C plugins_rust doc
+
+rust-build-wheels: rust-ensure-deps     ## Build Python wheels for all Rust plugins
+	@$(MAKE) -C plugins_rust build-wheels
+
+rust-audit: rust-ensure-deps            ## Run security audit on all Rust plugins
+	@$(MAKE) -C plugins_rust audit
+
+rust-coverage: rust-ensure-deps         ## Run coverage for all Rust plugins
+	@$(MAKE) -C plugins_rust coverage
+
+rust-release: rust-ensure-deps          ## Build release wheels for all Rust plugins
+	@$(MAKE) -C plugins_rust release
+
+rust-release-publish: rust-ensure-deps  ## Publish release wheels to PyPI
+	@$(MAKE) -C plugins_rust release-publish
+
+rust-uninstall-plugins: rust-ensure-deps ## Uninstall all Rust plugins from Python environment
+	@$(MAKE) -C plugins_rust uninstall
+
+rust-clean: rust-ensure-deps            ## Clean Rust build artifacts and uninstall plugins
+	@$(MAKE) -C plugins_rust uninstall
+	@$(MAKE) -C plugins_rust clean
+
+rust-verify: rust-ensure-deps           ## Verify Rust plugin installation
+	@$(MAKE) -C plugins_rust verify
+
+rust-verify-stubs: rust-ensure-deps     ## Verify stub generation and pyproject.toml for all Rust plugins
+	@$(MAKE) -C plugins_rust verify-stubs
+
+rust-clean-stubs: rust-ensure-deps      ## Remove all generated stub files from Rust plugins
+	@$(MAKE) -C plugins_rust clean-stubs
+
+rust-install-deps: rust-ensure-deps     ## Install all Rust build dependencies
+	@echo "✅ Rust build dependencies installed"
+
+rust-install-targets: rust-ensure-deps  ## Install all Rust cross-compilation targets
 	@echo "🎯 Installing Rust cross-compilation targets..."
 	@rustup target add x86_64-unknown-linux-gnu
 	@rustup target add aarch64-unknown-linux-gnu
@@ -7880,35 +7972,20 @@ rust-install-targets:                   ## Install all Rust cross-compilation ta
 	@rustup target add aarch64-apple-darwin
 	@rustup target add x86_64-pc-windows-msvc
 
-rust-build-x86_64: rust-check-maturin   ## Build for Linux x86_64
-	@echo "🦀 Building for x86_64-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target x86_64-unknown-linux-gnu
+rust-build-%: rust-ensure-deps               ## Build for specific target (use rust-build-<TARGET>)
+	@echo "🎯 Ensuring Rust target $* is installed..."
+	@rustup target add $*
+	@$(MAKE) -C plugins_rust build-target-$*
 
-rust-build-aarch64: rust-check-maturin  ## Build for Linux arm64/aarch64
-	@echo "🦀 Building for aarch64-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target aarch64-unknown-linux-gnu
-
-rust-build-armv7: rust-check-maturin    ## Build for Linux armv7 (32-bit ARM)
-	@echo "🦀 Building for armv7-unknown-linux-gnueabihf..."
-	@cd plugins_rust && maturin build --release --target armv7-unknown-linux-gnueabihf
-
-rust-build-s390x: rust-check-maturin    ## Build for Linux s390x (IBM mainframe)
-	@echo "🦀 Building for s390x-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target s390x-unknown-linux-gnu
-
-rust-build-ppc64le: rust-check-maturin  ## Build for Linux ppc64le (IBM POWER)
-	@echo "🦀 Building for powerpc64le-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target powerpc64le-unknown-linux-gnu
-
-rust-build-all-linux: rust-build-x86_64 rust-build-aarch64 rust-build-armv7 rust-build-s390x rust-build-ppc64le  ## Build for all Linux architectures
+rust-build-all-linux: rust-build-x86_64-unknown-linux-gnu rust-build-aarch64-unknown-linux-gnu rust-build-armv7-unknown-linux-gnueabihf rust-build-s390x-unknown-linux-gnu rust-build-powerpc64le-unknown-linux-gnu  ## Build for all Linux architectures
 	@echo "✅ Built for all Linux architectures"
 
 rust-build-all-platforms: rust-build-all-linux  ## Build for all platforms (Linux, macOS, Windows)
 	@echo "🦀 Building for macOS..."
-	@cd plugins_rust && maturin build --release --target x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
-	@cd plugins_rust && maturin build --release --target aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
+	@$(MAKE) -C plugins_rust build-target-x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
+	@$(MAKE) -C plugins_rust build-target-aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
 	@echo "🦀 Building for Windows..."
-	@cd plugins_rust && maturin build --release --target x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
+	@$(MAKE) -C plugins_rust build-target-x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
 	@echo "✅ Built for all platforms"
 
 rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + build all Linux (convenience)
@@ -7916,6 +7993,10 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
+
+.PHONY: conc-02-gateways
+conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)
+	@/bin/bash tests/manual/concurrency/run_conc_02_gateways.sh
 
 # -----------------------------------------------------------------------------
 # Temporary CI toggle for Conventional Commit message linting

@@ -191,7 +191,8 @@ packages.json
 .aider*
 aider*
 .ai*
-.claude
+.claude/*
+!.claude/skills/
 CLAUDE.local.md
 .continue
 
@@ -258,6 +259,7 @@ uv.lock
 # Rust (plugins_rust)
 # ========================================
 plugins_rust/target/
+plugins_rust/*/target/
 *.rs.bk
 plugins_rust/Cargo.lock
 
