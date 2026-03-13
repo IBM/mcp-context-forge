@@ -733,7 +733,7 @@ async def version_endpoint(
     request: Request,
     fmt: Optional[str] = None,
     partial: Optional[bool] = False,
-    current_user_ctx=Depends(require_admin_auth), # pylint: disable=unused-argument
+    current_user_ctx=Depends(require_admin_auth),  # pylint: disable=unused-argument
 ) -> Response:
     """Serve diagnostics as JSON, full HTML, or partial HTML.
 
