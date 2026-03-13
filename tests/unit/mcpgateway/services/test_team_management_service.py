@@ -901,6 +901,27 @@ class TestTeamManagementService:
         assert result == mock_members
 
     @pytest.mark.asyncio
+    async def test_get_team_members_with_search_paginated(self, service, mock_db):
+        """Test getting team members with search filter using page-based pagination."""
+        mock_member = MagicMock(spec=EmailTeamMember)
+        mock_member.user = MagicMock(spec=EmailUser)
+        mock_member.user.email = "john@example.com"
+
+        with patch("mcpgateway.services.team_management_service.unified_paginate") as mock_paginate:
+            mock_paginate.return_value = {
+                "data": [mock_member],
+                "pagination": MagicMock(page=1, per_page=30),
+                "links": {},
+            }
+            mock_db.commit.return_value = None
+
+            result = await service.get_team_members("team123", page=1, per_page=30, search="john")
+
+            assert "data" in result
+            assert len(result["data"]) == 1
+            mock_paginate.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_get_user_role_in_team(self, service, mock_db):
         """Test getting user role in team."""
         mock_membership = MagicMock(spec=EmailTeamMember)
