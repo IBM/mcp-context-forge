@@ -15,7 +15,7 @@ This plugin enforces the Bell-LaPadula security model:
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -108,6 +108,29 @@ class SecurityClearanceConfig(BaseModel):
     downgrade_rules: DowngradeRulesConfig = Field(default_factory=DowngradeRulesConfig)
     audit_all_access: bool = Field(True, description="Log all clearance checks")
     audit_denied_access: bool = Field(True, description="Log denied access attempts")
+    log_level_violations: bool = Field(True, description="Log violations at WARNING level")
+    audit_log_retention_days: int = Field(90, description="Audit log retention in days")
+    dynamic_rules: List[Dict[str, Any]] = Field(default_factory=list, description="Dynamic clearance rules")
+
+    @model_validator(mode="after")
+    def validate_levels(self) -> "SecurityClearanceConfig":
+        """Validate that level values are non-negative integers.
+
+        Returns:
+            The validated config instance.
+
+        Raises:
+            ValueError: If any level value is negative.
+
+        Example:
+            >>> cfg = SecurityClearanceConfig()
+            >>> all(v >= 0 for v in cfg.levels.values())
+            True
+        """
+        for name, value in self.levels.items():
+            if value < 0:
+                raise ValueError(f"Level '{name}' must be >= 0, got {value}")
+        return self
 
 
 # Core Access Control Logic
@@ -160,7 +183,7 @@ class ClearanceEngine:
             return self.config.team_clearances[tenant_id]
         return self.config.default_user_clearance
 
-    def resolve_tool_level(self, tool_name: Optional[str]) -> int:
+    def resolve_tool_level(self, tool_name: Optional[str], server_name: Optional[str] = None) -> int:
         """Resolve classification level for a tool.
 
         Args:
@@ -179,6 +202,8 @@ class ClearanceEngine:
         """
         if tool_name and tool_name in self.config.tool_levels:
             return self.config.tool_levels[tool_name]
+        if server_name and server_name in self.config.server_levels:
+            return self.config.server_levels[server_name]
         return self.config.default_tool_classification
 
     def check_no_read_up(self, user_level: int, resource_level: int) -> bool:
@@ -311,7 +336,7 @@ class SecurityClearancePlugin(Plugin):
             self._clearance_config.enforce_no_write_down,
         )
 
-    # Internal helpers
+
     def _get_user_context(self, context: PluginContext) -> tuple[Optional[str], Optional[str]]:
         """Extract user and tenant_id from plugin context.
 
@@ -340,7 +365,7 @@ class SecurityClearancePlugin(Plugin):
         """
         return PluginViolation(code=code, reason=reason)
 
-    # Hook: tool_pre_invoke
+
     async def tool_pre_invoke(
         self, payload: ToolPreInvokePayload, context: PluginContext
     ) -> ToolPreInvokeResult:

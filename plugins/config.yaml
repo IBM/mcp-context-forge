@@ -1067,7 +1067,7 @@ plugins:
   - name: "SecurityClearancePlugin"
     kind: "plugins.security_clearance.security_clearance.SecurityClearancePlugin"
     description: "Enforces Bell-LaPadula MAC security model with hierarchical clearance levels"
-    version: "1.0.0"
+    version: "1.1.0"
     author: "Katia Neli"
     hooks:
       - tool_pre_invoke
@@ -1103,3 +1103,16 @@ plugins:
         watermark_text: "[DOWNGRADED FROM LEVEL {source}]"
       audit_all_access: true
       audit_denied_access: true
+      # Explicit level hierarchy
+      levels:
+        PUBLIC: 0
+        INTERNAL: 1
+        CONFIDENTIAL: 2
+        SECRET: 3
+        TOP_SECRET: 4
+        COMPARTMENTALIZED: 5
+      # Additional audit settings
+      log_level_violations: true
+      audit_log_retention_days: 90
+      # Dynamic clearance rules
+      dynamic_rules: []
