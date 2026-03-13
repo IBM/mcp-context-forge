@@ -2085,6 +2085,7 @@ class ToolService(BaseService):
                 select(DbTool)
                 .options(joinedload(DbTool.gateway), joinedload(DbTool.email_team))
                 .options(selectinload(DbTool.metrics))
+                .options(selectinload(DbTool.metrics_hourly))
                 .join(server_tool_association, DbTool.id == server_tool_association.c.tool_id)
                 .where(server_tool_association.c.server_id == server_id)
             )
