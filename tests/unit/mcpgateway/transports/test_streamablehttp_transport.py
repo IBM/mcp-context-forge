@@ -945,7 +945,7 @@ async def test_get_prompt_service_exception(monkeypatch, caplog):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(side_effect=Exception("service error!")))
 
-    with caplog.at_level("ERROR"):
+    with caplog.at_level("ERROR", logger="mcpgateway.transports.streamablehttp_transport"):
         result = await get_prompt("error_prompt")
         assert result == []
         assert "Error getting prompt 'error_prompt': service error!" in caplog.text
