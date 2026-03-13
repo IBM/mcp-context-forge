@@ -199,7 +199,7 @@ class _StubTeamService:
 
 def test_team_id_helpers():
     team_id = uuid4()
-    assert admin._normalize_team_id(team_id) == UUID(str(team_id)).hex
+    assert admin._normalize_team_id(team_id) == str(UUID(str(team_id)))
     assert admin._normalize_team_id(None) is None
 
     with pytest.raises(ValueError):

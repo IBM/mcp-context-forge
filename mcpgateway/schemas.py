@@ -3817,7 +3817,7 @@ class ServerCreate(BaseModel):
             v (str): Value to validate
 
         Returns:
-            str: Value if validated as safe
+            str: Value if validated as safe (hyphenated UUID format)
 
         Raises:
             ValueError: When displayName contains unsafe content or exceeds length limits
@@ -3825,7 +3825,7 @@ class ServerCreate(BaseModel):
         Examples:
             >>> from mcpgateway.schemas import ServerCreate
             >>> ServerCreate.validate_id('550e8400-e29b-41d4-a716-446655440000')
-            '550e8400e29b41d4a716446655440000'
+            '550e8400-e29b-41d4-a716-446655440000'
             >>> ServerCreate.validate_id('invalid-uuid')
             Traceback (most recent call last):
                 ...
@@ -4005,7 +4005,7 @@ class ServerUpdate(BaseModelWithConfigDict):
             v (str): Value to validate
 
         Returns:
-            str: Value if validated as safe
+            str: Value if validated as safe (hyphenated UUID format)
 
         Raises:
             ValueError: When displayName contains unsafe content or exceeds length limits
@@ -4013,7 +4013,7 @@ class ServerUpdate(BaseModelWithConfigDict):
         Examples:
             >>> from mcpgateway.schemas import ServerUpdate
             >>> ServerUpdate.validate_id('550e8400-e29b-41d4-a716-446655440000')
-            '550e8400e29b41d4a716446655440000'
+            '550e8400-e29b-41d4-a716-446655440000'
             >>> ServerUpdate.validate_id('invalid-uuid')
             Traceback (most recent call last):
                 ...

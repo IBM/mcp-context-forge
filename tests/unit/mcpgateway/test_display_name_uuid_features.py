@@ -185,7 +185,8 @@ class TestServerUUIDFeature:
         # Verify the server was created with auto-generated UUID
         saved_server = db_session.query(DbServer).first()
         assert saved_server.id is not None
-        assert len(saved_server.id) == 32  # UUID hex format without dashes
+        assert len(saved_server.id) == 36  # UUID hyphenated format with dashes
+        assert "-" in saved_server.id
         assert saved_server.name == "Auto UUID Server"
 
     def test_server_update_uuid(self, db_session):
@@ -262,7 +263,7 @@ class TestSchemaValidation:
         server_data = {"id": "550e8400-e29b-41d4-a716-446655440000", "name": "Test Server", "description": "Test server with custom UUID"}
 
         server_create = ServerCreate(**server_data)
-        assert server_create.id == "550e8400e29b41d4a716446655440000"
+        assert server_create.id == "550e8400-e29b-41d4-a716-446655440000"
         assert server_create.name == "Test Server"
 
     def test_server_update_schema_with_uuid(self):
@@ -270,7 +271,7 @@ class TestSchemaValidation:
         update_data = {"id": "123e4567-e89b-12d3-a456-426614174000", "name": "Updated Server Name"}
 
         server_update = ServerUpdate(**update_data)
-        assert server_update.id == "123e4567e89b12d3a456426614174000"
+        assert server_update.id == "123e4567-e89b-12d3-a456-426614174000"
         assert server_update.name == "Updated Server Name"
 
     def test_server_uuid_validation(self):
@@ -280,7 +281,7 @@ class TestSchemaValidation:
 
         # Test valid UUID
         server_create = ServerCreate(id="550e8400-e29b-41d4-a716-446655440000", name="Test Server")
-        assert server_create.id == "550e8400e29b41d4a716446655440000"
+        assert server_create.id == "550e8400-e29b-41d4-a716-446655440000"
 
     def test_tool_create_request_type_and_auth_assembly(self):
         info_rest = type("obj", (object,), {"data": {"integration_type": "REST"}})
@@ -357,7 +358,7 @@ class TestSchemaValidation:
 
         # Test ServerUpdate UUID validation
         server_update = ServerUpdate(id="123e4567-e89b-12d3-a456-426614174000")
-        assert server_update.id == "123e4567e89b12d3a456426614174000"
+        assert server_update.id == "123e4567-e89b-12d3-a456-426614174000"
 
         # Test invalid UUID in update
         with pytest.raises(Exception):  # Pydantic ValidationError
@@ -369,7 +370,7 @@ class TestServerUUIDNormalization:
 
     @pytest.mark.asyncio
     async def test_server_create_uuid_normalization_standard_format(self, db_session, server_service):
-        """Test server creation with standard UUID format (with dashes) gets normalized to hex format."""
+        """Test server creation with standard UUID format (with dashes) gets normalized to hyphenated format."""
         # Standard
         import uuid as uuid_module
 
@@ -378,7 +379,7 @@ class TestServerUUIDNormalization:
 
         # Standard UUID format (with dashes)
         standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        expected_hex_uuid = str(uuid_module.UUID(standard_uuid)).replace("-", "")
+        expected_hyphenated_uuid = str(uuid_module.UUID(standard_uuid))
 
         # Mock database operations
         mock_db_server = None
@@ -386,9 +387,7 @@ class TestServerUUIDNormalization:
         def capture_add(server):
             nonlocal mock_db_server
             mock_db_server = server
-            # Simulate the UUID normalization that happens in the service
-            if hasattr(server, "id") and server.id:
-                server.id = str(uuid_module.UUID(server.id)).replace("-", "")
+            # UUID is already in the correct format when passed to add()
 
         db_session.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=None)))
         db_session.add = Mock(side_effect=capture_add)
@@ -403,7 +402,7 @@ class TestServerUUIDNormalization:
         server_service._notify_server_added = AsyncMock()
         server_service.convert_server_to_read = Mock(
             return_value=ServerRead(
-                id=expected_hex_uuid,
+                id=expected_hyphenated_uuid,
                 name="Test Server",
                 description="Test server with UUID normalization",
                 icon=None,
@@ -433,10 +432,10 @@ class TestServerUUIDNormalization:
 
         # Verify UUID was normalized to hex format
         assert mock_db_server is not None
-        assert mock_db_server.id == expected_hex_uuid
-        assert result.id == expected_hex_uuid
-        assert len(expected_hex_uuid) == 32  # UUID without dashes is 32 chars
-        assert "-" not in expected_hex_uuid
+        assert mock_db_server.id == expected_hyphenated_uuid
+        assert result.id == expected_hyphenated_uuid
+        assert len(expected_hyphenated_uuid) == 36  # UUID with dashes is 36 chars
+        assert "-" in expected_hyphenated_uuid
 
     @pytest.mark.asyncio
     async def test_server_create_uuid_normalization_hex_format(self, db_session, server_service):
@@ -617,30 +616,30 @@ class TestServerUUIDNormalization:
 
         # Test cases for UUID normalization
         test_cases = [
-            {"input": "550e8400-e29b-41d4-a716-446655440000", "expected": "550e8400e29b41d4a716446655440000", "description": "Standard UUID with dashes"},
-            {"input": "123e4567-e89b-12d3-a456-426614174000", "expected": "123e4567e89b12d3a456426614174000", "description": "Another standard UUID with dashes"},
-            {"input": "00000000-0000-0000-0000-000000000000", "expected": "00000000000000000000000000000000", "description": "Nil UUID"},
+            {"input": "550e8400-e29b-41d4-a716-446655440000", "expected": "550e8400-e29b-41d4-a716-446655440000", "description": "Standard UUID with dashes"},
+            {"input": "550e8400e29b41d4a716446655440000", "expected": "550e8400-e29b-41d4-a716-446655440000", "description": "UUID without dashes (normalized to hyphenated)"},
+            {"input": "00000000-0000-0000-0000-000000000000", "expected": "00000000-0000-0000-0000-000000000000", "description": "Nil UUID"},
         ]
 
         for case in test_cases:
-            # Simulate the normalization logic from server_service.py
-            normalized = str(uuid_module.UUID(case["input"])).replace("-", "")
+            # Simulate the normalization logic - convert to hyphenated format
+            normalized = str(uuid_module.UUID(case["input"]))
             assert normalized == case["expected"], f"Failed for {case['description']}: expected {case['expected']}, got {normalized}"
-            assert len(normalized) == 32, f"Normalized UUID should be 32 characters, got {len(normalized)}"
-            assert "-" not in normalized, "Normalized UUID should not contain dashes"
+            assert len(normalized) == 36, f"Normalized UUID should be 36 characters, got {len(normalized)}"
+            assert "-" in normalized, "Normalized UUID should contain dashes"
 
     def test_database_storage_format_verification(self, db_session):
-        """Test that UUIDs are stored in the database in the expected hex format."""
+        """Test that UUIDs are stored in the database in the expected hyphenated format."""
         # Standard
         import uuid as uuid_module
 
         # Create a server with standard UUID format
         standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        expected_hex = str(uuid_module.UUID(standard_uuid)).replace("-", "")
+        expected_hyphenated = str(uuid_module.UUID(standard_uuid))
 
-        # Simulate what the service does - normalize the UUID before storing
+        # Simulate what the service does - store in hyphenated format
         db_server = DbServer(
-            id=expected_hex,  # Simulate the normalized UUID
+            id=expected_hyphenated,  # Store in hyphenated format
             name="Storage Test Server",
             description="Test UUID storage format",
             enabled=True,
@@ -651,10 +650,9 @@ class TestServerUUIDNormalization:
 
         # Verify the stored format
         saved_server = db_session.query(DbServer).first()
-        assert saved_server.id == expected_hex
-        assert len(saved_server.id) == 32
-        assert "-" not in saved_server.id
-        assert saved_server.id.isalnum()  # Should only contain alphanumeric characters
+        assert saved_server.id == expected_hyphenated
+        assert len(saved_server.id) == 36
+        assert "-" in saved_server.id
 
     @pytest.mark.asyncio
     async def test_comprehensive_uuid_scenarios_with_service(self, db_session, server_service):
@@ -672,8 +670,8 @@ class TestServerUUIDNormalization:
         ]
 
         for i, scenario in enumerate(test_scenarios):
-            # Calculate expected normalized UUID
-            expected_hex = str(uuid_module.UUID(scenario["input"])).replace("-", "")
+            # Calculate expected normalized UUID (hyphenated format)
+            expected_hyphenated = str(uuid_module.UUID(scenario["input"]))
 
             # Mock database operations for this test
             captured_server = None
@@ -695,7 +693,7 @@ class TestServerUUIDNormalization:
             server_service._notify_server_added = AsyncMock()
             server_service.convert_server_to_read = Mock(
                 return_value=ServerRead(
-                    id=expected_hex,
+                    id=expected_hyphenated,
                     name=scenario["name"],
                     description=scenario["description"],
                     icon=None,
@@ -725,11 +723,10 @@ class TestServerUUIDNormalization:
 
             # Verify UUID normalization occurred correctly
             assert captured_server is not None, f"Server not captured for scenario: {scenario['name']}"
-            assert captured_server.id == expected_hex, f"UUID not normalized correctly for {scenario['name']}: expected {expected_hex}, got {captured_server.id}"
-            assert len(captured_server.id) == 32, f"Normalized UUID should be 32 chars for {scenario['name']}"
-            assert "-" not in captured_server.id, f"Normalized UUID should not contain dashes for {scenario['name']}"
-            assert captured_server.id.isalnum(), f"Normalized UUID should be alphanumeric for {scenario['name']}"
-            assert result.id == expected_hex, f"Response UUID should match normalized for {scenario['name']}"
+            assert captured_server.id == expected_hyphenated, f"UUID not normalized correctly for {scenario['name']}: expected {expected_hyphenated}, got {captured_server.id}"
+            assert len(captured_server.id) == 36, f"Normalized UUID should be 36 chars for {scenario['name']}"
+            assert "-" in captured_server.id, f"Normalized UUID should contain dashes for {scenario['name']}"
+            assert result.id == expected_hyphenated, f"Response UUID should match normalized for {scenario['name']}"
 
 
 @pytest.mark.asyncio
