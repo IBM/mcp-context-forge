@@ -12,6 +12,50 @@ make docker-prod DOCKER_BUILD_ARGS="--no-cache" testing-down compose-clean testi
 
 use these Rust-aware targets instead.
 
+### Quick Reference
+
+Build and start:
+
+```bash
+make testing-rebuild-rust-shadow
+make testing-rebuild-rust
+make testing-rebuild-rust-full
+```
+
+Start without rebuilding:
+
+```bash
+make testing-up-rust-shadow
+make testing-up-rust
+make testing-up-rust-full
+```
+
+Core validation:
+
+```bash
+cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml
+make test-mcp-cli
+make test-mcp-rbac
+make test-mcp-session-isolation
+make test
+make test-ui-headless
+```
+
+Benchmarks:
+
+```bash
+make benchmark-mcp-mixed
+make benchmark-mcp-tools
+make benchmark-mcp-mixed-300
+make benchmark-mcp-tools-300
+```
+
+Verify active runtime:
+
+```bash
+curl -sD - http://localhost:8080/health -o /dev/null | rg 'x-contextforge-mcp-'
+```
+
 ### Fast full-Rust MCP path
 
 Rebuild the image with Rust and start the testing stack in the fastest public
@@ -94,6 +138,16 @@ make benchmark-mcp-mixed
 make benchmark-mcp-tools
 make benchmark-mcp-mixed-300
 make benchmark-mcp-tools-300
+```
+
+The simplest end-to-end Rust validation flow is:
+
+```bash
+make testing-rebuild-rust-full
+make test-mcp-session-isolation
+make test-mcp-cli
+make test-mcp-rbac
+make benchmark-mcp-tools
 ```
 
 The `*-300` targets run distributed local Locust workers and return a non-zero

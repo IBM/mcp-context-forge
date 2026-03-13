@@ -1395,17 +1395,18 @@ services:
 
         echo "Generating JWT token..."
         echo "Environment: JWT_SECRET_KEY=$$JWT_SECRET_KEY"
-        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256"
+        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key --algo HS256"
         # Only capture stdout (the token), let warnings go to stderr
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
         echo "Generated token: $$MCPGATEWAY_BEARER_TOKEN"
 
         # Decode the token to verify it has expiration
         echo "Decoding token to verify claims..."
         python3 -m mcpgateway.utils.create_jwt_token --decode "$$MCPGATEWAY_BEARER_TOKEN" 2>/dev/null || echo "Failed to decode token"
 
-        # Test authentication first
-        echo "Testing authentication..."
+        # Wait for authenticated gateway readiness. /health goes green before the
+        # admin/bootstrap path is fully ready for authenticated registration calls.
+        echo "Waiting for authenticated gateway readiness..."
 
         # Use Python to make HTTP requests
         python3 -c "
@@ -1429,27 +1430,23 @@ services:
             with urllib.request.urlopen(req) as response:
                 return json.loads(response.read().decode('utf-8'))
 
-        # Test version endpoint without auth
-        print('Checking gateway config...')
-        try:
-            with urllib.request.urlopen('http://gateway:4444/version') as response:
-                data = response.read().decode('utf-8')
-                print(f'Gateway version response (no auth): {data[:200]}')
-        except Exception as e:
-            print(f'Version check failed: {e}')
-
-        # Test version endpoint with auth
-        print('Testing authentication...')
-        try:
-            req = urllib.request.Request('http://gateway:4444/version')
-            req.add_header('Authorization', f'Bearer {token}')
-            with urllib.request.urlopen(req) as response:
-                data = response.read().decode('utf-8')
-                print(f'Auth test response: SUCCESS')
-                auth_success = True
-        except Exception as e:
-            print(f'Auth test response: FAILED - {e}')
-            auth_success = False
+        print('Checking authenticated gateway readiness...')
+        for i in range(1, 61):
+            try:
+                req = urllib.request.Request('http://gateway:4444/version')
+                req.add_header('Authorization', f'Bearer {token}')
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    if response.status == 200:
+                        print('✅ Authenticated gateway readiness confirmed')
+                        break
+            except urllib.error.HTTPError as exc:
+                print(f'Authenticated readiness not ready yet ({i}/60): HTTP {exc.code}')
+            except Exception as exc:
+                print(f'Authenticated readiness not ready yet ({i}/60): {exc}')
+            time.sleep(2)
+        else:
+            print('❌ Gateway authenticated readiness check failed')
+            sys.exit(1)
 
         # Register fast_time_server with gateway using Streamable HTTP transport
         print('Registering fast_time_server with gateway (Streamable HTTP)...')
@@ -1591,7 +1588,7 @@ services:
         echo "Registering fast_time_server SSE transport with gateway..."
 
         # Generate JWT token
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
 
         python3 -c "
         import json
