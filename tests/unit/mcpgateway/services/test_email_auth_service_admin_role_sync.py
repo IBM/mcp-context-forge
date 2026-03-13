@@ -266,6 +266,35 @@ async def test_update_user_demote_admin_user_role_not_found(mock_db):
 
 
 @pytest.mark.asyncio
+async def test_create_platform_admin_new_user_assigns_role(mock_db):
+    """Test create_platform_admin assigns platform_admin role when creating new user."""
+    service = EmailAuthService(mock_db)
+
+    # Mock get_user_by_email to return None (user doesn't exist)
+    with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=None)):
+        # Mock create_user to return a new admin user
+        new_admin = EmailUser(email="newadmin@example.com", password_hash="hash", is_admin=True, is_active=True)
+
+        with patch.object(service, "create_user", new=AsyncMock(return_value=new_admin)) as mock_create_user:
+            # Call create_platform_admin
+            result = await service.create_platform_admin(email="newadmin@example.com", password="newpass", full_name="New Admin")
+
+            # Verify create_user was called with is_admin=True
+            mock_create_user.assert_called_once_with(
+                email="newadmin@example.com",
+                password="newpass",
+                full_name="New Admin",
+                is_admin=True,
+                auth_provider="local",
+                skip_password_validation=True
+            )
+
+            # Verify the returned user has admin status
+            assert result.is_admin is True
+            assert result.email == "newadmin@example.com"
+
+
+@pytest.mark.asyncio
 async def test_create_platform_admin_existing_user_assigns_role(mock_db):
     """Test create_platform_admin assigns platform_admin role when promoting existing user."""
     service = EmailAuthService(mock_db)
