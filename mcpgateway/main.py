@@ -1747,16 +1747,18 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
 class AdminAuthMiddleware(BaseHTTPMiddleware):
     """
-    Middleware to protect Admin UI routes (/admin/*) requiring admin privileges.
+    Middleware to protect Admin UI routes requiring authentication.
+
+    The UI base path is configurable via MCPGATEWAY_UI_BASE_PATH (default: /ui).
 
     Exempts login-related paths and static assets:
-    - /admin/login - login page
-    - /admin/logout - logout action
-    - /admin/forgot-password - self-service password reset request page
-    - /admin/reset-password/* - self-service password reset completion page
-    - /admin/static/* - static assets
+    - {ui_base_path}/login - login page
+    - {ui_base_path}/logout - logout action
+    - {ui_base_path}/forgot-password - self-service password reset request page
+    - {ui_base_path}/reset-password/* - self-service password reset completion page
+    - {ui_base_path}/static/* - static assets
 
-    All other /admin/* routes require the user to be authenticated AND be an admin.
+    All other UI routes require the user to be authenticated AND be an admin.
     Non-admin authenticated users receive a 403 Forbidden response.
 
     Note: This middleware respects the auth_required setting. When auth_required=False
@@ -1764,17 +1766,27 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     and relies on endpoint-level authentication which can be mocked in tests.
     """
 
-    # Public paths under /admin that do not require prior authentication.
-    EXEMPT_PATHS = [
-        "/admin/login",
-        "/admin/logout",
-        "/admin/forgot-password",
-        "/admin/reset-password",
-        "/admin/static",
-    ]
+    @property
+    def ui_base_path(self) -> str:
+        """Return the configured UI base path."""
+        return settings.mcpgateway_ui_base_path
 
-    @staticmethod
-    def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
+    @property
+    def exempt_paths(self) -> list[str]:
+        """Return the list of paths exempt from authentication.
+
+        Paths are dynamically built based on the configured UI base path.
+        """
+        base = self.ui_base_path
+        return [
+            f"{base}/login",
+            f"{base}/logout",
+            f"{base}/forgot-password",
+            f"{base}/reset-password",
+            f"{base}/static",
+        ]
+
+    def _error_response(self, request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
         """Return appropriate error response based on request Accept header.
 
         Args:
@@ -1789,8 +1801,9 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         """
         accept_header = request.headers.get("accept", "")
         is_htmx = request.headers.get("hx-request") == "true"
+        ui_base = self.ui_base_path
         if "text/html" in accept_header or is_htmx:
-            login_url = f"{root_path}/admin/login" if root_path else "/admin/login"
+            login_url = f"{root_path}{ui_base}/login" if root_path else f"{ui_base}/login"
             if error_param:
                 login_url = f"{login_url}?error={error_param}"
             if is_htmx:
@@ -1823,14 +1836,14 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        # Check if this is an admin route
-        is_admin_route = scope_path.startswith("/admin")
+        # Check if this is a UI route (using configured UI base path)
+        is_ui_route = scope_path.startswith(self.ui_base_path)
 
-        if not is_admin_route:
+        if not is_ui_route:
             return await call_next(request)
 
         # Check if path is exempt (login, logout, static)
-        is_exempt = any(scope_path.startswith(p) for p in self.EXEMPT_PATHS)
+        is_exempt = any(scope_path.startswith(p) for p in self.exempt_paths)
         if is_exempt:
             return await call_next(request)
 
@@ -2269,6 +2282,9 @@ jinja_env = Environment(
     autoescape=True,
     auto_reload=settings.templates_auto_reload,
 )
+
+# Add global variables available in all templates
+jinja_env.globals["ui_base_path"] = settings.mcpgateway_ui_base_path
 
 
 # Add custom filter to decode HTML entities for backward compatibility with old database records
@@ -7879,7 +7895,7 @@ if settings.llmchat_enabled:
 
         app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
-        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"])
+        app.include_router(llm_admin_router, prefix=f"{settings.mcpgateway_ui_base_path}/llm", tags=["LLM Admin"])
         logger.info("LLM configuration, proxy, and admin routers included")
     except ImportError as e:
         logger.debug(f"LLM routers not available: {e}")
@@ -7946,23 +7962,24 @@ if UI_ENABLED:
             exc,
         )
 
-    # Redirect root path to admin UI
+    # Redirect root path to UI
     @app.get("/")
     async def root_redirect():
         """
-        Redirects the root path ("/") to "/admin/".
+        Redirects the root path ("/") to the configured UI base path.
 
         Logs a debug message before redirecting.
 
         Returns:
-            RedirectResponse: Redirects to /admin/.
+            RedirectResponse: Redirects to the UI base path.
 
         Raises:
             HTTPException: If there is an error during redirection.
         """
-        logger.debug("Redirecting root path to /admin/")
+        ui_base = settings.mcpgateway_ui_base_path
+        logger.debug("Redirecting root path to %s/", ui_base)
         root_path = settings.app_root_path
-        return RedirectResponse(f"{root_path}/admin/", status_code=303)
+        return RedirectResponse(f"{root_path}{ui_base}/", status_code=303)
         # return RedirectResponse(request.url_for("admin_home"))
 
     # Redirect /favicon.ico to /static/favicon.ico for browser compatibility
@@ -7975,6 +7992,42 @@ if UI_ENABLED:
         """
         root_path = settings.app_root_path
         return RedirectResponse(f"{root_path}/static/favicon.ico", status_code=301)
+
+    # Backward compatibility: redirect legacy /admin/* paths to the configured UI base path
+    # Only active when MCPGATEWAY_UI_LEGACY_REDIRECT is True and UI base path differs from /admin
+    if settings.mcpgateway_ui_legacy_redirect and settings.mcpgateway_ui_base_path != "/admin":
+
+        @app.get("/admin/{path:path}", include_in_schema=False)
+        @app.post("/admin/{path:path}", include_in_schema=False)
+        @app.put("/admin/{path:path}", include_in_schema=False)
+        @app.delete("/admin/{path:path}", include_in_schema=False)
+        @app.patch("/admin/{path:path}", include_in_schema=False)
+        async def admin_legacy_redirect(request: Request, path: str = ""):
+            """Redirect deprecated /admin/* routes to the configured UI base path.
+
+            This backward compatibility redirect will be removed in the next major version.
+            The UI is now served from the MCPGATEWAY_UI_BASE_PATH (default: /ui).
+
+            Args:
+                request: The incoming request to preserve query parameters.
+                path: The path segment after /admin/
+
+            Returns:
+                RedirectResponse: 301 Moved Permanently to the new UI path.
+            """
+            ui_base = settings.mcpgateway_ui_base_path
+            root_path = settings.app_root_path
+            new_path = f"{root_path}{ui_base}/{path}" if path else f"{root_path}{ui_base}/"
+            # Preserve query string
+            if request.url.query:
+                new_path = f"{new_path}?{request.url.query}"
+            logger.warning(
+                "Deprecated: /admin is now %s. Update your bookmarks/links.",
+                ui_base,
+            )
+            return RedirectResponse(new_path, status_code=301)
+
+        logger.info("Legacy /admin/* redirect enabled -> %s/*", settings.mcpgateway_ui_base_path)
 
 else:
     # If UI is disabled, provide API info at root

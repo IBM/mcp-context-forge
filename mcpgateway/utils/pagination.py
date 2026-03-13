@@ -31,7 +31,7 @@ Examples:
                 query=query,
                 page=1,
                 per_page=50,
-                base_url="/admin/tools"
+                base_url="/ui/tools"
             )
             return result
 """
@@ -178,14 +178,14 @@ def generate_pagination_links(
 
     Examples:
         >>> links = generate_pagination_links(
-        ...     base_url="/admin/tools",
+        ...     base_url="/ui/tools",
         ...     page=2,
         ...     per_page=50,
         ...     total_pages=5
         ... )
-        >>> "/admin/tools?page=2" in links.self
+        >>> "/ui/tools?page=2" in links.self
         True
-        >>> "/admin/tools?page=3" in links.next
+        >>> "/ui/tools?page=3" in links.next
         True
 
         >>> # Test first page
@@ -323,7 +323,7 @@ async def offset_paginate(
                     query=query,
                     page=page,
                     per_page=50,
-                    base_url="/admin/tools"
+                    base_url="/ui/tools"
                 )
                 return result
     """
@@ -429,7 +429,7 @@ async def cursor_paginate(
                     query=query,
                     cursor=cursor,
                     per_page=50,
-                    base_url="/admin/tools"
+                    base_url="/ui/tools"
                 )
                 return result
     """
@@ -580,7 +580,7 @@ async def paginate_query(
                     db=db,
                     query=query,
                     page=page,
-                    base_url="/admin/tools"
+                    base_url="/ui/tools"
                 )
                 # Result contains: data, pagination, links
                 return result

@@ -336,7 +336,7 @@ async def get_well_known_file(filename: str, response: Response, request: Reques
     return get_well_known_file_content(filename)
 
 
-@router.get("/admin/well-known", response_model=dict)
+@router.get(f"{settings.mcpgateway_ui_base_path}/well-known", response_model=dict)
 async def get_well_known_status(user: str = Depends(require_auth)):
     """
     Get status of well-known URI configuration.

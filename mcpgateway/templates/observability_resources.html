@@ -81,7 +81,7 @@ window.createResourcesController = function() {
     },
     async loadResourceUsage() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/resources/usage?hours=${this.timeRange}&limit=${this.limit}`
+        `{{ root_path }}{{ ui_base_path }}/observability/resources/usage?hours=${this.timeRange}&limit=${this.limit}`
       );
       if (!response.ok) throw new Error('Failed to load resource usage');
       const data = await response.json();
@@ -98,7 +98,7 @@ window.createResourcesController = function() {
     },
     async loadResourcePerformance() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/resources/performance?hours=${this.timeRange}&limit=${this.limit}`
+        `{{ root_path }}{{ ui_base_path }}/observability/resources/performance?hours=${this.timeRange}&limit=${this.limit}`
       );
       if (!response.ok) throw new Error('Failed to load resource performance');
       const data = await response.json();
@@ -116,7 +116,7 @@ window.createResourcesController = function() {
     },
     async loadResourceSlowness() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/resources/performance?hours=${this.timeRange}&limit=10`
+        `{{ root_path }}{{ ui_base_path }}/observability/resources/performance?hours=${this.timeRange}&limit=10`
       );
       if (!response.ok) throw new Error('Failed to load resource slowness');
       const data = await response.json();
@@ -124,7 +124,7 @@ window.createResourcesController = function() {
     },
     async loadResourceErrorProne() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/resources/errors?hours=${this.timeRange}&limit=10`
+        `{{ root_path }}{{ ui_base_path }}/observability/resources/errors?hours=${this.timeRange}&limit=10`
       );
       if (!response.ok) throw new Error('Failed to load resource errors');
       const data = await response.json();

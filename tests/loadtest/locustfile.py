@@ -1090,49 +1090,49 @@ class AdminUIUser(BaseUser):
     @tag("admin", "dashboard")
     def admin_dashboard(self):
         """Load admin dashboard."""
-        with self.client.get("/admin/", headers=self.admin_headers, name="/admin/", catch_response=True) as response:
+        with self.client.get("/ui/", headers=self.admin_headers, name="/ui/", catch_response=True) as response:
             self._validate_html_response(response)
 
     @task(8)
     @tag("admin", "tools")
     def admin_tools_page(self):
         """Load tools list (JSON API)."""
-        with self.client.get("/admin/tools", headers=self.admin_headers, name="/admin/tools", catch_response=True) as response:
+        with self.client.get("/ui/tools", headers=self.admin_headers, name="/ui/tools", catch_response=True) as response:
             self._validate_json_response(response)
 
     @task(7)
     @tag("admin", "servers")
     def admin_servers_page(self):
         """Load servers list (JSON API)."""
-        with self.client.get("/admin/servers", headers=self.admin_headers, name="/admin/servers", catch_response=True) as response:
+        with self.client.get("/ui/servers", headers=self.admin_headers, name="/ui/servers", catch_response=True) as response:
             self._validate_json_response(response)
 
     @task(6)
     @tag("admin", "gateways")
     def admin_gateways_page(self):
         """Load gateways list (JSON API)."""
-        with self.client.get("/admin/gateways", headers=self.admin_headers, name="/admin/gateways", catch_response=True) as response:
+        with self.client.get("/ui/gateways", headers=self.admin_headers, name="/ui/gateways", catch_response=True) as response:
             self._validate_json_response(response)
 
     @task(5)
     @tag("admin", "resources")
     def admin_resources_page(self):
         """Load resources list (JSON API)."""
-        with self.client.get("/admin/resources", headers=self.admin_headers, name="/admin/resources", catch_response=True) as response:
+        with self.client.get("/ui/resources", headers=self.admin_headers, name="/ui/resources", catch_response=True) as response:
             self._validate_json_response(response)
 
     @task(5)
     @tag("admin", "prompts")
     def admin_prompts_page(self):
         """Load prompts list (JSON API)."""
-        with self.client.get("/admin/prompts", headers=self.admin_headers, name="/admin/prompts", catch_response=True) as response:
+        with self.client.get("/ui/prompts", headers=self.admin_headers, name="/ui/prompts", catch_response=True) as response:
             self._validate_json_response(response)
 
     @task(4)
     @tag("admin", "a2a")
     def admin_a2a_list(self):
         """Load A2A agents list (JSON API)."""
-        with self.client.get("/admin/a2a", headers=self.auth_headers, name="/admin/a2a", catch_response=True) as response:
+        with self.client.get("/ui/a2a", headers=self.auth_headers, name="/ui/a2a", catch_response=True) as response:
             self._validate_json_response(response)
 
     @task(3)
@@ -1140,9 +1140,9 @@ class AdminUIUser(BaseUser):
     def admin_performance(self):
         """Load performance stats (if enabled)."""
         with self.client.get(
-            "/admin/performance/stats",
+            "/ui/performance/stats",
             headers={**self.admin_headers, "HX-Request": "true"},
-            name="/admin/performance/stats",
+            name="/ui/performance/stats",
             catch_response=True,
         ) as response:
             # 404 is acceptable if performance tracking is disabled
@@ -1152,35 +1152,35 @@ class AdminUIUser(BaseUser):
     @tag("admin", "logs")
     def admin_logs(self):
         """Load logs (JSON API)."""
-        with self.client.get("/admin/logs", headers=self.auth_headers, name="/admin/logs", catch_response=True) as response:
+        with self.client.get("/ui/logs", headers=self.auth_headers, name="/ui/logs", catch_response=True) as response:
             self._validate_json_response(response)
 
     @task(1)
     @tag("admin", "events")
     def admin_events(self):
         """Load admin events stream metadata."""
-        with self.client.get("/admin/events", headers=self.auth_headers, name="/admin/events", catch_response=True) as response:
-            self._validate_json_response(response, allowed_codes=[200, 401, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+        with self.client.get("/ui/events", headers=self.auth_headers, name="/ui/events", catch_response=True) as response:
+            self._validate_json_response(response, allowed_codes=[200, 401, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("admin", "config")
     def admin_config_settings(self):
         """Load config settings (JSON API)."""
-        with self.client.get("/admin/config/settings", headers=self.auth_headers, name="/admin/config/settings", catch_response=True) as response:
+        with self.client.get("/ui/config/settings", headers=self.auth_headers, name="/ui/config/settings", catch_response=True) as response:
             self._validate_json_response(response)
 
     @task(2)
     @tag("admin", "metrics")
     def admin_metrics(self):
         """Load metrics (JSON API)."""
-        with self.client.get("/admin/metrics", headers=self.admin_headers, name="/admin/metrics", catch_response=True) as response:
+        with self.client.get("/ui/metrics", headers=self.admin_headers, name="/ui/metrics", catch_response=True) as response:
             self._validate_json_response(response, allowed_codes=[200, 500])
 
     @task(2)
     @tag("admin", "teams")
     def admin_teams(self):
         """Load teams management page."""
-        with self.client.get("/admin/teams", headers=self.admin_headers, name="/admin/teams", catch_response=True) as response:
+        with self.client.get("/ui/teams", headers=self.admin_headers, name="/ui/teams", catch_response=True) as response:
             self._validate_html_response(response)
 
     @task(2)
@@ -1188,14 +1188,14 @@ class AdminUIUser(BaseUser):
     def admin_users(self):
         """Load users management page."""
         headers = {**self.admin_headers, "HX-Request": "true"}
-        with self.client.get("/admin/users/partial", headers=headers, name="/admin/users/partial", catch_response=True) as response:
+        with self.client.get("/ui/users/partial", headers=headers, name="/ui/users/partial", catch_response=True) as response:
             self._validate_html_response(response)
 
     @task(1)
     @tag("admin", "export")
     def admin_export_config(self):
         """Load export configuration (JSON API)."""
-        with self.client.get("/admin/export/configuration", headers=self.admin_headers, name="/admin/export/configuration", catch_response=True) as response:
+        with self.client.get("/ui/export/configuration", headers=self.admin_headers, name="/ui/export/configuration", catch_response=True) as response:
             self._validate_json_response(response)
 
     @task(1)
@@ -1203,7 +1203,7 @@ class AdminUIUser(BaseUser):
     def admin_tools_partial(self):
         """Fetch tools partial via HTMX."""
         headers = {**self.admin_headers, "HX-Request": "true"}
-        with self.client.get("/admin/tools/partial", headers=headers, name="/admin/tools/partial", catch_response=True) as response:
+        with self.client.get("/ui/tools/partial", headers=headers, name="/ui/tools/partial", catch_response=True) as response:
             self._validate_html_response(response)
 
     @task(1)
@@ -1211,7 +1211,7 @@ class AdminUIUser(BaseUser):
     def admin_resources_partial(self):
         """Fetch resources partial via HTMX."""
         headers = {**self.admin_headers, "HX-Request": "true"}
-        with self.client.get("/admin/resources/partial", headers=headers, name="/admin/resources/partial", catch_response=True) as response:
+        with self.client.get("/ui/resources/partial", headers=headers, name="/ui/resources/partial", catch_response=True) as response:
             self._validate_html_response(response)
 
     @task(1)
@@ -1219,7 +1219,7 @@ class AdminUIUser(BaseUser):
     def admin_prompts_partial(self):
         """Fetch prompts partial via HTMX."""
         headers = {**self.admin_headers, "HX-Request": "true"}
-        with self.client.get("/admin/prompts/partial", headers=headers, name="/admin/prompts/partial", catch_response=True) as response:
+        with self.client.get("/ui/prompts/partial", headers=headers, name="/ui/prompts/partial", catch_response=True) as response:
             self._validate_html_response(response)
 
     @task(1)
@@ -1227,7 +1227,7 @@ class AdminUIUser(BaseUser):
     def admin_metrics_partial(self):
         """Fetch metrics partial via HTMX."""
         headers = {**self.admin_headers, "HX-Request": "true"}
-        with self.client.get("/admin/metrics/partial", headers=headers, name="/admin/metrics/partial", catch_response=True) as response:
+        with self.client.get("/ui/metrics/partial", headers=headers, name="/ui/metrics/partial", catch_response=True) as response:
             self._validate_html_response(response)
 
     @task(1)
@@ -1235,7 +1235,7 @@ class AdminUIUser(BaseUser):
     def admin_htmx_refresh(self):
         """Simulate HTMX partial refresh."""
         headers = {**self.admin_headers, "HX-Request": "true"}
-        endpoint = random.choice(["/admin/tools/partial", "/admin/resources/partial", "/admin/prompts/partial"])
+        endpoint = random.choice(["/ui/tools/partial", "/ui/resources/partial", "/ui/prompts/partial"])
         with self.client.get(endpoint, headers=headers, name=f"{endpoint} [htmx]", catch_response=True) as response:
             self._validate_html_response(response)
 
@@ -2764,13 +2764,13 @@ class ObservabilityUser(BaseUser):
     These provide tool usage, performance, and volume analytics.
 
     Endpoints tested:
-    - GET /admin/observability/tools/usage - Tool usage statistics
-    - GET /admin/observability/tools/performance - Tool performance data
-    - GET /admin/observability/metrics/top-volume - Top volume endpoints
+    - GET /ui/observability/tools/usage - Tool usage statistics
+    - GET /ui/observability/tools/performance - Tool performance data
+    - GET /ui/observability/metrics/top-volume - Top volume endpoints
 
     Skipped endpoints:
     - HTML-returning endpoints (already covered by admin UI tests)
-    - POST /admin/observability/queries - Write operation
+    - POST /ui/observability/queries - Write operation
     - Endpoints requiring specific IDs
 
     Weight: Low (admin analytics)
@@ -2782,11 +2782,11 @@ class ObservabilityUser(BaseUser):
     @task(3)
     @tag("observability", "tools")
     def get_tools_usage(self):
-        """GET /admin/observability/tools/usage - Get tool usage statistics."""
+        """GET /ui/observability/tools/usage - Get tool usage statistics."""
         with self.client.get(
-            "/admin/observability/tools/usage",
+            "/ui/observability/tools/usage",
             headers=self.auth_headers,
-            name="/admin/observability/tools/usage",
+            name="/ui/observability/tools/usage",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 401, 403, 500])
@@ -2794,11 +2794,11 @@ class ObservabilityUser(BaseUser):
     @task(3)
     @tag("observability", "performance")
     def get_tools_performance(self):
-        """GET /admin/observability/tools/performance - Get tool performance data."""
+        """GET /ui/observability/tools/performance - Get tool performance data."""
         with self.client.get(
-            "/admin/observability/tools/performance",
+            "/ui/observability/tools/performance",
             headers=self.auth_headers,
-            name="/admin/observability/tools/performance",
+            name="/ui/observability/tools/performance",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 401, 403, 500])
@@ -2806,11 +2806,11 @@ class ObservabilityUser(BaseUser):
     @task(2)
     @tag("observability", "volume")
     def get_top_volume(self):
-        """GET /admin/observability/metrics/top-volume - Get top volume endpoints."""
+        """GET /ui/observability/metrics/top-volume - Get top volume endpoints."""
         with self.client.get(
-            "/admin/observability/metrics/top-volume",
+            "/ui/observability/metrics/top-volume",
             headers=self.auth_headers,
-            name="/admin/observability/metrics/top-volume",
+            name="/ui/observability/metrics/top-volume",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 401, 403, 500])
@@ -2830,8 +2830,8 @@ class LLMUser(BaseUser):
     Endpoints tested:
     - GET /llm/gateway/models - List gateway-available models
     - GET /llmchat/gateway/models - List chat gateway models
-    - GET /admin/llm/provider-configs - LLM provider configurations
-    - GET /admin/llm/provider-defaults - Default provider settings
+    - GET /ui/llm/provider-configs - LLM provider configurations
+    - GET /ui/llm/provider-defaults - Default provider settings
 
     Skipped endpoints:
     - GET /llm/providers - 500 (requires LLM providers configured)
@@ -2874,11 +2874,11 @@ class LLMUser(BaseUser):
     @task(2)
     @tag("llm", "admin", "config")
     def get_provider_configs(self):
-        """GET /admin/llm/provider-configs - Get LLM provider configurations."""
+        """GET /ui/llm/provider-configs - Get LLM provider configurations."""
         with self.client.get(
-            "/admin/llm/provider-configs",
+            "/ui/llm/provider-configs",
             headers=self.auth_headers,
-            name="/admin/llm/provider-configs",
+            name="/ui/llm/provider-configs",
             catch_response=True,
         ) as response:
             # 200=Success, 401=Unauthorized, 403=Forbidden
@@ -2887,11 +2887,11 @@ class LLMUser(BaseUser):
     @task(2)
     @tag("llm", "admin", "defaults")
     def get_provider_defaults(self):
-        """GET /admin/llm/provider-defaults - Get default LLM provider settings."""
+        """GET /ui/llm/provider-defaults - Get default LLM provider settings."""
         with self.client.get(
-            "/admin/llm/provider-defaults",
+            "/ui/llm/provider-defaults",
             headers=self.auth_headers,
-            name="/admin/llm/provider-defaults",
+            name="/ui/llm/provider-defaults",
             catch_response=True,
         ) as response:
             # 200=Success, 401=Unauthorized, 403=Forbidden
@@ -4027,9 +4027,9 @@ class RealisticUser(BaseUser):
     def admin_dashboard(self):
         """Load admin dashboard."""
         with self.client.get(
-            "/admin/",
+            "/ui/",
             headers=self.admin_headers,
-            name="/admin/",
+            name="/ui/",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, *INFRASTRUCTURE_ERROR_CODES])
@@ -4066,7 +4066,7 @@ class RealisticUser(BaseUser):
     @tag("realistic", "admin")
     def admin_tools_page(self):
         """Admin tools page."""
-        with self.client.get("/admin/tools", headers=self.admin_headers, name="/admin/tools", catch_response=True) as response:
+        with self.client.get("/ui/tools", headers=self.admin_headers, name="/ui/tools", catch_response=True) as response:
             self._validate_status(response)
 
 
@@ -4278,28 +4278,28 @@ class AdminObservabilityExtendedUser(BaseUser):
     """User that tests extended admin observability endpoints.
 
     Endpoints tested:
-    - GET /admin/observability/partial - Observability overview HTML
-    - GET /admin/observability/stats - Observability stats
-    - GET /admin/observability/traces - Trace list
-    - GET /admin/observability/metrics/heatmap - Latency heatmap
-    - GET /admin/observability/metrics/percentiles - Latency percentiles
-    - GET /admin/observability/metrics/timeseries - Request timeseries
-    - GET /admin/observability/metrics/partial - Metrics overview HTML
-    - GET /admin/observability/metrics/top-errors - Top error endpoints
-    - GET /admin/observability/metrics/top-slow - Top slow endpoints
-    - GET /admin/observability/prompts/errors - Prompt errors
-    - GET /admin/observability/prompts/partial - Prompts HTML
-    - GET /admin/observability/prompts/performance - Prompt performance
-    - GET /admin/observability/prompts/usage - Prompt usage
-    - GET /admin/observability/resources/errors - Resource errors
-    - GET /admin/observability/resources/partial - Resources HTML
-    - GET /admin/observability/resources/performance - Resource performance
-    - GET /admin/observability/resources/usage - Resource usage
-    - GET /admin/observability/tools/chains - Tool chains
-    - GET /admin/observability/tools/errors - Tool errors
-    - GET /admin/observability/tools/partial - Tools HTML
-    - POST /admin/observability/queries - Create saved query
-    - GET /admin/observability/queries - List saved queries
+    - GET /ui/observability/partial - Observability overview HTML
+    - GET /ui/observability/stats - Observability stats
+    - GET /ui/observability/traces - Trace list
+    - GET /ui/observability/metrics/heatmap - Latency heatmap
+    - GET /ui/observability/metrics/percentiles - Latency percentiles
+    - GET /ui/observability/metrics/timeseries - Request timeseries
+    - GET /ui/observability/metrics/partial - Metrics overview HTML
+    - GET /ui/observability/metrics/top-errors - Top error endpoints
+    - GET /ui/observability/metrics/top-slow - Top slow endpoints
+    - GET /ui/observability/prompts/errors - Prompt errors
+    - GET /ui/observability/prompts/partial - Prompts HTML
+    - GET /ui/observability/prompts/performance - Prompt performance
+    - GET /ui/observability/prompts/usage - Prompt usage
+    - GET /ui/observability/resources/errors - Resource errors
+    - GET /ui/observability/resources/partial - Resources HTML
+    - GET /ui/observability/resources/performance - Resource performance
+    - GET /ui/observability/resources/usage - Resource usage
+    - GET /ui/observability/tools/chains - Tool chains
+    - GET /ui/observability/tools/errors - Tool errors
+    - GET /ui/observability/tools/partial - Tools HTML
+    - POST /ui/observability/queries - Create saved query
+    - GET /ui/observability/queries - List saved queries
 
     Weight: Low (admin analytics)
     """
@@ -4310,12 +4310,12 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(3)
     @tag("admin", "observability", "partial")
     def observability_partial(self):
-        """GET /admin/observability/partial - Observability overview."""
+        """GET /ui/observability/partial - Observability overview."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/observability/partial",
+            "/ui/observability/partial",
             headers=headers,
-            name="/admin/observability/partial",
+            name="/ui/observability/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -4323,11 +4323,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(3)
     @tag("admin", "observability", "stats")
     def observability_stats(self):
-        """GET /admin/observability/stats - Observability statistics."""
+        """GET /ui/observability/stats - Observability statistics."""
         with self.client.get(
-            "/admin/observability/stats",
+            "/ui/observability/stats",
             headers=self.admin_headers,
-            name="/admin/observability/stats",
+            name="/ui/observability/stats",
             catch_response=True,
         ) as response:
             self._validate_status(response)
@@ -4335,11 +4335,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "observability", "traces")
     def observability_traces(self):
-        """GET /admin/observability/traces - List traces."""
+        """GET /ui/observability/traces - List traces."""
         with self.client.get(
-            "/admin/observability/traces",
+            "/ui/observability/traces",
             headers=self.admin_headers,
-            name="/admin/observability/traces",
+            name="/ui/observability/traces",
             catch_response=True,
         ) as response:
             self._validate_status(response)
@@ -4347,11 +4347,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "observability", "heatmap")
     def observability_heatmap(self):
-        """GET /admin/observability/metrics/heatmap - Latency heatmap data."""
+        """GET /ui/observability/metrics/heatmap - Latency heatmap data."""
         with self.client.get(
-            "/admin/observability/metrics/heatmap",
+            "/ui/observability/metrics/heatmap",
             headers=self.auth_headers,
-            name="/admin/observability/metrics/heatmap",
+            name="/ui/observability/metrics/heatmap",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 500])
@@ -4359,11 +4359,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "observability", "percentiles")
     def observability_percentiles(self):
-        """GET /admin/observability/metrics/percentiles - Latency percentiles."""
+        """GET /ui/observability/metrics/percentiles - Latency percentiles."""
         with self.client.get(
-            "/admin/observability/metrics/percentiles",
+            "/ui/observability/metrics/percentiles",
             headers=self.auth_headers,
-            name="/admin/observability/metrics/percentiles",
+            name="/ui/observability/metrics/percentiles",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 500])
@@ -4371,11 +4371,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "observability", "timeseries")
     def observability_timeseries(self):
-        """GET /admin/observability/metrics/timeseries - Request timeseries."""
+        """GET /ui/observability/metrics/timeseries - Request timeseries."""
         with self.client.get(
-            "/admin/observability/metrics/timeseries",
+            "/ui/observability/metrics/timeseries",
             headers=self.auth_headers,
-            name="/admin/observability/metrics/timeseries",
+            name="/ui/observability/metrics/timeseries",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 500])
@@ -4383,12 +4383,12 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "metrics", "partial")
     def observability_metrics_partial(self):
-        """GET /admin/observability/metrics/partial - Metrics overview HTML."""
+        """GET /ui/observability/metrics/partial - Metrics overview HTML."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/observability/metrics/partial",
+            "/ui/observability/metrics/partial",
             headers=headers,
-            name="/admin/observability/metrics/partial",
+            name="/ui/observability/metrics/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -4396,11 +4396,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "top-errors")
     def observability_top_errors(self):
-        """GET /admin/observability/metrics/top-errors - Top error endpoints."""
+        """GET /ui/observability/metrics/top-errors - Top error endpoints."""
         with self.client.get(
-            "/admin/observability/metrics/top-errors",
+            "/ui/observability/metrics/top-errors",
             headers=self.auth_headers,
-            name="/admin/observability/metrics/top-errors",
+            name="/ui/observability/metrics/top-errors",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 500])
@@ -4408,11 +4408,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "top-slow")
     def observability_top_slow(self):
-        """GET /admin/observability/metrics/top-slow - Top slow endpoints."""
+        """GET /ui/observability/metrics/top-slow - Top slow endpoints."""
         with self.client.get(
-            "/admin/observability/metrics/top-slow",
+            "/ui/observability/metrics/top-slow",
             headers=self.auth_headers,
-            name="/admin/observability/metrics/top-slow",
+            name="/ui/observability/metrics/top-slow",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 500])
@@ -4420,11 +4420,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "prompts")
     def observability_prompts_errors(self):
-        """GET /admin/observability/prompts/errors - Prompt errors."""
+        """GET /ui/observability/prompts/errors - Prompt errors."""
         with self.client.get(
-            "/admin/observability/prompts/errors",
+            "/ui/observability/prompts/errors",
             headers=self.auth_headers,
-            name="/admin/observability/prompts/errors",
+            name="/ui/observability/prompts/errors",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -4432,12 +4432,12 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "prompts")
     def observability_prompts_partial(self):
-        """GET /admin/observability/prompts/partial - Prompts observability HTML."""
+        """GET /ui/observability/prompts/partial - Prompts observability HTML."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/observability/prompts/partial",
+            "/ui/observability/prompts/partial",
             headers=headers,
-            name="/admin/observability/prompts/partial",
+            name="/ui/observability/prompts/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -4445,11 +4445,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "prompts")
     def observability_prompts_performance(self):
-        """GET /admin/observability/prompts/performance - Prompt performance."""
+        """GET /ui/observability/prompts/performance - Prompt performance."""
         with self.client.get(
-            "/admin/observability/prompts/performance",
+            "/ui/observability/prompts/performance",
             headers=self.auth_headers,
-            name="/admin/observability/prompts/performance",
+            name="/ui/observability/prompts/performance",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -4457,11 +4457,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "prompts")
     def observability_prompts_usage(self):
-        """GET /admin/observability/prompts/usage - Prompt usage statistics."""
+        """GET /ui/observability/prompts/usage - Prompt usage statistics."""
         with self.client.get(
-            "/admin/observability/prompts/usage",
+            "/ui/observability/prompts/usage",
             headers=self.auth_headers,
-            name="/admin/observability/prompts/usage",
+            name="/ui/observability/prompts/usage",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -4469,11 +4469,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "resources")
     def observability_resources_errors(self):
-        """GET /admin/observability/resources/errors - Resource errors."""
+        """GET /ui/observability/resources/errors - Resource errors."""
         with self.client.get(
-            "/admin/observability/resources/errors",
+            "/ui/observability/resources/errors",
             headers=self.auth_headers,
-            name="/admin/observability/resources/errors",
+            name="/ui/observability/resources/errors",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -4481,12 +4481,12 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "resources")
     def observability_resources_partial(self):
-        """GET /admin/observability/resources/partial - Resources observability HTML."""
+        """GET /ui/observability/resources/partial - Resources observability HTML."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/observability/resources/partial",
+            "/ui/observability/resources/partial",
             headers=headers,
-            name="/admin/observability/resources/partial",
+            name="/ui/observability/resources/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -4494,11 +4494,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "resources")
     def observability_resources_performance(self):
-        """GET /admin/observability/resources/performance - Resource performance."""
+        """GET /ui/observability/resources/performance - Resource performance."""
         with self.client.get(
-            "/admin/observability/resources/performance",
+            "/ui/observability/resources/performance",
             headers=self.auth_headers,
-            name="/admin/observability/resources/performance",
+            name="/ui/observability/resources/performance",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -4506,11 +4506,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "resources")
     def observability_resources_usage(self):
-        """GET /admin/observability/resources/usage - Resource usage."""
+        """GET /ui/observability/resources/usage - Resource usage."""
         with self.client.get(
-            "/admin/observability/resources/usage",
+            "/ui/observability/resources/usage",
             headers=self.auth_headers,
-            name="/admin/observability/resources/usage",
+            name="/ui/observability/resources/usage",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -4518,11 +4518,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "tools")
     def observability_tools_chains(self):
-        """GET /admin/observability/tools/chains - Tool invocation chains."""
+        """GET /ui/observability/tools/chains - Tool invocation chains."""
         with self.client.get(
-            "/admin/observability/tools/chains",
+            "/ui/observability/tools/chains",
             headers=self.auth_headers,
-            name="/admin/observability/tools/chains",
+            name="/ui/observability/tools/chains",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -4530,11 +4530,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "tools")
     def observability_tools_errors(self):
-        """GET /admin/observability/tools/errors - Tool errors."""
+        """GET /ui/observability/tools/errors - Tool errors."""
         with self.client.get(
-            "/admin/observability/tools/errors",
+            "/ui/observability/tools/errors",
             headers=self.auth_headers,
-            name="/admin/observability/tools/errors",
+            name="/ui/observability/tools/errors",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -4542,12 +4542,12 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "tools")
     def observability_tools_partial(self):
-        """GET /admin/observability/tools/partial - Tools observability HTML."""
+        """GET /ui/observability/tools/partial - Tools observability HTML."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/observability/tools/partial",
+            "/ui/observability/tools/partial",
             headers=headers,
-            name="/admin/observability/tools/partial",
+            name="/ui/observability/tools/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -4555,11 +4555,11 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "queries")
     def observability_queries_list(self):
-        """GET /admin/observability/queries - List saved queries."""
+        """GET /ui/observability/queries - List saved queries."""
         with self.client.get(
-            "/admin/observability/queries",
+            "/ui/observability/queries",
             headers=self.auth_headers,
-            name="/admin/observability/queries",
+            name="/ui/observability/queries",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 500])
@@ -4567,17 +4567,17 @@ class AdminObservabilityExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "queries")
     def observability_queries_create(self):
-        """POST /admin/observability/queries - Create a saved query."""
+        """POST /ui/observability/queries - Create a saved query."""
         payload = {
             "name": f"locust-query-{uuid.uuid4().hex[:8]}",
             "query_type": "traces",
             "filters": {},
         }
         with self.client.post(
-            "/admin/observability/queries",
+            "/ui/observability/queries",
             json=payload,
             headers=self.auth_headers,
-            name="/admin/observability/queries [create]",
+            name="/ui/observability/queries [create]",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 201, 422, 500])
@@ -4589,11 +4589,11 @@ class AdminPerformanceExtendedUser(BaseUser):
     All endpoints return 404 when performance tracking is disabled.
 
     Endpoints tested:
-    - GET /admin/performance/cache - Cache stats
-    - GET /admin/performance/history - Performance history
-    - GET /admin/performance/requests - Request stats
-    - GET /admin/performance/system - System performance
-    - GET /admin/performance/workers - Worker stats
+    - GET /ui/performance/cache - Cache stats
+    - GET /ui/performance/history - Performance history
+    - GET /ui/performance/requests - Request stats
+    - GET /ui/performance/system - System performance
+    - GET /ui/performance/workers - Worker stats
 
     Weight: Low (admin diagnostics)
     """
@@ -4604,11 +4604,11 @@ class AdminPerformanceExtendedUser(BaseUser):
     @task(3)
     @tag("admin", "performance", "cache")
     def performance_cache(self):
-        """GET /admin/performance/cache - Cache performance stats."""
+        """GET /ui/performance/cache - Cache performance stats."""
         with self.client.get(
-            "/admin/performance/cache",
+            "/ui/performance/cache",
             headers=self.auth_headers,
-            name="/admin/performance/cache",
+            name="/ui/performance/cache",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 404])
@@ -4616,11 +4616,11 @@ class AdminPerformanceExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "performance", "history")
     def performance_history(self):
-        """GET /admin/performance/history - Performance history."""
+        """GET /ui/performance/history - Performance history."""
         with self.client.get(
-            "/admin/performance/history",
+            "/ui/performance/history",
             headers=self.auth_headers,
-            name="/admin/performance/history",
+            name="/ui/performance/history",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 404])
@@ -4628,11 +4628,11 @@ class AdminPerformanceExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "performance", "requests")
     def performance_requests(self):
-        """GET /admin/performance/requests - Request performance stats."""
+        """GET /ui/performance/requests - Request performance stats."""
         with self.client.get(
-            "/admin/performance/requests",
+            "/ui/performance/requests",
             headers=self.auth_headers,
-            name="/admin/performance/requests",
+            name="/ui/performance/requests",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 404])
@@ -4640,11 +4640,11 @@ class AdminPerformanceExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "performance", "system")
     def performance_system(self):
-        """GET /admin/performance/system - System performance metrics."""
+        """GET /ui/performance/system - System performance metrics."""
         with self.client.get(
-            "/admin/performance/system",
+            "/ui/performance/system",
             headers=self.auth_headers,
-            name="/admin/performance/system",
+            name="/ui/performance/system",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 404])
@@ -4652,11 +4652,11 @@ class AdminPerformanceExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "performance", "workers")
     def performance_workers(self):
-        """GET /admin/performance/workers - Worker performance stats."""
+        """GET /ui/performance/workers - Worker performance stats."""
         with self.client.get(
-            "/admin/performance/workers",
+            "/ui/performance/workers",
             headers=self.auth_headers,
-            name="/admin/performance/workers",
+            name="/ui/performance/workers",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 404])
@@ -4666,10 +4666,10 @@ class AdminPluginsUser(BaseUser):
     """User that tests admin plugin management endpoints.
 
     Endpoints tested:
-    - GET /admin/plugins - List all plugins
-    - GET /admin/plugins/stats - Plugin statistics
-    - GET /admin/plugins/partial - Plugins HTML partial
-    - GET /admin/plugins/{name} - Get specific plugin details
+    - GET /ui/plugins - List all plugins
+    - GET /ui/plugins/stats - Plugin statistics
+    - GET /ui/plugins/partial - Plugins HTML partial
+    - GET /ui/plugins/{name} - Get specific plugin details
 
     Weight: Low (admin operations)
     """
@@ -4680,11 +4680,11 @@ class AdminPluginsUser(BaseUser):
     @task(5)
     @tag("admin", "plugins")
     def list_plugins(self):
-        """GET /admin/plugins - List all plugins."""
+        """GET /ui/plugins - List all plugins."""
         with self.client.get(
-            "/admin/plugins",
+            "/ui/plugins",
             headers=self.auth_headers,
-            name="/admin/plugins",
+            name="/ui/plugins",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -4692,11 +4692,11 @@ class AdminPluginsUser(BaseUser):
     @task(3)
     @tag("admin", "plugins", "stats")
     def plugins_stats(self):
-        """GET /admin/plugins/stats - Plugin statistics."""
+        """GET /ui/plugins/stats - Plugin statistics."""
         with self.client.get(
-            "/admin/plugins/stats",
+            "/ui/plugins/stats",
             headers=self.auth_headers,
-            name="/admin/plugins/stats",
+            name="/ui/plugins/stats",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -4704,12 +4704,12 @@ class AdminPluginsUser(BaseUser):
     @task(2)
     @tag("admin", "plugins", "partial")
     def plugins_partial(self):
-        """GET /admin/plugins/partial - Plugins HTML partial."""
+        """GET /ui/plugins/partial - Plugins HTML partial."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/plugins/partial",
+            "/ui/plugins/partial",
             headers=headers,
-            name="/admin/plugins/partial",
+            name="/ui/plugins/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -4717,13 +4717,13 @@ class AdminPluginsUser(BaseUser):
     @task(2)
     @tag("admin", "plugins")
     def get_plugin_detail(self):
-        """GET /admin/plugins/{name} - Get plugin details."""
+        """GET /ui/plugins/{name} - Get plugin details."""
         plugin_names = ["VaultPlugin", "RateLimiterPlugin", "CircuitBreaker", "DenyListPlugin"]
         name = random.choice(plugin_names)
         with self.client.get(
-            f"/admin/plugins/{name}",
+            f"/ui/plugins/{name}",
             headers=self.auth_headers,
-            name="/admin/plugins/[name]",
+            name="/ui/plugins/[name]",
             catch_response=True,
         ) as response:
             # 200=Success, 404=Plugin not found
@@ -4734,16 +4734,16 @@ class AdminSystemExtendedUser(BaseUser):
     """User that tests admin system, maintenance, and registry endpoints.
 
     Endpoints tested:
-    - GET /admin/system/stats - System-wide statistics
-    - GET /admin/tags - Admin tags list
-    - GET /admin/well-known - Well-known file configuration
-    - GET /admin/mcp-pool/metrics - MCP connection pool metrics
-    - GET /admin/mcp-registry/servers - MCP server registry
-    - GET /admin/mcp-registry/partial - Registry HTML partial
-    - GET /admin/maintenance/partial - Maintenance HTML partial
-    - GET /admin/overview/partial - Dashboard overview HTML
-    - GET /admin/change-password-required - Password change requirement check
-    - GET /admin/tool-ops/partial - Tool operations HTML partial
+    - GET /ui/system/stats - System-wide statistics
+    - GET /ui/tags - Admin tags list
+    - GET /ui/well-known - Well-known file configuration
+    - GET /ui/mcp-pool/metrics - MCP connection pool metrics
+    - GET /ui/mcp-registry/servers - MCP server registry
+    - GET /ui/mcp-registry/partial - Registry HTML partial
+    - GET /ui/maintenance/partial - Maintenance HTML partial
+    - GET /ui/overview/partial - Dashboard overview HTML
+    - GET /ui/change-password-required - Password change requirement check
+    - GET /ui/tool-ops/partial - Tool operations HTML partial
 
     Weight: Low (admin diagnostics)
     """
@@ -4754,11 +4754,11 @@ class AdminSystemExtendedUser(BaseUser):
     @task(3)
     @tag("admin", "system", "stats")
     def system_stats(self):
-        """GET /admin/system/stats - System-wide statistics."""
+        """GET /ui/system/stats - System-wide statistics."""
         with self.client.get(
-            "/admin/system/stats",
+            "/ui/system/stats",
             headers=self.auth_headers,
-            name="/admin/system/stats",
+            name="/ui/system/stats",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 500])
@@ -4766,11 +4766,11 @@ class AdminSystemExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "tags")
     def admin_tags(self):
-        """GET /admin/tags - Admin tags list."""
+        """GET /ui/tags - Admin tags list."""
         with self.client.get(
-            "/admin/tags",
+            "/ui/tags",
             headers=self.auth_headers,
-            name="/admin/tags",
+            name="/ui/tags",
             catch_response=True,
         ) as response:
             # 500 can return non-JSON "Internal Server Error" text
@@ -4779,11 +4779,11 @@ class AdminSystemExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "well-known")
     def admin_well_known(self):
-        """GET /admin/well-known - Well-known file configuration."""
+        """GET /ui/well-known - Well-known file configuration."""
         with self.client.get(
-            "/admin/well-known",
+            "/ui/well-known",
             headers=self.auth_headers,
-            name="/admin/well-known",
+            name="/ui/well-known",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -4791,11 +4791,11 @@ class AdminSystemExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "mcp-pool")
     def mcp_pool_metrics(self):
-        """GET /admin/mcp-pool/metrics - MCP connection pool metrics."""
+        """GET /ui/mcp-pool/metrics - MCP connection pool metrics."""
         with self.client.get(
-            "/admin/mcp-pool/metrics",
+            "/ui/mcp-pool/metrics",
             headers=self.auth_headers,
-            name="/admin/mcp-pool/metrics",
+            name="/ui/mcp-pool/metrics",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -4803,11 +4803,11 @@ class AdminSystemExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "mcp-registry")
     def mcp_registry_servers(self):
-        """GET /admin/mcp-registry/servers - List MCP registry servers."""
+        """GET /ui/mcp-registry/servers - List MCP registry servers."""
         with self.client.get(
-            "/admin/mcp-registry/servers",
+            "/ui/mcp-registry/servers",
             headers=self.auth_headers,
-            name="/admin/mcp-registry/servers",
+            name="/ui/mcp-registry/servers",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -4815,12 +4815,12 @@ class AdminSystemExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "mcp-registry", "partial")
     def mcp_registry_partial(self):
-        """GET /admin/mcp-registry/partial - Registry HTML partial."""
+        """GET /ui/mcp-registry/partial - Registry HTML partial."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/mcp-registry/partial",
+            "/ui/mcp-registry/partial",
             headers=headers,
-            name="/admin/mcp-registry/partial",
+            name="/ui/mcp-registry/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -4828,12 +4828,12 @@ class AdminSystemExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "maintenance", "partial")
     def maintenance_partial(self):
-        """GET /admin/maintenance/partial - Maintenance HTML partial."""
+        """GET /ui/maintenance/partial - Maintenance HTML partial."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/maintenance/partial",
+            "/ui/maintenance/partial",
             headers=headers,
-            name="/admin/maintenance/partial",
+            name="/ui/maintenance/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -4841,12 +4841,12 @@ class AdminSystemExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "overview", "partial")
     def overview_partial(self):
-        """GET /admin/overview/partial - Dashboard overview HTML."""
+        """GET /ui/overview/partial - Dashboard overview HTML."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/overview/partial",
+            "/ui/overview/partial",
             headers=headers,
-            name="/admin/overview/partial",
+            name="/ui/overview/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -4854,11 +4854,11 @@ class AdminSystemExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "password")
     def change_password_required(self):
-        """GET /admin/change-password-required - Check password change requirement."""
+        """GET /ui/change-password-required - Check password change requirement."""
         with self.client.get(
-            "/admin/change-password-required",
+            "/ui/change-password-required",
             headers=self.admin_headers,
-            name="/admin/change-password-required",
+            name="/ui/change-password-required",
             catch_response=True,
         ) as response:
             self._validate_status(response)
@@ -4866,12 +4866,12 @@ class AdminSystemExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "tool-ops", "partial")
     def tool_ops_partial(self):
-        """GET /admin/tool-ops/partial - Tool operations HTML partial."""
+        """GET /ui/tool-ops/partial - Tool operations HTML partial."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/tool-ops/partial",
+            "/ui/tool-ops/partial",
             headers=headers,
-            name="/admin/tool-ops/partial",
+            name="/ui/tool-ops/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -4881,10 +4881,10 @@ class AdminSectionsUser(BaseUser):
     """User that tests admin section partial views.
 
     Endpoints tested:
-    - GET /admin/sections/gateways - Gateways section HTML
-    - GET /admin/sections/prompts - Prompts section HTML
-    - GET /admin/sections/resources - Resources section HTML
-    - GET /admin/sections/servers - Servers section HTML
+    - GET /ui/sections/gateways - Gateways section HTML
+    - GET /ui/sections/prompts - Prompts section HTML
+    - GET /ui/sections/resources - Resources section HTML
+    - GET /ui/sections/servers - Servers section HTML
 
     Weight: Low (admin UI partials)
     """
@@ -4895,12 +4895,12 @@ class AdminSectionsUser(BaseUser):
     @task(3)
     @tag("admin", "sections", "gateways")
     def section_gateways(self):
-        """GET /admin/sections/gateways - Gateways section HTML."""
+        """GET /ui/sections/gateways - Gateways section HTML."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/sections/gateways",
+            "/ui/sections/gateways",
             headers=headers,
-            name="/admin/sections/gateways",
+            name="/ui/sections/gateways",
             catch_response=True,
         ) as response:
             # May return HTML or JSON depending on config
@@ -4909,12 +4909,12 @@ class AdminSectionsUser(BaseUser):
     @task(3)
     @tag("admin", "sections", "servers")
     def section_servers(self):
-        """GET /admin/sections/servers - Servers section HTML."""
+        """GET /ui/sections/servers - Servers section HTML."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/sections/servers",
+            "/ui/sections/servers",
             headers=headers,
-            name="/admin/sections/servers",
+            name="/ui/sections/servers",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -4922,12 +4922,12 @@ class AdminSectionsUser(BaseUser):
     @task(2)
     @tag("admin", "sections", "prompts")
     def section_prompts(self):
-        """GET /admin/sections/prompts - Prompts section HTML."""
+        """GET /ui/sections/prompts - Prompts section HTML."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/sections/prompts",
+            "/ui/sections/prompts",
             headers=headers,
-            name="/admin/sections/prompts",
+            name="/ui/sections/prompts",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -4935,12 +4935,12 @@ class AdminSectionsUser(BaseUser):
     @task(2)
     @tag("admin", "sections", "resources")
     def section_resources(self):
-        """GET /admin/sections/resources - Resources section HTML."""
+        """GET /ui/sections/resources - Resources section HTML."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/sections/resources",
+            "/ui/sections/resources",
             headers=headers,
-            name="/admin/sections/resources",
+            name="/ui/sections/resources",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -4950,20 +4950,20 @@ class AdminSearchUser(BaseUser):
     """User that tests admin search and ID listing endpoints.
 
     Endpoints tested:
-    - GET /admin/tools/search - Search tools
-    - GET /admin/servers/search - Search servers
-    - GET /admin/gateways/search - Search gateways
-    - GET /admin/resources/search - Search resources
-    - GET /admin/prompts/search - Search prompts
-    - GET /admin/a2a/search - Search A2A agents
-    - GET /admin/teams/search - Search teams
-    - GET /admin/users/search - Search users
-    - GET /admin/tools/ids - Tool ID list
-    - GET /admin/gateways/ids - Gateway ID list
-    - GET /admin/resources/ids - Resource ID list
-    - GET /admin/prompts/ids - Prompt ID list
-    - GET /admin/a2a/ids - A2A agent ID list
-    - GET /admin/teams/ids - Team ID list
+    - GET /ui/tools/search - Search tools
+    - GET /ui/servers/search - Search servers
+    - GET /ui/gateways/search - Search gateways
+    - GET /ui/resources/search - Search resources
+    - GET /ui/prompts/search - Search prompts
+    - GET /ui/a2a/search - Search A2A agents
+    - GET /ui/teams/search - Search teams
+    - GET /ui/users/search - Search users
+    - GET /ui/tools/ids - Tool ID list
+    - GET /ui/gateways/ids - Gateway ID list
+    - GET /ui/resources/ids - Resource ID list
+    - GET /ui/prompts/ids - Prompt ID list
+    - GET /ui/a2a/ids - A2A agent ID list
+    - GET /ui/teams/ids - Team ID list
 
     Weight: Low (admin search operations)
     """
@@ -4974,11 +4974,11 @@ class AdminSearchUser(BaseUser):
     @task(3)
     @tag("admin", "search", "tools")
     def search_tools(self):
-        """GET /admin/tools/search - Search tools."""
+        """GET /ui/tools/search - Search tools."""
         with self.client.get(
-            "/admin/tools/search?q=test",
+            "/ui/tools/search?q=test",
             headers=self.auth_headers,
-            name="/admin/tools/search",
+            name="/ui/tools/search",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -4986,24 +4986,24 @@ class AdminSearchUser(BaseUser):
     @task(3)
     @tag("admin", "search", "servers")
     def search_servers(self):
-        """GET /admin/servers/search - Search servers."""
+        """GET /ui/servers/search - Search servers."""
         with self.client.get(
-            "/admin/servers/search?q=test",
+            "/ui/servers/search?q=test",
             headers=self.auth_headers,
-            name="/admin/servers/search",
+            name="/ui/servers/search",
             catch_response=True,
         ) as response:
-            # 404 can occur due to routing conflict with /admin/servers/{server_id}
+            # 404 can occur due to routing conflict with /ui/servers/{server_id}
             self._validate_json_response(response, allowed_codes=[200, 404])
 
     @task(2)
     @tag("admin", "search", "gateways")
     def search_gateways(self):
-        """GET /admin/gateways/search - Search gateways."""
+        """GET /ui/gateways/search - Search gateways."""
         with self.client.get(
-            "/admin/gateways/search?q=test",
+            "/ui/gateways/search?q=test",
             headers=self.auth_headers,
-            name="/admin/gateways/search",
+            name="/ui/gateways/search",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5011,11 +5011,11 @@ class AdminSearchUser(BaseUser):
     @task(2)
     @tag("admin", "search", "resources")
     def search_resources(self):
-        """GET /admin/resources/search - Search resources."""
+        """GET /ui/resources/search - Search resources."""
         with self.client.get(
-            "/admin/resources/search?q=test",
+            "/ui/resources/search?q=test",
             headers=self.auth_headers,
-            name="/admin/resources/search",
+            name="/ui/resources/search",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5023,11 +5023,11 @@ class AdminSearchUser(BaseUser):
     @task(2)
     @tag("admin", "search", "prompts")
     def search_prompts(self):
-        """GET /admin/prompts/search - Search prompts."""
+        """GET /ui/prompts/search - Search prompts."""
         with self.client.get(
-            "/admin/prompts/search?q=test",
+            "/ui/prompts/search?q=test",
             headers=self.auth_headers,
-            name="/admin/prompts/search",
+            name="/ui/prompts/search",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5035,11 +5035,11 @@ class AdminSearchUser(BaseUser):
     @task(1)
     @tag("admin", "search", "a2a")
     def search_a2a(self):
-        """GET /admin/a2a/search - Search A2A agents."""
+        """GET /ui/a2a/search - Search A2A agents."""
         with self.client.get(
-            "/admin/a2a/search?q=test",
+            "/ui/a2a/search?q=test",
             headers=self.auth_headers,
-            name="/admin/a2a/search",
+            name="/ui/a2a/search",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5047,11 +5047,11 @@ class AdminSearchUser(BaseUser):
     @task(1)
     @tag("admin", "search", "teams")
     def search_teams(self):
-        """GET /admin/teams/search - Search teams."""
+        """GET /ui/teams/search - Search teams."""
         with self.client.get(
-            "/admin/teams/search?q=test",
+            "/ui/teams/search?q=test",
             headers=self.auth_headers,
-            name="/admin/teams/search",
+            name="/ui/teams/search",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5059,11 +5059,11 @@ class AdminSearchUser(BaseUser):
     @task(1)
     @tag("admin", "search", "users")
     def search_users(self):
-        """GET /admin/users/search - Search users."""
+        """GET /ui/users/search - Search users."""
         with self.client.get(
-            "/admin/users/search?q=test",
+            "/ui/users/search?q=test",
             headers=self.auth_headers,
-            name="/admin/users/search",
+            name="/ui/users/search",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5071,11 +5071,11 @@ class AdminSearchUser(BaseUser):
     @task(2)
     @tag("admin", "ids", "tools")
     def tools_ids(self):
-        """GET /admin/tools/ids - List tool IDs."""
+        """GET /ui/tools/ids - List tool IDs."""
         with self.client.get(
-            "/admin/tools/ids",
+            "/ui/tools/ids",
             headers=self.auth_headers,
-            name="/admin/tools/ids",
+            name="/ui/tools/ids",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5083,11 +5083,11 @@ class AdminSearchUser(BaseUser):
     @task(2)
     @tag("admin", "ids", "gateways")
     def gateways_ids(self):
-        """GET /admin/gateways/ids - List gateway IDs."""
+        """GET /ui/gateways/ids - List gateway IDs."""
         with self.client.get(
-            "/admin/gateways/ids",
+            "/ui/gateways/ids",
             headers=self.auth_headers,
-            name="/admin/gateways/ids",
+            name="/ui/gateways/ids",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5095,11 +5095,11 @@ class AdminSearchUser(BaseUser):
     @task(2)
     @tag("admin", "ids", "resources")
     def resources_ids(self):
-        """GET /admin/resources/ids - List resource IDs."""
+        """GET /ui/resources/ids - List resource IDs."""
         with self.client.get(
-            "/admin/resources/ids",
+            "/ui/resources/ids",
             headers=self.auth_headers,
-            name="/admin/resources/ids",
+            name="/ui/resources/ids",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5107,11 +5107,11 @@ class AdminSearchUser(BaseUser):
     @task(2)
     @tag("admin", "ids", "prompts")
     def prompts_ids(self):
-        """GET /admin/prompts/ids - List prompt IDs."""
+        """GET /ui/prompts/ids - List prompt IDs."""
         with self.client.get(
-            "/admin/prompts/ids",
+            "/ui/prompts/ids",
             headers=self.auth_headers,
-            name="/admin/prompts/ids",
+            name="/ui/prompts/ids",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5119,11 +5119,11 @@ class AdminSearchUser(BaseUser):
     @task(1)
     @tag("admin", "ids", "a2a")
     def a2a_ids(self):
-        """GET /admin/a2a/ids - List A2A agent IDs."""
+        """GET /ui/a2a/ids - List A2A agent IDs."""
         with self.client.get(
-            "/admin/a2a/ids",
+            "/ui/a2a/ids",
             headers=self.auth_headers,
-            name="/admin/a2a/ids",
+            name="/ui/a2a/ids",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5131,11 +5131,11 @@ class AdminSearchUser(BaseUser):
     @task(1)
     @tag("admin", "ids", "teams")
     def teams_ids(self):
-        """GET /admin/teams/ids - List team IDs."""
+        """GET /ui/teams/ids - List team IDs."""
         with self.client.get(
-            "/admin/teams/ids",
+            "/ui/teams/ids",
             headers=self.auth_headers,
-            name="/admin/teams/ids",
+            name="/ui/teams/ids",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5143,14 +5143,14 @@ class AdminSearchUser(BaseUser):
     @task(1)
     @tag("admin", "ids", "servers")
     def servers_ids(self):
-        """GET /admin/servers/ids - List server IDs."""
+        """GET /ui/servers/ids - List server IDs."""
         with self.client.get(
-            "/admin/servers/ids",
+            "/ui/servers/ids",
             headers=self.auth_headers,
-            name="/admin/servers/ids",
+            name="/ui/servers/ids",
             catch_response=True,
         ) as response:
-            # Note: may return 404 due to routing conflict with /admin/servers/{server_id}
+            # Note: may return 404 due to routing conflict with /ui/servers/{server_id}
             self._validate_json_response(response, allowed_codes=[200, 404])
 
 
@@ -5158,11 +5158,11 @@ class AdminCacheConfigUser(BaseUser):
     """User that tests admin cache and passthrough header config endpoints.
 
     Endpoints tested:
-    - GET /admin/cache/a2a-stats/stats - A2A cache statistics
-    - POST /admin/cache/a2a-stats/invalidate - Invalidate A2A cache
-    - GET /admin/config/passthrough-headers - Get passthrough headers config
-    - GET /admin/config/passthrough-headers/cache-stats - Cache stats for headers
-    - POST /admin/config/passthrough-headers/invalidate-cache - Invalidate header cache
+    - GET /ui/cache/a2a-stats/stats - A2A cache statistics
+    - POST /ui/cache/a2a-stats/invalidate - Invalidate A2A cache
+    - GET /ui/config/passthrough-headers - Get passthrough headers config
+    - GET /ui/config/passthrough-headers/cache-stats - Cache stats for headers
+    - POST /ui/config/passthrough-headers/invalidate-cache - Invalidate header cache
 
     Weight: Low (admin cache operations)
     """
@@ -5173,11 +5173,11 @@ class AdminCacheConfigUser(BaseUser):
     @task(3)
     @tag("admin", "cache", "a2a")
     def a2a_cache_stats(self):
-        """GET /admin/cache/a2a-stats/stats - A2A cache statistics."""
+        """GET /ui/cache/a2a-stats/stats - A2A cache statistics."""
         with self.client.get(
-            "/admin/cache/a2a-stats/stats",
+            "/ui/cache/a2a-stats/stats",
             headers=self.auth_headers,
-            name="/admin/cache/a2a-stats/stats",
+            name="/ui/cache/a2a-stats/stats",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -5185,11 +5185,11 @@ class AdminCacheConfigUser(BaseUser):
     @task(1)
     @tag("admin", "cache", "a2a")
     def a2a_cache_invalidate(self):
-        """POST /admin/cache/a2a-stats/invalidate - Invalidate A2A cache."""
+        """POST /ui/cache/a2a-stats/invalidate - Invalidate A2A cache."""
         with self.client.post(
-            "/admin/cache/a2a-stats/invalidate",
+            "/ui/cache/a2a-stats/invalidate",
             headers=self.auth_headers,
-            name="/admin/cache/a2a-stats/invalidate",
+            name="/ui/cache/a2a-stats/invalidate",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -5197,11 +5197,11 @@ class AdminCacheConfigUser(BaseUser):
     @task(3)
     @tag("admin", "config", "passthrough")
     def get_passthrough_headers(self):
-        """GET /admin/config/passthrough-headers - Get passthrough headers config."""
+        """GET /ui/config/passthrough-headers - Get passthrough headers config."""
         with self.client.get(
-            "/admin/config/passthrough-headers",
+            "/ui/config/passthrough-headers",
             headers=self.auth_headers,
-            name="/admin/config/passthrough-headers",
+            name="/ui/config/passthrough-headers",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -5209,11 +5209,11 @@ class AdminCacheConfigUser(BaseUser):
     @task(2)
     @tag("admin", "config", "passthrough", "cache")
     def passthrough_cache_stats(self):
-        """GET /admin/config/passthrough-headers/cache-stats - Header cache stats."""
+        """GET /ui/config/passthrough-headers/cache-stats - Header cache stats."""
         with self.client.get(
-            "/admin/config/passthrough-headers/cache-stats",
+            "/ui/config/passthrough-headers/cache-stats",
             headers=self.auth_headers,
-            name="/admin/config/passthrough-headers/cache-stats",
+            name="/ui/config/passthrough-headers/cache-stats",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -5221,11 +5221,11 @@ class AdminCacheConfigUser(BaseUser):
     @task(1)
     @tag("admin", "config", "passthrough", "cache")
     def passthrough_cache_invalidate(self):
-        """POST /admin/config/passthrough-headers/invalidate-cache - Invalidate header cache."""
+        """POST /ui/config/passthrough-headers/invalidate-cache - Invalidate header cache."""
         with self.client.post(
-            "/admin/config/passthrough-headers/invalidate-cache",
+            "/ui/config/passthrough-headers/invalidate-cache",
             headers=self.auth_headers,
-            name="/admin/config/passthrough-headers/invalidate-cache",
+            name="/ui/config/passthrough-headers/invalidate-cache",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -5235,10 +5235,10 @@ class AdminHTMXPartialsUser(BaseUser):
     """User that tests remaining admin HTMX partial views.
 
     Endpoints tested:
-    - GET /admin/a2a/partial - A2A agents HTML partial
-    - GET /admin/gateways/partial - Gateways HTML partial
-    - GET /admin/servers/partial - Servers HTML partial
-    - GET /admin/teams/partial - Teams HTML partial
+    - GET /ui/a2a/partial - A2A agents HTML partial
+    - GET /ui/gateways/partial - Gateways HTML partial
+    - GET /ui/servers/partial - Servers HTML partial
+    - GET /ui/teams/partial - Teams HTML partial
 
     Weight: Low (admin UI)
     """
@@ -5249,12 +5249,12 @@ class AdminHTMXPartialsUser(BaseUser):
     @task(3)
     @tag("admin", "htmx", "a2a")
     def a2a_partial(self):
-        """GET /admin/a2a/partial - A2A agents HTML partial."""
+        """GET /ui/a2a/partial - A2A agents HTML partial."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/a2a/partial",
+            "/ui/a2a/partial",
             headers=headers,
-            name="/admin/a2a/partial",
+            name="/ui/a2a/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -5262,12 +5262,12 @@ class AdminHTMXPartialsUser(BaseUser):
     @task(3)
     @tag("admin", "htmx", "gateways")
     def gateways_partial(self):
-        """GET /admin/gateways/partial - Gateways HTML partial."""
+        """GET /ui/gateways/partial - Gateways HTML partial."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/gateways/partial",
+            "/ui/gateways/partial",
             headers=headers,
-            name="/admin/gateways/partial",
+            name="/ui/gateways/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -5275,12 +5275,12 @@ class AdminHTMXPartialsUser(BaseUser):
     @task(3)
     @tag("admin", "htmx", "servers")
     def servers_partial(self):
-        """GET /admin/servers/partial - Servers HTML partial."""
+        """GET /ui/servers/partial - Servers HTML partial."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/servers/partial",
+            "/ui/servers/partial",
             headers=headers,
-            name="/admin/servers/partial",
+            name="/ui/servers/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -5288,12 +5288,12 @@ class AdminHTMXPartialsUser(BaseUser):
     @task(2)
     @tag("admin", "htmx", "teams")
     def teams_partial(self):
-        """GET /admin/teams/partial - Teams HTML partial."""
+        """GET /ui/teams/partial - Teams HTML partial."""
         headers = {**self.admin_headers, "HX-Request": "true"}
         with self.client.get(
-            "/admin/teams/partial",
+            "/ui/teams/partial",
             headers=headers,
-            name="/admin/teams/partial",
+            name="/ui/teams/partial",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -5438,8 +5438,8 @@ class AdminGrpcUser(BaseUser):
     """User that tests admin gRPC service management endpoints.
 
     Endpoints tested:
-    - GET /admin/grpc - List gRPC services
-    - POST /admin/grpc - Create gRPC service (not executed, just listed)
+    - GET /ui/grpc - List gRPC services
+    - POST /ui/grpc - Create gRPC service (not executed, just listed)
 
     Weight: Very low (gRPC management)
     """
@@ -5450,11 +5450,11 @@ class AdminGrpcUser(BaseUser):
     @task(5)
     @tag("admin", "grpc")
     def list_grpc_services(self):
-        """GET /admin/grpc - List gRPC services."""
+        """GET /ui/grpc - List gRPC services."""
         with self.client.get(
-            "/admin/grpc",
+            "/ui/grpc",
             headers=self.auth_headers,
-            name="/admin/grpc",
+            name="/ui/grpc",
             catch_response=True,
         ) as response:
             self._validate_json_response(response, allowed_codes=[200, 404])
@@ -5544,8 +5544,8 @@ class AdminLoginLogoutUser(BaseUser):
     """User that tests admin login/logout endpoints.
 
     Endpoints tested:
-    - GET /admin/login - Admin login page
-    - GET /admin/logout - Admin logout
+    - GET /ui/login - Admin login page
+    - GET /ui/logout - Admin logout
 
     Weight: Very low (session management)
     """
@@ -5556,11 +5556,11 @@ class AdminLoginLogoutUser(BaseUser):
     @task(3)
     @tag("admin", "login")
     def admin_login_page(self):
-        """GET /admin/login - Admin login page."""
+        """GET /ui/login - Admin login page."""
         with self.client.get(
-            "/admin/login",
+            "/ui/login",
             headers=self.admin_headers,
-            name="/admin/login",
+            name="/ui/login",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 302])
@@ -5568,11 +5568,11 @@ class AdminLoginLogoutUser(BaseUser):
     @task(1)
     @tag("admin", "logout")
     def admin_logout(self):
-        """GET /admin/logout - Admin logout."""
+        """GET /ui/logout - Admin logout."""
         with self.client.get(
-            "/admin/logout",
+            "/ui/logout",
             headers=self.admin_headers,
-            name="/admin/logout",
+            name="/ui/logout",
             catch_response=True,
         ) as response:
             # Typically redirects to login page
@@ -5583,9 +5583,9 @@ class AdminLogsExtendedUser(BaseUser):
     """User that tests extended admin log endpoints.
 
     Endpoints tested:
-    - GET /admin/logs/export - Export logs
-    - GET /admin/logs/file - Get log file
-    - GET /admin/logs/stream - Logs stream endpoint (connection/status probe)
+    - GET /ui/logs/export - Export logs
+    - GET /ui/logs/file - Get log file
+    - GET /ui/logs/stream - Logs stream endpoint (connection/status probe)
 
     Weight: Very low (admin operations)
     """
@@ -5596,11 +5596,11 @@ class AdminLogsExtendedUser(BaseUser):
     @task(3)
     @tag("admin", "logs", "export")
     def logs_export(self):
-        """GET /admin/logs/export - Export logs."""
+        """GET /ui/logs/export - Export logs."""
         with self.client.get(
-            "/admin/logs/export",
+            "/ui/logs/export",
             headers=self.auth_headers,
-            name="/admin/logs/export",
+            name="/ui/logs/export",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 404, 500])
@@ -5608,11 +5608,11 @@ class AdminLogsExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "logs", "file")
     def logs_file(self):
-        """GET /admin/logs/file - Get log file contents."""
+        """GET /ui/logs/file - Get log file contents."""
         with self.client.get(
-            "/admin/logs/file",
+            "/ui/logs/file",
             headers=self.auth_headers,
-            name="/admin/logs/file",
+            name="/ui/logs/file",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 404, 500])
@@ -5620,11 +5620,11 @@ class AdminLogsExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "logs", "stream")
     def logs_stream_probe(self):
-        """GET /admin/logs/stream - Logs stream endpoint probe."""
+        """GET /ui/logs/stream - Logs stream endpoint probe."""
         with self.client.get(
-            "/admin/logs/stream",
+            "/ui/logs/stream",
             headers={"Accept": "application/json"},
-            name="/admin/logs/stream",
+            name="/ui/logs/stream",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 401, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -5634,9 +5634,9 @@ class AdminLLMExtendedUser(BaseUser):
     """User that tests extended admin LLM management endpoints.
 
     Endpoints tested:
-    - GET /admin/llm/api-info/html - LLM API info page
-    - GET /admin/llm/models/html - LLM models admin page
-    - GET /admin/llm/providers/html - LLM providers admin page
+    - GET /ui/llm/api-info/html - LLM API info page
+    - GET /ui/llm/models/html - LLM models admin page
+    - GET /ui/llm/providers/html - LLM providers admin page
 
     Weight: Very low (admin pages)
     """
@@ -5647,11 +5647,11 @@ class AdminLLMExtendedUser(BaseUser):
     @task(3)
     @tag("admin", "llm", "api-info")
     def llm_api_info(self):
-        """GET /admin/llm/api-info/html - LLM API info page."""
+        """GET /ui/llm/api-info/html - LLM API info page."""
         with self.client.get(
-            "/admin/llm/api-info/html",
+            "/ui/llm/api-info/html",
             headers=self.admin_headers,
-            name="/admin/llm/api-info/html",
+            name="/ui/llm/api-info/html",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -5659,11 +5659,11 @@ class AdminLLMExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "llm", "models")
     def llm_models_html(self):
-        """GET /admin/llm/models/html - LLM models admin page."""
+        """GET /ui/llm/models/html - LLM models admin page."""
         with self.client.get(
-            "/admin/llm/models/html",
+            "/ui/llm/models/html",
             headers=self.admin_headers,
-            name="/admin/llm/models/html",
+            name="/ui/llm/models/html",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -5671,11 +5671,11 @@ class AdminLLMExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "llm", "providers")
     def llm_providers_html(self):
-        """GET /admin/llm/providers/html - LLM providers admin page."""
+        """GET /ui/llm/providers/html - LLM providers admin page."""
         with self.client.get(
-            "/admin/llm/providers/html",
+            "/ui/llm/providers/html",
             headers=self.admin_headers,
-            name="/admin/llm/providers/html",
+            name="/ui/llm/providers/html",
             catch_response=True,
         ) as response:
             self._validate_html_response(response)
@@ -5685,7 +5685,7 @@ class AdminSupportBundleUser(BaseUser):
     """User that tests admin support bundle generation.
 
     Endpoints tested:
-    - GET /admin/support-bundle/generate - Generate support bundle
+    - GET /ui/support-bundle/generate - Generate support bundle
 
     Weight: Very low (diagnostic operation)
     """
@@ -5696,11 +5696,11 @@ class AdminSupportBundleUser(BaseUser):
     @task(1)
     @tag("admin", "support-bundle")
     def generate_support_bundle(self):
-        """GET /admin/support-bundle/generate - Generate support bundle."""
+        """GET /ui/support-bundle/generate - Generate support bundle."""
         with self.client.get(
-            "/admin/support-bundle/generate",
+            "/ui/support-bundle/generate",
             headers=self.auth_headers,
-            name="/admin/support-bundle/generate",
+            name="/ui/support-bundle/generate",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 404, 500])
@@ -5740,13 +5740,13 @@ class AdminEntityDetailUser(BaseUser):
     """User that tests admin entity detail view endpoints.
 
     Endpoints tested:
-    - GET /admin/tools/{tool_id} - Tool detail view
-    - GET /admin/servers/{server_id} - Server detail view
-    - GET /admin/gateways/{gateway_id} - Gateway detail view
-    - GET /admin/resources/{resource_id} - Resource detail view
-    - GET /admin/prompts/{prompt_id} - Prompt detail view
-    - GET /admin/users - User list
-    - GET /admin/import/status - Import status list
+    - GET /ui/tools/{tool_id} - Tool detail view
+    - GET /ui/servers/{server_id} - Server detail view
+    - GET /ui/gateways/{gateway_id} - Gateway detail view
+    - GET /ui/resources/{resource_id} - Resource detail view
+    - GET /ui/prompts/{prompt_id} - Prompt detail view
+    - GET /ui/users - User list
+    - GET /ui/import/status - Import status list
 
     Weight: Low (admin UI)
     """
@@ -5757,13 +5757,13 @@ class AdminEntityDetailUser(BaseUser):
     @task(3)
     @tag("admin", "tools", "detail")
     def admin_tool_detail(self):
-        """GET /admin/tools/{tool_id} - Tool detail view."""
+        """GET /ui/tools/{tool_id} - Tool detail view."""
         if TOOL_IDS:
             tool_id = random.choice(TOOL_IDS)
             with self.client.get(
-                f"/admin/tools/{tool_id}",
+                f"/ui/tools/{tool_id}",
                 headers=self.admin_headers,
-                name="/admin/tools/[id]",
+                name="/ui/tools/[id]",
                 catch_response=True,
             ) as response:
                 self._validate_status(response, allowed_codes=[200, 404])
@@ -5771,13 +5771,13 @@ class AdminEntityDetailUser(BaseUser):
     @task(3)
     @tag("admin", "servers", "detail")
     def admin_server_detail(self):
-        """GET /admin/servers/{server_id} - Server detail view."""
+        """GET /ui/servers/{server_id} - Server detail view."""
         if SERVER_IDS:
             server_id = random.choice(SERVER_IDS)
             with self.client.get(
-                f"/admin/servers/{server_id}",
+                f"/ui/servers/{server_id}",
                 headers=self.admin_headers,
-                name="/admin/servers/[id]",
+                name="/ui/servers/[id]",
                 catch_response=True,
             ) as response:
                 self._validate_status(response, allowed_codes=[200, 404])
@@ -5785,13 +5785,13 @@ class AdminEntityDetailUser(BaseUser):
     @task(2)
     @tag("admin", "gateways", "detail")
     def admin_gateway_detail(self):
-        """GET /admin/gateways/{gateway_id} - Gateway detail view."""
+        """GET /ui/gateways/{gateway_id} - Gateway detail view."""
         if GATEWAY_IDS:
             gw_id = random.choice(GATEWAY_IDS)
             with self.client.get(
-                f"/admin/gateways/{gw_id}",
+                f"/ui/gateways/{gw_id}",
                 headers=self.admin_headers,
-                name="/admin/gateways/[id]",
+                name="/ui/gateways/[id]",
                 catch_response=True,
             ) as response:
                 self._validate_status(response, allowed_codes=[200, 404])
@@ -5799,13 +5799,13 @@ class AdminEntityDetailUser(BaseUser):
     @task(2)
     @tag("admin", "resources", "detail")
     def admin_resource_detail(self):
-        """GET /admin/resources/{resource_id} - Resource detail view."""
+        """GET /ui/resources/{resource_id} - Resource detail view."""
         if RESOURCE_IDS:
             res_id = random.choice(RESOURCE_IDS)
             with self.client.get(
-                f"/admin/resources/{res_id}",
+                f"/ui/resources/{res_id}",
                 headers=self.admin_headers,
-                name="/admin/resources/[id]",
+                name="/ui/resources/[id]",
                 catch_response=True,
             ) as response:
                 self._validate_status(response, allowed_codes=[200, 404])
@@ -5813,13 +5813,13 @@ class AdminEntityDetailUser(BaseUser):
     @task(2)
     @tag("admin", "prompts", "detail")
     def admin_prompt_detail(self):
-        """GET /admin/prompts/{prompt_id} - Prompt detail view."""
+        """GET /ui/prompts/{prompt_id} - Prompt detail view."""
         if PROMPT_IDS:
             prompt_id = random.choice(PROMPT_IDS)
             with self.client.get(
-                f"/admin/prompts/{prompt_id}",
+                f"/ui/prompts/{prompt_id}",
                 headers=self.admin_headers,
-                name="/admin/prompts/[id]",
+                name="/ui/prompts/[id]",
                 catch_response=True,
             ) as response:
                 self._validate_status(response, allowed_codes=[200, 404])
@@ -5827,11 +5827,11 @@ class AdminEntityDetailUser(BaseUser):
     @task(2)
     @tag("admin", "users")
     def admin_users_list(self):
-        """GET /admin/users - Admin user list."""
+        """GET /ui/users - Admin user list."""
         with self.client.get(
-            "/admin/users",
+            "/ui/users",
             headers=self.admin_headers,
-            name="/admin/users",
+            name="/ui/users",
             catch_response=True,
         ) as response:
             self._validate_status(response)
@@ -5839,11 +5839,11 @@ class AdminEntityDetailUser(BaseUser):
     @task(1)
     @tag("admin", "import")
     def admin_import_status(self):
-        """GET /admin/import/status - Import status list."""
+        """GET /ui/import/status - Import status list."""
         with self.client.get(
-            "/admin/import/status",
+            "/ui/import/status",
             headers=self.auth_headers,
-            name="/admin/import/status",
+            name="/ui/import/status",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5853,7 +5853,7 @@ class AdminMetricsResetUser(BaseUser):
     """User that tests admin metrics reset endpoint.
 
     Endpoints tested:
-    - POST /admin/metrics/reset - Reset admin metrics
+    - POST /ui/metrics/reset - Reset admin metrics
 
     Weight: Very low (destructive operation)
     """
@@ -5864,11 +5864,11 @@ class AdminMetricsResetUser(BaseUser):
     @task(1)
     @tag("admin", "metrics", "reset")
     def admin_metrics_reset(self):
-        """POST /admin/metrics/reset - Reset admin metrics."""
+        """POST /ui/metrics/reset - Reset admin metrics."""
         with self.client.post(
-            "/admin/metrics/reset",
+            "/ui/metrics/reset",
             headers=self.auth_headers,
-            name="/admin/metrics/reset",
+            name="/ui/metrics/reset",
             catch_response=True,
         ) as response:
             self._validate_json_response(response)
@@ -5946,12 +5946,12 @@ class AdminTeamsMembershipUser(BaseUser):
     """User that tests admin team membership management endpoints.
 
     Endpoints tested:
-    - GET /admin/teams/{team_id}/edit - Team edit view
-    - GET /admin/teams/{team_id}/members - Team members list
-    - GET /admin/teams/{team_id}/join-requests - Team join requests
-    - GET /admin/teams/{team_id}/members/partial - Members HTML partial
-    - GET /admin/teams/{team_id}/members/add - Add member view
-    - GET /admin/teams/{team_id}/non-members/partial - Non-members partial
+    - GET /ui/teams/{team_id}/edit - Team edit view
+    - GET /ui/teams/{team_id}/members - Team members list
+    - GET /ui/teams/{team_id}/join-requests - Team join requests
+    - GET /ui/teams/{team_id}/members/partial - Members HTML partial
+    - GET /ui/teams/{team_id}/members/add - Add member view
+    - GET /ui/teams/{team_id}/non-members/partial - Non-members partial
 
     Weight: Low (admin team management)
     """
@@ -5986,13 +5986,13 @@ class AdminTeamsMembershipUser(BaseUser):
     @task(3)
     @tag("admin", "teams", "edit")
     def team_edit_view(self):
-        """GET /admin/teams/{team_id}/edit - Team edit view."""
+        """GET /ui/teams/{team_id}/edit - Team edit view."""
         if self.team_ids:
             tid = random.choice(self.team_ids)
             with self.client.get(
-                f"/admin/teams/{tid}/edit",
+                f"/ui/teams/{tid}/edit",
                 headers=self.admin_headers,
-                name="/admin/teams/[id]/edit",
+                name="/ui/teams/[id]/edit",
                 catch_response=True,
             ) as response:
                 self._validate_status(response, allowed_codes=[200, 404])
@@ -6000,13 +6000,13 @@ class AdminTeamsMembershipUser(BaseUser):
     @task(3)
     @tag("admin", "teams", "members")
     def team_members(self):
-        """GET /admin/teams/{team_id}/members - Team members list."""
+        """GET /ui/teams/{team_id}/members - Team members list."""
         if self.team_ids:
             tid = random.choice(self.team_ids)
             with self.client.get(
-                f"/admin/teams/{tid}/members",
+                f"/ui/teams/{tid}/members",
                 headers=self.admin_headers,
-                name="/admin/teams/[id]/members",
+                name="/ui/teams/[id]/members",
                 catch_response=True,
             ) as response:
                 self._validate_status(response, allowed_codes=[200, 404])
@@ -6014,13 +6014,13 @@ class AdminTeamsMembershipUser(BaseUser):
     @task(2)
     @tag("admin", "teams", "join-requests")
     def team_join_requests(self):
-        """GET /admin/teams/{team_id}/join-requests - Team join requests."""
+        """GET /ui/teams/{team_id}/join-requests - Team join requests."""
         if self.team_ids:
             tid = random.choice(self.team_ids)
             with self.client.get(
-                f"/admin/teams/{tid}/join-requests",
+                f"/ui/teams/{tid}/join-requests",
                 headers=self.admin_headers,
-                name="/admin/teams/[id]/join-requests",
+                name="/ui/teams/[id]/join-requests",
                 catch_response=True,
             ) as response:
                 self._validate_status(response, allowed_codes=[200, 404])
@@ -6028,14 +6028,14 @@ class AdminTeamsMembershipUser(BaseUser):
     @task(1)
     @tag("admin", "teams", "members", "partial")
     def team_members_partial(self):
-        """GET /admin/teams/{team_id}/members/partial - Members HTML partial."""
+        """GET /ui/teams/{team_id}/members/partial - Members HTML partial."""
         if self.team_ids:
             tid = random.choice(self.team_ids)
             headers = {**self.admin_headers, "HX-Request": "true"}
             with self.client.get(
-                f"/admin/teams/{tid}/members/partial",
+                f"/ui/teams/{tid}/members/partial",
                 headers=headers,
-                name="/admin/teams/[id]/members/partial",
+                name="/ui/teams/[id]/members/partial",
                 catch_response=True,
             ) as response:
                 self._validate_html_response(response, allowed_codes=[200, 404])
@@ -6043,13 +6043,13 @@ class AdminTeamsMembershipUser(BaseUser):
     @task(1)
     @tag("admin", "teams", "members", "add")
     def team_members_add_view(self):
-        """GET /admin/teams/{team_id}/members/add - Add member view."""
+        """GET /ui/teams/{team_id}/members/add - Add member view."""
         if self.team_ids:
             tid = random.choice(self.team_ids)
             with self.client.get(
-                f"/admin/teams/{tid}/members/add",
+                f"/ui/teams/{tid}/members/add",
                 headers=self.admin_headers,
-                name="/admin/teams/[id]/members/add",
+                name="/ui/teams/[id]/members/add",
                 catch_response=True,
             ) as response:
                 self._validate_status(response, allowed_codes=[200, 404])
@@ -6057,14 +6057,14 @@ class AdminTeamsMembershipUser(BaseUser):
     @task(1)
     @tag("admin", "teams", "non-members")
     def team_non_members_partial(self):
-        """GET /admin/teams/{team_id}/non-members/partial - Non-members partial."""
+        """GET /ui/teams/{team_id}/non-members/partial - Non-members partial."""
         if self.team_ids:
             tid = random.choice(self.team_ids)
             headers = {**self.admin_headers, "HX-Request": "true"}
             with self.client.get(
-                f"/admin/teams/{tid}/non-members/partial",
+                f"/ui/teams/{tid}/non-members/partial",
                 headers=headers,
-                name="/admin/teams/[id]/non-members/partial",
+                name="/ui/teams/[id]/non-members/partial",
                 catch_response=True,
             ) as response:
                 self._validate_html_response(response, allowed_codes=[200, 404])
@@ -6133,7 +6133,7 @@ class ImportExtendedUser(BaseUser):
 
     Endpoints tested:
     - GET /import/status/{import_id} - Get specific import status
-    - POST /admin/import/preview - Preview import
+    - POST /ui/import/preview - Preview import
 
     Weight: Very low (admin operations)
     """
@@ -6157,13 +6157,13 @@ class ImportExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "import", "preview")
     def admin_import_preview(self):
-        """POST /admin/import/preview - Preview import."""
+        """POST /ui/import/preview - Preview import."""
         payload = {"data": {"tools": [], "servers": [], "resources": [], "prompts": [], "gateways": [], "roots": []}}
         with self.client.post(
-            "/admin/import/preview",
+            "/ui/import/preview",
             json=payload,
             headers=self.auth_headers,
-            name="/admin/import/preview",
+            name="/ui/import/preview",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 400, 422, 500])
@@ -6302,7 +6302,7 @@ class AdminResourcesTestUser(BaseUser):
     """User that tests admin resource testing endpoints.
 
     Endpoints tested:
-    - GET /admin/resources/test/{resource_uri} - Test resource fetch
+    - GET /ui/resources/test/{resource_uri} - Test resource fetch
 
     Weight: Very low (admin diagnostic)
     """
@@ -6313,11 +6313,11 @@ class AdminResourcesTestUser(BaseUser):
     @task(1)
     @tag("admin", "resources", "test")
     def test_resource(self):
-        """GET /admin/resources/test/{resource_uri} - Test resource fetch."""
+        """GET /ui/resources/test/{resource_uri} - Test resource fetch."""
         with self.client.get(
-            "/admin/resources/test/test://sample",
+            "/ui/resources/test/test://sample",
             headers=self.auth_headers,
-            name="/admin/resources/test/[uri]",
+            name="/ui/resources/test/[uri]",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 404, 500])
@@ -7362,15 +7362,15 @@ class AdminDetailReadExtendedUser(BaseUser):
     """Admin detail read-only endpoints.
 
     Endpoints tested:
-    - GET /admin/a2a/{agent_id} - Admin A2A detail
-    - GET /admin/grpc/{service_id} - Admin gRPC detail
-    - GET /admin/grpc/{service_id}/methods - Admin gRPC methods
-    - GET /admin/import/status/{import_id} - Import status detail
-    - GET /admin/mcp-registry/{server_id}/status - MCP registry status
-    - GET /admin/observability/queries/{query_id} - Observability query detail
-    - GET /admin/observability/trace/{trace_id} - Observability trace detail
-    - GET /admin/users/{user_email}/edit - User edit form
-    - GET /admin/config/settings - Config settings
+    - GET /ui/a2a/{agent_id} - Admin A2A detail
+    - GET /ui/grpc/{service_id} - Admin gRPC detail
+    - GET /ui/grpc/{service_id}/methods - Admin gRPC methods
+    - GET /ui/import/status/{import_id} - Import status detail
+    - GET /ui/mcp-registry/{server_id}/status - MCP registry status
+    - GET /ui/observability/queries/{query_id} - Observability query detail
+    - GET /ui/observability/trace/{trace_id} - Observability trace detail
+    - GET /ui/users/{user_email}/edit - User edit form
+    - GET /ui/config/settings - Config settings
 
     Weight: Very low (admin reads)
     """
@@ -7381,15 +7381,15 @@ class AdminDetailReadExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "a2a", "detail")
     def admin_a2a_detail(self):
-        """GET /admin/a2a/{agent_id} - Admin A2A agent detail."""
+        """GET /ui/a2a/{agent_id} - Admin A2A agent detail."""
         if not A2A_TESTING_ENABLED:
             return
         if A2A_IDS:
             agent_id = random.choice(A2A_IDS)
             with self.client.get(
-                f"/admin/a2a/{agent_id}",
+                f"/ui/a2a/{agent_id}",
                 headers=self.admin_headers,
-                name="/admin/a2a/[id]",
+                name="/ui/a2a/[id]",
                 catch_response=True,
             ) as detail_resp:
                 self._validate_status(detail_resp, allowed_codes=[200, 404, 500])
@@ -7397,12 +7397,12 @@ class AdminDetailReadExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "grpc", "detail")
     def admin_grpc_detail(self):
-        """GET /admin/grpc/{service_id} - Admin gRPC detail."""
+        """GET /ui/grpc/{service_id} - Admin gRPC detail."""
         fake_id = f"loadtest-{uuid.uuid4().hex[:8]}"
         with self.client.get(
-            f"/admin/grpc/{fake_id}",
+            f"/ui/grpc/{fake_id}",
             headers=self.admin_headers,
-            name="/admin/grpc/[id]",
+            name="/ui/grpc/[id]",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 404, 500])
@@ -7410,12 +7410,12 @@ class AdminDetailReadExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "grpc", "methods")
     def admin_grpc_methods(self):
-        """GET /admin/grpc/{service_id}/methods - Admin gRPC methods."""
+        """GET /ui/grpc/{service_id}/methods - Admin gRPC methods."""
         fake_id = f"loadtest-{uuid.uuid4().hex[:8]}"
         with self.client.get(
-            f"/admin/grpc/{fake_id}/methods",
+            f"/ui/grpc/{fake_id}/methods",
             headers=self.admin_headers,
-            name="/admin/grpc/[id]/methods",
+            name="/ui/grpc/[id]/methods",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 404, 500])
@@ -7423,12 +7423,12 @@ class AdminDetailReadExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "import", "status")
     def admin_import_status_detail(self):
-        """GET /admin/import/status/{import_id} - Import status detail."""
+        """GET /ui/import/status/{import_id} - Import status detail."""
         fake_id = f"loadtest-{uuid.uuid4().hex[:8]}"
         with self.client.get(
-            f"/admin/import/status/{fake_id}",
+            f"/ui/import/status/{fake_id}",
             headers=self.admin_headers,
-            name="/admin/import/status/[id]",
+            name="/ui/import/status/[id]",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 404, 500])
@@ -7436,13 +7436,13 @@ class AdminDetailReadExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "mcp-registry", "status")
     def admin_mcp_registry_status(self):
-        """GET /admin/mcp-registry/{server_id}/status - MCP registry status."""
+        """GET /ui/mcp-registry/{server_id}/status - MCP registry status."""
         if SERVER_IDS:
             server_id = random.choice(SERVER_IDS)
             with self.client.get(
-                f"/admin/mcp-registry/{server_id}/status",
+                f"/ui/mcp-registry/{server_id}/status",
                 headers=self.admin_headers,
-                name="/admin/mcp-registry/[id]/status",
+                name="/ui/mcp-registry/[id]/status",
                 catch_response=True,
             ) as response:
                 self._validate_status(response, allowed_codes=[200, 404, 500])
@@ -7450,12 +7450,12 @@ class AdminDetailReadExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "queries")
     def admin_observability_query_detail(self):
-        """GET /admin/observability/queries/{query_id} - Query detail."""
+        """GET /ui/observability/queries/{query_id} - Query detail."""
         fake_id = f"loadtest-{uuid.uuid4().hex[:8]}"
         with self.client.get(
-            f"/admin/observability/queries/{fake_id}",
+            f"/ui/observability/queries/{fake_id}",
             headers=self.admin_headers,
-            name="/admin/observability/queries/[id]",
+            name="/ui/observability/queries/[id]",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 404, 422, 500])
@@ -7463,12 +7463,12 @@ class AdminDetailReadExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "observability", "traces")
     def admin_observability_trace(self):
-        """GET /admin/observability/trace/{trace_id} - Trace detail."""
+        """GET /ui/observability/trace/{trace_id} - Trace detail."""
         fake_id = f"loadtest-{uuid.uuid4().hex[:8]}"
         with self.client.get(
-            f"/admin/observability/trace/{fake_id}",
+            f"/ui/observability/trace/{fake_id}",
             headers=self.admin_headers,
-            name="/admin/observability/trace/[id]",
+            name="/ui/observability/trace/[id]",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 404, 500])
@@ -7476,11 +7476,11 @@ class AdminDetailReadExtendedUser(BaseUser):
     @task(2)
     @tag("admin", "users", "detail")
     def admin_user_edit(self):
-        """GET /admin/users/{user_email}/edit - User edit form."""
+        """GET /ui/users/{user_email}/edit - User edit form."""
         with self.client.get(
-            "/admin/users/admin@example.com/edit",
+            "/ui/users/admin@example.com/edit",
             headers=self.admin_headers,
-            name="/admin/users/[email]/edit",
+            name="/ui/users/[email]/edit",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 404, 500])
@@ -7488,11 +7488,11 @@ class AdminDetailReadExtendedUser(BaseUser):
     @task(1)
     @tag("admin", "config", "settings")
     def admin_config_settings(self):
-        """GET /admin/config/settings - Config settings."""
+        """GET /ui/config/settings - Config settings."""
         with self.client.get(
-            "/admin/config/settings",
+            "/ui/config/settings",
             headers=self.admin_headers,
-            name="/admin/config/settings",
+            name="/ui/config/settings",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 500])
@@ -7502,12 +7502,12 @@ class AdminGrpcCRUDUser(BaseUser):
     """Admin gRPC service management.
 
     Endpoints tested:
-    - POST /admin/grpc - Create gRPC service
-    - GET /admin/grpc/{service_id} - Get service detail
-    - PUT /admin/grpc/{service_id} - Update service
-    - POST /admin/grpc/{service_id}/reflect - Reflect service
-    - POST /admin/grpc/{service_id}/state - Toggle state
-    - POST /admin/grpc/{service_id}/delete - Delete service
+    - POST /ui/grpc - Create gRPC service
+    - GET /ui/grpc/{service_id} - Get service detail
+    - PUT /ui/grpc/{service_id} - Update service
+    - POST /ui/grpc/{service_id}/reflect - Reflect service
+    - POST /ui/grpc/{service_id}/state - Toggle state
+    - POST /ui/grpc/{service_id}/delete - Delete service
 
     Weight: Very low (admin gRPC)
     """
@@ -7528,10 +7528,10 @@ class AdminGrpcCRUDUser(BaseUser):
         }
 
         with self.client.post(
-            "/admin/grpc",
+            "/ui/grpc",
             json=svc_data,
             headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/admin/grpc [create]",
+            name="/ui/grpc [create]",
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201):
@@ -7540,41 +7540,41 @@ class AdminGrpcCRUDUser(BaseUser):
                     svc_id = data.get("id") or data.get("name") or svc_name
                     # GET detail
                     time.sleep(0.05)
-                    self.client.get(f"/admin/grpc/{svc_id}", headers=self.admin_headers, name="/admin/grpc/[id] [read]")
+                    self.client.get(f"/ui/grpc/{svc_id}", headers=self.admin_headers, name="/ui/grpc/[id] [read]")
                     # PUT update
                     time.sleep(0.05)
                     with self.client.put(
-                        f"/admin/grpc/{svc_id}",
+                        f"/ui/grpc/{svc_id}",
                         json={**svc_data, "description": f"Updated at {time.time()}"},
                         headers={**self.auth_headers, "Content-Type": "application/json"},
-                        name="/admin/grpc/[id] [update]",
+                        name="/ui/grpc/[id] [update]",
                         catch_response=True,
                     ) as put_resp:
                         self._validate_status(put_resp, allowed_codes=[200, 403, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # Reflect
                     time.sleep(0.05)
                     with self.client.post(
-                        f"/admin/grpc/{svc_id}/reflect",
+                        f"/ui/grpc/{svc_id}/reflect",
                         headers=self.auth_headers,
-                        name="/admin/grpc/[id]/reflect",
+                        name="/ui/grpc/[id]/reflect",
                         catch_response=True,
                     ) as reflect_resp:
                         self._validate_status(reflect_resp, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # Toggle state
                     time.sleep(0.05)
                     with self.client.post(
-                        f"/admin/grpc/{svc_id}/state",
+                        f"/ui/grpc/{svc_id}/state",
                         headers=self.auth_headers,
-                        name="/admin/grpc/[id]/state",
+                        name="/ui/grpc/[id]/state",
                         catch_response=True,
                     ) as state_resp:
                         self._validate_status(state_resp, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # Delete
                     time.sleep(0.05)
                     with self.client.post(
-                        f"/admin/grpc/{svc_id}/delete",
+                        f"/ui/grpc/{svc_id}/delete",
                         headers=self.auth_headers,
-                        name="/admin/grpc/[id]/delete",
+                        name="/ui/grpc/[id]/delete",
                         catch_response=True,
                     ) as del_resp:
                         self._validate_status(del_resp, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -7591,16 +7591,16 @@ class AdminHTMXEntityOpsUser(BaseUser):
     Covers admin UI endpoints for toggling entity states and testing.
 
     Endpoints tested:
-    - POST /admin/a2a/{id}/state - Toggle A2A state
-    - POST /admin/a2a/{id}/test - Test A2A agent
-    - POST /admin/gateways/{id}/state - Toggle gateway state
-    - POST /admin/gateways/test - Test gateway URL
-    - POST /admin/servers/{id}/state - Toggle server state
-    - POST /admin/prompts/{id}/state - Toggle prompt state
-    - POST /admin/resources/{id}/state - Toggle resource state
-    - POST /admin/tools/{id}/state - Toggle tool state
-    - POST /admin/change-password-required - Toggle setting
-    - PUT /admin/config/passthrough-headers - Update passthrough headers
+    - POST /ui/a2a/{id}/state - Toggle A2A state
+    - POST /ui/a2a/{id}/test - Test A2A agent
+    - POST /ui/gateways/{id}/state - Toggle gateway state
+    - POST /ui/gateways/test - Test gateway URL
+    - POST /ui/servers/{id}/state - Toggle server state
+    - POST /ui/prompts/{id}/state - Toggle prompt state
+    - POST /ui/resources/{id}/state - Toggle resource state
+    - POST /ui/tools/{id}/state - Toggle tool state
+    - POST /ui/change-password-required - Toggle setting
+    - PUT /ui/config/passthrough-headers - Update passthrough headers
 
     Weight: Very low (admin operations)
     """
@@ -7611,16 +7611,16 @@ class AdminHTMXEntityOpsUser(BaseUser):
     @task(1)
     @tag("admin", "a2a", "state")
     def toggle_a2a_state(self):
-        """POST /admin/a2a/{id}/state - Toggle A2A state."""
+        """POST /ui/a2a/{id}/state - Toggle A2A state."""
         if not A2A_TESTING_ENABLED:
             return
         if A2A_IDS:
             agent_id = random.choice(A2A_IDS)
             with self.client.post(
-                f"/admin/a2a/{agent_id}/state",
+                f"/ui/a2a/{agent_id}/state",
                 data="activate=true",
                 headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded"},
-                name="/admin/a2a/[id]/state",
+                name="/ui/a2a/[id]/state",
                 catch_response=True,
             ) as r:
                 self._validate_status(r, allowed_codes=[200, 302, 303, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -7628,16 +7628,16 @@ class AdminHTMXEntityOpsUser(BaseUser):
     @task(1)
     @tag("admin", "a2a", "test")
     def test_a2a_agent(self):
-        """POST /admin/a2a/{id}/test - Test A2A agent."""
+        """POST /ui/a2a/{id}/test - Test A2A agent."""
         if not A2A_TESTING_ENABLED:
             return
         if A2A_IDS:
             agent_id = random.choice(A2A_IDS)
             with self.client.post(
-                f"/admin/a2a/{agent_id}/test",
+                f"/ui/a2a/{agent_id}/test",
                 json={"query": "Load test ping"},
                 headers={**self.auth_headers, "Content-Type": "application/json"},
-                name="/admin/a2a/[id]/test",
+                name="/ui/a2a/[id]/test",
                 catch_response=True,
             ) as r:
                 self._validate_status(r, allowed_codes=[200, 403, 404, 500, 503, *INFRASTRUCTURE_ERROR_CODES])
@@ -7645,21 +7645,21 @@ class AdminHTMXEntityOpsUser(BaseUser):
     @task(1)
     @tag("admin", "gateways", "state")
     def toggle_gateway_state(self):
-        """POST /admin/gateways/{id}/state - Toggle gateway state."""
+        """POST /ui/gateways/{id}/state - Toggle gateway state."""
         if GATEWAY_IDS:
             gw_id = random.choice(GATEWAY_IDS)
             with self.client.post(f"/admin/gateways/{gw_id}/state", headers=self.auth_headers, name="/admin/gateways/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "gateways", "test")
     def test_gateway(self):
-        """POST /admin/gateways/test - Test gateway URL."""
+        """POST /ui/gateways/test - Test gateway URL."""
         with self.client.post(
-            "/admin/gateways/test",
+            "/ui/gateways/test",
             json={"url": "http://localhost:1"},
             headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/admin/gateways/test",
+            name="/ui/gateways/test",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 400, 422, 500, 503, *INFRASTRUCTURE_ERROR_CODES])
@@ -7667,47 +7667,47 @@ class AdminHTMXEntityOpsUser(BaseUser):
     @task(1)
     @tag("admin", "servers", "state")
     def toggle_server_state(self):
-        """POST /admin/servers/{id}/state - Toggle server state."""
+        """POST /ui/servers/{id}/state - Toggle server state."""
         if SERVER_IDS:
             srv_id = random.choice(SERVER_IDS)
             with self.client.post(f"/admin/servers/{srv_id}/state", headers=self.auth_headers, name="/admin/servers/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "prompts", "state")
     def toggle_prompt_state(self):
-        """POST /admin/prompts/{id}/state - Toggle prompt state."""
+        """POST /ui/prompts/{id}/state - Toggle prompt state."""
         if PROMPT_IDS:
             pid = random.choice(PROMPT_IDS)
             with self.client.post(f"/admin/prompts/{pid}/state", headers=self.auth_headers, name="/admin/prompts/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "resources", "state")
     def toggle_resource_state(self):
-        """POST /admin/resources/{id}/state - Toggle resource state."""
+        """POST /ui/resources/{id}/state - Toggle resource state."""
         if RESOURCE_IDS:
             rid = random.choice(RESOURCE_IDS)
             with self.client.post(f"/admin/resources/{rid}/state", headers=self.auth_headers, name="/admin/resources/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "tools", "state")
     def toggle_tool_state(self):
-        """POST /admin/tools/{id}/state - Toggle tool state."""
+        """POST /ui/tools/{id}/state - Toggle tool state."""
         if TOOL_IDS:
             tid = random.choice(TOOL_IDS)
             with self.client.post(f"/admin/tools/{tid}/state", headers=self.auth_headers, name="/admin/tools/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 403, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "config")
     def toggle_change_password(self):
-        """POST /admin/change-password-required - Toggle setting."""
+        """POST /ui/change-password-required - Toggle setting."""
         with self.client.post(
-            "/admin/change-password-required",
+            "/ui/change-password-required",
             headers=self.auth_headers,
-            name="/admin/change-password-required [toggle]",
+            name="/ui/change-password-required [toggle]",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 403, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -7715,12 +7715,12 @@ class AdminHTMXEntityOpsUser(BaseUser):
     @task(1)
     @tag("admin", "config", "passthrough")
     def update_passthrough_headers(self):
-        """PUT /admin/config/passthrough-headers - Update config."""
+        """PUT /ui/config/passthrough-headers - Update config."""
         with self.client.put(
-            "/admin/config/passthrough-headers",
+            "/ui/config/passthrough-headers",
             json={"headers": []},
             headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/admin/config/passthrough-headers [update]",
+            name="/ui/config/passthrough-headers [update]",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -7730,8 +7730,8 @@ class AdminMCPRegistryOpsUser(BaseUser):
     """Admin MCP registry operations.
 
     Endpoints tested:
-    - POST /admin/mcp-registry/bulk-register - Bulk register servers
-    - POST /admin/mcp-registry/{server_id}/register - Register single server
+    - POST /ui/mcp-registry/bulk-register - Bulk register servers
+    - POST /ui/mcp-registry/{server_id}/register - Register single server
 
     Weight: Very low (admin operations)
     """
@@ -7742,13 +7742,13 @@ class AdminMCPRegistryOpsUser(BaseUser):
     @task(1)
     @tag("admin", "mcp-registry", "register")
     def register_server(self):
-        """POST /admin/mcp-registry/{server_id}/register - Register server."""
+        """POST /ui/mcp-registry/{server_id}/register - Register server."""
         if SERVER_IDS:
             server_id = random.choice(SERVER_IDS)
             with self.client.post(
-                f"/admin/mcp-registry/{server_id}/register",
+                f"/ui/mcp-registry/{server_id}/register",
                 headers=self.auth_headers,
-                name="/admin/mcp-registry/[id]/register",
+                name="/ui/mcp-registry/[id]/register",
                 catch_response=True,
             ) as response:
                 self._validate_status(response, allowed_codes=[200, 400, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -7756,12 +7756,12 @@ class AdminMCPRegistryOpsUser(BaseUser):
     @task(1)
     @tag("admin", "mcp-registry", "bulk")
     def bulk_register(self):
-        """POST /admin/mcp-registry/bulk-register - Bulk register."""
+        """POST /ui/mcp-registry/bulk-register - Bulk register."""
         with self.client.post(
-            "/admin/mcp-registry/bulk-register",
+            "/ui/mcp-registry/bulk-register",
             json={"server_ids": []},
             headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/admin/mcp-registry/bulk-register",
+            name="/ui/mcp-registry/bulk-register",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 400, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -7771,14 +7771,14 @@ class AdminLLMOpsUser(BaseUser):
     """Admin LLM operations (unique to admin UI).
 
     Endpoints tested:
-    - POST /admin/llm/test - Test LLM connection
-    - DELETE /admin/llm/models/{model_id} - Delete model via admin
-    - POST /admin/llm/models/{model_id}/state - Toggle model state
-    - DELETE /admin/llm/providers/{provider_id} - Delete provider via admin
-    - POST /admin/llm/providers/{provider_id}/fetch-models - Fetch models
-    - POST /admin/llm/providers/{provider_id}/health - Check health
-    - POST /admin/llm/providers/{provider_id}/state - Toggle state
-    - POST /admin/llm/providers/{provider_id}/sync-models - Sync models
+    - POST /ui/llm/test - Test LLM connection
+    - DELETE /ui/llm/models/{model_id} - Delete model via admin
+    - POST /ui/llm/models/{model_id}/state - Toggle model state
+    - DELETE /ui/llm/providers/{provider_id} - Delete provider via admin
+    - POST /ui/llm/providers/{provider_id}/fetch-models - Fetch models
+    - POST /ui/llm/providers/{provider_id}/health - Check health
+    - POST /ui/llm/providers/{provider_id}/state - Toggle state
+    - POST /ui/llm/providers/{provider_id}/sync-models - Sync models
 
     Weight: Very low (admin LLM ops)
     """
@@ -7789,12 +7789,12 @@ class AdminLLMOpsUser(BaseUser):
     @task(2)
     @tag("admin", "llm", "test")
     def test_llm(self):
-        """POST /admin/llm/test - Test LLM connection."""
+        """POST /ui/llm/test - Test LLM connection."""
         with self.client.post(
-            "/admin/llm/test",
+            "/ui/llm/test",
             json={"provider_type": "openai", "base_url": "http://localhost:1/v1", "api_key": "test"},
             headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/admin/llm/test",
+            name="/ui/llm/test",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 400, 422, 500, 503, *INFRASTRUCTURE_ERROR_CODES])
@@ -7858,74 +7858,74 @@ class AdminLLMOpsUser(BaseUser):
     @task(1)
     @tag("admin", "llm", "providers", "fetch-models")
     def admin_provider_fetch_models(self):
-        """POST /admin/llm/providers/{id}/fetch-models - Fetch models."""
+        """POST /ui/llm/providers/{id}/fetch-models - Fetch models."""
         pid = self._get_random_provider_id()
         if pid:
-            with self.client.post(f"/admin/llm/providers/{pid}/fetch-models", headers=self.auth_headers, name="/admin/llm/providers/[id]/fetch-models", catch_response=True) as r:
+            with self.client.post(f"/ui/llm/providers/{pid}/fetch-models", headers=self.auth_headers, name="/ui/llm/providers/[id]/fetch-models", catch_response=True) as r:
                 self._validate_status(r, allowed_codes=[200, 404, 500, 503, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "llm", "providers", "health")
     def admin_provider_health(self):
-        """POST /admin/llm/providers/{id}/health - Check health."""
+        """POST /ui/llm/providers/{id}/health - Check health."""
         pid = self._get_random_provider_id()
         if pid:
-            with self.client.post(f"/admin/llm/providers/{pid}/health", headers=self.auth_headers, name="/admin/llm/providers/[id]/health", catch_response=True) as r:
+            with self.client.post(f"/ui/llm/providers/{pid}/health", headers=self.auth_headers, name="/ui/llm/providers/[id]/health", catch_response=True) as r:
                 self._validate_status(r, allowed_codes=[200, 404, 500, 503, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "llm", "providers", "state")
     def admin_provider_state(self):
-        """POST /admin/llm/providers/{id}/state - Toggle state."""
+        """POST /ui/llm/providers/{id}/state - Toggle state."""
         pid = self._get_random_provider_id()
         if pid:
             with self.client.post(f"/admin/llm/providers/{pid}/state", headers=self.auth_headers, name="/admin/llm/providers/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "llm", "providers", "sync-models")
     def admin_provider_sync_models(self):
-        """POST /admin/llm/providers/{id}/sync-models - Sync models."""
+        """POST /ui/llm/providers/{id}/sync-models - Sync models."""
         pid = self._get_random_provider_id()
         if pid:
-            with self.client.post(f"/admin/llm/providers/{pid}/sync-models", headers=self.auth_headers, name="/admin/llm/providers/[id]/sync-models", catch_response=True) as r:
+            with self.client.post(f"/ui/llm/providers/{pid}/sync-models", headers=self.auth_headers, name="/ui/llm/providers/[id]/sync-models", catch_response=True) as r:
                 self._validate_status(r, allowed_codes=[200, 404, 500, 503, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "llm", "providers", "delete")
     def admin_provider_delete(self):
-        """DELETE /admin/llm/providers/{id} - Delete provider (test with fake ID)."""
+        """DELETE /ui/llm/providers/{id} - Delete provider (test with fake ID)."""
         fake_id = f"loadtest-{uuid.uuid4().hex[:8]}"
         with self.client.delete(f"/admin/llm/providers/{fake_id}", headers=self.auth_headers, name="/admin/llm/providers/[id] [delete]", catch_response=True) as r:
-            self._validate_status(r, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(r, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "llm", "models", "state")
     def admin_model_state(self):
-        """POST /admin/llm/models/{id}/state - Toggle model state."""
+        """POST /ui/llm/models/{id}/state - Toggle model state."""
         mid = self._get_random_model_id()
         if mid:
             with self.client.post(f"/admin/llm/models/{mid}/state", headers=self.auth_headers, name="/admin/llm/models/[id]/state", catch_response=True) as r:
-                self._validate_status(r, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_status(r, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "llm", "models", "delete")
     def admin_model_delete(self):
-        """DELETE /admin/llm/models/{id} - Delete model (test with fake ID)."""
+        """DELETE /ui/llm/models/{id} - Delete model (test with fake ID)."""
         fake_id = f"loadtest-{uuid.uuid4().hex[:8]}"
         with self.client.delete(f"/admin/llm/models/{fake_id}", headers=self.auth_headers, name="/admin/llm/models/[id] [delete]", catch_response=True) as r:
-            self._validate_status(r, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(r, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class AdminObservabilityQueriesUser(BaseUser):
     """Admin observability saved queries CRUD.
 
     Endpoints tested:
-    - POST /admin/observability/queries - Create saved query
-    - GET /admin/observability/queries/{query_id} - Get query
-    - PUT /admin/observability/queries/{query_id} - Update query
-    - POST /admin/observability/queries/{query_id}/use - Use query
-    - DELETE /admin/observability/queries/{query_id} - Delete query
+    - POST /ui/observability/queries - Create saved query
+    - GET /ui/observability/queries/{query_id} - Get query
+    - PUT /ui/observability/queries/{query_id} - Update query
+    - POST /ui/observability/queries/{query_id}/use - Use query
+    - DELETE /ui/observability/queries/{query_id} - Delete query
 
     Weight: Very low (admin observability)
     """
@@ -7944,10 +7944,10 @@ class AdminObservabilityQueriesUser(BaseUser):
         }
 
         with self.client.post(
-            "/admin/observability/queries",
+            "/ui/observability/queries",
             json=query_data,
             headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/admin/observability/queries [create]",
+            name="/ui/observability/queries [create]",
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201):
@@ -7957,32 +7957,32 @@ class AdminObservabilityQueriesUser(BaseUser):
                     if qid:
                         # GET
                         time.sleep(0.05)
-                        self.client.get(f"/admin/observability/queries/{qid}", headers=self.admin_headers, name="/admin/observability/queries/[id]")
+                        self.client.get(f"/ui/observability/queries/{qid}", headers=self.admin_headers, name="/ui/observability/queries/[id]")
                         # PUT update
                         time.sleep(0.05)
                         with self.client.put(
-                            f"/admin/observability/queries/{qid}",
+                            f"/ui/observability/queries/{qid}",
                             json={**query_data, "description": f"Updated at {time.time()}"},
                             headers={**self.auth_headers, "Content-Type": "application/json"},
-                            name="/admin/observability/queries/[id] [update]",
+                            name="/ui/observability/queries/[id] [update]",
                             catch_response=True,
                         ) as put_resp:
                             self._validate_status(put_resp, allowed_codes=[200, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                         # Use
                         time.sleep(0.05)
                         with self.client.post(
-                            f"/admin/observability/queries/{qid}/use",
+                            f"/ui/observability/queries/{qid}/use",
                             headers=self.auth_headers,
-                            name="/admin/observability/queries/[id]/use",
+                            name="/ui/observability/queries/[id]/use",
                             catch_response=True,
                         ) as use_resp:
                             self._validate_status(use_resp, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                         # DELETE
                         time.sleep(0.05)
                         with self.client.delete(
-                            f"/admin/observability/queries/{qid}",
+                            f"/ui/observability/queries/{qid}",
                             headers=self.auth_headers,
-                            name="/admin/observability/queries/[id] [delete]",
+                            name="/ui/observability/queries/[id] [delete]",
                             catch_response=True,
                         ) as del_resp:
                             self._validate_status(del_resp, allowed_codes=[200, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -8000,17 +8000,17 @@ class MiscEndpointsUser(BaseUser):
     - POST /a2a/{agent_name}/invoke - Invoke A2A agent
     - POST /export/selective - Selective export
     - POST /import - Import configuration
-    - POST /admin/import/configuration - Admin import
-    - POST /admin/import/preview - Admin import preview
-    - POST /admin/export/selective - Admin selective export
+    - POST /ui/import/configuration - Admin import
+    - POST /ui/import/preview - Admin import preview
+    - POST /ui/export/selective - Admin selective export
     - POST /prompts/{prompt_id} - Update prompt via POST
     - POST /llmchat/chat - LLM chat
     - POST /llmchat/connect - LLM chat connect
     - POST /oauth/fetch-tools/{gateway_id} - Fetch OAuth tools
     - DELETE /oauth/registered-clients/{client_id} - Delete OAuth client
     - DELETE /teams/{team_id}/members/{user_email} - Remove team member
-    - POST /admin/login - Admin login (POST)
-    - POST /admin/logout - Admin logout (POST)
+    - POST /ui/login - Admin login (POST)
+    - POST /ui/logout - Admin logout (POST)
 
     Weight: Very low (misc operations)
     """
@@ -8085,12 +8085,12 @@ class MiscEndpointsUser(BaseUser):
     @task(1)
     @tag("admin", "import")
     def admin_import_preview(self):
-        """POST /admin/import/preview - Admin import preview."""
+        """POST /ui/import/preview - Admin import preview."""
         with self.client.post(
-            "/admin/import/preview",
+            "/ui/import/preview",
             json={"data": {"tools": []}},
             headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/admin/import/preview",
+            name="/ui/import/preview",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 400, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -8098,12 +8098,12 @@ class MiscEndpointsUser(BaseUser):
     @task(1)
     @tag("admin", "import", "config")
     def admin_import_configuration(self):
-        """POST /admin/import/configuration - Admin import configuration."""
+        """POST /ui/import/configuration - Admin import configuration."""
         with self.client.post(
-            "/admin/import/configuration",
+            "/ui/import/configuration",
             json={"import_data": {"tools": [], "servers": []}, "conflict_strategy": "update", "dry_run": True},
             headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/admin/import/configuration",
+            name="/ui/import/configuration",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 400, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -8111,12 +8111,12 @@ class MiscEndpointsUser(BaseUser):
     @task(1)
     @tag("admin", "export", "selective")
     def admin_selective_export(self):
-        """POST /admin/export/selective - Admin selective export."""
+        """POST /ui/export/selective - Admin selective export."""
         with self.client.post(
-            "/admin/export/selective",
+            "/ui/export/selective",
             json={"entity_types": ["tools"]},
             headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/admin/export/selective",
+            name="/ui/export/selective",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -8192,12 +8192,12 @@ class MiscEndpointsUser(BaseUser):
     @task(1)
     @tag("admin", "login")
     def admin_login_post(self):
-        """POST /admin/login - Admin login form submission."""
+        """POST /ui/login - Admin login form submission."""
         with self.client.post(
-            "/admin/login",
+            "/ui/login",
             data={"username": BASIC_AUTH_USER, "password": BASIC_AUTH_PASSWORD},
             headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded"},
-            name="/admin/login [post]",
+            name="/ui/login [post]",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 302, 303, 401, 403, 422, *INFRASTRUCTURE_ERROR_CODES])
@@ -8205,11 +8205,11 @@ class MiscEndpointsUser(BaseUser):
     @task(1)
     @tag("admin", "logout")
     def admin_logout_post(self):
-        """POST /admin/logout - Admin logout."""
+        """POST /ui/logout - Admin logout."""
         with self.client.post(
-            "/admin/logout",
+            "/ui/logout",
             headers=self.admin_headers,
-            name="/admin/logout [post]",
+            name="/ui/logout [post]",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 302, 303, 307, *INFRASTRUCTURE_ERROR_CODES])
@@ -8221,30 +8221,30 @@ class AdminHTMXEntityCRUDUser(BaseUser):
     These duplicate REST API CRUD but go through the admin HTMX form handler path.
 
     Endpoints tested:
-    - POST /admin/tools - Create tool via admin
-    - POST /admin/tools/{id}/edit - Edit tool via admin
-    - POST /admin/tools/{id}/delete - Delete tool via admin
-    - POST /admin/tools/import - Import tools via admin
-    - POST /admin/servers - Create server via admin
-    - POST /admin/servers/{id}/edit - Edit server via admin
-    - POST /admin/servers/{id}/delete - Delete server via admin
-    - POST /admin/prompts - Create prompt via admin
-    - POST /admin/prompts/{id}/edit - Edit prompt via admin
-    - POST /admin/prompts/{id}/delete - Delete prompt via admin
-    - POST /admin/resources - Create resource via admin
-    - POST /admin/resources/{id}/edit - Edit resource via admin
-    - POST /admin/resources/{id}/delete - Delete resource via admin
-    - POST /admin/a2a - Create A2A via admin
-    - POST /admin/a2a/{id}/edit - Edit A2A via admin
-    - POST /admin/a2a/{id}/delete - Delete A2A via admin
-    - POST /admin/gateways - Create gateway via admin
-    - POST /admin/gateways/{id}/edit - Edit gateway via admin
-    - POST /admin/gateways/{id}/delete - Delete gateway via admin
-    - POST /admin/roots - Create root via admin
-    - GET /admin/roots/{uri} - Read root via admin
-    - POST /admin/roots/{uri}/update - Update root via admin
-    - GET /admin/roots/export - Export root via admin
-    - POST /admin/roots/{uri}/delete - Delete root via admin
+    - POST /ui/tools - Create tool via admin
+    - POST /ui/tools/{id}/edit - Edit tool via admin
+    - POST /ui/tools/{id}/delete - Delete tool via admin
+    - POST /ui/tools/import - Import tools via admin
+    - POST /ui/servers - Create server via admin
+    - POST /ui/servers/{id}/edit - Edit server via admin
+    - POST /ui/servers/{id}/delete - Delete server via admin
+    - POST /ui/prompts - Create prompt via admin
+    - POST /ui/prompts/{id}/edit - Edit prompt via admin
+    - POST /ui/prompts/{id}/delete - Delete prompt via admin
+    - POST /ui/resources - Create resource via admin
+    - POST /ui/resources/{id}/edit - Edit resource via admin
+    - POST /ui/resources/{id}/delete - Delete resource via admin
+    - POST /ui/a2a - Create A2A via admin
+    - POST /ui/a2a/{id}/edit - Edit A2A via admin
+    - POST /ui/a2a/{id}/delete - Delete A2A via admin
+    - POST /ui/gateways - Create gateway via admin
+    - POST /ui/gateways/{id}/edit - Edit gateway via admin
+    - POST /ui/gateways/{id}/delete - Delete gateway via admin
+    - POST /ui/roots - Create root via admin
+    - GET /ui/roots/{uri} - Read root via admin
+    - POST /ui/roots/{uri}/update - Update root via admin
+    - GET /ui/roots/export - Export root via admin
+    - POST /ui/roots/{uri}/delete - Delete root via admin
 
     Weight: Very low (admin HTMX)
     """
@@ -8255,14 +8255,14 @@ class AdminHTMXEntityCRUDUser(BaseUser):
     @task(2)
     @tag("admin", "tools", "htmx", "crud")
     def admin_tool_lifecycle(self):
-        """POST /admin/tools -> edit -> delete - Tool lifecycle via admin."""
+        """POST /ui/tools -> edit -> delete - Tool lifecycle via admin."""
         tool_name = f"loadtest-admintool-{uuid.uuid4().hex[:8]}"
         form_data = f"name={tool_name}&description=Load+test+tool&integration_type=MCP"
         with self.client.post(
-            "/admin/tools",
+            "/ui/tools",
             data=form_data,
             headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-            name="/admin/tools [create]",
+            name="/ui/tools [create]",
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201, 302):
@@ -8276,19 +8276,19 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                     # Edit
                     time.sleep(0.05)
                     with self.client.post(
-                        f"/admin/tools/{tool_id}/edit",
+                        f"/ui/tools/{tool_id}/edit",
                         data=f"name={tool_name}&description=Edited+by+load+test",
                         headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-                        name="/admin/tools/[id]/edit",
+                        name="/ui/tools/[id]/edit",
                         catch_response=True,
                     ) as edit_resp:
                         self._validate_status(edit_resp, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     # Delete
                     time.sleep(0.05)
                     with self.client.post(
-                        f"/admin/tools/{tool_id}/delete",
+                        f"/ui/tools/{tool_id}/delete",
                         headers={**self.admin_headers, "HX-Request": "true"},
-                        name="/admin/tools/[id]/delete",
+                        name="/ui/tools/[id]/delete",
                         catch_response=True,
                     ) as del_resp:
                         self._validate_status(del_resp, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -8299,12 +8299,12 @@ class AdminHTMXEntityCRUDUser(BaseUser):
     @task(1)
     @tag("admin", "tools", "htmx", "import")
     def admin_tools_import(self):
-        """POST /admin/tools/import - Import tools via admin."""
+        """POST /ui/tools/import - Import tools via admin."""
         with self.client.post(
-            "/admin/tools/import",
+            "/ui/tools/import",
             json={"tools": []},
             headers={**self.auth_headers, "Content-Type": "application/json"},
-            name="/admin/tools/import",
+            name="/ui/tools/import",
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 302, 400, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -8312,14 +8312,14 @@ class AdminHTMXEntityCRUDUser(BaseUser):
     @task(1)
     @tag("admin", "servers", "htmx", "crud")
     def admin_server_lifecycle(self):
-        """POST /admin/servers -> edit -> delete - Server lifecycle via admin."""
+        """POST /ui/servers -> edit -> delete - Server lifecycle via admin."""
         srv_name = f"loadtest-adminsrv-{uuid.uuid4().hex[:8]}"
         form_data = f"name={srv_name}&description=Load+test+server"
         with self.client.post(
-            "/admin/servers",
+            "/ui/servers",
             data=form_data,
             headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-            name="/admin/servers [create]",
+            name="/ui/servers [create]",
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201, 302):
@@ -8331,18 +8331,18 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                 if srv_id:
                     time.sleep(0.05)
                     with self.client.post(
-                        f"/admin/servers/{srv_id}/edit",
+                        f"/ui/servers/{srv_id}/edit",
                         data=f"name={srv_name}&description=Edited",
                         headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-                        name="/admin/servers/[id]/edit",
+                        name="/ui/servers/[id]/edit",
                         catch_response=True,
                     ) as edit_resp:
                         self._validate_status(edit_resp, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(
-                        f"/admin/servers/{srv_id}/delete",
+                        f"/ui/servers/{srv_id}/delete",
                         headers={**self.admin_headers, "HX-Request": "true"},
-                        name="/admin/servers/[id]/delete",
+                        name="/ui/servers/[id]/delete",
                         catch_response=True,
                     ) as del_resp:
                         self._validate_status(del_resp, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -8353,14 +8353,14 @@ class AdminHTMXEntityCRUDUser(BaseUser):
     @task(1)
     @tag("admin", "prompts", "htmx", "crud")
     def admin_prompt_lifecycle(self):
-        """POST /admin/prompts -> edit -> delete - Prompt lifecycle via admin."""
+        """POST /ui/prompts -> edit -> delete - Prompt lifecycle via admin."""
         name = f"loadtest-adminprompt-{uuid.uuid4().hex[:8]}"
         form_data = f"name={name}&description=Load+test+prompt&template=Hello"
         with self.client.post(
-            "/admin/prompts",
+            "/ui/prompts",
             data=form_data,
             headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-            name="/admin/prompts [create]",
+            name="/ui/prompts [create]",
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201, 302):
@@ -8372,10 +8372,10 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                 if pid:
                     time.sleep(0.05)
                     with self.client.post(f"/admin/prompts/{pid}/edit", data=f"name={name}&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/prompts/[id]/edit", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(f"/admin/prompts/{pid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/prompts/[id]/delete", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
             elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
@@ -8383,14 +8383,14 @@ class AdminHTMXEntityCRUDUser(BaseUser):
     @task(1)
     @tag("admin", "resources", "htmx", "crud")
     def admin_resource_lifecycle(self):
-        """POST /admin/resources -> edit -> delete - Resource lifecycle via admin."""
+        """POST /ui/resources -> edit -> delete - Resource lifecycle via admin."""
         name = f"loadtest-adminres-{uuid.uuid4().hex[:8]}"
         form_data = f"name={name}&uri=file:///tmp/{name}&description=Load+test"
         with self.client.post(
-            "/admin/resources",
+            "/ui/resources",
             data=form_data,
             headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-            name="/admin/resources [create]",
+            name="/ui/resources [create]",
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201, 302):
@@ -8402,10 +8402,10 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                 if rid:
                     time.sleep(0.05)
                     with self.client.post(f"/admin/resources/{rid}/edit", data=f"name={name}&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/resources/[id]/edit", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(f"/admin/resources/{rid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/resources/[id]/delete", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
             elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
@@ -8413,16 +8413,16 @@ class AdminHTMXEntityCRUDUser(BaseUser):
     @task(1)
     @tag("admin", "a2a", "htmx", "crud")
     def admin_a2a_create(self):
-        """POST /admin/a2a - Create A2A agent via admin HTMX form."""
+        """POST /ui/a2a - Create A2A agent via admin HTMX form."""
         if not A2A_TESTING_ENABLED:
             return
         name = f"loadtest-admina2a-{uuid.uuid4().hex[:8]}"
         form_data = f"name={name}&endpoint_url=http://localhost:1&description=Load+test&visibility=public"
         with self.client.post(
-            "/admin/a2a",
+            "/ui/a2a",
             data=form_data,
             headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-            name="/admin/a2a [create]",
+            name="/ui/a2a [create]",
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201, 302):
@@ -8433,7 +8433,7 @@ class AdminHTMXEntityCRUDUser(BaseUser):
     @task(1)
     @tag("admin", "a2a", "htmx", "crud")
     def admin_a2a_edit_delete(self):
-        """POST /admin/a2a/{id}/edit + /delete - Edit and delete via admin HTMX."""
+        """POST /ui/a2a/{id}/edit + /delete - Edit and delete via admin HTMX."""
         if not A2A_TESTING_ENABLED:
             return
         # Create via REST to get a reliable ID, then test admin edit/delete
@@ -8455,10 +8455,10 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                 if aid:
                     time.sleep(0.05)
                     with self.client.post(f"/admin/a2a/{aid}/edit", data=f"name={name}&endpoint_url=http://localhost:1&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/a2a/[id]/edit", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 303, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 303, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(f"/admin/a2a/{aid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/a2a/[id]/delete", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 303, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 303, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
             elif response.status_code in (409, 422, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
@@ -8466,14 +8466,14 @@ class AdminHTMXEntityCRUDUser(BaseUser):
     @task(1)
     @tag("admin", "gateways", "htmx", "crud")
     def admin_gateway_lifecycle(self):
-        """POST /admin/gateways -> edit -> delete - Gateway lifecycle via admin."""
+        """POST /ui/gateways -> edit -> delete - Gateway lifecycle via admin."""
         name = f"loadtest-admingw-{uuid.uuid4().hex[:8]}"
         form_data = f"name={name}&url=http://localhost:1&description=Load+test"
         with self.client.post(
-            "/admin/gateways",
+            "/ui/gateways",
             data=form_data,
             headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-            name="/admin/gateways [create]",
+            name="/ui/gateways [create]",
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201, 302):
@@ -8485,10 +8485,10 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                 if gid:
                     time.sleep(0.05)
                     with self.client.post(f"/admin/gateways/{gid}/edit", data=f"name={name}&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/gateways/[id]/edit", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(f"/admin/gateways/{gid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/gateways/[id]/delete", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                        self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
             elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
@@ -8496,51 +8496,51 @@ class AdminHTMXEntityCRUDUser(BaseUser):
     @task(1)
     @tag("admin", "roots", "htmx", "crud")
     def admin_roots_lifecycle(self):
-        """POST /admin/roots -> get/update/export/delete - Roots lifecycle via admin."""
+        """POST /ui/roots -> get/update/export/delete - Roots lifecycle via admin."""
         uri = f"file:///tmp/loadtest-{uuid.uuid4().hex[:8]}"
         encoded_uri = quote(uri, safe="")
         encoded_query_uri = quote(uri, safe="")
         with self.client.post(
-            "/admin/roots",
+            "/ui/roots",
             data=f"uri={uri}&name=loadtest-root",
             headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-            name="/admin/roots [create]",
+            name="/ui/roots [create]",
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201, 302):
                 time.sleep(0.05)
                 with self.client.get(
-                    f"/admin/roots/{encoded_uri}",
+                    f"/ui/roots/{encoded_uri}",
                     headers=self.auth_headers,
-                    name="/admin/roots/[uri]",
+                    name="/ui/roots/[uri]",
                     catch_response=True,
                 ) as get_resp:
                     self._validate_status(get_resp, allowed_codes=[200, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
                 time.sleep(0.05)
                 with self.client.post(
-                    f"/admin/roots/{encoded_uri}/update",
+                    f"/ui/roots/{encoded_uri}/update",
                     data=f"uri={uri}&name=loadtest-root-updated",
                     headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-                    name="/admin/roots/[uri]/update",
+                    name="/ui/roots/[uri]/update",
                     catch_response=True,
                 ) as upd_resp:
                     self._validate_status(upd_resp, allowed_codes=[200, 302, 303, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
                 time.sleep(0.05)
                 with self.client.get(
-                    f"/admin/roots/export?uri={encoded_query_uri}",
+                    f"/ui/roots/export?uri={encoded_query_uri}",
                     headers=self.auth_headers,
-                    name="/admin/roots/export",
+                    name="/ui/roots/export",
                     catch_response=True,
                 ) as export_resp:
                     self._validate_status(export_resp, allowed_codes=[200, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
                 time.sleep(0.05)
                 with self.client.post(
-                    f"/admin/roots/{encoded_uri}/delete",
+                    f"/ui/roots/{encoded_uri}/delete",
                     headers={**self.admin_headers, "HX-Request": "true"},
-                    name="/admin/roots/[uri]/delete",
+                    name="/ui/roots/[uri]/delete",
                     catch_response=True,
                 ) as del_resp:
                     self._validate_status(del_resp, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
@@ -8553,12 +8553,12 @@ class AdminUsersOpsUser(BaseUser):
     """Admin user management operations.
 
     Endpoints tested:
-    - POST /admin/users - Create user via admin
-    - DELETE /admin/users/{user_email} - Delete user via admin
-    - POST /admin/users/{user_email}/activate - Activate user
-    - POST /admin/users/{user_email}/deactivate - Deactivate user
-    - POST /admin/users/{user_email}/force-password-change - Force password change
-    - POST /admin/users/{user_email}/update - Update user via admin
+    - POST /ui/users - Create user via admin
+    - DELETE /ui/users/{user_email} - Delete user via admin
+    - POST /ui/users/{user_email}/activate - Activate user
+    - POST /ui/users/{user_email}/deactivate - Deactivate user
+    - POST /ui/users/{user_email}/force-password-change - Force password change
+    - POST /ui/users/{user_email}/update - Update user via admin
 
     Weight: Very low (admin user ops)
     """
@@ -8569,37 +8569,37 @@ class AdminUsersOpsUser(BaseUser):
     @task(2)
     @tag("admin", "users", "crud")
     def admin_user_lifecycle(self):
-        """POST /admin/users -> activate/deactivate -> update -> delete."""
+        """POST /ui/users -> activate/deactivate -> update -> delete."""
         email = f"loadtest-adminuser-{uuid.uuid4().hex[:8]}@example.com"
         form_data = f"email={email}&password=LoadTest123!&full_name=Load+Test+User"
         with self.client.post(
-            "/admin/users",
+            "/ui/users",
             data=form_data,
             headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-            name="/admin/users [create]",
+            name="/ui/users [create]",
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201, 302):
                 # Activate
                 time.sleep(0.05)
                 with self.client.post(f"/admin/users/{email}/activate", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/users/[email]/activate", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Deactivate
                 time.sleep(0.05)
                 with self.client.post(f"/admin/users/{email}/deactivate", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/users/[email]/deactivate", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Force password change
                 time.sleep(0.05)
                 with self.client.post(f"/admin/users/{email}/force-password-change", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/users/[email]/force-password-change", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Update
                 time.sleep(0.05)
                 with self.client.post(f"/admin/users/{email}/update", data="full_name=Updated+Load+Test", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/users/[email]/update", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Delete
                 time.sleep(0.05)
                 with self.client.delete(f"/admin/users/{email}", headers=self.admin_headers, name="/admin/users/[email] [delete]", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
             elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
@@ -8609,17 +8609,17 @@ class AdminTeamsHTMXOpsUser(BaseUser):
     """Admin teams HTMX operations.
 
     Endpoints tested:
-    - POST /admin/teams - Create team via admin
-    - POST /admin/teams/{id}/update - Update team via admin
-    - POST /admin/teams/{id}/add-member - Add member
-    - POST /admin/teams/{id}/remove-member - Remove member
-    - POST /admin/teams/{id}/update-member-role - Update member role
-    - POST /admin/teams/{id}/join-request - Submit join request
-    - POST /admin/teams/{id}/join-requests/{id}/approve - Approve join request
-    - POST /admin/teams/{id}/join-requests/{id}/reject - Reject join request
-    - POST /admin/teams/{id}/leave - Leave team
-    - DELETE /admin/teams/{id} - Delete team via admin
-    - DELETE /admin/teams/{id}/join-request/{id} - Delete join request
+    - POST /ui/teams - Create team via admin
+    - POST /ui/teams/{id}/update - Update team via admin
+    - POST /ui/teams/{id}/add-member - Add member
+    - POST /ui/teams/{id}/remove-member - Remove member
+    - POST /ui/teams/{id}/update-member-role - Update member role
+    - POST /ui/teams/{id}/join-request - Submit join request
+    - POST /ui/teams/{id}/join-requests/{id}/approve - Approve join request
+    - POST /ui/teams/{id}/join-requests/{id}/reject - Reject join request
+    - POST /ui/teams/{id}/leave - Leave team
+    - DELETE /ui/teams/{id} - Delete team via admin
+    - DELETE /ui/teams/{id}/join-request/{id} - Delete join request
 
     Weight: Very low (admin teams)
     """
@@ -8631,14 +8631,14 @@ class AdminTeamsHTMXOpsUser(BaseUser):
     @task(2)
     @tag("admin", "teams", "htmx", "crud")
     def admin_team_lifecycle(self):
-        """POST /admin/teams -> update -> delete."""
+        """POST /ui/teams -> update -> delete."""
         name = f"loadtest-adminteam-{uuid.uuid4().hex[:8]}"
         form_data = f"name={name}&description=Load+test+team&visibility=private"
         with self.client.post(
-            "/admin/teams",
+            "/ui/teams",
             data=form_data,
             headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-            name="/admin/teams [create]",
+            name="/ui/teams [create]",
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201, 302):
@@ -8650,31 +8650,31 @@ class AdminTeamsHTMXOpsUser(BaseUser):
                 # Update
                 time.sleep(0.1)
                 with self.client.post(f"/admin/teams/{tid}/update", data=f"name={name}&description=Updated", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/teams/[id]/update", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Add member
                 time.sleep(0.1)
                 with self.client.post(f"/admin/teams/{tid}/add-member", data="email=admin@example.com&role=viewer", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/teams/[id]/add-member", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Update member role
                 time.sleep(0.1)
                 with self.client.post(f"/admin/teams/{tid}/update-member-role", data="email=admin@example.com&role=admin", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/teams/[id]/update-member-role", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Remove member
                 time.sleep(0.1)
                 with self.client.post(f"/admin/teams/{tid}/remove-member", data="email=admin@example.com", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/teams/[id]/remove-member", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Join request
                 time.sleep(0.1)
                 with self.client.post(f"/admin/teams/{tid}/join-request", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/teams/[id]/join-request", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 409, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 409, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Leave
                 time.sleep(0.1)
                 with self.client.post(f"/admin/teams/{tid}/leave", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/teams/[id]/leave", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 400, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 # Delete
                 time.sleep(0.1)
                 with self.client.delete(f"/admin/teams/{tid}", headers=self.admin_headers, name="/admin/teams/[id] [delete]", catch_response=True) as r:
-                    self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                    self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
             elif response.status_code in (403, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
@@ -8697,13 +8697,13 @@ class AdminTeamsHTMXOpsUser(BaseUser):
                                 action = random.choice(["approve", "reject", "delete"])
                                 if action == "approve":
                                     with self.client.post(f"/admin/teams/{tid}/join-requests/{rid}/approve", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/teams/[id]/join-requests/[id]/approve", catch_response=True) as r:
-                                        self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                                        self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                                 elif action == "reject":
                                     with self.client.post(f"/admin/teams/{tid}/join-requests/{rid}/reject", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/teams/[id]/join-requests/[id]/reject", catch_response=True) as r:
-                                        self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                                        self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                                 else:
                                     with self.client.delete(f"/admin/teams/{tid}/join-request/{rid}", headers=self.admin_headers, name="/admin/teams/[id]/join-request/[id] [delete]", catch_response=True) as r:
-                                        self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+                                        self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                     except Exception:
                         pass
                 response.success()

@@ -994,7 +994,7 @@ class TestAdminServerRoutes:
         mock_set_state.assert_called_once_with(mock_db, "server-1", True, user_email="test-user")
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/admin#catalog"
+        assert result.headers["location"] == "/ui#catalog"
 
     @patch.object(ServerService, "set_server_state")
     async def test_admin_set_server_state_deactivate(self, mock_set_state, mock_request, mock_db):
@@ -1008,7 +1008,7 @@ class TestAdminServerRoutes:
         mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user")
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/admin#catalog"
+        assert result.headers["location"] == "/ui#catalog"
 
     @patch.object(ServerService, "set_server_state")
     async def test_admin_set_server_state_with_inactive_checked(self, mock_set_state, mock_request, mock_db):
@@ -1022,7 +1022,7 @@ class TestAdminServerRoutes:
         mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user")
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/admin/?include_inactive=true#catalog"
+        assert result.headers["location"] == "/ui/?include_inactive=true#catalog"
 
     @patch.object(ServerService, "set_server_state")
     async def test_admin_set_server_state_with_exception(self, mock_toggle_status, mock_request, mock_db):
@@ -1103,7 +1103,7 @@ class TestAdminServerRoutes:
         response = await admin_delete_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
-        assert response.headers["location"] == "/admin#catalog"
+        assert response.headers["location"] == "/ui#catalog"
         mock_delete_server.assert_called_once()
 
     @patch.object(ServerService, "delete_server")
@@ -1128,7 +1128,7 @@ class TestAdminServerRoutes:
         response = await admin_delete_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert "team_id" not in response.headers["location"]
-        assert response.headers["location"] == "/admin#catalog"
+        assert response.headers["location"] == "/ui#catalog"
 
     @patch.object(ServerService, "delete_server")
     async def test_admin_delete_server_error_handlers(self, mock_delete_server, mock_request, mock_db):
@@ -1883,7 +1883,7 @@ class TestAdminToolRoutes:
         response = await admin_set_tool_state(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
-        assert response.headers["location"] == "/root/admin/?include_inactive=true#tools"
+        assert response.headers["location"] == "/root/ui/?include_inactive=true#tools"
 
         # Error path with include_inactive=true
         mock_toggle_status.side_effect = PermissionError("nope")
@@ -3149,7 +3149,7 @@ class TestAdminRootRoutes:
         response = await admin_delete_root("/test/root", mock_request, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
-        assert response.headers["location"] == "/root/admin/?include_inactive=true#roots"
+        assert response.headers["location"] == "/root/ui/?include_inactive=true#roots"
 
     @patch("mcpgateway.admin.root_service.remove_root", new_callable=AsyncMock)
     async def test_admin_delete_root_redirects_without_include_inactive(self, mock_remove_root, mock_request, mock_db):
@@ -3160,7 +3160,7 @@ class TestAdminRootRoutes:
         response = await admin_delete_root("/test/root", mock_request, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
-        assert response.headers["location"] == "/root/admin#roots"
+        assert response.headers["location"] == "/root/ui#roots"
 
     @patch("mcpgateway.admin.root_service.remove_root", new_callable=AsyncMock)
     async def test_admin_delete_root_preserves_team_id(self, mock_remove_root, mock_request, mock_db):
@@ -4773,7 +4773,7 @@ class TestA2AAgentManagement:
         result = await admin_set_a2a_agent_state("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/root/admin#a2a-agents"
+        assert result.headers["location"] == "/root/ui#a2a-agents"
 
     @patch.object(A2AAgentService, "delete_agent")
     async def test_admin_delete_a2a_agent_success(self, mock_delete_agent, mock_request, mock_db):
@@ -4849,7 +4849,7 @@ class TestA2AAgentManagement:
         result = await admin_delete_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/admin#a2a-agents"
+        assert result.headers["location"] == "/ui#a2a-agents"
 
     @patch.object(A2AAgentService, "get_agent")
     @patch.object(A2AAgentService, "invoke_agent")
@@ -6645,7 +6645,7 @@ async def test_admin_list_teams_admin_view(monkeypatch, mock_request, mock_db, a
     pagination = MagicMock()
     pagination.model_dump.return_value = {"page": 1}
     links = MagicMock()
-    links.model_dump.return_value = {"self": "/admin/teams?page=1"}
+    links.model_dump.return_value = {"self": "/ui/teams?page=1"}
 
     team_service = MagicMock()
     team_service.list_teams = AsyncMock(return_value={"data": [team], "pagination": pagination, "links": links})
@@ -7283,7 +7283,7 @@ async def test_admin_update_team_success_redirect(monkeypatch, mock_db, allow_pe
     response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"].endswith("/admin/#teams")
+    assert response.headers["location"].endswith("/ui/#teams")
 
 
 @pytest.mark.asyncio
@@ -7841,7 +7841,7 @@ async def test_admin_teams_partial_html_controls_admin(monkeypatch, mock_request
     pagination = MagicMock()
     pagination.model_dump.return_value = {"page": 1}
     links = MagicMock()
-    links.model_dump.return_value = {"self": "/admin/teams/partial?page=1"}
+    links.model_dump.return_value = {"self": "/ui/teams/partial?page=1"}
 
     team_service = MagicMock()
     team_service.get_user_teams = AsyncMock(return_value=[team])
@@ -7963,7 +7963,7 @@ async def test_admin_teams_partial_html_admin_relationship_none(monkeypatch, moc
     other_team = SimpleNamespace(id="team-2", name="Other", slug="other", description="", visibility="private", is_active=True, is_personal=False)
 
     pagination = SimpleNamespace(model_dump=lambda: {"page": 1})
-    links = SimpleNamespace(model_dump=lambda: {"self": "/admin/teams/partial?page=1"})
+    links = SimpleNamespace(model_dump=lambda: {"self": "/ui/teams/partial?page=1"})
 
     team_service = MagicMock()
     team_service.get_user_teams = AsyncMock(return_value=[user_team])
@@ -8020,7 +8020,7 @@ async def test_admin_list_users_standard(monkeypatch, mock_db, allow_permission)
     request.scope = {"root_path": ""}
 
     pagination = SimpleNamespace(model_dump=lambda: {"page": 1})
-    links = SimpleNamespace(model_dump=lambda: {"self": "/admin/users?page=1"})
+    links = SimpleNamespace(model_dump=lambda: {"self": "/ui/users?page=1"})
     auth_service = MagicMock()
     auth_service.list_users = AsyncMock(
         return_value=SimpleNamespace(
@@ -8173,7 +8173,7 @@ async def test_admin_users_partial_html_controls_uses_resolve_root_path(monkeypa
     )
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
-    assert template_call[0][2]["base_url"] == "/api/proxy/mcp/admin/users/partial"
+    assert template_call[0][2]["base_url"] == "/api/proxy/mcp/ui/users/partial"
 
 
 @pytest.mark.asyncio
@@ -9298,7 +9298,7 @@ async def test_admin_servers_partial_html_propagates_search_and_tags_to_paginati
     )
     assert isinstance(response, HTMLResponse)
     _args, kwargs = paginate_mock.call_args
-    assert kwargs["base_url"].endswith("/admin/servers/partial")
+    assert kwargs["base_url"].endswith("/ui/servers/partial")
     assert kwargs["query_params"]["q"] == "server"
     assert kwargs["query_params"]["tags"] == "alpha+beta,gamma"
 
@@ -9387,7 +9387,7 @@ async def test_admin_tools_partial_html_propagates_search_and_tags_to_pagination
     )
     assert isinstance(response, HTMLResponse)
     _args, kwargs = paginate_mock.call_args
-    assert kwargs["base_url"].endswith("/admin/tools/partial")
+    assert kwargs["base_url"].endswith("/ui/tools/partial")
     assert kwargs["query_params"]["q"] == "tool"
     assert kwargs["query_params"]["tags"] == "t1"
 
@@ -9515,7 +9515,7 @@ async def test_admin_tool_ops_partial_uses_resolve_root_path(monkeypatch, mock_r
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
-    assert mock_paginate.call_args.kwargs["base_url"] == "/api/proxy/mcp/admin/tool-ops/partial"
+    assert mock_paginate.call_args.kwargs["base_url"] == "/api/proxy/mcp/ui/tool-ops/partial"
 
 
 @pytest.mark.asyncio
@@ -9664,7 +9664,7 @@ async def test_admin_prompts_partial_html_propagates_search_and_tags_to_paginati
     )
     assert isinstance(response, HTMLResponse)
     _args, kwargs = paginate_mock.call_args
-    assert kwargs["base_url"].endswith("/admin/prompts/partial")
+    assert kwargs["base_url"].endswith("/ui/prompts/partial")
     assert kwargs["query_params"]["q"] == "prompt"
     assert kwargs["query_params"]["tags"] == "t1"
 
@@ -9810,7 +9810,7 @@ async def test_admin_resources_partial_html_propagates_search_and_tags_to_pagina
     )
     assert isinstance(response, HTMLResponse)
     _args, kwargs = paginate_mock.call_args
-    assert kwargs["base_url"].endswith("/admin/resources/partial")
+    assert kwargs["base_url"].endswith("/ui/resources/partial")
     assert kwargs["query_params"]["q"] == "resource"
     assert kwargs["query_params"]["tags"] == "t1"
 
@@ -9869,7 +9869,7 @@ async def test_admin_gateways_partial_html_propagates_search_and_tags_to_paginat
     )
     assert isinstance(response, HTMLResponse)
     _args, kwargs = paginate_mock.call_args
-    assert kwargs["base_url"].endswith("/admin/gateways/partial")
+    assert kwargs["base_url"].endswith("/ui/gateways/partial")
     assert kwargs["query_params"]["q"] == "gateway"
     assert kwargs["query_params"]["tags"] == "t1"
 
@@ -10064,7 +10064,7 @@ async def test_admin_a2a_partial_html_propagates_search_and_tags_to_pagination(m
     )
     assert isinstance(response, HTMLResponse)
     _args, kwargs = paginate_mock.call_args
-    assert kwargs["base_url"].endswith("/admin/a2a/partial")
+    assert kwargs["base_url"].endswith("/ui/a2a/partial")
     assert kwargs["query_params"]["q"] == "agent"
     assert kwargs["query_params"]["tags"] == "t1"
 
@@ -11505,7 +11505,7 @@ class TestAdminAdditionalCoverage:
         pagination = MagicMock()
         pagination.model_dump.return_value = {"page": 1}
         links = MagicMock()
-        links.model_dump.return_value = {"self": "/admin/a2a?page=1"}
+        links.model_dump.return_value = {"self": "/ui/a2a?page=1"}
 
         service = MagicMock()
         service.list_agents = AsyncMock(return_value={"data": [agent], "pagination": pagination, "links": links})
@@ -12002,7 +12002,7 @@ async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
         return_value={
             "data": [mock_service],
             "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
-            "links": PaginationLinks(self="/admin/grpc?page=1&per_page=50", first="/admin/grpc?page=1&per_page=50", last="/admin/grpc?page=1&per_page=50"),
+            "links": PaginationLinks(self="/ui/grpc?page=1&per_page=50", first="/ui/grpc?page=1&per_page=50", last="/ui/grpc?page=1&per_page=50"),
         }
     )
     mgr.register_service = AsyncMock(return_value={"id": "svc-1"})
@@ -12875,7 +12875,7 @@ async def test_change_password_required_handler_success(monkeypatch, mock_db):
 
     response = await change_password_required_handler(request, db=mock_db)
     assert isinstance(response, RedirectResponse)
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/ui")
 
 
 @pytest.mark.asyncio
@@ -12885,7 +12885,7 @@ async def test_change_password_required_handler_email_auth_disabled(monkeypatch,
     request.scope = {"root_path": "/root"}
     response = await change_password_required_handler(request, db=mock_db)
     assert isinstance(response, RedirectResponse)
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/ui")
 
 
 @pytest.mark.asyncio
@@ -13719,7 +13719,7 @@ async def test_admin_delete_tool_success(mock_delete, mock_db):
 
     response = await admin_delete_tool("tool-1", request, mock_db, user={"email": "user@example.com"})
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin#tools"
+    assert response.headers["location"] == "/root/ui#tools"
     mock_delete.assert_called_once_with(mock_db, "tool-1", user_email="user@example.com", purge_metrics=True)
 
 
@@ -13733,7 +13733,7 @@ async def test_admin_delete_tool_success_include_inactive(mock_delete, mock_db):
 
     response = await admin_delete_tool("tool-1", request, mock_db, user={"email": "user@example.com"})
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/?include_inactive=true#tools"
+    assert response.headers["location"] == "/root/ui/?include_inactive=true#tools"
 
 
 @pytest.mark.asyncio
@@ -13762,7 +13762,7 @@ async def test_admin_delete_tool_generic_exception_error_redirect(mock_delete, m
     response = await admin_delete_tool("tool-1", request, mock_db, user={"email": "user@example.com"})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert "/root/admin/?" in response.headers["location"]
+    assert "/root/ui/?" in response.headers["location"]
     assert "include_inactive=true" not in response.headers["location"]
 
 
@@ -13775,7 +13775,7 @@ async def test_admin_delete_gateway_success(mock_delete, mock_db):
 
     response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com"})
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin#gateways"
+    assert response.headers["location"] == "/root/ui#gateways"
     mock_delete.assert_called_once_with(mock_db, "gateway-1", user_email="user@example.com")
 
 
@@ -13812,7 +13812,7 @@ async def test_admin_delete_gateway_success_inactive_checked_redirect(mock_delet
     response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com"})
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/admin/?include_inactive=true#gateways"
+    assert response.headers["location"] == "/ui/?include_inactive=true#gateways"
 
 
 @pytest.mark.asyncio
@@ -13854,7 +13854,7 @@ async def test_admin_delete_resource_success_inactive_unchecked_redirect(mock_de
 
     response = await admin_delete_resource("res-1", request, mock_db, user={"email": "user@example.com"})
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin#resources"
+    assert response.headers["location"] == "/root/ui#resources"
     mock_delete.assert_called_once_with(mock_db, "res-1", user_email="user@example.com", purge_metrics=False)
 
 
@@ -13904,7 +13904,7 @@ async def test_admin_delete_prompt_success(mock_delete, mock_db):
 
     response = await admin_delete_prompt("prompt-1", request, mock_db, user={"email": "user@example.com"})
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin#prompts"
+    assert response.headers["location"] == "/root/ui#prompts"
     mock_delete.assert_called_once_with(mock_db, "prompt-1", user_email="user@example.com", purge_metrics=False)
 
 
@@ -13918,7 +13918,7 @@ async def test_admin_delete_prompt_success_inactive_checked_redirect(mock_delete
 
     response = await admin_delete_prompt("prompt-1", request, mock_db, user={"email": "user@example.com"})
     assert response.status_code == 303
-    assert response.headers["location"] == "/admin/?include_inactive=true#prompts"
+    assert response.headers["location"] == "/ui/?include_inactive=true#prompts"
 
 
 @pytest.mark.asyncio
@@ -13990,7 +13990,7 @@ async def test_admin_set_resource_state_success_inactive_checked_redirect(mock_s
 
     response = await admin_set_resource_state("res-1", request, mock_db, user={"email": "user@example.com"})
     assert response.status_code == 303
-    assert response.headers["location"] == "/admin/?include_inactive=true#resources"
+    assert response.headers["location"] == "/ui/?include_inactive=true#resources"
 
 
 @pytest.mark.asyncio
@@ -14040,7 +14040,7 @@ async def test_admin_set_prompt_state_success_inactive_checked_redirect(mock_set
 
     response = await admin_set_prompt_state("prompt-1", request, mock_db, user={"email": "user@example.com"})
     assert response.status_code == 303
-    assert response.headers["location"] == "/admin/?include_inactive=true#prompts"
+    assert response.headers["location"] == "/ui/?include_inactive=true#prompts"
 
 
 @pytest.mark.asyncio
@@ -14948,18 +14948,18 @@ class TestUtilityFunctions:
         assert exc_info.value.status_code == 400
 
     def test_build_admin_redirect_no_params(self):
-        assert _build_admin_redirect("", "catalog") == "/admin#catalog"
+        assert _build_admin_redirect("", "catalog") == "/ui#catalog"
 
     def test_build_admin_redirect_with_root_path(self):
-        assert _build_admin_redirect("/root", "tools") == "/root/admin#tools"
+        assert _build_admin_redirect("/root", "tools") == "/root/ui#tools"
 
     def test_build_admin_redirect_error_only(self):
         result = _build_admin_redirect("", "catalog", error="Error msg")
-        assert result == "/admin/?error=Error%20msg#catalog"
+        assert result == "/ui/?error=Error%20msg#catalog"
 
     def test_build_admin_redirect_include_inactive_only(self):
         result = _build_admin_redirect("/root", "tools", include_inactive=True)
-        assert result == "/root/admin/?include_inactive=true#tools"
+        assert result == "/root/ui/?include_inactive=true#tools"
 
     def test_build_admin_redirect_error_and_include_inactive(self):
         result = _build_admin_redirect("", "catalog", error="Error msg", include_inactive=True)
@@ -14969,16 +14969,16 @@ class TestUtilityFunctions:
 
     def test_build_admin_redirect_with_invalid_team_id(self):
         result = _build_admin_redirect("", "tools", team_id="invalid-uuid")
-        assert result == "/admin#tools"
+        assert result == "/ui#tools"
 
     def test_build_admin_redirect_with_empty_team_id(self):
         result = _build_admin_redirect("", "tools", team_id="")
-        assert result == "/admin#tools"
+        assert result == "/ui#tools"
 
     def test_build_admin_redirect_with_valid_team_id(self):
         uid = "12345678-1234-5678-1234-567812345678"
         result = _build_admin_redirect("", "tools", team_id=uid)
-        assert result == "/admin/?team_id=12345678123456781234567812345678#tools"
+        assert result == "/ui/?team_id=12345678123456781234567812345678#tools"
 
     def test_build_admin_redirect_with_error_and_team_id(self):
         uid = "12345678-1234-5678-1234-567812345678"
@@ -14992,7 +14992,7 @@ class TestUtilityFunctions:
         result = _build_admin_redirect("/root", "tools", include_inactive=True, team_id=uid)
         assert "include_inactive=true" in result
         assert "team_id=12345678123456781234567812345678" in result
-        assert result.startswith("/root/admin/?")
+        assert result.startswith("/root/ui/?")
         assert result.endswith("#tools")
 
     def test_build_admin_redirect_all_params(self):
@@ -15001,7 +15001,7 @@ class TestUtilityFunctions:
         assert "error=fail" in result
         assert "include_inactive=true" in result
         assert "team_id=12345678123456781234567812345678" in result
-        assert result.startswith("/root/admin/?")
+        assert result.startswith("/root/ui/?")
         assert result.endswith("#catalog")
 
     def test_get_client_ip_forwarded_for(self):
@@ -15584,7 +15584,7 @@ class TestAuthLogin:
         result = await admin_login_handler(request, mock_db)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"].endswith("/admin")
+        assert result.headers["location"].endswith("/ui")
 
     @pytest.mark.asyncio
     async def test_admin_login_handler_auth_failure(self, monkeypatch, mock_db):
@@ -17742,6 +17742,9 @@ class TestTemplateButtonGating:
             return s
 
         env.filters["tojson_attr"] = tojson_attr
+
+        # Add global variables (same as in main.py)
+        env.globals["ui_base_path"] = settings.mcpgateway_ui_base_path
         return env
 
     def _render_tools_partial(self, jinja_env, tool_data, current_user_email, is_admin=False, user_team_roles=None):
@@ -18980,13 +18983,16 @@ class TestAdminTokensPartialSearch:
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.app_root_path = "/root"
+            mock_settings.mcpgateway_ui_base_path = "/ui"
             mock_settings.email_auth_enabled = False
+            mock_settings.mcpgateway_ui_base_path = "/ui"
             response = await admin_mod.admin_forgot_password_page(request)
             assert isinstance(response, RedirectResponse)
-            assert response.headers["location"].endswith("/root/admin/login")
+            assert response.headers["location"].endswith("/root/ui/login")
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.app_root_path = "/root"
+            mock_settings.mcpgateway_ui_base_path = "/ui"
             mock_settings.email_auth_enabled = True
             mock_settings.password_reset_enabled = True
             mock_settings.mcpgateway_ui_airgapped = False
@@ -18998,8 +19004,9 @@ class TestAdminTokensPartialSearch:
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.email_auth_enabled = False
+            mock_settings.mcpgateway_ui_base_path = "/ui"
             response = await admin_mod.admin_forgot_password_handler(request, db=mock_db)
-            assert response.headers["location"].endswith("/root/admin/login")
+            assert response.headers["location"].endswith("/root/ui/login")
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.email_auth_enabled = True
@@ -19056,12 +19063,15 @@ class TestAdminTokensPartialSearch:
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.app_root_path = "/root"
+            mock_settings.mcpgateway_ui_base_path = "/ui"
             mock_settings.email_auth_enabled = False
+            mock_settings.mcpgateway_ui_base_path = "/ui"
             response = await admin_mod.admin_reset_password_page("token123", request, db=mock_db)
-            assert response.headers["location"].endswith("/root/admin/login")
+            assert response.headers["location"].endswith("/root/ui/login")
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.app_root_path = "/root"
+            mock_settings.mcpgateway_ui_base_path = "/ui"
             mock_settings.email_auth_enabled = True
             mock_settings.password_reset_enabled = False
             response = await admin_mod.admin_reset_password_page("token123", request, db=mock_db)
@@ -19069,6 +19079,7 @@ class TestAdminTokensPartialSearch:
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.app_root_path = "/root"
+            mock_settings.mcpgateway_ui_base_path = "/ui"
             mock_settings.email_auth_enabled = True
             mock_settings.password_reset_enabled = True
             mock_settings.password_min_length = 8
@@ -19084,6 +19095,7 @@ class TestAdminTokensPartialSearch:
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.app_root_path = "/root"
+            mock_settings.mcpgateway_ui_base_path = "/ui"
             mock_settings.email_auth_enabled = True
             mock_settings.password_reset_enabled = True
             mock_settings.password_min_length = 8
@@ -19098,8 +19110,9 @@ class TestAdminTokensPartialSearch:
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.email_auth_enabled = False
+            mock_settings.mcpgateway_ui_base_path = "/ui"
             response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
-            assert response.headers["location"].endswith("/root/admin/login")
+            assert response.headers["location"].endswith("/root/ui/login")
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.email_auth_enabled = True
@@ -19199,6 +19212,7 @@ class TestAdminTokensPartialSearch:
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.email_auth_enabled = False
+            mock_settings.mcpgateway_ui_base_path = "/ui"
             response = await admin_mod.admin_unlock_user("user%40example.com", request, db=mock_db, user={"email": "admin@example.com"})
             assert response.status_code == 403
 
@@ -19478,7 +19492,7 @@ class TestAdminCsrfProtection:
         request = self._make_request(
             method="POST",
             headers={
-                "referer": "https://example.com/admin",
+                "referer": "https://example.com/ui",
                 "host": "example.com",
                 "x-csrf-token": "expected",
             },
@@ -19509,7 +19523,7 @@ class TestAdminCsrfProtection:
 
         request = self._make_request(
             method="POST",
-            headers={"referer": "https://example.com/admin", "host": "example.com"},
+            headers={"referer": "https://example.com/ui", "host": "example.com"},
             cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "csrf-token"},
         )
 
@@ -19971,7 +19985,7 @@ class TestAdminCsrfProtection:
         request = MagicMock()
         request.scope = {"root_path": "/mounted"}
 
-        assert admin_mod._admin_cookie_path(request) == "/mounted/admin"
+        assert admin_mod._admin_cookie_path(request) == "/mounted/ui"
 
     def test_admin_cookie_path_falls_back_to_settings_root_path(self, monkeypatch):
         # First-Party
@@ -19981,7 +19995,7 @@ class TestAdminCsrfProtection:
         request = MagicMock()
         request.scope = {"root_path": ""}
 
-        assert admin_mod._admin_cookie_path(request) == "/api/proxy/mcp/admin"
+        assert admin_mod._admin_cookie_path(request) == "/api/proxy/mcp/ui"
 
     def test_admin_cookie_path_normalizes_settings_root_path(self, monkeypatch):
         # First-Party
@@ -19991,7 +20005,7 @@ class TestAdminCsrfProtection:
         request = MagicMock()
         request.scope = {"root_path": ""}
 
-        assert admin_mod._admin_cookie_path(request) == "/api/proxy/mcp/admin"
+        assert admin_mod._admin_cookie_path(request) == "/api/proxy/mcp/ui"
 
     def test_admin_cookie_path_returns_default_when_both_scope_and_settings_empty(self, monkeypatch):
         # First-Party
@@ -20001,7 +20015,7 @@ class TestAdminCsrfProtection:
         request = MagicMock()
         request.scope = {"root_path": ""}
 
-        assert admin_mod._admin_cookie_path(request) == "/admin"
+        assert admin_mod._admin_cookie_path(request) == "/ui"
 
     def test_admin_cookie_path_strips_trailing_slash_from_scope_root_path(self, monkeypatch):
         # First-Party
@@ -20011,7 +20025,7 @@ class TestAdminCsrfProtection:
         request = MagicMock()
         request.scope = {"root_path": "/mounted/"}
 
-        assert admin_mod._admin_cookie_path(request) == "/mounted/admin"
+        assert admin_mod._admin_cookie_path(request) == "/mounted/ui"
 
 
 # ---------------------------------------------------------------------------
@@ -20455,7 +20469,7 @@ class TestPublicVisibilityGuard:
         result = await admin_create_grpc_service(service, mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
         assert result.status_code == 201
 
-
+#
 # ---------------------------------------------------------------------------
 # include_public parameter — team isolation with public overlay (#3411)
 # ---------------------------------------------------------------------------
@@ -21586,3 +21600,11 @@ class TestAdminPersonalTeamFiltering:
             call_kwargs = mock_team_service.list_teams.call_args[1]
             assert call_kwargs["search_query"] == "nomatch"
             assert call_kwargs["personal_owner_email"] == "admin@example.com"
+
+def test_ui_base_path_returns_settings_value():
+    """Test _ui_base_path() returns the configured value from settings."""
+    from mcpgateway.admin import _ui_base_path
+    from mcpgateway.config import settings
+
+    result = _ui_base_path()
+    assert result == settings.mcpgateway_ui_base_path

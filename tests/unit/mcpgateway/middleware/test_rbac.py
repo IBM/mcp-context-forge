@@ -101,10 +101,10 @@ async def test_get_current_user_with_permissions_cookie_rejected_for_api_request
 
 @pytest.mark.asyncio
 async def test_cookie_auth_allowed_with_admin_referer():
-    """/admin referer marks the request as a browser/UI request; cookie auth must be accepted."""
+    """/ui referer marks the request as a browser/UI request; cookie auth must be accepted."""
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {"jwt_token": "token123"}
-    mock_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/admin#gateways"}
+    mock_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/ui#gateways"}
     mock_request.client = MagicMock()
     mock_request.client.host = "127.0.0.1"
     mock_request.state = MagicMock(auth_method="jwt", request_id="req-admin", token_teams=["team-1"])
@@ -1372,6 +1372,7 @@ async def test_no_token_auth_disabled_platform_admin():
     mock_settings.auth_required = False
     mock_settings.allow_unauthenticated_admin = True
     mock_settings.platform_admin_email = "admin@platform.com"
+    mock_settings.mcpgateway_ui_base_path = "/ui"
 
     with patch("mcpgateway.middleware.rbac.settings", mock_settings):
         result = await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
@@ -1397,6 +1398,7 @@ async def test_no_token_auth_disabled_defaults_to_anonymous():
     mock_settings.mcp_client_auth_enabled = True
     mock_settings.auth_required = False
     mock_settings.allow_unauthenticated_admin = False
+    mock_settings.mcpgateway_ui_base_path = "/ui"
 
     with patch("mcpgateway.middleware.rbac.settings", mock_settings):
         result = await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)

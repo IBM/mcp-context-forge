@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
+from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session, get_for_update
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
@@ -351,9 +352,6 @@ class A2AAgentService(BaseService):
                 # Standard
                 from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
 
-                # First-Party
-                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
                 # Service-layer enforcement: Check feature flag
                 if not settings.insecure_allow_queryparam_auth:
                     raise ValueError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
@@ -614,7 +612,7 @@ class A2AAgentService(BaseService):
             per_page=per_page,
             cursor=cursor,
             limit=limit,
-            base_url="/admin/a2a",  # Used for page-based links
+            base_url=f"{settings.mcpgateway_ui_base_path}/a2a",  # Used for page-based links
             query_params={"include_inactive": include_inactive} if include_inactive else {},
         )
 
@@ -1011,9 +1009,6 @@ class A2AAgentService(BaseService):
                 # Standard
                 from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
 
-                # First-Party
-                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
                 # Service-layer enforcement: Check feature flag
                 if not settings.insecure_allow_queryparam_auth:
                     # Grandfather clause: Allow updates to existing query_param agents
@@ -1046,9 +1041,6 @@ class A2AAgentService(BaseService):
                     is_masked_placeholder = False
                     if param_value and hasattr(param_value, "get_secret_value"):
                         raw_value = param_value.get_secret_value()
-                        # First-Party
-                        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
                         is_masked_placeholder = raw_value == settings.masked_auth_value
                     elif param_value:
                         raw_value = str(param_value)

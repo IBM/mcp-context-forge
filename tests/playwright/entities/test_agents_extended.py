@@ -32,14 +32,14 @@ def _skip_if_no_agents(agents_page: AgentsPage) -> None:
 def _open_view_modal(agents_page: AgentsPage, index: int = 0) -> None:
     """Open the view modal for an agent row by index.
 
-    The JS handler fetches GET /admin/a2a/{id} before showing the modal,
+    The JS handler fetches GET /ui/a2a/{id} before showing the modal,
     so we intercept the response to detect API errors early.
     """
     row = agents_page.get_agent_row(index)
     view_btn = row.locator('button:has-text("View")')
     with agents_page.page.expect_response(
         lambda resp: (
-            re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None
+            re.search(r"/ui/a2a/[0-9a-f]", resp.url) is not None
             and "/partial" not in resp.url
             and resp.request.method == "GET"
         ),
@@ -64,13 +64,13 @@ def _close_view_modal(agents_page: AgentsPage) -> None:
 def _open_edit_modal(agents_page: AgentsPage, index: int = 0) -> None:
     """Open the edit modal for an agent row by index.
 
-    The JS handler fetches GET /admin/a2a/{id} before showing the modal.
+    The JS handler fetches GET /ui/a2a/{id} before showing the modal.
     """
     row = agents_page.get_agent_row(index)
     edit_btn = row.locator('button:has-text("Edit")')
     with agents_page.page.expect_response(
         lambda resp: (
-            re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None
+            re.search(r"/ui/a2a/[0-9a-f]", resp.url) is not None
             and "/partial" not in resp.url
             and resp.request.method == "GET"
         ),

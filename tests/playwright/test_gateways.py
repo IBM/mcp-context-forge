@@ -303,14 +303,14 @@ class TestGatewayCreation:
         fails, the gateway is NOT saved to the database (returns 502). Since this
         depends on external service availability, we skip rather than fail.
 
-        After a successful POST, the JS handler redirects to /admin#gateways via
+        After a successful POST, the JS handler redirects to /ui#gateways via
         window.location.href. We wait for that navigation to settle.
 
         Returns:
             The response object from the POST.
         """
         with gateways_page.page.expect_response(
-            lambda r: "/admin/gateways" in r.url and r.request.method == "POST",
+            lambda r: "/ui/gateways" in r.url and r.request.method == "POST",
             timeout=120000,
         ) as response_info:
             gateways_page.add_gateway_btn.scroll_into_view_if_needed()
@@ -330,7 +330,7 @@ class TestGatewayCreation:
     def _verify_gateway_in_table(gateways_page: GatewaysPage, gateway_name: str, max_retries: int = 3):
         """Reload, search, and assert gateway exists in the table.
 
-        After gateway creation, the JS handler redirects to /admin#gateways.
+        After gateway creation, the JS handler redirects to /ui#gateways.
         We reload to ensure the DB commit (which runs after the POST response
         is sent) has completed, then navigate to the gateways tab and search.
         """

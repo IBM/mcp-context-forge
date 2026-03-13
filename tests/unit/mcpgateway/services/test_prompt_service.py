@@ -1760,7 +1760,7 @@ class TestListPromptsAdvanced:
             mock_paginate.return_value = {
                 "data": [mock_prompt],
                 "pagination": {"page": 1, "per_page": 10, "total": 1},
-                "links": {"self": "/admin/prompts?page=1"},
+                "links": {"self": "/ui/prompts?page=1"},
             }
 
             result = await prompt_service.list_prompts(db, page=1, per_page=10)

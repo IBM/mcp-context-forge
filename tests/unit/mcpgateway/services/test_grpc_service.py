@@ -298,10 +298,10 @@ class TestGrpcService:
                     has_prev=False,
                 ),
                 "links": PaginationLinks(
-                    self="/admin/grpc?page=1&per_page=10",
-                    first="/admin/grpc?page=1&per_page=10",
-                    last="/admin/grpc?page=3&per_page=10",
-                    next="/admin/grpc?page=2&per_page=10",
+                    self="/ui/grpc?page=1&per_page=10",
+                    first="/ui/grpc?page=1&per_page=10",
+                    last="/ui/grpc?page=3&per_page=10",
+                    next="/ui/grpc?page=2&per_page=10",
                     prev=None,
                 ),
             }
@@ -315,7 +315,7 @@ class TestGrpcService:
         assert result["pagination"].total_pages == 3
         assert result["pagination"].has_next is True
         assert result["pagination"].has_prev is False
-        assert result["links"].next == "/admin/grpc?page=2&per_page=10"
+        assert result["links"].next == "/ui/grpc?page=2&per_page=10"
 
         # Test page 2
         services_page2 = []
@@ -355,11 +355,11 @@ class TestGrpcService:
                     has_prev=True,
                 ),
                 "links": PaginationLinks(
-                    self="/admin/grpc?page=2&per_page=10",
-                    first="/admin/grpc?page=1&per_page=10",
-                    last="/admin/grpc?page=3&per_page=10",
-                    next="/admin/grpc?page=3&per_page=10",
-                    prev="/admin/grpc?page=1&per_page=10",
+                    self="/ui/grpc?page=2&per_page=10",
+                    first="/ui/grpc?page=1&per_page=10",
+                    last="/ui/grpc?page=3&per_page=10",
+                    next="/ui/grpc?page=3&per_page=10",
+                    prev="/ui/grpc?page=1&per_page=10",
                 ),
             }
 
@@ -370,8 +370,8 @@ class TestGrpcService:
         assert result["pagination"].page == 2
         assert result["pagination"].has_next is True
         assert result["pagination"].has_prev is True
-        assert result["links"].next == "/admin/grpc?page=3&per_page=10"
-        assert result["links"].prev == "/admin/grpc?page=1&per_page=10"
+        assert result["links"].next == "/ui/grpc?page=3&per_page=10"
+        assert result["links"].prev == "/ui/grpc?page=1&per_page=10"
 
     async def test_get_service_success(self, service, mock_db, sample_db_service):
         """Test getting a specific service."""

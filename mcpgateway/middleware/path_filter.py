@@ -33,16 +33,17 @@ logger = logging.getLogger(__name__)
 # Observability: exact matches + "/static/" prefix + allowlist
 # NOTE: /healthz is included for translate.py compatibility (gateway uses /health, /ready)
 # See: mcpgateway/translate.py, mcpgateway/config.py:observability_include_paths/observability_exclude_paths
+# NOTE: UI-based path filtering is done dynamically in should_skip_observability() using settings.mcpgateway_ui_base_path
 OBSERVABILITY_SKIP_EXACT: FrozenSet[str] = frozenset(
     [
         "/health",
         "/healthz",  # translate.py only, kept for compatibility
         "/ready",
         "/metrics",
-        "/admin/events",
     ]
 )
-OBSERVABILITY_SKIP_PREFIXES: Tuple[str, ...] = ("/static/", "/admin/observability/")
+# Static prefix is always skipped; UI observability paths are checked dynamically
+OBSERVABILITY_SKIP_PREFIXES: Tuple[str, ...] = ("/static/",)
 
 # AuthContext: exact matches + "/static/" prefix (preserves pre-allowlist behavior)
 AUTH_CONTEXT_SKIP_EXACT: FrozenSet[str] = frozenset(
@@ -159,8 +160,9 @@ def _get_observability_exclude_regex() -> Tuple[Pattern[str], ...]:
 def should_skip_observability(path: str) -> bool:
     """Skip logic for ObservabilityMiddleware.
 
-    Skips health endpoints (exact match), static files (prefix match), configured
-    include/exclude patterns (include first, then exclude).
+    Skips health endpoints (exact match), static files (prefix match), UI events/observability
+    paths (dynamic based on settings.mcpgateway_ui_base_path), and configured include/exclude
+    patterns (include first, then exclude).
 
     Args:
         path: The URL path from request.url.path
@@ -183,6 +185,11 @@ def should_skip_observability(path: str) -> bool:
         False
     """
     if path in OBSERVABILITY_SKIP_EXACT or _matches_prefix(path, OBSERVABILITY_SKIP_PREFIXES):
+        return True
+
+    # Dynamically skip UI events and observability paths based on configured UI base path
+    ui_base_path = settings.mcpgateway_ui_base_path
+    if path == f"{ui_base_path}/events" or path.startswith(f"{ui_base_path}/observability/"):
         return True
 
     if _matches_any_regex(path, _get_observability_exclude_regex()):

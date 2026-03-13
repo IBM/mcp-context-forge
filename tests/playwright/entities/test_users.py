@@ -25,7 +25,7 @@ def _create_user_and_navigate(users_page: UsersPage, test_user_data: dict) -> No
     users_page.navigate_to_users_tab()
     users_page.wait_for_visible(users_page.create_user_form, timeout=15000)
 
-    with users_page.page.expect_response(lambda response: "/admin/users" in response.url and response.request.method == "POST" and "/partial" not in response.url) as response_info:
+    with users_page.page.expect_response(lambda response: "/ui/users" in response.url and response.request.method == "POST" and "/partial" not in response.url) as response_info:
         users_page.create_user(
             email=test_user_data["email"],
             full_name=test_user_data["full_name"],
@@ -83,7 +83,7 @@ class TestUsersCRUD:
         _create_user_and_navigate(users_page, test_user_data)
 
         # Delete user (accepts hx-confirm dialog)
-        with users_page.page.expect_response(lambda response: "/admin/users" in response.url and response.request.method == "DELETE") as response_info:
+        with users_page.page.expect_response(lambda response: "/ui/users" in response.url and response.request.method == "DELETE") as response_info:
             users_page.click_delete(test_user_data["email"])
         response = response_info.value
         assert response.status < 400, f"User deletion failed with status {response.status}"

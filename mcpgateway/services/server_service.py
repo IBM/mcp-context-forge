@@ -847,7 +847,7 @@ class ServerService(BaseService):
             per_page=per_page,
             cursor=cursor,
             limit=limit,
-            base_url="/admin/servers",  # Used for page-based links
+            base_url=f"{settings.mcpgateway_ui_base_path}/servers",  # Used for page-based links
             query_params={"include_inactive": include_inactive} if include_inactive else {},
         )
 
