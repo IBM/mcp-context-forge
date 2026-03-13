@@ -2832,6 +2832,7 @@ class ToolService(BaseService):
         self,
         db: Session,
         name: str,
+        arguments: Optional[Dict[str, Any]] = None,
         request_headers: Optional[Dict[str, str]] = None,
         app_user_email: Optional[str] = None,
         user_email: Optional[str] = None,
@@ -2845,9 +2846,14 @@ class ToolService(BaseService):
         execute the call directly for the simple streamable HTTP MCP cases that
         dominate load tests, while Python remains the authority for policy.
 
+        When tool_pre_invoke hooks are registered, they are executed during plan
+        resolution and their modifications (cleaned args, injected headers) are
+        returned in the plan for the Rust runtime to apply.
+
         Args:
             db: Active database session.
             name: Tool name requested by the caller.
+            arguments: Tool call arguments from the JSON-RPC params (passed to pre-invoke hooks).
             request_headers: Incoming request headers used for passthrough/auth decisions.
             app_user_email: OAuth application user email, when present.
             user_email: Effective requester email after auth normalization.
@@ -2862,8 +2868,12 @@ class ToolService(BaseService):
             ToolNotFoundError: If the requested tool is not visible or invocable.
             ToolInvocationError: If gateway auth preparation fails or the tool name is ambiguous.
         """
-        if self._plugin_manager and (self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) or self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)):
-            return {"eligible": False, "fallbackReason": "plugin-hooks-configured"}
+        has_pre_invoke = self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE)
+        has_post_invoke = self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)
+
+        # Post-invoke hooks cannot run after Rust upstream execution; force fallback
+        if has_post_invoke:
+            return {"eligible": False, "fallbackReason": "post-invoke-hooks-configured"}
 
         if current_trace_id.get():
             return {"eligible": False, "fallbackReason": "observability-trace-active"}
@@ -3111,7 +3121,36 @@ class ToolService(BaseService):
 
         runtime_headers = {str(header_name): str(header_value) for header_name, header_value in headers.items() if header_name and header_value}
 
-        return {
+        # Run tool_pre_invoke hooks so that plugins (e.g. wxo_connections) can
+        # inject credentials and clean arguments before the Rust direct call.
+        modified_args = arguments
+        if has_pre_invoke and arguments is not None:
+            import uuid as _uuid  # pylint: disable=import-outside-toplevel
+
+            hook_global_context = GlobalContext(
+                request_id=str(_uuid.uuid4()),
+                server_id=server_id,
+                tenant_id=None,
+                user=app_user_email,
+            )
+            hook_headers = dict(request_headers) if request_headers else {}
+            pre_result, _ = await self._plugin_manager.invoke_hook(
+                ToolHookType.TOOL_PRE_INVOKE,
+                payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=hook_headers)),
+                global_context=hook_global_context,
+                violations_as_exceptions=True,
+            )
+            if pre_result.modified_payload:
+                modified_args = pre_result.modified_payload.args
+                if pre_result.modified_payload.name and pre_result.modified_payload.name != name:
+                    tool_name_original = pre_result.modified_payload.name
+                if pre_result.modified_payload.headers is not None:
+                    plugin_headers = pre_result.modified_payload.headers.root if hasattr(pre_result.modified_payload.headers, "root") else {}
+                    for hk, hv in plugin_headers.items():
+                        if hk and hv:
+                            runtime_headers[str(hk)] = str(hv)
+
+        plan: Dict[str, Any] = {
             "eligible": True,
             "transport": transport,
             "serverUrl": gateway_url,
@@ -3121,6 +3160,11 @@ class ToolService(BaseService):
             "gatewayId": tool_gateway_id,
             "toolName": name,
         }
+        if has_pre_invoke:
+            plan["hasPreInvokeHooks"] = True
+            if modified_args is not None:
+                plan["modifiedArgs"] = modified_args
+        return plan
 
     def _load_invocable_tools(self, db: Session, name: str, server_id: Optional[str] = None) -> List[DbTool]:
         """Load candidate tools for invocation, narrowing to a virtual server when possible.

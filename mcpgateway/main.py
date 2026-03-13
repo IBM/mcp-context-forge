@@ -8481,9 +8481,11 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
         elif auth_token_teams is None:
             auth_token_teams = []
 
+        arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
         plan = await tool_service.prepare_rust_mcp_tool_execution(
             db=db,
             name=name,
+            arguments=arguments,
             request_headers={k.lower(): v for k, v in request.headers.items()},
             app_user_email=get_user_email(user),
             user_email=auth_user_email,
