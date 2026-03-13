@@ -694,7 +694,7 @@ class RoleService:
             >>> asyncio.iscoroutinefunction(service.get_user_role_assignment)
             True
         """
-        conditions = [UserRole.user_email == user_email, UserRole.role_id == role_id, UserRole.scope == scope]
+        conditions = [UserRole.user_email == user_email, UserRole.role_id == role_id, UserRole.scope == scope, UserRole.is_active.is_(True)]  # FIX #3505: Only return active assignments
 
         if scope_id:
             conditions.append(UserRole.scope_id == scope_id)
