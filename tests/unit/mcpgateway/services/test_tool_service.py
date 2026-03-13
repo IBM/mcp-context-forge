@@ -6804,6 +6804,62 @@ class TestRustMcpExecutionPlan:
                 await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", user_email="user@example.com", token_teams=["team-a"])
 
     @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_selects_highest_priority_accessible_candidate(self, tool_service):
+        """A single best-priority accessible candidate should be selected successfully."""
+        cache = self._cache_mock(None)
+        tool_service._plugin_manager = None
+        selected_gateway = SimpleNamespace(
+            id="gw-1",
+            name="gateway-one",
+            url="http://gateway.example/mcp",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            passthrough_headers=[],
+        )
+        candidate_team = SimpleNamespace(
+            id="tool-team",
+            enabled=True,
+            reachable=True,
+            visibility="team",
+            team_id="team-a",
+            owner_email="user@example.com",
+            gateway=selected_gateway,
+        )
+        candidate_public = SimpleNamespace(
+            id="tool-public",
+            enabled=True,
+            reachable=True,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            gateway=selected_gateway,
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda request_headers, headers, *_args, **_kwargs: headers),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[candidate_public, candidate_team]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(side_effect=[True, True, True])),
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=self._cache_payload(id="tool-team", gateway_id="gw-1")),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan["eligible"] is True
+        assert plan["gatewayId"] == "gw-1"
+        assert plan["toolName"] == "tool-one"
+
+    @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_rejects_inaccessible_db_candidates(self, tool_service):
         """DB-loaded candidates with no accessible match should surface as not-found."""
         cache = self._cache_mock(None)

@@ -12072,6 +12072,30 @@ async def test_auth_jwt_records_batch_team_cache_hit_on_success(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_auth_jwt_uses_batched_team_ids_when_auth_cache_is_disabled(monkeypatch):
+    """Batched auth lookups should still populate session team context without the cache layer."""
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler, user_context_var
+
+    jwt_payload = {"sub": "user@example.com", "is_admin": False, "token_use": "session"}
+    auth_cache = MagicMock()
+    auth_cache.get_team_membership_valid_sync = MagicMock(return_value=True)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", True)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(
+        "mcpgateway.auth._get_auth_context_batched_sync",
+        MagicMock(return_value={"user": {"is_active": True, "is_admin": False}, "team_ids": ["team-b"], "is_token_revoked": False}),
+    )
+
+    handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
+
+    assert await handler._auth_jwt(token="fake-token") is True
+    assert user_context_var.get()["teams"] == ["team-b"]
+
+
+@pytest.mark.asyncio
 async def test_auth_jwt_returns_invalid_credentials_when_batched_lookup_raises_http_exception(monkeypatch):
     """HTTPException from the batched auth lookup should be surfaced as invalid credentials."""
     from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler

@@ -3287,11 +3287,6 @@ class _StreamableHttpAuthHandler:
                         final_teams = cached_team_ids
                     elif batched_auth_ctx is not None:
                         final_teams = list(batched_auth_ctx.get("team_ids") or [])
-                        if auth_cache is not None:
-                            try:
-                                await auth_cache.set_user_teams(f"{user_email}:True", final_teams)
-                            except Exception as cache_set_error:
-                                logger.debug("Failed to cache MCP teams list for %s: %s", user_email, cache_set_error)
                     else:
                         _record_mcp_auth_cache_event("teams_db_resolve")
                         # Resolve teams synchronously with L1 cache (StreamableHTTP uses sync context)
