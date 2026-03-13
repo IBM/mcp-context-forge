@@ -2452,7 +2452,7 @@ async fn handle_initialize_with_session_core(
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
     if let Some(existing) = get_runtime_session(state, &session_id).await {
-        if !runtime_session_allows_access(&existing, auth_context.as_ref()) {
+        if !runtime_session_allows_access(&existing, auth_context.as_ref(), &incoming_headers) {
             return json_response(
                 StatusCode::OK,
                 json!({
@@ -3198,7 +3198,7 @@ async fn validate_runtime_session_request(
     }
 
     let auth_context = decode_internal_auth_context_from_headers_optional(incoming_headers);
-    if !runtime_session_allows_access(&record, auth_context.as_ref()) {
+    if !runtime_session_allows_access(&record, auth_context.as_ref(), incoming_headers) {
         return Err(json_response(
             StatusCode::FORBIDDEN,
             json!({
@@ -3220,14 +3220,24 @@ async fn validate_runtime_session_request(
 fn runtime_session_allows_access(
     record: &RuntimeSessionRecord,
     auth_context: Option<&InternalAuthContext>,
+    incoming_headers: &HeaderMap,
 ) -> bool {
+    if let Some(expected_fingerprint) = record.auth_binding_fingerprint.as_deref() {
+        let Some(actual_fingerprint) = auth_binding_fingerprint(incoming_headers) else {
+            return false;
+        };
+        if actual_fingerprint != expected_fingerprint {
+            return false;
+        }
+    }
+
     let Some(owner_email) = record.owner_email.as_deref() else {
         return true;
     };
     let Some(auth_context) = auth_context else {
         return false;
     };
-    auth_context.is_admin || auth_context.email.as_deref() == Some(owner_email)
+    auth_context.email.as_deref() == Some(owner_email)
 }
 
 fn requested_initialize_session_id(
@@ -3916,7 +3926,7 @@ async fn forward_transport_request(
 
             let auth_context =
                 decode_internal_auth_context_from_headers_optional(&incoming_headers);
-            if !runtime_session_allows_access(&record, auth_context.as_ref()) {
+            if !runtime_session_allows_access(&record, auth_context.as_ref(), &incoming_headers) {
                 return json_response(
                     StatusCode::FORBIDDEN,
                     json!({

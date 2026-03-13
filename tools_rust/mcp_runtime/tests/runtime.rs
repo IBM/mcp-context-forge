@@ -478,7 +478,7 @@ async fn public_session_reuses_authenticated_context_when_flag_enabled() {
 }
 
 #[tokio::test]
-async fn public_session_reauthenticates_when_auth_binding_changes() {
+async fn public_session_denies_when_auth_binding_changes() {
     let auth_calls = Arc::new(Mutex::new(0usize));
 
     let backend = {
@@ -567,12 +567,14 @@ async fn public_session_reauthenticates_when_auth_binding_changes() {
         .send()
         .await
         .expect("roots response");
-    assert_eq!(roots_response.status(), StatusCode::OK);
+    assert_eq!(roots_response.status(), StatusCode::FORBIDDEN);
+    let body: Value = roots_response.json().await.expect("roots json");
+    assert_eq!(body["detail"], json!("Session access denied"));
 
     assert_eq!(
         *auth_calls.lock().expect("lock"),
         2,
-        "Changed auth material should force Rust to fall back to backend authenticate",
+        "Changed auth material should still be rechecked before the public MCP session is denied",
     );
 }
 
@@ -1180,6 +1182,100 @@ async fn session_core_transport_denies_non_owner_before_backend_dispatch() {
     let get_response = client
         .get(format!("{runtime_url}/mcp?session_id=owned-session-1"))
         .header("x-contextforge-auth-context", intruder_auth)
+        .send()
+        .await
+        .expect("get response");
+
+    assert_eq!(get_response.status(), StatusCode::FORBIDDEN);
+    let body: Value = get_response.json().await.expect("json body");
+    assert_eq!(body["detail"], json!("Session access denied"));
+    let calls = transport_calls.lock().expect("lock");
+    assert_eq!(calls.len(), 1);
+    assert!(calls[0].starts_with("POST:"));
+}
+
+#[tokio::test]
+async fn session_core_transport_denies_same_email_with_different_auth_binding() {
+    let transport_calls = Arc::new(Mutex::new(Vec::<String>::new()));
+    let backend = {
+        let post_calls = transport_calls.clone();
+        Router::new().route(
+            "/_internal/mcp/transport",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let transport_calls = post_calls.clone();
+                async move {
+                    transport_calls.lock().expect("lock").push(format!(
+                        "POST:{}",
+                        headers
+                            .get("mcp-session-id")
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or("missing")
+                    ));
+                    let mut response_headers = HeaderMap::new();
+                    response_headers.insert(
+                        "mcp-session-id",
+                        HeaderValue::from_static("bound-session-1"),
+                    );
+                    (
+                        StatusCode::OK,
+                        response_headers,
+                        Json(json!({
+                            "jsonrpc":"2.0",
+                            "id": body["id"],
+                            "result": {"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"ContextForge","version":"0.1.0"}}
+                        })),
+                    )
+                }
+            }),
+        )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            session_core_enabled: true,
+            session_auth_reuse_enabled: true,
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+    let owner_auth = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "email": "owner@example.com",
+            "teams": ["team-a"],
+            "is_admin": false,
+            "is_authenticated": true,
+        }))
+        .expect("owner auth context json"),
+    );
+    let client = reqwest::Client::new();
+
+    let initialize_response = client
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer owner-session-token")
+        .header("x-contextforge-auth-context", owner_auth.clone())
+        .json(&json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"initialize",
+            "params":{"protocolVersion":"2025-11-25","capabilities":{}}
+        }))
+        .send()
+        .await
+        .expect("initialize response");
+    let initialize_status = initialize_response.status();
+    let initialize_body = initialize_response.text().await.expect("initialize body");
+    assert!(
+        initialize_status == StatusCode::OK,
+        "initialize status={initialize_status} body={initialize_body}"
+    );
+
+    let get_response = client
+        .get(format!("{runtime_url}/mcp?session_id=bound-session-1"))
+        .header("authorization", "Bearer owner-public-only-token")
+        .header("x-contextforge-auth-context", owner_auth)
         .send()
         .await
         .expect("get response");

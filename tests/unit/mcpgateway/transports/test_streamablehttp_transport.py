@@ -9417,6 +9417,73 @@ async def test_handle_streamable_http_server_scope_requires_servers_use(monkeypa
         await wrapper.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_handle_streamable_http_server_scope_checks_any_team_for_team_api_token(monkeypatch):
+    """Server-scoped MCP requests should check RBAC across token teams for API tokens."""
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, user_context_var
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            pass
+
+    dummy_manager = DummySessionManager()
+    dummy_manager.handle_request = AsyncMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: dummy_manager)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+
+    permission_check = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", permission_check)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    token = user_context_var.set(
+        {
+            "email": "dev@example.com",
+            "teams": ["team-1"],
+            "is_admin": False,
+            "is_authenticated": True,
+            "token_use": "api",
+        }
+    )
+    try:
+        scope = _make_scope("/servers/abc-123-def/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1")])
+        receive = _make_receive(orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": "1"}))
+        send, _messages = _make_send_collector()
+
+        await wrapper.handle_streamable_http(scope, receive, send)
+
+        assert permission_check.await_args.kwargs["permission"] == "servers.use"
+        assert permission_check.await_args.kwargs["check_any_team"] is True
+    finally:
+        user_context_var.reset(token)
+        await wrapper.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("user_context", "server_id", "expected"),
+    [
+        (None, "srv-1", False),
+        ({"token_use": "session", "teams": []}, None, True),
+        ({"token_use": "api", "teams": ["team-1"]}, "srv-1", True),
+        ({"token_use": "api", "teams": []}, "srv-1", False),
+        ({"token_use": "api", "teams": ["team-1"]}, None, False),
+    ],
+)
+def test_check_any_team_for_server_scoped_rbac(user_context, server_id, expected):
+    """Server-scoped RBAC should reuse any-team lookup for session and team API tokens."""
+    assert tr._check_any_team_for_server_scoped_rbac(user_context, server_id) is expected
+
+
 # ---------------------------------------------------------------------------
 # streamable_http_auth exception fallbacks
 # ---------------------------------------------------------------------------

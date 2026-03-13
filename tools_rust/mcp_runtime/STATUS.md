@@ -2,6 +2,107 @@
 
 Last updated: March 13, 2026
 
+Current profiling conclusion:
+
+- the current full-Rust path has a very high short-run peak on tools-only
+  traffic, but the sustained `1000-user` ceiling is lower
+- current comparison on the same live full-Rust stack:
+  - `60s / 1000 users` tools-only:
+    - `9226.93 RPS` overall
+    - `8765.5 RPS` on `MCP tools/call [rapid]`
+    - `3` failures total
+  - `180s / 1000 users` tools-only:
+    - `5900.11 RPS` overall
+    - `5612.9 RPS` on `MCP tools/call [rapid]`
+    - `1` failure total
+  - `600s / 1000 users` tools-only:
+    - `5076.21 RPS` overall
+    - `4832.5 RPS` on `MCP tools/call [rapid]`
+    - `11` failures total
+- sustained profiling points to the remaining bottleneck clearly:
+  - gateway CPU, not PostgreSQL or PgBouncer
+  - Rust sidecar syscall mix is dominated by:
+    - `futex`
+    - `writev`
+    - `recvfrom`
+  - sampled Python workers are still hot in the internal Rust -> Python
+    authenticate path:
+    - `handle_internal_mcp_authenticate`
+    - `_run_internal_mcp_authentication`
+    - `streamable_http_auth`
+    - `authenticate`
+    - `_auth_jwt`
+    - `get_auth_context`
+    - `verify_jwt_token`
+    - token-scoping middleware
+- backend snapshots during the sustained `10m` run:
+  - each gateway: roughly `744-813%` CPU, about `6 GiB` RSS
+  - nginx: about `81-85%` CPU
+  - `fast_time_server`: about `74-81%` CPU
+  - Redis: about `22-23%` CPU
+  - PostgreSQL: about `19-21%` CPU
+  - PgBouncer: about `8%` CPU
+  - `cl_waiting = 0`, `maxwait = 0`, PostgreSQL mostly `idle`
+- current interpretation:
+  - the biggest remaining steady-state cost is the Rust -> Python internal auth
+    handshake on the public MCP path
+  - the auth cache was a major win, but it did not remove the per-request
+    internal Python auth/control hop
+  - after that, the next pressure point is the upstream `fast_time_server`
+    itself under very high tools-only load
+
+Immediate next performance step:
+
+1. Bind authenticated context to the MCP session in Rust after `initialize`.
+   - use it for steady-state session traffic
+   - keep the existing safe Python fallback when session-auth reuse is
+     disabled
+2. Add explicit Rust counters for:
+   - session-auth reuse hits/misses
+   - internal Python auth round-trips
+   - fallback reasons
+3. Re-run the sustained `1000-user / 10m` tools-only benchmark after that
+   change
+
+Safety/testing next step:
+
+- before treating Rust session-auth reuse as fully trustworthy, add explicit
+  cross-user/session-isolation coverage for `POST`, `GET`, `DELETE`,
+  replay/resume, token changes, revocation, and affinity forwarding
+- the full end-to-end design is captured in
+  [TESTING-DESIGN.md](/home/cmihai/agents2/pr/mcp-context-forge/tools_rust/mcp_runtime/TESTING-DESIGN.md)
+
+Session/auth isolation status:
+
+- the first compose-backed implementation of that design is now in place at
+  [tests/e2e/test_mcp_session_isolation.py](/home/cmihai/agents2/pr/mcp-context-forge/tests/e2e/test_mcp_session_isolation.py)
+- rerun command:
+  - `make test-mcp-session-isolation`
+- validated on a rebuilt `RUST_MCP_MODE=full` stack together with:
+  - `make test-mcp-cli`
+  - `make test-mcp-rbac`
+  - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
+- latest result on the rebuilt compose stack:
+  - `make test-mcp-session-isolation` -> `7 passed`
+  - `make test-mcp-cli` -> `23 passed`
+  - `make test-mcp-rbac` -> `40 passed`
+  - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
+    -> `48 passed`
+- the isolation suite currently proves:
+  - same-team users cannot reuse another caller's MCP session
+  - same-email narrower tokens cannot reuse a team-scoped MCP session
+  - cross-user live `GET /mcp` hijack attempts are denied
+  - cross-user replay/resume attempts are denied
+  - cross-user `DELETE /mcp` is denied and the owner session remains usable
+  - live tool output stays fresh in a valid session
+  - concurrent owner traffic and peer hijack attempts do not leak results
+- compose-only caveat on clean rebuilds:
+  - `register_fast_time` currently fails because it mints a non-admin JWT
+    after recent mainline auth changes
+  - the isolation suite therefore prefers `fast_time` only when it has synced
+    tools and otherwise falls back to the available `fast_test`
+    streamable-HTTP gateway
+
 Status focus in this update:
 
 - the high-level Rust MCP UX is now:

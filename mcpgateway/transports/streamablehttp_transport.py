@@ -794,6 +794,29 @@ def _check_scoped_permission(user_context: dict[str, Any], permission: str) -> b
     return allowed
 
 
+def _check_any_team_for_server_scoped_rbac(user_context: dict[str, Any] | None, server_id: str | None) -> bool:
+    """Return whether Streamable HTTP RBAC should check across team-scoped roles.
+
+    Server-scoped MCP routes (``/servers/<id>/mcp``) should authorize team-bound
+    callers against the specific virtual server context. Session tokens already do
+    this via ``check_any_team=True`` because they have no single explicit team_id.
+    Team-scoped API tokens need the same treatment on server-scoped routes; otherwise
+    they are evaluated only in global scope and incorrectly denied.
+
+    Args:
+        user_context: Current authenticated MCP user context, if any.
+        server_id: Effective virtual server identifier for the MCP request.
+
+    Returns:
+        ``True`` when RBAC should search across the caller's token teams.
+    """
+    if not user_context:
+        return False
+    if user_context.get("token_use") == "session":
+        return True
+    return bool(server_id) and bool(user_context.get("teams"))
+
+
 def set_shared_session_registry(session_registry: Any) -> None:
     """Set the process-wide session registry used by Streamable HTTP helpers.
 
@@ -1138,11 +1161,10 @@ async def call_tool(name: str, arguments: dict) -> Union[
         # Layer 2: RBAC check
         # Session tokens have no explicit team_id; check across all team-scoped roles.
         # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
-        _is_session_token = user_context.get("token_use") == "session"
         has_execute_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="tools.execute",
-            check_any_team=_is_session_token,
+            check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
         )
         if not has_execute_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
@@ -2207,6 +2229,7 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
         has_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="servers.use",
+            check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
         )
         if not has_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
@@ -2509,11 +2532,11 @@ class SessionManagerWrapper:
         # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
         user_context = user_context_var.get()
         if match and _should_enforce_streamable_rbac(user_context):
-            _is_session = user_context.get("token_use") == "session" if user_context else False
+            _server_id = match.group("server_id")
             has_server_access = await _check_streamable_permission(
                 user_context=user_context,
                 permission="servers.use",
-                check_any_team=_is_session,
+                check_any_team=_check_any_team_for_server_scoped_rbac(user_context, _server_id),
             )
             if not has_server_access:
                 response = ORJSONResponse(
