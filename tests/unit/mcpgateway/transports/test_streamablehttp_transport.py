@@ -639,7 +639,7 @@ async def test_get_prompt_no_content(monkeypatch, caplog):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(return_value=mock_result))
 
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
         result = await get_prompt("empty_prompt")
         assert result == []
         assert "No content returned by prompt: empty_prompt" in caplog.text
@@ -660,7 +660,7 @@ async def test_get_prompt_no_result(monkeypatch, caplog):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(return_value=None))
 
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
         result = await get_prompt("missing_prompt")
         assert result == []
         assert "No content returned by prompt: missing_prompt" in caplog.text
@@ -681,7 +681,7 @@ async def test_get_prompt_service_exception(monkeypatch, caplog):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(side_effect=Exception("service error!")))
 
-    with caplog.at_level("ERROR"):
+    with caplog.at_level("ERROR", logger="mcpgateway.transports.streamablehttp_transport"):
         result = await get_prompt("error_prompt")
         assert result == []
         assert "Error getting prompt 'error_prompt': service error!" in caplog.text
