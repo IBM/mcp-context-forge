@@ -82,6 +82,10 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
         sso_generic_issuer="https://auth.example.com",
         sso_generic_jwks_uri=None,
         sso_generic_scope="openid profile email",
+        sso_generic_groups_claim="groups",
+        sso_generic_role_mappings={},
+        sso_generic_default_role=None,
+        sso_generic_sync_roles_on_login=True,
         sso_trusted_domains=["example.com"],
         sso_auto_create_users=True,
     )
@@ -334,6 +338,10 @@ def test_get_predefined_sso_providers_skips_keycloak_when_disabled(monkeypatch):
         sso_generic_issuer="https://auth.example.com",
         sso_generic_jwks_uri=None,
         sso_generic_scope="openid profile email",
+        sso_generic_groups_claim="groups",
+        sso_generic_role_mappings={},
+        sso_generic_default_role=None,
+        sso_generic_sync_roles_on_login=True,
         sso_trusted_domains=[],
         sso_auto_create_users=True,
     )
@@ -643,6 +651,10 @@ def test_generic_oidc_includes_jwks_uri_when_configured(monkeypatch):
         sso_generic_issuer="https://keycloak.example.com",
         sso_generic_jwks_uri="https://keycloak.example.com/certs",
         sso_generic_scope="openid profile email",
+        sso_generic_groups_claim="groups",
+        sso_generic_role_mappings={},
+        sso_generic_default_role=None,
+        sso_generic_sync_roles_on_login=True,
         sso_trusted_domains=[],
         sso_auto_create_users=True,
     )
@@ -697,6 +709,10 @@ def test_generic_oidc_omits_jwks_uri_when_not_configured(monkeypatch):
         sso_generic_issuer="https://auth0.example.com",
         sso_generic_jwks_uri=None,
         sso_generic_scope="openid profile email",
+        sso_generic_groups_claim="groups",
+        sso_generic_role_mappings={},
+        sso_generic_default_role=None,
+        sso_generic_sync_roles_on_login=True,
         sso_trusted_domains=[],
         sso_auto_create_users=True,
     )
