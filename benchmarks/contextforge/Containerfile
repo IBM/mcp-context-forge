@@ -1,0 +1,135 @@
+# syntax=docker/dockerfile:1.7
+
+ARG PYTHON_VERSION=3.12
+ARG ENABLE_RUST=false
+ARG ENABLE_PROFILING=false
+
+FROM quay.io/pypa/manylinux2014:2026.03.06-3 AS rust-builder-base
+ARG ENABLE_RUST
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV CARGO_HOME=/usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV PATH="${CARGO_HOME}/bin:${PATH}"
+WORKDIR /build
+
+RUN if [ "$ENABLE_RUST" != "true" ]; then \
+        mkdir -p /build/rust-wheels; \
+        exit 0; \
+    fi
+
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
+    fi
+
+COPY plugins_rust/ /build/plugins_rust/
+
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        if [ -f "${CARGO_HOME}/env" ]; then . "${CARGO_HOME}/env"; fi \
+        && mkdir -p /build/rust-wheels \
+        && /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin \
+        && for plugin_dir in /build/plugins_rust/*/; do \
+            if [ -f "$plugin_dir/Cargo.toml" ] && [ -f "$plugin_dir/pyproject.toml" ]; then \
+                /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 --manifest-path "$plugin_dir/Cargo.toml" --out /build/rust-wheels || exit 1; \
+            fi; \
+        done; \
+    fi
+
+FROM rust-builder-base AS rust-builder
+
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1772441712 AS builder
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+ARG PYTHON_VERSION
+ARG ENABLE_RUST=false
+ARG ENABLE_PROFILING=false
+ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
+
+RUN dnf upgrade -y \
+    && dnf install -y \
+        python${PYTHON_VERSION} \
+        python${PYTHON_VERSION}-devel \
+        binutils \
+        openssl-devel \
+        gcc \
+        gcc-c++ \
+        postgresql-devel \
+        curl \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
+    && dnf clean all
+
+WORKDIR /app
+
+RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
+        echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
+    else \
+        echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'" > /etc/profile.d/use-openssl.sh; \
+    fi \
+    && chmod 644 /etc/profile.d/use-openssl.sh
+
+COPY pyproject.toml /app/
+COPY --from=rust-builder /build/rust-wheels/ /tmp/rust-wheels/
+
+RUN . /etc/profile.d/use-openssl.sh \
+    && python3 -m venv /app/.venv \
+    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
+    && /app/.venv/bin/uv pip install ".[redis,postgres,mysql,observability,granian]" \
+    && if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl >/dev/null 2>&1; then \
+        /app/.venv/bin/python3 -m pip install /tmp/rust-wheels/*.whl; \
+    fi \
+    && if [ "$ENABLE_PROFILING" = "true" ]; then \
+        /app/.venv/bin/pip install --no-cache-dir "memray>=1.17.0" "py-spy>=0.4.0"; \
+    fi \
+    && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel pdm \
+    && rm -rf /tmp/rust-wheels /root/.cache /var/cache/dnf \
+    && rm -rf /app/*.egg-info /app/build /app/dist /app/.eggs /app/.venv/share/python-wheels
+
+COPY run-gunicorn.sh run-granian.sh run.sh /app/
+COPY gunicorn.config.py /app/
+COPY mcpgateway/ /app/mcpgateway/
+COPY plugins/ /app/plugins/
+COPY benchmarks/contextforge/ /app/benchmarks/contextforge/
+COPY mcp-catalog.yml /app/
+
+RUN cp /app/benchmarks/contextforge/docker-entrypoint.sh /app/docker-entrypoint.sh \
+    && chmod +x /app/run-gunicorn.sh /app/run-granian.sh /app/docker-entrypoint.sh /app/run.sh /app/benchmarks/contextforge/run-uvicorn.sh \
+    && python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins /app/benchmarks/contextforge 2>/dev/null || true \
+    && find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
+    && chown -R 1001:0 /app \
+    && chmod -R g=u /app
+
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549 AS runtime
+
+ARG PYTHON_VERSION=3.12
+ARG ENABLE_PROFILING=false
+
+RUN microdnf upgrade -y --nodocs --setopt=install_weak_deps=0 \
+    && microdnf install -y --nodocs --setopt=install_weak_deps=0 \
+        python${PYTHON_VERSION} \
+        ca-certificates \
+        procps-ng \
+        shadow-utils \
+    && if [ "$ENABLE_PROFILING" = "true" ]; then \
+        microdnf install -y --nodocs --setopt=install_weak_deps=0 gdb; \
+    fi \
+    && microdnf clean all \
+    && rm -rf /var/cache/yum \
+    && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 \
+    && useradd --uid 1001 --gid 0 --home-dir /app --shell /sbin/nologin --no-create-home --comment app app
+
+COPY --from=builder --chown=1001:0 /app /app
+
+ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+EXPOSE 4444
+USER 1001
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD ["python3", "-c", "import httpx,sys;sys.exit(0 if httpx.get('http://localhost:4444/health',timeout=5).status_code==200 else 1)"]
+
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
