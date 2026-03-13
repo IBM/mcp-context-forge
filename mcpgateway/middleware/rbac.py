@@ -714,9 +714,9 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
         # Store permission metadata as function attributes for introspection
         # This enables validation tools to extract permissions without fragile closure inspection
         # Using setattr() to avoid pylint protected-access warnings
-        setattr(wrapper, '_required_permission', permission)
-        setattr(wrapper, '_resource_type', resource_type)
-        setattr(wrapper, '_allow_admin_bypass', allow_admin_bypass)
+        setattr(wrapper, "_required_permission", permission)
+        setattr(wrapper, "_resource_type", resource_type)
+        setattr(wrapper, "_allow_admin_bypass", allow_admin_bypass)
 
         return wrapper
 
