@@ -452,6 +452,36 @@ class TestResourceListing:
         assert len(result) == 1
 
     @pytest.mark.asyncio
+    async def test_list_server_resources_with_include_metrics_true(self, resource_service, mock_db):
+        """Test that list_server_resources eager loads metrics when include_metrics=True.
+
+        This test ensures that when include_metrics=True, the query includes
+        selectinload for both metrics and metrics_hourly relationships to prevent N+1 queries.
+        Regression test for PR #3649 performance optimization.
+        """
+        mock_resource = MagicMock()
+        mock_resource.enabled = True
+        mock_resource.team_id = None
+        mock_resource.team = None
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [mock_resource]
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalars.return_value = mock_scalars
+        mock_db.execute.return_value = mock_execute_result
+
+        resource_service.convert_resource_to_read = MagicMock(return_value="converted_resource_with_metrics")
+
+        # Call with include_metrics=True to trigger eager loading code path
+        resources = await resource_service.list_server_resources(mock_db, server_id="server123", include_metrics=True)
+
+        assert resources == ["converted_resource_with_metrics"]
+        # Verify convert_resource_to_read was called with include_metrics=True
+        resource_service.convert_resource_to_read.assert_called_once_with(
+            mock_resource, include_metrics=True
+        )
+
+    @pytest.mark.asyncio
     async def test_list_resources_cache_hit_returns_cached(self, resource_service, mock_db):
         """Cover list_resources cache-hit reconstruction (ResourceRead.model_validate)."""
         cached = {"resources": [{"id": "r1"}], "next_cursor": "c1"}

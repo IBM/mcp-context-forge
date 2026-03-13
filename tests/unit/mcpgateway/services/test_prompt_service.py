@@ -2112,6 +2112,36 @@ class TestListServerPrompts:
         assert result == ["converted"]
 
     @pytest.mark.asyncio
+    async def test_list_server_prompts_with_include_metrics_true(self, prompt_service):
+        """Test that list_server_prompts eager loads metrics when include_metrics=True.
+
+        This test ensures that when include_metrics=True, the query includes
+        selectinload for both metrics and metrics_hourly relationships to prevent N+1 queries.
+        Regression test for PR #3649 performance optimization.
+        """
+        db = MagicMock()
+        mock_prompt = MagicMock()
+        mock_prompt.enabled = True
+        mock_prompt.team_id = None
+        mock_prompt.team = None
+
+        prompt_result = MagicMock()
+        prompt_result.scalars.return_value.all.return_value = [mock_prompt]
+        db.execute = MagicMock(return_value=prompt_result)
+        db.commit = MagicMock()
+
+        prompt_service.convert_prompt_to_read = MagicMock(return_value="converted_prompt_with_metrics")
+
+        # Call with include_metrics=True to trigger eager loading code path
+        prompts = await prompt_service.list_server_prompts(db, server_id="server-1", include_metrics=True)
+
+        assert prompts == ["converted_prompt_with_metrics"]
+        # Verify convert_prompt_to_read was called with include_metrics=True
+        prompt_service.convert_prompt_to_read.assert_called_once_with(
+            mock_prompt, include_metrics=True
+        )
+
+    @pytest.mark.asyncio
     async def test_include_inactive_true_skips_enabled_filter(self, prompt_service):
         """Covers include_inactive=True branch (skips DbPrompt.enabled filter)."""
         db = MagicMock()
