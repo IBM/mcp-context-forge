@@ -386,7 +386,6 @@ def _get_token_teams_from_request(request: Request) -> Optional[List[str]]:
         if payload:
             # Use normalize_token_teams for consistent secure-first semantics
             return normalize_token_teams(payload)
-
     # No JWT payload - return [] for public-only (secure default)
     return []
 
@@ -429,7 +428,6 @@ def _get_rpc_filter_context(request: Request, user) -> tuple:
     token_teams = _get_token_teams_from_request(request)
 
     # Check if user is admin - MUST come from token, not DB user
-    # This ensures that tokens with restricted scope (empty teams) don't inherit admin bypass
     is_admin = False
     cached = getattr(request.state, "_jwt_verified_payload", None)
     if cached and isinstance(cached, tuple) and len(cached) == 2:
@@ -442,7 +440,6 @@ def _get_rpc_filter_context(request: Request, user) -> tuple:
     # This allows admins to create properly scoped tokens for restricted access
     if token_teams is not None and len(token_teams) == 0:
         is_admin = False
-
     return user_email, token_teams, is_admin
 
 
@@ -6186,7 +6183,6 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-            # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
                 user_email = None
                 token_teams = None  # Admin unrestricted
@@ -7921,8 +7917,20 @@ if ADMIN_API_ENABLED:
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 
-# Streamable http Mount
-app.mount("/mcp", app=streamable_http_session.handle_streamable_http)
+
+# Streamable http Mount with auth middleware wrapper
+async def streamable_http_with_auth(scope, receive, send):
+    """Wrapper that applies auth middleware before delegating to streamable HTTP handler."""
+    # Apply authentication middleware first
+    auth_ok = await streamable_http_auth(scope, receive, send)
+    if not auth_ok:
+        # Auth middleware already sent error response
+        return
+    # Auth succeeded, delegate to streamable HTTP handler
+    await streamable_http_session.handle_streamable_http(scope, receive, send)
+
+
+app.mount("/mcp", app=streamable_http_with_auth)
 
 # Conditional static files mounting and root redirect
 if UI_ENABLED:

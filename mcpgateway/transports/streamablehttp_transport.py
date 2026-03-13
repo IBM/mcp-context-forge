@@ -1460,13 +1460,9 @@ async def list_tools() -> List[types.Tool]:
     token_teams = user_context.get("teams") if user_context else None
     is_admin = user_context.get("is_admin", False) if user_context else False
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Admin override is enforced exclusively within base_service._apply_access_control().
+    # Always pass through the original user_email and token_teams along with is_admin.
+    # Privileged bypass is applied only when is_admin is explicitly True
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -1533,7 +1529,7 @@ async def list_tools() -> List[types.Tool]:
                     return []
 
                 # Default cache mode: use database
-                tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
+                tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, requesting_user_is_admin=is_admin, _request_headers=request_headers)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.error("Error listing tools:%s", e)
@@ -1541,7 +1537,9 @@ async def list_tools() -> List[types.Tool]:
     else:
         try:
             async with get_db() as db:
-                tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
+                tools, _ = await tool_service.list_tools(
+                    db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, requesting_user_is_admin=is_admin, _request_headers=request_headers
+                )
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.exception("Error listing tools:%s", e)
@@ -2359,6 +2357,8 @@ class SessionManagerWrapper:
 
         # Enforce server access parity for server-scoped Streamable HTTP MCP routes.
         # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
+        # Read user context from ASGI scope (set by auth middleware) instead of ContextVar
+        # because ContextVars are lost across async context boundaries (MCP SDK task groups)
         user_context = user_context_var.get()
         if match and _should_enforce_streamable_rbac(user_context):
             _is_session = user_context.get("token_use") == "session" if user_context else False
@@ -2684,6 +2684,7 @@ class SessionManagerWrapper:
         # handlers can retrieve it even when ContextVars are lost (the SDK's
         # task group was created at startup, so spawned handler tasks inherit
         # the startup context rather than the per-request context).
+        # Use the same user_context we retrieved above (from ASGI scope or ContextVar)
         scope[_MCPGATEWAY_CONTEXT_KEY] = {
             "server_id": server_id_var.get(),
             "request_headers": headers,
@@ -2820,7 +2821,9 @@ class _StreamableHttpAuthHandler:
             False if authentication fails and a 401 response is sent.
         """
         path = self.scope.get("path", "")
-        if (not path.endswith("/mcp") and not path.endswith("/mcp/")) or path.startswith("/.well-known/"):
+        # Auth applies to /mcp and all sub-paths (/mcp/*, /mcp/messages, etc.)
+        # but not to RFC 9728 metadata endpoints
+        if not (path == "/mcp" or path.startswith("/mcp/")) or path.startswith("/.well-known/"):
             # No auth for non-MCP paths or RFC 9728 metadata endpoints
             return True
 
@@ -3038,7 +3041,13 @@ class _StreamableHttpAuthHandler:
             jwt_scoped_perms = jwt_scopes.get("permissions") or [] if isinstance(jwt_scopes, dict) else []
             if jwt_scoped_perms:
                 auth_user_ctx["scoped_permissions"] = jwt_scoped_perms
+
             user_context_var.set(auth_user_ctx)
+
+            # Store in ASGI scope for mounted apps (e.g., /mcp mount)
+            # This ensures the context is available even when ContextVars are lost
+            # across async context boundaries (e.g., MCP SDK task groups)
+            self.scope["mcp_user_context"] = auth_user_ctx
         except HTTPException:
             # JWT verification failed (expired, malformed, bad signature, etc.)
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})

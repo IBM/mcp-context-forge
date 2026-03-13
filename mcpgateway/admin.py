@@ -7958,19 +7958,23 @@ async def admin_tools_partial_html(
             query = query.where(false())
     else:
         # All Teams view: apply standard access conditions
-        access_conditions = []
+        _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+        if not _is_admin:
+            # Non-admin: apply standard access conditions
+            access_conditions = []
 
-        # 1. User's personal tools (owner_email matches)
-        access_conditions.append(_owner_access_condition(DbTool.owner_email, DbTool.team_id, user_email=user_email, team_ids=team_ids, user=user))
+            # 1. User's personal tools (owner_email matches)
+            access_conditions.append(_owner_access_condition(DbTool.owner_email, DbTool.team_id, user_email=user_email, team_ids=team_ids, user=user))
 
-        # 2. Team tools where user is member
-        if team_ids:
-            access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+            # 2. Team tools where user is member
+            if team_ids:
+                access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
 
-        # 3. Public tools
-        access_conditions.append(DbTool.visibility == "public")
+            # 3. Public tools
+            access_conditions.append(DbTool.visibility == "public")
 
-        query = query.where(or_(*access_conditions))
+            query = query.where(or_(*access_conditions))
+        # else: Admin sees all tools (no access conditions applied)
 
     if search_query:
         query = query.where(

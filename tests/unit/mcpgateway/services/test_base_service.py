@@ -101,8 +101,31 @@ class TestApplyAccessControl:
 
     @pytest.mark.asyncio
     async def test_admin_bypass_returns_query_unmodified(self, service, mock_db, query):
-        """When user_email=None and token_teams=None (admin bypass), return query as-is."""
-        result = await service._apply_access_control(query, mock_db, user_email=None, token_teams=None)
+        """Admin bypass requires token_teams=None AND is_admin=True."""
+        result = await service._apply_access_control(query, mock_db, user_email=None, token_teams=None, is_admin=True)
+        assert result is query
+        query.where.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_requires_is_admin_true(self, service, mock_db, query):
+        """token_teams=None without is_admin=True should NOT bypass (secure default)."""
+        with patch.object(service, "_apply_visibility_filter", return_value="filtered") as mock_filter:
+            result = await service._apply_access_control(query, mock_db, user_email="admin@test.com", token_teams=None, is_admin=False)
+            # Should call _apply_visibility_filter, not bypass
+            mock_filter.assert_called_once()
+            assert result == "filtered"
+
+    @pytest.mark.asyncio
+    async def test_admin_with_user_email_and_is_admin_true_bypasses(self, service, mock_db, query):
+        """Admin with user_email set but is_admin=True and token_teams=None should bypass."""
+        result = await service._apply_access_control(query, mock_db, user_email="admin@test.com", token_teams=None, is_admin=True)
+        assert result is query
+        query.where.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_auth_context_returns_query_unmodified(self, service, mock_db, query):
+        """No auth context (user_email=None, token_teams=None, is_admin=False) returns query as-is."""
+        result = await service._apply_access_control(query, mock_db, user_email=None, token_teams=None, is_admin=False)
         assert result is query
         query.where.assert_not_called()
 

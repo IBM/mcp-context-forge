@@ -260,8 +260,10 @@ class TestCreateAccessTokenTeamsFormat:
                 # Call create_access_token
                 token, expires_in = await create_access_token(mock_user_with_teams)
 
-                # Session token: no teams/namespaces embedded, has token_use
-                assert "teams" not in captured_payload, "session tokens should not embed teams"
+                # Session token: has teams claim for token scoping, has token_use
+                assert "teams" in captured_payload, "session tokens must have teams claim for token scoping"
+                assert isinstance(captured_payload["teams"], list), "teams claim must be a list"
+                assert len(captured_payload["teams"]) == 2, "should have 2 team IDs"
                 assert "namespaces" not in captured_payload, "session tokens should not embed namespaces"
                 assert captured_payload.get("token_use") == "session", "session tokens must have token_use='session'"
                 assert "user" in captured_payload, "session tokens must have user info"
@@ -299,8 +301,9 @@ class TestCreateAccessTokenTeamsFormat:
 
                 await create_access_token(admin_user)
 
-                # Admin session tokens: same as regular — no teams, has token_use
-                assert "teams" not in captured_payload, "admin session tokens should omit teams key"
+                # Admin session tokens: teams=None for admin bypass
+                assert "teams" in captured_payload, "admin session tokens must have teams claim"
+                assert captured_payload["teams"] is None, "admin session tokens should have teams=None for bypass"
                 assert captured_payload.get("token_use") == "session", "admin session tokens must have token_use='session'"
 
 
