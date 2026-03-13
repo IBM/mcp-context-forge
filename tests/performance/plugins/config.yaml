@@ -539,11 +539,18 @@ plugins:
   #   priority: 10  # adjust the priority
   #   mcp:
   #     proto: STREAMABLEHTTP
-  #     url: http://127.0.0.1:8000/mcp
+  #     url: http://localhost:8000/mcp
   #  # tls:
   #  #   ca_bundle: /app/certs/plugins/ca.crt
   #  #   client_cert: /app/certs/plugins/gateway-client.pem
   #  #   verify: true
+  # - name: "LLMGuardPlugin"
+  #   kind: "external"
+  #   mode: "enforce"  # Don't fail if the server is unavailable
+  #   priority: 20 # adjust the priority
+  #   mcp:
+  #     proto: STREAMABLEHTTP
+  #     url: http://localhost:8001/mcp
 
   # Circuit Breaker - trip on high error rates or consecutive failures
   - name: CircuitBreaker

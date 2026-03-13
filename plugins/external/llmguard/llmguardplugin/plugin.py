@@ -12,6 +12,7 @@ This module loads configurations for plugins.
 from llmguardplugin.cache import CacheTTLDict
 from llmguardplugin.llmguard import LLMGuardBase
 from llmguardplugin.schema import LLMGuardConfig
+from prometheus_client import Counter
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -35,6 +36,13 @@ from mcpgateway.services.logging_service import LoggingService
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Prometheus metrics for error tracking
+llm_guard_plugin_errors_total = Counter(
+    "llm_guard_plugin_errors_total",
+    "Total number of LLM Guard plugin errors by type",
+    labelnames=["error_type", "hook_type"],
+)
 
 
 class LLMGuardPlugin(Plugin):
@@ -147,7 +155,7 @@ class LLMGuardPlugin(Plugin):
         Args:
             context: The plugin context to update with vault cache ID.
         """
-        _, vault_id, vault_tuples = self.llmguard_instance._retreive_vault()
+        _, vault_id, vault_tuples = self.llmguard_instance._retrieve_vault()
         if vault_id and vault_tuples:
             success, _ = await self.cache.update_cache(vault_id, vault_tuples)
             if success and self.lgconfig.set_guardrails_context:
@@ -175,21 +183,26 @@ class LLMGuardPlugin(Plugin):
         filters_context = {"input": {"filters": []}}
         logger.debug("Applying input guardrail filters on %s", prompt_text)
 
-        result = await self.llmguard_instance._apply_input_filters(prompt_text)
-        filters_context["input"]["filters"].append(result)
-        logger.debug("Result of input guardrail filters: %s", result)
+        try:
+            result = await self.llmguard_instance._apply_input_filters(prompt_text)
+            filters_context["input"]["filters"].append(result)
+            logger.debug("Result of input guardrail filters: %s", result)
 
-        decision = self.llmguard_instance._apply_policy_input(result)
-        logger.debug("Result of policy decision: %s", decision)
+            decision = self.llmguard_instance._apply_policy_input(result)
+            logger.debug("Result of policy decision: %s", decision)
 
-        if self.lgconfig.set_guardrails_context:
-            self.__update_context(context, "context", filters_context)
+            if self.lgconfig.set_guardrails_context:
+                self.__update_context(context, "context", filters_context)
 
-        if not decision[0]:
-            violation = self._create_filter_violation(decision)
-            return False, violation
+            if not decision[0]:
+                violation = self._create_filter_violation(decision)
+                return False, violation
 
-        return True, None
+            return True, None
+        except Exception as e:
+            logger.error("Error processing input filters: %s", e)
+            llm_guard_plugin_errors_total.labels(error_type="filter_processing_error", hook_type="prompt_pre_fetch").inc()
+            raise
 
     async def _process_input_sanitizers(self, prompt_text: str, context: PluginContext) -> tuple[bool, str | None, PluginViolation | None]:
         """Apply input sanitizers and return processing result.
@@ -204,22 +217,27 @@ class LLMGuardPlugin(Plugin):
         sanitizers_context = {"input": {"sanitizers": []}}
         logger.debug("Applying input guardrail sanitizers on %s", prompt_text)
 
-        result = await self.llmguard_instance._apply_input_sanitizers(prompt_text)
-        sanitizers_context["input"]["sanitizers"].append(result)
-        logger.debug("Result of input guardrail sanitizers on %s", result)
+        try:
+            result = await self.llmguard_instance._apply_input_sanitizers(prompt_text)
+            sanitizers_context["input"]["sanitizers"].append(result)
+            logger.debug("Result of input guardrail sanitizers on %s", result)
 
-        if self.lgconfig.set_guardrails_context:
-            self.__update_context(context, "context", sanitizers_context)
+            if self.lgconfig.set_guardrails_context:
+                self.__update_context(context, "context", sanitizers_context)
 
-        if not result:
-            violation = self._create_sanitizer_violation()
-            logger.info("violation %s", violation)
-            return False, None, violation
+            if not result:
+                violation = self._create_sanitizer_violation()
+                logger.info("violation %s", violation)
+                return False, None, violation
 
-        # Handle vault caching
-        await self._handle_vault_caching(context)
+            # Handle vault caching
+            await self._handle_vault_caching(context)
 
-        return True, result[0], None
+            return True, result[0], None
+        except Exception as e:
+            logger.error("Error processing input sanitizers: %s", e)
+            llm_guard_plugin_errors_total.labels(error_type="sanitizer_processing_error", hook_type="prompt_pre_fetch").inc()
+            raise
 
     def _get_guardrails_state(self, context: PluginContext) -> tuple[str, str | None]:
         """Retrieve original_prompt and vault_id from context state.
@@ -295,21 +313,26 @@ class LLMGuardPlugin(Plugin):
         filters_context = {"output": {"filters": []}}
         logger.debug("Applying output guardrails on %s", text)
 
-        result = await self.llmguard_instance._apply_output_filters(original_prompt, text)
-        filters_context["output"]["filters"].append(result)
+        try:
+            result = await self.llmguard_instance._apply_output_filters(original_prompt, text)
+            filters_context["output"]["filters"].append(result)
 
-        decision = self.llmguard_instance._apply_policy_output(result)
-        logger.debug("Policy decision on output guardrails: %s", decision)
+            decision = self.llmguard_instance._apply_policy_output(result)
+            logger.debug("Policy decision on output guardrails: %s", decision)
 
-        if self.lgconfig.set_guardrails_context:
-            self.__update_context(context, "context", filters_context)
+            if self.lgconfig.set_guardrails_context:
+                self.__update_context(context, "context", filters_context)
 
-        if not decision[0]:
-            violation = self._create_filter_violation(decision)
-            logger.info("violation %s", violation)
-            return False, violation
+            if not decision[0]:
+                violation = self._create_filter_violation(decision)
+                logger.info("violation %s", violation)
+                return False, violation
 
-        return True, None
+            return True, None
+        except Exception as e:
+            logger.error("Error processing output filters: %s", e)
+            llm_guard_plugin_errors_total.labels(error_type="filter_processing_error", hook_type="prompt_post_fetch").inc()
+            raise
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """The plugin hook to apply input guardrails on using llmguard.
