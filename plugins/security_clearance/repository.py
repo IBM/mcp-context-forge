@@ -152,3 +152,40 @@ class ClearanceRepository:
                 db.rollback()
             except Exception:
                 pass
+
+    # Audit trail
+    def get_audit_trail(
+        self,
+        db: Session,
+        *,
+        user_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        decision: Optional[str] = None,
+        limit: int = 100,
+    ) -> list:
+        """Return audit log entries filtered by user, tenant, or decision.
+
+        Args:
+            db: SQLAlchemy Session.
+            user_id: Filter by user ID.
+            tenant_id: Filter by tenant ID.
+            decision: Filter by decision (ALLOW or DENY).
+            limit: Maximum number of rows to return.
+
+        Returns:
+            List of SCClearanceAuditLog instances.
+        """
+        try:
+            q = db.query(SCClearanceAuditLog).order_by(
+                SCClearanceAuditLog.timestamp.desc()
+            )
+            if user_id:
+                q = q.filter(SCClearanceAuditLog.user_id == user_id)
+            if tenant_id:
+                q = q.filter(SCClearanceAuditLog.tenant_id == tenant_id)
+            if decision:
+                q = q.filter(SCClearanceAuditLog.decision == decision)
+            return q.limit(limit).all()
+        except Exception as exc:
+            logger.debug("Audit trail query failed: %s", exc)
+            return []

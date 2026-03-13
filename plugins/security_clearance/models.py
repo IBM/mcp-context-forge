@@ -149,3 +149,33 @@ class SCDynamicRule(Base):
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now, onupdate=_utc_now)
+
+
+class SCResourceClassification(Base):
+    """Minimum clearance level required to access a resource."""
+
+    __tablename__ = "sc_resource_classifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    resource_uri: Mapped[str] = mapped_column(String(512), nullable=False)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    classification_level: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now, onupdate=_utc_now)
+
+
+class SCA2AAgentClearance(Base):
+    """Clearance level assigned to an A2A agent."""
+
+    __tablename__ = "sc_a2a_agent_clearances"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    clearance_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    granted_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now, onupdate=_utc_now)
