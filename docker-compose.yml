@@ -150,17 +150,18 @@ services:
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
       # High-level Rust MCP UX:
-      #   RUST_MCP_MODE=off  -> Python MCP transport
-      #   RUST_MCP_MODE=edge -> Rust runtime edge with managed UDS sidecar defaults
-      #   RUST_MCP_MODE=full -> edge + Rust session/event-store/resume/live-stream cores
-      #   RUST_MCP_SESSION_AUTH_REUSE=true -> reuse Python-authenticated context per MCP session in Rust
-      #   When false, public /mcp stays on the Python ingress path and Rust remains internal-only for safety.
+      #   RUST_MCP_MODE=off    -> Python MCP transport
+      #   RUST_MCP_MODE=shadow -> Rust sidecar is present, but public /mcp stays on Python for safe fallback
+      #   RUST_MCP_MODE=edge   -> direct public /mcp on Rust with managed UDS sidecar defaults
+      #   RUST_MCP_MODE=full   -> edge + Rust session/event-store/resume/live-stream/affinity cores
       # Advanced EXPERIMENTAL_/MCP_RUST_* env vars below still work as explicit overrides.
       - RUST_MCP_MODE=${RUST_MCP_MODE:-off}
       - RUST_MCP_LOG=${RUST_MCP_LOG:-warn}
+      # Advanced override: force the session-auth-reuse fast path on/off
+      # independently of RUST_MCP_MODE. Prefer the mode presets above.
       - RUST_MCP_SESSION_AUTH_REUSE=${RUST_MCP_SESSION_AUTH_REUSE:-}
       # Experimental Rust MCP runtime internals. Leave unset for the simple
-      # RUST_MCP_MODE=edge/full paths; set explicitly only to override.
+      # RUST_MCP_MODE=shadow/edge/full paths; set explicitly only to override.
       - EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED:-}
       - EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED:-}
       - EXPERIMENTAL_RUST_MCP_RUNTIME_URL=${EXPERIMENTAL_RUST_MCP_RUNTIME_URL:-}
@@ -172,6 +173,7 @@ services:
       - EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED=${EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED:-}
       - EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED=${EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED:-}
       - EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED=${EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED:-}
+      # Sidecar-level knobs. These default from the mode-derived experimental settings above.
       - MCP_RUST_LISTEN_HTTP=${MCP_RUST_LISTEN_HTTP:-}
       - MCP_RUST_LISTEN_UDS=${MCP_RUST_LISTEN_UDS:-}
       - MCP_RUST_PUBLIC_LISTEN_HTTP=${MCP_RUST_PUBLIC_LISTEN_HTTP:-}

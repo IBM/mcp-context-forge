@@ -1297,6 +1297,10 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 testing-up-rust:                           ## Start testing stack with RUST_MCP_MODE=edge
 	@RUST_MCP_MODE=edge RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
 
+.PHONY: testing-up-rust-shadow
+testing-up-rust-shadow:                    ## Start testing stack with RUST_MCP_MODE=shadow
+	@RUST_MCP_MODE=shadow RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
+
 .PHONY: testing-up-rust-full
 testing-up-rust-full:                      ## Start testing stack with RUST_MCP_MODE=full
 	@RUST_MCP_MODE=full RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
@@ -1307,6 +1311,13 @@ testing-rebuild-rust:                      ## Rebuild Rust image with no cache, 
 	@$(MAKE) compose-clean
 	@$(MAKE) docker-prod-rust-no-cache
 	@RUST_MCP_MODE=edge RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
+
+.PHONY: testing-rebuild-rust-shadow
+testing-rebuild-rust-shadow:               ## Rebuild Rust image with no cache, then start testing stack in shadow mode
+	@$(MAKE) testing-down
+	@$(MAKE) compose-clean
+	@$(MAKE) docker-prod-rust-no-cache
+	@RUST_MCP_MODE=shadow RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
 
 .PHONY: testing-rebuild-rust-full
 testing-rebuild-rust-full:                 ## Rebuild Rust image with no cache, then start testing stack in full mode

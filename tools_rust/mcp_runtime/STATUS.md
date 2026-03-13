@@ -1,39 +1,60 @@
 # Rust MCP Runtime Status
 
-Last updated: March 12, 2026
+Last updated: March 13, 2026
 
 Status focus in this update:
 
+- the high-level Rust MCP UX is now:
+  - `RUST_MCP_MODE=off`
+  - `RUST_MCP_MODE=shadow`
+  - `RUST_MCP_MODE=edge`
+  - `RUST_MCP_MODE=full`
+- `shadow` means the Rust sidecar is built and running, but public `/mcp`
+  stays mounted on Python for the safest rollback/comparison path
+- `edge` means public `/mcp` is routed directly from nginx to Rust
+- `full` means `edge` plus the Rust session/event-store/resume/live-stream and
+  affinity cores
+- the common top-level workflows are now:
+  - `make testing-rebuild-rust-shadow`
+  - `make testing-rebuild-rust`
+  - `make testing-rebuild-rust-full`
+  - `make benchmark-mcp-mixed`
+  - `make benchmark-mcp-tools`
+  - `make benchmark-mcp-mixed-300`
+  - `make benchmark-mcp-tools-300`
 - public `/mcp` ingress is now routed directly from nginx to the Rust runtime
-  when Rust mode is enabled, instead of entering Python first and then hopping
-  to the sidecar
+  in `edge|full` mode instead of entering Python first and then hopping to the
+  sidecar
 - the Rust runtime now exposes a dedicated public listener:
   - `MCP_RUST_PUBLIC_LISTEN_HTTP`
   - this is wired by `RUST_MCP_MODE=edge|full` through `docker-entrypoint.sh`
-- direct public Rust ingress authenticates through the new trusted Python
-  endpoint:
+- `shadow` is the safety-first mode:
+  - `/health` shows `x-contextforge-mcp-transport-mounted: python`
+  - public transport/session behavior stays on Python
+  - the Rust sidecar remains available internally
+- `edge|full` are the fast public-Rust modes:
+  - `/health` shows `x-contextforge-mcp-transport-mounted: rust`
+- direct public Rust ingress authenticates through the trusted Python endpoint:
   - `POST /_internal/mcp/authenticate`
   - Rust forwards the derived auth context on subsequent internal MCP calls
 - the public-auth handshake is only enabled when the Rust public listener is
   configured, so the older internal Python -> Rust path still works unchanged
-- Rust now strips proxy-chain headers on trusted internal Rust -> Python hops:
+- Rust strips proxy-chain headers on trusted internal Rust -> Python hops:
   - `x-real-ip`
   - `x-forwarded-for`
   - `x-forwarded-proto`
   - `x-forwarded-host`
   - `forwarded`
-  - this fixed the live nginx regression where Python rejected Rust internal
+  - this fixed the nginx regression where Python rejected Rust internal
     dispatch as non-local because it saw the external client IP
-- rebuilt-image validation on the current tree passed:
+- rebuilt full-mode validation on the current tree passed for the MCP/runtime
+  layers:
   - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
-    -> `44 passed`
-  - `make flake8` -> passed
-  - `make bandit` -> passed
-  - `make interrogate` -> passed
-  - `make pylint` -> `10.00/10`
+    -> `47 passed`
+  - `make test` -> `14543 passed, 482 skipped, 15 warnings`
   - `make test-mcp-cli` -> `23 passed`
   - `make test-mcp-rbac` -> `40 passed`
-- live rebuilt-image proof is explicit:
+- current full-mode proof is explicit:
   - `GET /health` returns:
     - `x-contextforge-mcp-runtime-mode: rust-managed`
     - `x-contextforge-mcp-transport-mounted: rust`
@@ -43,42 +64,55 @@ Status focus in this update:
     - `x-contextforge-mcp-resume-core-mode: rust`
     - `x-contextforge-mcp-live-stream-core-mode: rust`
     - `x-contextforge-mcp-affinity-core-mode: rust`
+    - `x-contextforge-mcp-session-auth-reuse-mode: rust`
   - a live public `tools/call` on `/servers/<id>/mcp` returns:
     - `x-contextforge-mcp-runtime: rust`
     - `x-contextforge-mcp-upstream-client: rmcp`
-- rebuilt-image benchmark results on `Fast Time Server`
-  (`9779b6698cbd4b4995ee04a4fab38737`) are currently:
-  - mixed MCP, `150 users / 30s`:
-    - `1376.87 RPS`
-    - `6.02 ms` avg
-    - `13 ms` p95
-    - `30 ms` p99
+- current benchmark picture on the rebuilt full-mode image:
+  - tools-only, `125 users / 60s`, `make benchmark-mcp-tools`:
+    - `2026.75 RPS` overall
+    - `MCP tools/call [rapid]` -> `1928.7 RPS`
+    - `5.92 ms` avg
     - `0%` failures
-  - mixed MCP, `300 users / 30s`:
-    - `2618.22 RPS`
-    - `9.08 ms` avg
-    - `19 ms` p95
-    - `40 ms` p99
+  - tools-only, `300 users / 60s`, `make benchmark-mcp-tools-300`:
+    - `4026.11 RPS` overall
+    - `MCP tools/call [rapid]` -> `3829.9 RPS`
+    - `18.02 ms` avg
     - `0%` failures
-  - tools-only, `125 users / 30s`, explicit `MCPToolCallerUser`:
-    - `1915.77 RPS` overall
-    - `MCP tools/call [rapid]` -> `1821.8 RPS`
-    - `4.45 ms` avg
-    - `6 ms` p95
-    - `15 ms` p99
-    - `0%` failures
-  - tools-only, `300 users / 30s`, explicit `MCPToolCallerUser`:
-    - `3727.96 RPS` overall
-    - `MCP tools/call [rapid]` -> `3545.5 RPS`
-    - `13.44 ms` avg
-    - `23 ms` p95
-    - `39 ms` p99
-    - `0%` failures
-- current conclusion after the direct-ingress cut:
+  - mixed MCP, `125 users / 60s`, `make benchmark-mcp-mixed`:
+    - `1191.02 RPS`
+    - `1.78%` failures
+  - mixed MCP, `300 users / 60s`, `make benchmark-mcp-mixed-300`:
+    - `2437.21 RPS`
+    - `1.83%` failures
+  - the mixed benchmark failures are currently all on `MCP resources/read`
+    against the seeded `Fast Time Server`
+  - a manual live `resources/read` on that server still returns:
+    - `Multiple rows were found when one or none was required`
+  - so the mixed benchmark is currently measuring a real benchmark-fixture/data
+    issue on that server, not a generic Rust transport failure
+- current conclusion after the direct-ingress and auth-cache work:
   - the Python pre-Rust ingress/proxy hop is no longer the main steady-state
     cost on the public MCP path
-  - the remaining high-value work is now session-bound auth reuse and trimming
-    the remaining Python control/auth calls that still happen per request
+  - the pure tools hot path now sustains roughly `4k RPS` on the rebuilt full
+    image
+  - the next high-value work is still session-bound auth reuse and trimming
+    remaining Python control/auth calls that still happen per request
+- current repo-wide caveat:
+  - `make test-ui-headless` is not green on the same rebuilt full-Rust stack
+  - current result:
+    - `23 failed`
+    - `756 passed`
+    - `86 skipped`
+    - `16 errors`
+  - the failures are concentrated in broader admin/entity UI flows, not MCP
+    protocol/runtime behavior:
+    - entity lifecycle CRUD for tools/resources
+    - prompt/resource modal flows
+    - gateway creation/deletion UI
+    - team join-request flows
+    - MCP registry filter UI
+    - logout/session UI flows
 
 - Rust session-affinity forwarding is now implemented behind a separate
   feature-flagged slice:
@@ -1374,17 +1408,23 @@ Integrated in the main application:
 - the managed sidecar can derive `MCP_RUST_DATABASE_URL` from `DATABASE_URL` for Postgres-backed direct read paths
 - the top-level user-facing enablement flow is now:
   - `RUST_MCP_BUILD=true` to build the Rust runtime into the image
-  - `RUST_MCP_MODE=off|edge|full` to select Python, Rust edge, or Rust edge + session/event/resume/live-stream cores
+  - `RUST_MCP_MODE=off|shadow|edge|full` to select Python, internal-only Rust sidecar, Rust public edge, or Rust public edge + session/event/resume/live-stream cores
   - `RUST_MCP_LOG=warn` to set the default sidecar log filter for the simple mode flow
-- `docker-entrypoint.sh` now fans `RUST_MCP_MODE=edge|full` out into the lower-level `EXPERIMENTAL_RUST_MCP_*` and `MCP_RUST_*` defaults
+- `docker-entrypoint.sh` now fans `RUST_MCP_MODE=shadow|edge|full` out into the lower-level `EXPERIMENTAL_RUST_MCP_*` and `MCP_RUST_*` defaults
 - `docker-compose.yml` derives the Rust build args from `RUST_MCP_BUILD` and carries `RUST_MCP_MODE` into the gateway service
 - the common Rust workflows are now wrapped in top-level make targets:
   - `make docker-prod-rust`
   - `make docker-prod-rust-no-cache`
+  - `make testing-up-rust-shadow`
   - `make testing-up-rust`
   - `make testing-up-rust-full`
+  - `make testing-rebuild-rust-shadow`
   - `make testing-rebuild-rust`
   - `make testing-rebuild-rust-full`
+  - `make benchmark-mcp-mixed`
+  - `make benchmark-mcp-tools`
+  - `make benchmark-mcp-mixed-300`
+  - `make benchmark-mcp-tools-300`
 - `Containerfile.lite` includes the Rust runtime binary when built with `ENABLE_RUST=true`
 - `docker-compose.yml` exposes the Rust runtime env vars, including `MCP_RUST_LOG`
 

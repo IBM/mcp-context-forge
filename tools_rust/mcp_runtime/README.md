@@ -25,15 +25,14 @@ That enables:
 
 - `RUST_MCP_BUILD=true`
 - `RUST_MCP_MODE=full`
-- `RUST_MCP_SESSION_AUTH_REUSE=true`
 
-### Safer fallback mode
+### Safe shadow mode
 
 Rebuild the image with Rust included, but keep the public MCP transport/session
 path on Python:
 
 ```bash
-RUST_MCP_SESSION_AUTH_REUSE=false make testing-rebuild-rust-full
+make testing-rebuild-rust-shadow
 ```
 
 Use this when you want the Rust sidecar available but want the public `/mcp`
@@ -87,6 +86,29 @@ Activate the local virtualenv first:
 ```bash
 source .venv/bin/activate
 ```
+
+If the testing stack is already up, the simplest benchmark wrappers are:
+
+```bash
+make benchmark-mcp-mixed
+make benchmark-mcp-tools
+make benchmark-mcp-mixed-300
+make benchmark-mcp-tools-300
+```
+
+The `*-300` targets run distributed local Locust workers and return a non-zero
+exit status if Locust records request failures.
+
+Current caveat on the seeded testing stack:
+
+- the default mixed benchmark target uses `Fast Time Server`
+  (`9779b6698cbd4b4995ee04a4fab38737`)
+- on the current rebuilt image, that server still returns a duplicate-row error
+  on `resources/read`
+- so `make benchmark-mcp-mixed` and `make benchmark-mcp-mixed-300` currently
+  fail because of the seeded server fixture, not because the Rust MCP transport
+  path is generally broken
+- the tools-only benchmark targets are currently the cleanest throughput signal
 
 Quick mixed MCP benchmark:
 
@@ -447,14 +469,16 @@ Not yet implemented:
 The gateway now supports a simpler integrated experimental mode:
 
 - `RUST_MCP_BUILD=true` builds the Rust MCP runtime into the image
-- `RUST_MCP_MODE=off|edge|full`
+- `RUST_MCP_MODE=off|shadow|edge|full`
   - `off`: Python MCP transport
-  - `edge`: Rust MCP runtime edge with managed UDS sidecar defaults
+  - `shadow`: Rust sidecar present, but public `/mcp` stays on Python
+  - `edge`: direct public `/mcp` on Rust with managed UDS sidecar defaults
   - `full`: `edge` plus Rust session/event-store/resume/live-stream cores
 - `RUST_MCP_LOG=warn` controls the bundled sidecar log level for the simple path
 
 Advanced low-level env vars still exist and override the simple mode when set:
 
+- `RUST_MCP_SESSION_AUTH_REUSE=true|false`
 - `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=true`
 - `EXPERIMENTAL_RUST_MCP_RUNTIME_URL=http://127.0.0.1:8787`
 - `EXPERIMENTAL_RUST_MCP_RUNTIME_TIMEOUT_SECONDS=30`
@@ -493,6 +517,7 @@ still authenticate in Python first, before they reach the Rust sidecar.
 That means the Python auth path is still part of the hot path for:
 
 - `RUST_MCP_MODE=off`
+- `RUST_MCP_MODE=shadow`
 - `RUST_MCP_MODE=edge`
 - `RUST_MCP_MODE=full`
 
@@ -590,8 +615,10 @@ make docker-prod-rust-no-cache
 The simple compose workflows are:
 
 ```bash
+make testing-up-rust-shadow
 make testing-up-rust
 make testing-up-rust-full
+make testing-rebuild-rust-shadow
 make testing-rebuild-rust
 make testing-rebuild-rust-full
 ```
@@ -679,18 +706,40 @@ Validated on the live compose stack with:
 - `HTTP_SERVER=gunicorn`
 - `GUNICORN_WORKERS=32`
 
-Validated results on that compose-built stack:
+Validated results on the current rebuilt full-Rust stack:
 
-- `make test-mcp-cli` -> `23 passed`
-- `make test-mcp-rbac` -> `40 passed`
-- full `make test-ui-headless` completed with:
-  - `761 passed`
-  - `83 skipped`
-  - `3 failed`
-  - `5 errors`
-  - the exact `8` failing/error cases all passed when rerun individually on
-    the same stack, which currently points to suite-order or shared-state UI
-    flake rather than a deterministic MCP runtime regression
+- `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
+  - `47 passed`
+- `make test`
+  - `14543 passed`
+  - `482 skipped`
+  - `15 warnings`
+- `make test-mcp-cli`
+  - `23 passed`
+- `make test-mcp-rbac`
+  - `40 passed`
+- `make test-ui-headless`
+  - `756 passed`
+  - `86 skipped`
+  - `23 failed`
+  - `16 errors`
+  - the current UI failures are broader admin/entity flows and should not be
+    treated as proof of an MCP protocol/runtime regression
+
+Current benchmark snapshots on that rebuilt full-Rust stack:
+
+- `make benchmark-mcp-tools`
+  - `2026.75 RPS`
+  - `0%` failures
+- `make benchmark-mcp-tools-300`
+  - `4026.11 RPS`
+  - `0%` failures
+- `make benchmark-mcp-mixed`
+  - `1191.02 RPS`
+  - `1.78%` failures, all on `MCP resources/read`
+- `make benchmark-mcp-mixed-300`
+  - `2437.21 RPS`
+  - `1.83%` failures, all on `MCP resources/read`
 
 Live proof on the compose-built stack:
 

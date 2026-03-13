@@ -48,12 +48,17 @@ apply_rust_mcp_mode_defaults() {
     local resume_core_default="false"
     local live_stream_core_default="false"
     local affinity_core_default="false"
+    local session_auth_reuse_default="false"
 
     case "${normalized_mode}" in
         ""|off)
             ;;
+        shadow)
+            runtime_enabled_default="true"
+            ;;
         edge)
             runtime_enabled_default="true"
+            session_auth_reuse_default="true"
             ;;
         full)
             runtime_enabled_default="true"
@@ -62,10 +67,11 @@ apply_rust_mcp_mode_defaults() {
             resume_core_default="true"
             live_stream_core_default="true"
             affinity_core_default="true"
+            session_auth_reuse_default="true"
             ;;
         *)
             echo "ERROR: Unknown RUST_MCP_MODE value: ${RUST_MCP_MODE}"
-            echo "Valid options: off, edge, full"
+            echo "Valid options: off, shadow, edge, full"
             exit 1
             ;;
     esac
@@ -98,7 +104,7 @@ apply_rust_mcp_mode_defaults() {
         if [[ -n "${RUST_MCP_SESSION_AUTH_REUSE}" ]]; then
             EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED="${RUST_MCP_SESSION_AUTH_REUSE}"
         else
-            EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED="false"
+            EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED="${session_auth_reuse_default}"
         fi
     fi
     if [[ -z "${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS}" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
@@ -244,7 +250,7 @@ print_mcp_runtime_mode() {
         runtime_mode="python-rust-built-disabled"
         echo "WARNING: MCP runtime mode: ${runtime_mode}"
         echo "WARNING: Rust MCP artifacts are present in this image, but EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=false so /mcp will run on the Python transport."
-        echo "WARNING: Set RUST_MCP_MODE=edge or RUST_MCP_MODE=full to activate the Rust MCP runtime."
+        echo "WARNING: Set RUST_MCP_MODE=shadow, RUST_MCP_MODE=edge, or RUST_MCP_MODE=full to activate the Rust MCP runtime."
         return
     fi
 
