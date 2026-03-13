@@ -6165,8 +6165,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], "cursor_abc")))
 
-        # Pass apijsonpath as something that's not a string and not a JsonPathModifier
-        # This will cause parsed_apijsonpath to remain None, triggering lines 3676-3681
+        # Pass apijsonpath=None to trigger pagination path
         result = await main_mod.list_tools.__wrapped__(
             request,
             cursor=None,
@@ -6178,7 +6177,7 @@ class TestRemainingCoverageGaps:
             visibility=None,
             gateway_id=None,
             db=MagicMock(),
-            apijsonpath=123,  # Not a string, not a JsonPathModifier - will be None after parsing
+            apijsonpath=None,  # Explicitly None to trigger pagination path
             user={"email": "user@example.com"},
         )
 
@@ -6192,6 +6191,65 @@ class TestRemainingCoverageGaps:
             assert hasattr(result, 'tools')
             assert hasattr(result, 'next_cursor')
             assert result.next_cursor == "cursor_abc"
+
+    async def test_list_tools_apijsonpath_invalid_type(self, monkeypatch):
+        """Test list_tools with invalid apijsonpath type raises clear error."""
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        tool = MagicMock()
+        tool.to_dict.return_value = {"id": "t1"}
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
+
+        # Pass invalid type (integer) - should raise 400 with clear message
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.list_tools.__wrapped__(
+                request,
+                cursor=None,
+                include_pagination=False,
+                limit=None,
+                include_inactive=False,
+                tags=None,
+                team_id=None,
+                visibility=None,
+                gateway_id=None,
+                db=MagicMock(),
+                apijsonpath=123,  # Invalid type
+                user={"email": "user@example.com"},
+            )
+        assert excinfo.value.status_code == 400
+        assert "Invalid apijsonpath type" in str(excinfo.value.detail)
+        assert "int" in str(excinfo.value.detail)
+
+    async def test_get_tool_apijsonpath_invalid_type(self, monkeypatch):
+        """Test get_tool with invalid apijsonpath type raises clear error."""
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        data = MagicMock()
+        data.to_dict.return_value = {"id": "t1"}
+
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
+        monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
+
+        # Pass invalid type (list) - should raise 400 with clear message
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.get_tool.__wrapped__(
+                "tool-1",
+                request=request,
+                db=MagicMock(),
+                user={"email": "u"},
+                apijsonpath=["invalid", "type"]  # Invalid type
+            )
+        assert excinfo.value.status_code == 400
+        assert "Invalid apijsonpath type" in str(excinfo.value.detail)
+        assert "list" in str(excinfo.value.detail)
 
     async def test_create_tool_endpoint_coverage(self, monkeypatch):
         """Test create_tool endpoint (lines 3695-3698)."""

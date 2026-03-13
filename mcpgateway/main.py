@@ -713,7 +713,7 @@ def _parse_apijsonpath(raw: Optional[Union[str, JsonPathModifier]]) -> Optional[
         Parsed JsonPathModifier or None if raw is None
 
     Raises:
-        HTTPException: If the JSON string is invalid (400 Bad Request)
+        HTTPException: If the JSON string is invalid or unexpected type provided (400 Bad Request)
     """
     if raw is None:
         return None
@@ -726,7 +726,8 @@ def _parse_apijsonpath(raw: Optional[Union[str, JsonPathModifier]]) -> Optional[
     elif isinstance(raw, JsonPathModifier):
         return raw
 
-    return None
+    # Unexpected type - fail fast with clear error message
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid apijsonpath type: expected string or JsonPathModifier, got {type(raw).__name__}")
 
 
 def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict[str, str]] = None) -> Union[List, Dict]:
