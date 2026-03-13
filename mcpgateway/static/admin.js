@@ -4749,6 +4749,7 @@ async function runResourceTest() {
 
     // Copy button
     const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
     copyBtn.textContent = "Copy";
     copyBtn.className =
         "text-xs px-2 py-1 rounded bg-gray-300 dark:bg-gray-600 hover:bg-gray-400 dark:hover:bg-gray-500";
@@ -4756,6 +4757,7 @@ async function runResourceTest() {
 
     // Fullscreen button
     const fullscreenBtn = document.createElement("button");
+    fullscreenBtn.type = "button";
     fullscreenBtn.textContent = "Fullscreen";
     fullscreenBtn.className =
         "text-xs px-2 py-1 rounded bg-blue-300 dark:bg-blue-600 hover:bg-blue-400 dark:hover:bg-blue-500";
@@ -4763,6 +4765,7 @@ async function runResourceTest() {
 
     // Download button
     const downloadBtn = document.createElement("button");
+    downloadBtn.type = "button";
     downloadBtn.textContent = "Download";
     downloadBtn.className =
         "text-xs px-2 py-1 rounded bg-green-300 dark:bg-green-600 hover:bg-green-400 dark:hover:bg-green-500";
@@ -4831,6 +4834,7 @@ async function runResourceTest() {
             "bg-white dark:bg-gray-900 rounded-lg w-full h-full p-4 overflow-auto";
 
         const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
         closeBtn.textContent = "Close";
         closeBtn.className =
             "text-xs px-3 py-1 mb-2 rounded bg-red-400 hover:bg-red-500 dark:bg-red-700 dark:hover:bg-red-600";
@@ -5604,11 +5608,12 @@ async function viewPrompt(promptName) {
 
             const argsEl = promptDetailsDiv.querySelector(".prompt-arguments");
             if (argsEl) {
-                argsEl.textContent = JSON.stringify(
-                    prompt.arguments || {},
-                    null,
-                    2,
-                );
+                const args = prompt.arguments;
+                if (!args || args.length === 0) {
+                    argsEl.textContent = "No arguments";
+                } else {
+                    argsEl.textContent = JSON.stringify(args, null, 2);
+                }
             }
 
             if (prompt.metrics) {
@@ -5845,7 +5850,7 @@ async function editPrompt(promptId) {
 
         // Validate arguments JSON
         const argsValidation = validateJson(
-            JSON.stringify(prompt.arguments || {}),
+            JSON.stringify(prompt.arguments || []),
             "Arguments",
         );
         if (argsField && argsValidation.valid) {
@@ -6973,6 +6978,111 @@ async function viewServer(serverId) {
             }
 
             container.appendChild(associatedDiv);
+
+            // OAuth Configuration section
+            if (server.oauthEnabled) {
+                const oauthDiv = document.createElement("div");
+                oauthDiv.className = "mt-6 border-t pt-4";
+
+                const oauthTitle = document.createElement("strong");
+                oauthTitle.textContent = "OAuth 2.0 Configuration:";
+                oauthTitle.className =
+                    "block text-gray-900 dark:text-gray-100 mb-3";
+                oauthDiv.appendChild(oauthTitle);
+
+                // OAuth Config details
+                const oauthConfig = server.oauthConfig || server.oauth_config;
+                if (oauthConfig) {
+                    const oauthConfigDiv = document.createElement("div");
+                    oauthConfigDiv.className =
+                        "mt-3 space-y-2 bg-gray-50 dark:bg-gray-800 p-3 rounded-md";
+
+                    // Authorization Servers
+                    if (
+                        oauthConfig.authorization_servers &&
+                        oauthConfig.authorization_servers.length > 0
+                    ) {
+                        const authServersP = document.createElement("p");
+                        authServersP.className = "text-sm";
+                        const authServersStrong =
+                            document.createElement("strong");
+                        authServersStrong.textContent =
+                            "Authorization Servers: ";
+                        authServersStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        authServersP.appendChild(authServersStrong);
+
+                        const serversList = document.createElement("ul");
+                        serversList.className =
+                            "mt-1 ml-4 list-disc list-inside";
+                        oauthConfig.authorization_servers.forEach(
+                            (serverUrl) => {
+                                const li = document.createElement("li");
+                                li.className =
+                                    "text-gray-600 dark:text-gray-400 text-sm";
+                                li.textContent = serverUrl;
+                                serversList.appendChild(li);
+                            },
+                        );
+                        authServersP.appendChild(serversList);
+                        oauthConfigDiv.appendChild(authServersP);
+                    }
+
+                    // Token Endpoint
+                    if (oauthConfig.token_endpoint) {
+                        const tokenEndpointP = document.createElement("p");
+                        tokenEndpointP.className = "text-sm";
+                        const tokenEndpointStrong =
+                            document.createElement("strong");
+                        tokenEndpointStrong.textContent = "Token Endpoint: ";
+                        tokenEndpointStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        tokenEndpointP.appendChild(tokenEndpointStrong);
+
+                        const tokenEndpointSpan =
+                            document.createElement("span");
+                        tokenEndpointSpan.className =
+                            "text-gray-600 dark:text-gray-400 break-all";
+                        tokenEndpointSpan.textContent =
+                            oauthConfig.token_endpoint;
+                        tokenEndpointP.appendChild(tokenEndpointSpan);
+                        oauthConfigDiv.appendChild(tokenEndpointP);
+                    }
+
+                    // Scopes Supported
+                    if (
+                        oauthConfig.scopes_supported &&
+                        oauthConfig.scopes_supported.length > 0
+                    ) {
+                        const scopesP = document.createElement("p");
+                        scopesP.className = "text-sm";
+                        const scopesStrong = document.createElement("strong");
+                        scopesStrong.textContent = "Supported Scopes: ";
+                        scopesStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        scopesP.appendChild(scopesStrong);
+
+                        const scopesSpan = document.createElement("span");
+                        scopesSpan.className =
+                            "text-gray-600 dark:text-gray-400";
+                        scopesSpan.textContent =
+                            oauthConfig.scopes_supported.join(", ");
+                        scopesP.appendChild(scopesSpan);
+                        oauthConfigDiv.appendChild(scopesP);
+                    }
+
+                    oauthDiv.appendChild(oauthConfigDiv);
+                } else {
+                    const noConfigP = document.createElement("p");
+                    noConfigP.className =
+                        "mt-2 text-sm text-gray-500 dark:text-gray-400";
+                    noConfigP.textContent =
+                        "OAuth is enabled but no configuration details are available.";
+                    oauthDiv.appendChild(noConfigP);
+                }
+
+                container.appendChild(oauthDiv);
+            }
 
             // Add metadata section
             const metadataDiv = document.createElement("div");
@@ -12211,6 +12321,16 @@ async function testTool(toolId) {
             }
         }
 
+        // Clear previous result before opening
+        const resultContainer = safeGetElement("tool-test-result");
+        if (resultContainer) {
+            resultContainer.textContent = "";
+        }
+        const loadingEl = safeGetElement("tool-test-loading");
+        if (loadingEl) {
+            loadingEl.style.display = "none";
+        }
+
         openModal("tool-test-modal");
         console.log("✓ Tool test modal loaded successfully");
     } catch (error) {
@@ -14497,6 +14617,22 @@ async function testPrompt(promptId) {
                 }
             }
 
+            // Clear previous result before opening
+            const resultContainer = safeGetElement("prompt-test-result");
+            if (resultContainer) {
+                resultContainer.textContent = "";
+                const placeholder = document.createElement("div");
+                placeholder.className =
+                    "text-gray-500 dark:text-gray-400 text-sm italic";
+                placeholder.textContent =
+                    'Click "Render Prompt" to see the rendered output';
+                resultContainer.appendChild(placeholder);
+            }
+            const promptLoading = safeGetElement("prompt-test-loading");
+            if (promptLoading) {
+                promptLoading.classList.add("hidden");
+            }
+
             // Build form fields based on prompt arguments
             buildPromptTestForm(prompt);
 
@@ -14828,6 +14964,16 @@ async function testGateway(gatewayURL) {
 
         // Clean up any existing event listeners first
         cleanupGatewayTestModal();
+
+        // Clear previous result before opening
+        const responseDiv = safeGetElement("gateway-test-response-json");
+        const resultDiv = safeGetElement("gateway-test-result");
+        if (responseDiv) {
+            responseDiv.textContent = "";
+        }
+        if (resultDiv) {
+            resultDiv.classList.add("hidden");
+        }
 
         // Open the modal
         openModal("gateway-test-modal");
