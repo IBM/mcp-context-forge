@@ -36,6 +36,13 @@ from mcpgateway.plugins.framework import (
 )
 from mcpgateway.services.logging_service import LoggingService
 
+# Repository (Phase 2) — optional DB integration
+try:
+    from plugins.security_clearance.repository import ClearanceRepository
+    _repo = ClearanceRepository()
+except Exception:
+    _repo = None
+
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
@@ -149,26 +156,23 @@ class ClearanceEngine:
         False
     """
 
-    def __init__(self, config: SecurityClearanceConfig):
+    def __init__(self, config: SecurityClearanceConfig, db=None):
         """Initialise the engine with the plugin configuration.
-
         Args:
             config: SecurityClearanceConfig instance.
+            db: Optional SQLAlchemy Session for Phase 2 DB lookups.
         """
         self.config = config
+        self.db = db
 
     def resolve_user_clearance(self, user_id: Optional[str], tenant_id: Optional[str]) -> int:
         """Resolve effective clearance level for a user.
-
-        Lookup order: user_id -> tenant_id as team -> default.
-
+        Lookup order: DB -> YAML config -> default.
         Args:
             user_id: The user identifier (email or username).
             tenant_id: The tenant identifier used as team fallback.
-
         Returns:
             Integer clearance level.
-
         Example:
             >>> cfg = SecurityClearanceConfig(user_clearances={"alice": 3})
             >>> engine = ClearanceEngine(cfg)
@@ -177,6 +181,17 @@ class ClearanceEngine:
             >>> engine.resolve_user_clearance("unknown", None)
             0
         """
+        # Phase 2: DB lookup first
+        if self.db and _repo:
+            if user_id:
+                level = _repo.get_user_clearance(self.db, user_id, tenant_id)
+                if level is not None:
+                    return level
+            if tenant_id:
+                level = _repo.get_team_clearance(self.db, tenant_id, tenant_id)
+                if level is not None:
+                    return level
+        # Phase 1: YAML config fallback
         if user_id and user_id in self.config.user_clearances:
             return self.config.user_clearances[user_id]
         if tenant_id and tenant_id in self.config.team_clearances:
@@ -185,10 +200,10 @@ class ClearanceEngine:
 
     def resolve_tool_level(self, tool_name: Optional[str], server_name: Optional[str] = None) -> int:
         """Resolve classification level for a tool.
-
+        Lookup order: DB -> YAML config -> default.
         Args:
             tool_name: The tool name.
-
+            server_name: Optional server name for fallback.
         Returns:
             Integer classification level.
 
@@ -200,6 +215,17 @@ class ClearanceEngine:
             >>> engine.resolve_tool_level("unknown-tool")
             1
         """
+        # Phase 2: DB lookup first
+        if self.db and _repo:
+            if tool_name:
+                level = _repo.get_tool_classification(self.db, tool_name, server_name)
+                if level is not None:
+                    return level
+            if server_name:
+                level = _repo.get_server_classification(self.db, server_name)
+                if level is not None:
+                    return level
+        # Phase 1: YAML config fallback
         if tool_name and tool_name in self.config.tool_levels:
             return self.config.tool_levels[tool_name]
         if server_name and server_name in self.config.server_levels:
@@ -329,13 +355,21 @@ class SecurityClearancePlugin(Plugin):
         """
         super().__init__(config)
         self._clearance_config = SecurityClearanceConfig(**(config.config or {}))
-        self._engine = ClearanceEngine(self._clearance_config)
+        self._db = None  # injected at runtime via set_db()
+        self._engine = ClearanceEngine(self._clearance_config, db=self._db)
         logger.info(
             "SecurityClearancePlugin initialised | enforce_no_read_up=%s enforce_no_write_down=%s",
             self._clearance_config.enforce_no_read_up,
             self._clearance_config.enforce_no_write_down,
         )
 
+    def set_db(self, db) -> None:
+        """Inject a SQLAlchemy Session for Phase 2 DB lookups.
+        Args:
+            db: SQLAlchemy Session instance.
+        """
+        self._db = db
+        self._engine.db = db
 
     def _get_user_context(self, context: PluginContext) -> tuple[Optional[str], Optional[str]]:
         """Extract user and tenant_id from plugin context.
