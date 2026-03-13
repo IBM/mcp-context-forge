@@ -4,6 +4,7 @@ set -euo pipefail
 HTTP_SERVER="${HTTP_SERVER:-gunicorn}"
 RUST_MCP_MODE="${RUST_MCP_MODE:-off}"
 RUST_MCP_LOG="${RUST_MCP_LOG:-warn}"
+RUST_MCP_SESSION_AUTH_REUSE="${RUST_MCP_SESSION_AUTH_REUSE:-}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED="${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED:-}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED="${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED:-}"
 EXPERIMENTAL_RUST_MCP_RUNTIME_URL="${EXPERIMENTAL_RUST_MCP_RUNTIME_URL:-}"
@@ -13,6 +14,7 @@ EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED="${EXPERIMENTAL_RUST_MCP_EVENT_STORE_E
 EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED:-}"
 EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED:-}"
 EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED:-}"
+EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED="${EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED:-}"
 CONTEXTFORGE_ENABLE_RUST_BUILD="${CONTEXTFORGE_ENABLE_RUST_BUILD:-false}"
 CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD="${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD:-false}"
 MCP_RUST_LISTEN_HTTP="${MCP_RUST_LISTEN_HTTP:-}"
@@ -25,6 +27,8 @@ MCP_RUST_EVENT_STORE_ENABLED="${MCP_RUST_EVENT_STORE_ENABLED:-}"
 MCP_RUST_RESUME_CORE_ENABLED="${MCP_RUST_RESUME_CORE_ENABLED:-}"
 MCP_RUST_LIVE_STREAM_CORE_ENABLED="${MCP_RUST_LIVE_STREAM_CORE_ENABLED:-}"
 MCP_RUST_AFFINITY_CORE_ENABLED="${MCP_RUST_AFFINITY_CORE_ENABLED:-}"
+MCP_RUST_SESSION_AUTH_REUSE_ENABLED="${MCP_RUST_SESSION_AUTH_REUSE_ENABLED:-}"
+MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS="${MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}" || {
@@ -90,13 +94,23 @@ apply_rust_mcp_mode_defaults() {
     if [[ -z "${EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED}" ]]; then
         EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED="${affinity_core_default}"
     fi
+    if [[ -z "${EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED}" ]]; then
+        if [[ -n "${RUST_MCP_SESSION_AUTH_REUSE}" ]]; then
+            EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED="${RUST_MCP_SESSION_AUTH_REUSE}"
+        else
+            EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED="false"
+        fi
+    fi
     if [[ -z "${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS}" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
         EXPERIMENTAL_RUST_MCP_RUNTIME_UDS="/tmp/contextforge-mcp-rust.sock"
     fi
     if [[ -z "${MCP_RUST_LISTEN_HTTP}" ]]; then
         MCP_RUST_LISTEN_HTTP="127.0.0.1:8787"
     fi
-    if [[ -z "${MCP_RUST_PUBLIC_LISTEN_HTTP}" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
+    if [[ -z "${MCP_RUST_PUBLIC_LISTEN_HTTP}" \
+          && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" \
+          && "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" \
+          && "${EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED}" = "true" ]]; then
         MCP_RUST_PUBLIC_LISTEN_HTTP="0.0.0.0:8787"
     fi
     if [[ -z "${MCP_RUST_LISTEN_UDS}" && -n "${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS}" ]]; then
@@ -127,9 +141,16 @@ apply_rust_mcp_mode_defaults() {
     if [[ -z "${MCP_RUST_AFFINITY_CORE_ENABLED}" ]]; then
         MCP_RUST_AFFINITY_CORE_ENABLED="${EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED}"
     fi
+    if [[ -z "${MCP_RUST_SESSION_AUTH_REUSE_ENABLED}" ]]; then
+        MCP_RUST_SESSION_AUTH_REUSE_ENABLED="${EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED}"
+    fi
+    if [[ -z "${MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS}" ]]; then
+        MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS="30"
+    fi
 
     export RUST_MCP_MODE
     export RUST_MCP_LOG
+    export RUST_MCP_SESSION_AUTH_REUSE
     export EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED
     export EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED
     export EXPERIMENTAL_RUST_MCP_RUNTIME_URL
@@ -139,6 +160,7 @@ apply_rust_mcp_mode_defaults() {
     export EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED
     export EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED
     export EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED
+    export EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED
     export MCP_RUST_LISTEN_HTTP
     export MCP_RUST_LISTEN_UDS
     export MCP_RUST_PUBLIC_LISTEN_HTTP
@@ -149,6 +171,8 @@ apply_rust_mcp_mode_defaults() {
     export MCP_RUST_RESUME_CORE_ENABLED
     export MCP_RUST_LIVE_STREAM_CORE_ENABLED
     export MCP_RUST_AFFINITY_CORE_ENABLED
+    export MCP_RUST_SESSION_AUTH_REUSE_ENABLED
+    export MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS
 }
 
 cleanup() {
@@ -175,6 +199,7 @@ print_mcp_runtime_mode() {
     local resume_core_mode="python"
     local live_stream_core_mode="python"
     local affinity_core_mode="python"
+    local session_auth_reuse_mode="python"
 
     if [[ "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" = "true" ]]; then
         upstream_client_mode="rmcp"
@@ -194,14 +219,17 @@ print_mcp_runtime_mode() {
     if [[ "${MCP_RUST_AFFINITY_CORE_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
         affinity_core_mode="rust"
     fi
+    if [[ "${MCP_RUST_SESSION_AUTH_REUSE_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
+        session_auth_reuse_mode="rust"
+    fi
 
     if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
         if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
             runtime_mode="rust-managed"
-            echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode}, resume core: ${resume_core_mode}, live stream core: ${live_stream_core_mode}, affinity core: ${affinity_core_mode})"
+            echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode}, resume core: ${resume_core_mode}, live stream core: ${live_stream_core_mode}, affinity core: ${affinity_core_mode}, session auth reuse: ${session_auth_reuse_mode})"
         else
             runtime_mode="rust-external"
-            echo "MCP runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}}, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode}, resume core: ${resume_core_mode}, live stream core: ${live_stream_core_mode}, affinity core: ${affinity_core_mode})"
+            echo "MCP runtime mode: ${runtime_mode} (external sidecar target: ${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-${EXPERIMENTAL_RUST_MCP_RUNTIME_URL}}, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode}, resume core: ${resume_core_mode}, live stream core: ${live_stream_core_mode}, affinity core: ${affinity_core_mode}, session auth reuse: ${session_auth_reuse_mode})"
         fi
 
         if [[ "${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT}" = "true" && "${CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD}" != "true" ]]; then
@@ -282,11 +310,18 @@ start_managed_rust_mcp_runtime() {
         unset MCP_RUST_LISTEN_UDS || true
         unset EXPERIMENTAL_RUST_MCP_RUNTIME_UDS || true
     fi
+    if [[ -n "${MCP_RUST_PUBLIC_LISTEN_HTTP:-}" ]]; then
+        export MCP_RUST_PUBLIC_LISTEN_HTTP="${MCP_RUST_PUBLIC_LISTEN_HTTP}"
+    else
+        unset MCP_RUST_PUBLIC_LISTEN_HTTP || true
+    fi
     export MCP_RUST_BACKEND_RPC_URL="${backend_rpc_url}"
     export MCP_RUST_SESSION_CORE_ENABLED="${MCP_RUST_SESSION_CORE_ENABLED}"
     export MCP_RUST_EVENT_STORE_ENABLED="${MCP_RUST_EVENT_STORE_ENABLED}"
     export MCP_RUST_RESUME_CORE_ENABLED="${MCP_RUST_RESUME_CORE_ENABLED}"
     export MCP_RUST_LIVE_STREAM_CORE_ENABLED="${MCP_RUST_LIVE_STREAM_CORE_ENABLED}"
+    export MCP_RUST_SESSION_AUTH_REUSE_ENABLED="${MCP_RUST_SESSION_AUTH_REUSE_ENABLED}"
+    export MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS="${MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS}"
     export MCP_RUST_CACHE_PREFIX="${rust_cache_prefix}"
     export MCP_RUST_EVENT_STORE_MAX_EVENTS_PER_STREAM="${rust_event_store_max}"
     export MCP_RUST_EVENT_STORE_TTL_SECONDS="${rust_event_store_ttl}"

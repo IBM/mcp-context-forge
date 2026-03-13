@@ -147,7 +147,14 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy
 from mcpgateway.transports.sse_transport import SSETransport
-from mcpgateway.transports.streamablehttp_transport import _validate_streamable_session_access, get_streamable_http_auth_context, SessionManagerWrapper, set_shared_session_registry, streamable_http_auth, user_context_var
+from mcpgateway.transports.streamablehttp_transport import (
+    _validate_streamable_session_access,
+    get_streamable_http_auth_context,
+    SessionManagerWrapper,
+    set_shared_session_registry,
+    streamable_http_auth,
+    user_context_var,
+)
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -547,9 +554,7 @@ async def _run_internal_mcp_authentication(
             if message.get("type") == "http.response.start":
                 status_code = int(message.get("status", 500))
                 response_headers = {
-                    key.decode("latin-1"): value.decode("latin-1")
-                    for key, value in message.get("headers", [])
-                    if isinstance(key, (bytes, bytearray)) and isinstance(value, (bytes, bytearray))
+                    key.decode("latin-1"): value.decode("latin-1") for key, value in message.get("headers", []) if isinstance(key, (bytes, bytearray)) and isinstance(value, (bytes, bytearray))
                 }
             elif message.get("type") == "http.response.body":
                 body += message.get("body", b"")
@@ -1127,7 +1132,32 @@ def _current_mcp_transport_mount() -> str:
     Returns:
         Runtime label identifying the currently mounted public MCP transport.
     """
-    return "rust" if settings.experimental_rust_mcp_runtime_enabled else "python"
+    return "rust" if _should_mount_public_rust_transport() else "python"
+
+
+def _should_mount_public_rust_transport() -> bool:
+    """Return whether the public ``/mcp`` path should be served directly by Rust.
+
+    Returns:
+        ``True`` only when the Rust runtime is enabled and the session-auth reuse
+        path is enabled, allowing Rust to safely own steady-state public MCP
+        session traffic. Otherwise returns ``False`` and leaves public MCP on
+        the Python ingress path.
+    """
+    return bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled)
+
+
+def _should_use_rust_public_session_stack() -> bool:
+    """Return whether Rust should own the effective public MCP session stack.
+
+    Returns:
+        ``True`` only when the Rust runtime is enabled and session-auth reuse is
+        enabled, allowing the public transport, session metadata, replay/resume,
+        live-stream, and affinity behavior to stay on a consistent Rust-backed
+        path. Otherwise returns ``False`` so the public MCP session stack falls
+        back to Python semantics.
+    """
+    return _should_mount_public_rust_transport()
 
 
 def _current_mcp_runtime_mode() -> str:
@@ -1149,7 +1179,7 @@ def _current_mcp_session_core_mode() -> str:
     Returns:
         ``"rust"`` when the Rust session core is enabled, otherwise ``"python"``.
     """
-    if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_core_enabled:
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_session_core_enabled:
         return "rust"
     return "python"
 
@@ -1160,7 +1190,7 @@ def _current_mcp_event_store_mode() -> str:
     Returns:
         ``"rust"`` when the Rust event store is enabled, otherwise ``"python"``.
     """
-    if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_event_store_enabled:
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_event_store_enabled:
         return "rust"
     return "python"
 
@@ -1172,7 +1202,7 @@ def _current_mcp_resume_core_mode() -> str:
         ``"rust"`` when Rust owns replay/resume, otherwise ``"python"``.
     """
     if (
-        settings.experimental_rust_mcp_runtime_enabled
+        _should_use_rust_public_session_stack()
         and settings.experimental_rust_mcp_session_core_enabled
         and settings.experimental_rust_mcp_event_store_enabled
         and settings.experimental_rust_mcp_resume_core_enabled
@@ -1187,7 +1217,7 @@ def _current_mcp_live_stream_core_mode() -> str:
     Returns:
         ``"rust"`` when Rust owns live GET /mcp streaming, otherwise ``"python"``.
     """
-    if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_live_stream_core_enabled:
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_live_stream_core_enabled:
         return "rust"
     return "python"
 
@@ -1198,7 +1228,18 @@ def _current_mcp_affinity_core_mode() -> str:
     Returns:
         ``"rust"`` when Rust owns session-affinity forwarding, otherwise ``"python"``.
     """
-    if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_affinity_core_enabled:
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_affinity_core_enabled:
+        return "rust"
+    return "python"
+
+
+def _current_mcp_session_auth_reuse_mode() -> str:
+    """Return which runtime currently owns MCP session-bound auth-context reuse.
+
+    Returns:
+        ``"rust"`` when Rust session auth reuse is enabled, otherwise ``"python"``.
+    """
+    if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled:
         return "rust"
     return "python"
 
@@ -1219,16 +1260,18 @@ def _mcp_runtime_status_payload() -> Dict[str, Any]:
         "resume_core_mode": _current_mcp_resume_core_mode(),
         "live_stream_core_mode": _current_mcp_live_stream_core_mode(),
         "affinity_core_mode": _current_mcp_affinity_core_mode(),
-        "rust_session_core_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_core_enabled),
-        "rust_event_store_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_event_store_enabled),
+        "session_auth_reuse_mode": _current_mcp_session_auth_reuse_mode(),
+        "rust_session_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_session_core_enabled),
+        "rust_event_store_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_event_store_enabled),
         "rust_resume_core_enabled": bool(
-            settings.experimental_rust_mcp_runtime_enabled
+            _should_use_rust_public_session_stack()
             and settings.experimental_rust_mcp_session_core_enabled
             and settings.experimental_rust_mcp_event_store_enabled
             and settings.experimental_rust_mcp_resume_core_enabled
         ),
-        "rust_live_stream_core_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_live_stream_core_enabled),
-        "rust_affinity_core_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_affinity_core_enabled),
+        "rust_live_stream_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_live_stream_core_enabled),
+        "rust_affinity_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_affinity_core_enabled),
+        "rust_session_auth_reuse_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled),
     }
 
     if settings.experimental_rust_mcp_runtime_enabled:
@@ -1257,6 +1300,7 @@ def _apply_runtime_mode_headers(response: Response) -> None:
     response.headers["x-contextforge-mcp-resume-core-mode"] = _current_mcp_resume_core_mode()
     response.headers["x-contextforge-mcp-live-stream-core-mode"] = _current_mcp_live_stream_core_mode()
     response.headers["x-contextforge-mcp-affinity-core-mode"] = _current_mcp_affinity_core_mode()
+    response.headers["x-contextforge-mcp-session-auth-reuse-mode"] = _current_mcp_session_auth_reuse_mode()
 
 
 @lru_cache(maxsize=512)
@@ -10542,6 +10586,10 @@ class MCPRuntimeHeaderTransportWrapper:
                     isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-affinity-core" for item in headers
                 ):
                     headers.append((b"x-contextforge-mcp-affinity-core", _current_mcp_affinity_core_mode().encode("ascii")))
+                if not any(
+                    isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-session-auth-reuse" for item in headers
+                ):
+                    headers.append((b"x-contextforge-mcp-session-auth-reuse", _current_mcp_session_auth_reuse_mode().encode("ascii")))
                 message = dict(message)
                 message["headers"] = headers
             await send(message)
@@ -10555,17 +10603,30 @@ def _build_mcp_transport_app():
     Returns:
         Transport app object that should be mounted at the public ``/mcp`` path.
     """
-    if settings.experimental_rust_mcp_runtime_enabled:
+    if _should_mount_public_rust_transport():
         logger.warning(
-            "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s.",
+            "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
             _current_mcp_runtime_mode(),
             settings.experimental_rust_mcp_runtime_uds or settings.experimental_rust_mcp_runtime_url,
             _current_mcp_session_core_mode(),
             _current_mcp_resume_core_mode(),
             _current_mcp_live_stream_core_mode(),
             _current_mcp_affinity_core_mode(),
+            _current_mcp_session_auth_reuse_mode(),
         )
         return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
+
+    if settings.experimental_rust_mcp_runtime_enabled:
+        logger.warning(
+            "MCP runtime mode: %s. Rust sidecar remains enabled, but public /mcp stays on the Python transport because MCP session auth reuse is disabled. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
+            _current_mcp_runtime_mode(),
+            _current_mcp_session_core_mode(),
+            _current_mcp_resume_core_mode(),
+            _current_mcp_live_stream_core_mode(),
+            _current_mcp_affinity_core_mode(),
+            _current_mcp_session_auth_reuse_mode(),
+        )
+        return MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
 
     if _rust_build_included():
         logger.warning(

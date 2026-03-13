@@ -2371,7 +2371,7 @@ class SessionManagerWrapper:
         """
 
         if settings.use_stateful_sessions:
-            if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_event_store_enabled:
+            if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled and settings.experimental_rust_mcp_event_store_enabled:
                 event_store = RustEventStore(
                     max_events_per_stream=settings.streamable_http_max_events_per_stream,
                     ttl=settings.streamable_http_event_ttl,

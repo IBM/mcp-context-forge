@@ -58,6 +58,8 @@ fn test_runtime_config() -> RuntimeConfig {
         resume_core_enabled: false,
         live_stream_core_enabled: false,
         affinity_core_enabled: false,
+        session_auth_reuse_enabled: false,
+        session_auth_reuse_ttl_seconds: 30,
         session_ttl_seconds: 3_600,
         event_store_max_events_per_stream: 100,
         event_store_ttl_seconds: 3_600,
@@ -238,6 +240,7 @@ async fn health_alias_is_available_for_gateway_style_probes() {
     assert_eq!(body["event_store_enabled"], json!(false));
     assert_eq!(body["resume_core_enabled"], json!(false));
     assert_eq!(body["live_stream_core_enabled"], json!(false));
+    assert_eq!(body["session_auth_reuse_enabled"], json!(false));
     assert_eq!(body["active_sessions"], json!(0));
     assert!(
         body["supported_protocol_versions"]
@@ -251,8 +254,7 @@ async fn health_alias_is_available_for_gateway_style_probes() {
 #[tokio::test]
 async fn server_scoped_public_initialize_authenticates_before_backend_dispatch() {
     let auth_calls = Arc::new(Mutex::new(Vec::<Value>::new()));
-    let initialize_calls =
-        Arc::new(Mutex::new(Vec::<(Option<String>, Option<String>)>::new()));
+    let initialize_calls = Arc::new(Mutex::new(Vec::<(Option<String>, Option<String>)>::new()));
 
     let backend = {
         let auth_calls = auth_calls.clone();
@@ -351,12 +353,329 @@ async fn server_scoped_public_initialize_authenticates_before_backend_dispatch()
     assert_eq!(auth_call.len(), 1);
     assert_eq!(auth_call[0]["path"], "/servers/server-1/mcp");
     assert_eq!(auth_call[0]["clientIp"], "203.0.113.10");
-    assert_eq!(auth_call[0]["headers"]["authorization"], "Bearer test-token");
+    assert_eq!(
+        auth_call[0]["headers"]["authorization"],
+        "Bearer test-token"
+    );
 
     let initialize_call = initialize_calls.lock().expect("lock");
     assert_eq!(initialize_call.len(), 1);
     assert_eq!(initialize_call[0].0.as_deref(), Some("server-1"));
     assert!(initialize_call[0].1.is_some());
+}
+
+#[tokio::test]
+async fn public_session_reuses_authenticated_context_when_flag_enabled() {
+    let auth_calls = Arc::new(Mutex::new(0usize));
+    let roots_calls = Arc::new(Mutex::new(Vec::<Option<String>>::new()));
+
+    let backend = {
+        let auth_calls = auth_calls.clone();
+        let roots_calls = roots_calls.clone();
+        Router::new()
+            .route(
+                "/_internal/mcp/authenticate",
+                post(move || {
+                    let auth_calls = auth_calls.clone();
+                    async move {
+                        *auth_calls.lock().expect("lock") += 1;
+                        Json(json!({
+                            "authContext": {
+                                "email": "user@example.com",
+                                "teams": ["team-a"],
+                                "is_authenticated": true,
+                                "is_admin": false,
+                                "permission_is_admin": false,
+                                "token_use": "session"
+                            }
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/transport",
+                post(|| async move {
+                    Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {},
+                            "serverInfo": {"name": "ContextForge", "version": "0.1.0"}
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/_internal/mcp/roots/list",
+                post(move |headers: HeaderMap| {
+                    let roots_calls = roots_calls.clone();
+                    async move {
+                        roots_calls.lock().expect("lock").push(
+                            headers
+                                .get("x-contextforge-auth-context")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
+                        );
+                        Json(json!({"jsonrpc":"2.0","id":2,"result":{"roots":[]}}))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            public_listen_http: Some("127.0.0.1:8788".to_string()),
+            session_core_enabled: true,
+            session_auth_reuse_enabled: true,
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+    let client = reqwest::Client::new();
+
+    let initialize_response = client
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer alpha")
+        .header("mcp-session-id", "session-reuse-1")
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}}
+        }))
+        .send()
+        .await
+        .expect("initialize response");
+    assert_eq!(initialize_response.status(), StatusCode::OK);
+
+    let roots_response = client
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer alpha")
+        .header("mcp-session-id", "session-reuse-1")
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "roots/list",
+            "params": {}
+        }))
+        .send()
+        .await
+        .expect("roots response");
+    assert_eq!(roots_response.status(), StatusCode::OK);
+
+    assert_eq!(*auth_calls.lock().expect("lock"), 1);
+    assert_eq!(roots_calls.lock().expect("lock").len(), 1);
+    assert!(
+        roots_calls.lock().expect("lock")[0].is_some(),
+        "Rust should forward the reused auth context header to the backend roots/list route",
+    );
+}
+
+#[tokio::test]
+async fn public_session_reauthenticates_when_auth_binding_changes() {
+    let auth_calls = Arc::new(Mutex::new(0usize));
+
+    let backend = {
+        let auth_calls = auth_calls.clone();
+        Router::new()
+            .route(
+                "/_internal/mcp/authenticate",
+                post(move || {
+                    let auth_calls = auth_calls.clone();
+                    async move {
+                        *auth_calls.lock().expect("lock") += 1;
+                        Json(json!({
+                            "authContext": {
+                                "email": "user@example.com",
+                                "teams": ["team-a"],
+                                "is_authenticated": true,
+                                "is_admin": false,
+                                "permission_is_admin": false,
+                                "token_use": "session"
+                            }
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/transport",
+                post(|| async move {
+                    Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {},
+                            "serverInfo": {"name": "ContextForge", "version": "0.1.0"}
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/_internal/mcp/roots/list",
+                post(|| async move { Json(json!({"jsonrpc":"2.0","id":2,"result":{"roots":[]}})) }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            public_listen_http: Some("127.0.0.1:8788".to_string()),
+            session_core_enabled: true,
+            session_auth_reuse_enabled: true,
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+    let client = reqwest::Client::new();
+
+    let initialize_response = client
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer alpha")
+        .header("mcp-session-id", "session-reuse-2")
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}}
+        }))
+        .send()
+        .await
+        .expect("initialize response");
+    assert_eq!(initialize_response.status(), StatusCode::OK);
+
+    let roots_response = client
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer beta")
+        .header("mcp-session-id", "session-reuse-2")
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "roots/list",
+            "params": {}
+        }))
+        .send()
+        .await
+        .expect("roots response");
+    assert_eq!(roots_response.status(), StatusCode::OK);
+
+    assert_eq!(
+        *auth_calls.lock().expect("lock"),
+        2,
+        "Changed auth material should force Rust to fall back to backend authenticate",
+    );
+}
+
+#[tokio::test]
+async fn public_session_reauthenticates_after_auth_reuse_ttl_expires() {
+    let auth_calls = Arc::new(Mutex::new(0usize));
+
+    let backend = {
+        let auth_calls = auth_calls.clone();
+        Router::new()
+            .route(
+                "/_internal/mcp/authenticate",
+                post(move || {
+                    let auth_calls = auth_calls.clone();
+                    async move {
+                        *auth_calls.lock().expect("lock") += 1;
+                        Json(json!({
+                            "authContext": {
+                                "email": "user@example.com",
+                                "teams": ["team-a"],
+                                "is_authenticated": true,
+                                "is_admin": false,
+                                "permission_is_admin": false,
+                                "token_use": "session"
+                            }
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/transport",
+                post(|| async move {
+                    Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {},
+                            "serverInfo": {"name": "ContextForge", "version": "0.1.0"}
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/_internal/mcp/roots/list",
+                post(|| async move { Json(json!({"jsonrpc":"2.0","id":2,"result":{"roots":[]}})) }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            public_listen_http: Some("127.0.0.1:8788".to_string()),
+            session_core_enabled: true,
+            session_auth_reuse_enabled: true,
+            session_auth_reuse_ttl_seconds: 1,
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+    let client = reqwest::Client::new();
+
+    let initialize_response = client
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer alpha")
+        .header("mcp-session-id", "session-reuse-3")
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}}
+        }))
+        .send()
+        .await
+        .expect("initialize response");
+    assert_eq!(initialize_response.status(), StatusCode::OK);
+
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+
+    let roots_response = client
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer alpha")
+        .header("mcp-session-id", "session-reuse-3")
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "roots/list",
+            "params": {}
+        }))
+        .send()
+        .await
+        .expect("roots response");
+    assert_eq!(roots_response.status(), StatusCode::OK);
+
+    assert_eq!(
+        *auth_calls.lock().expect("lock"),
+        2,
+        "Expired session-bound auth context should force Rust to fall back to backend authenticate",
+    );
 }
 
 #[tokio::test]
@@ -1119,10 +1438,7 @@ async fn affinity_core_forwards_session_post_to_owner_worker_channel() {
         let session_id = session_id.clone();
         let owner_worker_id = owner_worker_id.clone();
         tokio::spawn(async move {
-            let mut pubsub = redis_client
-                .get_async_pubsub()
-                .await
-                .expect("pubsub");
+            let mut pubsub = redis_client.get_async_pubsub().await.expect("pubsub");
             pubsub
                 .subscribe(format!("mcpgw:pool_http:{owner_worker_id}"))
                 .await
@@ -1368,7 +1684,7 @@ async fn resume_core_replays_public_get_from_rust_event_store() {
                         .push("GET".to_string());
                     (
                         StatusCode::OK,
-                        [( "content-type", "text/event-stream")],
+                        [("content-type", "text/event-stream")],
                         "data: backend-fallback\n\n",
                     )
                 }
@@ -1433,10 +1749,7 @@ async fn resume_core_replays_public_get_from_rust_event_store() {
         .await
         .expect("store event 1");
     assert_eq!(store_1.status(), StatusCode::OK);
-    let first_event_id = store_1
-        .json::<Value>()
-        .await
-        .expect("store 1 json")["eventId"]
+    let first_event_id = store_1.json::<Value>().await.expect("store 1 json")["eventId"]
         .as_str()
         .expect("event id")
         .to_string();
@@ -1452,10 +1765,7 @@ async fn resume_core_replays_public_get_from_rust_event_store() {
         .await
         .expect("store event 2");
     assert_eq!(store_2.status(), StatusCode::OK);
-    let second_event_id = store_2
-        .json::<Value>()
-        .await
-        .expect("store 2 json")["eventId"]
+    let second_event_id = store_2.json::<Value>().await.expect("store 2 json")["eventId"]
         .as_str()
         .expect("event id")
         .to_string();
@@ -1485,7 +1795,10 @@ async fn resume_core_replays_public_get_from_rust_event_store() {
                 break;
             };
             collected.extend_from_slice(&chunk);
-            if collected.windows(second_event_id.len()).any(|window| window == second_event_id.as_bytes()) {
+            if collected
+                .windows(second_event_id.len())
+                .any(|window| window == second_event_id.as_bytes())
+            {
                 break;
             }
         }
@@ -1584,7 +1897,10 @@ async fn resume_core_disabled_falls_back_to_python_transport_get() {
             .and_then(|value| value.to_str().ok()),
         Some("python")
     );
-    assert_eq!(response.text().await.expect("body"), "data: backend-fallback\n\n");
+    assert_eq!(
+        response.text().await.expect("body"),
+        "data: backend-fallback\n\n"
+    );
 
     let calls = transport_calls.lock().expect("lock");
     assert_eq!(calls.as_slice(), &["POST".to_string(), "GET".to_string()]);
@@ -1850,7 +2166,10 @@ async fn live_stream_core_disabled_falls_back_to_python_transport_get() {
             .and_then(|value| value.to_str().ok()),
         Some("python")
     );
-    assert_eq!(response.text().await.expect("body"), "data: backend-live-fallback\n\n");
+    assert_eq!(
+        response.text().await.expect("body"),
+        "data: backend-live-fallback\n\n"
+    );
 
     let calls = transport_calls.lock().expect("lock");
     assert_eq!(calls.as_slice(), &["GET".to_string()]);

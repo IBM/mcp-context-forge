@@ -2,6 +2,186 @@
 
 This crate is an experimental Rust MCP runtime edge for ContextForge.
 
+## Quick Start
+
+If you previously used:
+
+```bash
+make docker-prod DOCKER_BUILD_ARGS="--no-cache" testing-down compose-clean testing-up
+```
+
+use these Rust-aware targets instead.
+
+### Fast full-Rust MCP path
+
+Rebuild the image with Rust and start the testing stack in the fastest public
+Rust MCP mode:
+
+```bash
+make testing-rebuild-rust-full
+```
+
+That enables:
+
+- `RUST_MCP_BUILD=true`
+- `RUST_MCP_MODE=full`
+- `RUST_MCP_SESSION_AUTH_REUSE=true`
+
+### Safer fallback mode
+
+Rebuild the image with Rust included, but keep the public MCP transport/session
+path on Python:
+
+```bash
+RUST_MCP_SESSION_AUTH_REUSE=false make testing-rebuild-rust-full
+```
+
+Use this when you want the Rust sidecar available but want the public `/mcp`
+path to fall back to Python semantics.
+
+### Edge-only Rust mode
+
+Rebuild the image and start only the Rust transport edge without the newer
+Rust session/event/resume/live-stream cores:
+
+```bash
+make testing-rebuild-rust
+```
+
+### Verify what is running
+
+```bash
+curl -sD - http://localhost:8080/health -o /dev/null | rg 'x-contextforge-mcp-'
+```
+
+Typical fast full-Rust headers:
+
+```text
+x-contextforge-mcp-runtime-mode: rust-managed
+x-contextforge-mcp-transport-mounted: rust
+x-contextforge-mcp-session-core-mode: rust
+x-contextforge-mcp-event-store-mode: rust
+x-contextforge-mcp-resume-core-mode: rust
+x-contextforge-mcp-live-stream-core-mode: rust
+x-contextforge-mcp-affinity-core-mode: rust
+x-contextforge-mcp-session-auth-reuse-mode: rust
+```
+
+Typical safer fallback headers:
+
+```text
+x-contextforge-mcp-runtime-mode: rust-managed
+x-contextforge-mcp-transport-mounted: python
+x-contextforge-mcp-session-core-mode: python
+x-contextforge-mcp-event-store-mode: python
+x-contextforge-mcp-resume-core-mode: python
+x-contextforge-mcp-live-stream-core-mode: python
+x-contextforge-mcp-affinity-core-mode: python
+x-contextforge-mcp-session-auth-reuse-mode: python
+```
+
+### Benchmark CLI
+
+Activate the local virtualenv first:
+
+```bash
+source .venv/bin/activate
+```
+
+Quick mixed MCP benchmark:
+
+```bash
+LOCUST_LOG_LEVEL=ERROR \
+MCP_SERVER_ID=9779b6698cbd4b4995ee04a4fab38737 \
+locust -f tests/loadtest/locustfile_mcp_protocol.py \
+  --host=http://localhost:8080 \
+  --users=125 \
+  --spawn-rate=30 \
+  --run-time=60s \
+  --headless \
+  --only-summary
+```
+
+Quick pure-tools benchmark:
+
+```bash
+LOCUST_LOG_LEVEL=ERROR \
+MCP_SERVER_ID=9779b6698cbd4b4995ee04a4fab38737 \
+locust -f tests/loadtest/locustfile_mcp_protocol.py \
+  --host=http://localhost:8080 \
+  --users=125 \
+  --spawn-rate=30 \
+  --run-time=60s \
+  --headless \
+  --only-summary \
+  MCPToolCallerUser
+```
+
+Proper distributed local mixed benchmark at `300` users:
+
+Terminal 1:
+
+```bash
+source .venv/bin/activate
+LOCUST_LOG_LEVEL=ERROR \
+MCP_SERVER_ID=9779b6698cbd4b4995ee04a4fab38737 \
+locust -f tests/loadtest/locustfile_mcp_protocol.py \
+  --host=http://localhost:8080 \
+  --master \
+  --headless \
+  --expect-workers=4 \
+  --master-bind-port=5567 \
+  --users=300 \
+  --spawn-rate=50 \
+  --run-time=60s \
+  --only-summary
+```
+
+Terminals 2-5:
+
+```bash
+source .venv/bin/activate
+LOCUST_LOG_LEVEL=ERROR \
+MCP_SERVER_ID=9779b6698cbd4b4995ee04a4fab38737 \
+locust -f tests/loadtest/locustfile_mcp_protocol.py \
+  --worker \
+  --master-host=127.0.0.1 \
+  --master-port=5567
+```
+
+Proper distributed local pure-tools benchmark at `300` users:
+
+Terminal 1:
+
+```bash
+source .venv/bin/activate
+LOCUST_LOG_LEVEL=ERROR \
+MCP_SERVER_ID=9779b6698cbd4b4995ee04a4fab38737 \
+locust -f tests/loadtest/locustfile_mcp_protocol.py \
+  --host=http://localhost:8080 \
+  --master \
+  --headless \
+  --expect-workers=4 \
+  --master-bind-port=5569 \
+  --users=300 \
+  --spawn-rate=50 \
+  --run-time=60s \
+  --only-summary \
+  MCPToolCallerUser
+```
+
+Terminals 2-5:
+
+```bash
+source .venv/bin/activate
+LOCUST_LOG_LEVEL=ERROR \
+MCP_SERVER_ID=9779b6698cbd4b4995ee04a4fab38737 \
+locust -f tests/loadtest/locustfile_mcp_protocol.py \
+  --worker \
+  --master-host=127.0.0.1 \
+  --master-port=5569
+```
+
 ## What it is
 
 This prototype owns:

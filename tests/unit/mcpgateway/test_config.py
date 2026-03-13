@@ -442,6 +442,7 @@ def test_validate_secrets_low_entropy_warns():
 
 def test_validate_secrets_direct_call_non_secretstr_value():
     """Cover validate_secrets branch where v is not a SecretStr (config.py:691)."""
+
     class _Info:
         field_name = "jwt_secret_key"
         data = {"client_mode": True}
@@ -481,6 +482,7 @@ def test_validate_admin_password_low_complexity():
 
 def test_validate_admin_password_direct_call_plain_string():
     """Cover validate_admin_password branch where v is not a SecretStr (config.py:726)."""
+
     class _Info:
         data = {"client_mode": True}
 
@@ -519,6 +521,7 @@ def test_validate_cors_origins_invalid_format_warns():
 
 def test_validate_cors_origins_none_passthrough_direct_call():
     """Directly cover the validator branch returning None (config.py:767)."""
+
     # This branch is not reachable through Settings() because _parse_allowed_origins
     # turns inputs into a set, but we still want to keep the validator logic covered.
     class _Info:
@@ -529,6 +532,7 @@ def test_validate_cors_origins_none_passthrough_direct_call():
 
 def test_validate_cors_origins_invalid_type_direct_call():
     """Directly cover the validator raising ValueError for invalid types (config.py:769)."""
+
     class _Info:
         data = {"client_mode": True}
 
@@ -796,6 +800,7 @@ def test_auto_enable_security_txt_empty():
 
 def test_auto_enable_security_txt_falls_back_to_bool_value_direct_call():
     """Directly cover fallback branch when well_known_security_txt is missing from validator context (config.py:1699)."""
+
     class _Info:
         data = {}
 
@@ -1058,6 +1063,8 @@ def test_experimental_rust_mcp_runtime_defaults():
     assert s.experimental_rust_mcp_event_store_enabled is False
     assert s.experimental_rust_mcp_resume_core_enabled is False
     assert s.experimental_rust_mcp_live_stream_core_enabled is False
+    assert s.experimental_rust_mcp_affinity_core_enabled is False
+    assert s.experimental_rust_mcp_session_auth_reuse_enabled is False
 
 
 def test_experimental_rust_mcp_runtime_uds_accepts_absolute_path(tmp_path: Path):

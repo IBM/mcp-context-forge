@@ -18,6 +18,7 @@ use redis::{AsyncCommands, Script, aio::ConnectionManager as RedisConnectionMana
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashMap, hash_map::DefaultHasher},
     convert::Infallible,
@@ -25,7 +26,7 @@ use std::{
     path::Path,
     str::{self, FromStr},
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -61,6 +62,7 @@ const EVENT_STORE_HEADER: &str = "x-contextforge-mcp-event-store";
 const RESUME_CORE_HEADER: &str = "x-contextforge-mcp-resume-core";
 const LIVE_STREAM_CORE_HEADER: &str = "x-contextforge-mcp-live-stream-core";
 const AFFINITY_CORE_HEADER: &str = "x-contextforge-mcp-affinity-core";
+const SESSION_AUTH_REUSE_HEADER: &str = "x-contextforge-mcp-session-auth-reuse";
 const INTERNAL_AFFINITY_FORWARDED_HEADER: &str = "x-contextforge-affinity-forwarded";
 const INTERNAL_AFFINITY_FORWARDED_VALUE: &str = "rust";
 
@@ -120,6 +122,7 @@ pub struct AppState {
     resume_core_enabled: bool,
     live_stream_core_enabled: bool,
     affinity_core_enabled: bool,
+    session_auth_reuse_enabled: bool,
     cache_prefix: Arc<str>,
     event_store_max_events_per_stream: usize,
     event_store_ttl: Duration,
@@ -133,6 +136,7 @@ pub struct AppState {
     tools_call_plan_ttl: Duration,
     upstream_session_ttl: Duration,
     session_ttl: Duration,
+    session_auth_reuse_ttl: Duration,
     public_ingress_enabled: bool,
 }
 
@@ -159,6 +163,7 @@ pub struct HealthResponse {
     pub resume_core_enabled: bool,
     pub live_stream_core_enabled: bool,
     pub affinity_core_enabled: bool,
+    pub session_auth_reuse_enabled: bool,
     pub active_sessions: usize,
 }
 
@@ -191,6 +196,8 @@ struct InternalAuthContext {
     teams: Option<Vec<String>>,
     #[serde(default)]
     is_admin: bool,
+    #[serde(default)]
+    is_authenticated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -241,6 +248,9 @@ struct RuntimeSessionRecord {
     server_id: Option<String>,
     protocol_version: Option<String>,
     client_capabilities: Option<Value>,
+    encoded_auth_context: Option<String>,
+    auth_binding_fingerprint: Option<String>,
+    auth_context_expires_at_epoch_ms: Option<u64>,
     created_at: Instant,
     last_used: Instant,
 }
@@ -264,6 +274,9 @@ struct StoredRuntimeSessionRecord {
     server_id: Option<String>,
     protocol_version: Option<String>,
     client_capabilities: Option<Value>,
+    encoded_auth_context: Option<String>,
+    auth_binding_fingerprint: Option<String>,
+    auth_context_expires_at_epoch_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -345,6 +358,9 @@ impl From<&RuntimeSessionRecord> for StoredRuntimeSessionRecord {
             server_id: value.server_id.clone(),
             protocol_version: value.protocol_version.clone(),
             client_capabilities: value.client_capabilities.clone(),
+            encoded_auth_context: value.encoded_auth_context.clone(),
+            auth_binding_fingerprint: value.auth_binding_fingerprint.clone(),
+            auth_context_expires_at_epoch_ms: value.auth_context_expires_at_epoch_ms,
         }
     }
 }
@@ -356,6 +372,9 @@ impl From<StoredRuntimeSessionRecord> for RuntimeSessionRecord {
             server_id: value.server_id,
             protocol_version: value.protocol_version,
             client_capabilities: value.client_capabilities,
+            encoded_auth_context: value.encoded_auth_context,
+            auth_binding_fingerprint: value.auth_binding_fingerprint,
+            auth_context_expires_at_epoch_ms: value.auth_context_expires_at_epoch_ms,
             created_at: Instant::now(),
             last_used: Instant::now(),
         }
@@ -496,6 +515,7 @@ impl AppState {
             resume_core_enabled: config.resume_core_enabled,
             live_stream_core_enabled: config.live_stream_core_enabled,
             affinity_core_enabled: config.affinity_core_enabled,
+            session_auth_reuse_enabled: config.session_auth_reuse_enabled,
             cache_prefix: Arc::from(config.cache_prefix.clone()),
             event_store_max_events_per_stream: config.event_store_max_events_per_stream,
             event_store_ttl: Duration::from_secs(config.event_store_ttl_seconds),
@@ -509,6 +529,7 @@ impl AppState {
             tools_call_plan_ttl: Duration::from_secs(config.tools_call_plan_ttl_seconds),
             upstream_session_ttl: Duration::from_secs(config.upstream_session_ttl_seconds),
             session_ttl: Duration::from_secs(config.session_ttl_seconds),
+            session_auth_reuse_ttl: Duration::from_secs(config.session_auth_reuse_ttl_seconds),
             public_ingress_enabled: config.public_listen_http.is_some(),
         })
     }
@@ -691,6 +712,10 @@ impl AppState {
         self.affinity_core_enabled
     }
 
+    pub fn session_auth_reuse_enabled(&self) -> bool {
+        self.session_auth_reuse_enabled
+    }
+
     fn cache_prefix(&self) -> &str {
         &self.cache_prefix
     }
@@ -738,6 +763,10 @@ impl AppState {
 
     fn session_ttl(&self) -> Duration {
         self.session_ttl
+    }
+
+    fn session_auth_reuse_ttl(&self) -> Duration {
+        self.session_auth_reuse_ttl
     }
 
     fn public_ingress_enabled(&self) -> bool {
@@ -835,6 +864,7 @@ async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
         resume_core_enabled: state.resume_core_enabled(),
         live_stream_core_enabled: state.live_stream_core_enabled(),
         affinity_core_enabled: state.affinity_core_enabled(),
+        session_auth_reuse_enabled: state.session_auth_reuse_enabled(),
         active_sessions,
     })
 }
@@ -1059,9 +1089,8 @@ async fn rpc_inner(
         && server_scoped_request
         && state.db_pool().is_some()
         && can_use_direct_resources_read(&request.params);
-    let rust_db_direct_resource_templates_list = specialized_resource_templates_list
-        && server_scoped_request
-        && state.db_pool().is_some();
+    let rust_db_direct_resource_templates_list =
+        specialized_resource_templates_list && server_scoped_request && state.db_pool().is_some();
     let rust_db_direct_prompts_list =
         specialized_prompts_list && server_scoped_request && state.db_pool().is_some();
     let rust_db_direct_prompts_get = specialized_prompts_get
@@ -1200,12 +1229,7 @@ async fn rpc_inner(
     }
 
     if rust_db_direct_resources_list {
-        return direct_server_resources_list(
-            &state,
-            effective_headers,
-            request.id.clone(),
-        )
-        .await;
+        return direct_server_resources_list(&state, effective_headers, request.id.clone()).await;
     }
 
     if specialized_resources_list {
@@ -1279,12 +1303,7 @@ async fn rpc_inner(
     }
 
     if rust_db_direct_prompts_list {
-        return direct_server_prompts_list(
-            &state,
-            effective_headers,
-            request.id.clone(),
-        )
-        .await;
+        return direct_server_prompts_list(&state, effective_headers, request.id.clone()).await;
     }
 
     if specialized_prompts_list {
@@ -2049,6 +2068,73 @@ fn public_client_ip(incoming_headers: &HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
+fn unix_epoch_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn current_encoded_auth_context_header(incoming_headers: &HeaderMap) -> Option<String> {
+    incoming_headers
+        .get("x-contextforge-auth-context")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+}
+
+fn auth_binding_fingerprint(incoming_headers: &HeaderMap) -> Option<String> {
+    let mut material = String::new();
+
+    for header_name in ["authorization", "cookie"] {
+        if let Some(value) = incoming_headers
+            .get(header_name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            material.push_str(header_name);
+            material.push('=');
+            material.push_str(value);
+            material.push('\n');
+        }
+    }
+
+    if material.is_empty() {
+        return None;
+    }
+
+    let digest = Sha256::digest(material.as_bytes());
+    Some(URL_SAFE_NO_PAD.encode(digest))
+}
+
+fn can_reuse_session_auth(
+    state: &AppState,
+    record: &RuntimeSessionRecord,
+    incoming_headers: &HeaderMap,
+    requested_server_id: Option<&str>,
+) -> Option<String> {
+    if !state.session_auth_reuse_enabled() {
+        return None;
+    }
+
+    if requested_server_id.is_some() && record.server_id.as_deref() != requested_server_id {
+        return None;
+    }
+
+    let expected_fingerprint = record.auth_binding_fingerprint.as_deref()?;
+    let actual_fingerprint = auth_binding_fingerprint(incoming_headers)?;
+    if actual_fingerprint != expected_fingerprint {
+        return None;
+    }
+
+    let expires_at = record.auth_context_expires_at_epoch_ms?;
+    if unix_epoch_millis() >= expires_at {
+        return None;
+    }
+
+    record.encoded_auth_context.clone()
+}
+
 fn encode_internal_auth_context_header(auth_context: &Value) -> Result<HeaderValue, Response> {
     let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(auth_context).map_err(|err| {
         json_response(
@@ -2086,6 +2172,31 @@ async fn authenticate_public_request_if_needed(
     }
     if incoming_headers.contains_key("x-contextforge-auth-context") {
         return Ok((incoming_headers, public_path));
+    }
+
+    if state.session_core_enabled() {
+        if let Some(session_id) = runtime_session_id_from_request(&incoming_headers, uri) {
+            if let Some(record) = get_runtime_session(state, &session_id).await {
+                if let Some(encoded_auth_context) =
+                    can_reuse_session_auth(state, &record, &incoming_headers, server_id)
+                {
+                    let encoded_auth_context = HeaderValue::from_str(&encoded_auth_context)
+                        .map_err(|err| {
+                            json_response(
+                                StatusCode::BAD_GATEWAY,
+                                json!({
+                                    "detail": format!("Stored MCP auth context header encoding failed: {err}"),
+                                }),
+                            )
+                        })?;
+                    incoming_headers.insert(
+                        HeaderName::from_static("x-contextforge-auth-context"),
+                        encoded_auth_context,
+                    );
+                    return Ok((incoming_headers, public_path));
+                }
+            }
+        }
     }
 
     let request_body = InternalAuthenticateRequest {
@@ -2385,16 +2496,25 @@ async fn handle_initialize_with_session_core(
         .unwrap_or_else(|| session_id.clone());
 
     if status.is_success() {
-        let record = RuntimeSessionRecord {
+        let mut record = RuntimeSessionRecord {
             owner_email: auth_context
                 .as_ref()
                 .and_then(|context| context.email.clone()),
             server_id: extract_server_id_header(&incoming_headers),
             protocol_version: requested_protocol_version(request),
             client_capabilities: extract_client_capabilities(request),
+            encoded_auth_context: None,
+            auth_binding_fingerprint: None,
+            auth_context_expires_at_epoch_ms: None,
             created_at: Instant::now(),
             last_used: Instant::now(),
         };
+        maybe_bind_session_auth_context(
+            state,
+            &mut record,
+            &incoming_headers,
+            auth_context.as_ref(),
+        );
         upsert_runtime_session(state, response_session_id.clone(), record).await;
     } else {
         remove_runtime_session(state, &response_session_id).await;
@@ -2421,6 +2541,15 @@ async fn handle_initialize_with_session_core(
         response
             .headers_mut()
             .insert(HeaderName::from_static(EVENT_STORE_HEADER), value);
+    }
+    if let Ok(value) = HeaderValue::from_str(if state.session_auth_reuse_enabled() {
+        "rust"
+    } else {
+        "python"
+    }) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static(SESSION_AUTH_REUSE_HEADER), value);
     }
     if let Ok(value) = HeaderValue::from_str(if state.resume_core_enabled() {
         "rust"
@@ -2588,7 +2717,10 @@ fn is_affinity_forwarded_request(headers: &HeaderMap) -> bool {
 
 async fn get_pool_session_owner(state: &AppState, session_id: &str) -> Option<String> {
     let mut redis = state.redis().await?;
-    match redis.get::<_, Option<String>>(pool_owner_key(session_id)).await {
+    match redis
+        .get::<_, Option<String>>(pool_owner_key(session_id))
+        .await
+    {
         Ok(owner) => owner,
         Err(err) => {
             warn!("Rust MCP affinity owner lookup failed for {session_id}: {err}");
@@ -2630,17 +2762,14 @@ async fn forward_transport_request_via_affinity_owner(
         .await
         .map_err(|err| affinity_forward_error_response("Pub/Sub subscribe failed", err))?;
 
-    let mut publish_conn = state
-        .redis()
-        .await
-        .ok_or_else(|| {
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "detail": "Rust MCP affinity forwarding requires Redis",
-                }),
-            )
-        })?;
+    let mut publish_conn = state.redis().await.ok_or_else(|| {
+        json_response(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "detail": "Rust MCP affinity forwarding requires Redis",
+            }),
+        )
+    })?;
 
     let headers = build_affinity_forward_headers(incoming_headers);
     let payload = AffinityForwardRequest {
@@ -2692,9 +2821,9 @@ async fn forward_transport_request_via_affinity_owner(
             )
         })?;
 
-    let payload_json: String = message
-        .get_payload()
-        .map_err(|err| affinity_forward_error_response("Affinity response payload decode failed", err))?;
+    let payload_json: String = message.get_payload().map_err(|err| {
+        affinity_forward_error_response("Affinity response payload decode failed", err)
+    })?;
     let payload: AffinityForwardResponse = serde_json::from_str(&payload_json).map_err(|err| {
         affinity_forward_error_response("Affinity response JSON decode failed", err)
     })?;
@@ -2736,7 +2865,10 @@ fn response_from_affinity_forward_response(
     let mut has_session_id = false;
     for (name, value) in payload.headers {
         let lower = name.to_ascii_lowercase();
-        if matches!(lower.as_str(), "connection" | "transfer-encoding" | "keep-alive" | "content-length") {
+        if matches!(
+            lower.as_str(),
+            "connection" | "transfer-encoding" | "keep-alive" | "content-length"
+        ) {
             continue;
         }
         if lower == "content-type" {
@@ -3051,6 +3183,20 @@ async fn validate_runtime_session_request(
         ));
     };
 
+    if let (Some(session_server_id), Some(request_server_id)) = (
+        record.server_id.as_deref(),
+        extract_server_id_header(incoming_headers).as_deref(),
+    ) {
+        if session_server_id != request_server_id {
+            return Err(json_response(
+                StatusCode::FORBIDDEN,
+                json!({
+                    "detail": "Session access denied",
+                }),
+            ));
+        }
+    }
+
     let auth_context = decode_internal_auth_context_from_headers_optional(incoming_headers);
     if !runtime_session_allows_access(&record, auth_context.as_ref()) {
         return Err(json_response(
@@ -3137,6 +3283,53 @@ fn requested_protocol_version_from_headers(incoming_headers: &HeaderMap) -> Opti
         .map(str::to_string)
 }
 
+fn maybe_bind_session_auth_context(
+    state: &AppState,
+    record: &mut RuntimeSessionRecord,
+    incoming_headers: &HeaderMap,
+    auth_context: Option<&InternalAuthContext>,
+) {
+    if !state.session_auth_reuse_enabled() {
+        record.encoded_auth_context = None;
+        record.auth_binding_fingerprint = None;
+        record.auth_context_expires_at_epoch_ms = None;
+        return;
+    }
+
+    let Some(auth_context) = auth_context else {
+        record.encoded_auth_context = None;
+        record.auth_binding_fingerprint = None;
+        record.auth_context_expires_at_epoch_ms = None;
+        return;
+    };
+
+    if !auth_context.is_authenticated {
+        record.encoded_auth_context = None;
+        record.auth_binding_fingerprint = None;
+        record.auth_context_expires_at_epoch_ms = None;
+        return;
+    }
+
+    let Some(encoded_auth_context) = current_encoded_auth_context_header(incoming_headers) else {
+        record.encoded_auth_context = None;
+        record.auth_binding_fingerprint = None;
+        record.auth_context_expires_at_epoch_ms = None;
+        return;
+    };
+
+    let Some(fingerprint) = auth_binding_fingerprint(incoming_headers) else {
+        record.encoded_auth_context = None;
+        record.auth_binding_fingerprint = None;
+        record.auth_context_expires_at_epoch_ms = None;
+        return;
+    };
+
+    record.encoded_auth_context = Some(encoded_auth_context);
+    record.auth_binding_fingerprint = Some(fingerprint);
+    record.auth_context_expires_at_epoch_ms =
+        Some(unix_epoch_millis() + state.session_auth_reuse_ttl().as_millis() as u64);
+}
+
 fn inject_session_header(incoming_headers: &mut HeaderMap, session_id: &str) {
     if let Ok(value) = HeaderValue::from_str(session_id) {
         incoming_headers.insert(HeaderName::from_static("mcp-session-id"), value);
@@ -3185,11 +3378,15 @@ async fn maybe_upsert_runtime_session_from_transport_response(
     let existing = get_runtime_session(state, &session_id).await;
     let auth_context = decode_internal_auth_context_from_headers_optional(incoming_headers);
     let now = Instant::now();
-    let record = RuntimeSessionRecord {
+    let mut record = RuntimeSessionRecord {
         owner_email: existing
             .as_ref()
             .and_then(|record| record.owner_email.clone())
-            .or_else(|| auth_context.as_ref().and_then(|context| context.email.clone())),
+            .or_else(|| {
+                auth_context
+                    .as_ref()
+                    .and_then(|context| context.email.clone())
+            }),
         server_id: existing
             .as_ref()
             .and_then(|record| record.server_id.clone())
@@ -3201,12 +3398,22 @@ async fn maybe_upsert_runtime_session_from_transport_response(
         client_capabilities: existing
             .as_ref()
             .and_then(|record| record.client_capabilities.clone()),
+        encoded_auth_context: existing
+            .as_ref()
+            .and_then(|record| record.encoded_auth_context.clone()),
+        auth_binding_fingerprint: existing
+            .as_ref()
+            .and_then(|record| record.auth_binding_fingerprint.clone()),
+        auth_context_expires_at_epoch_ms: existing
+            .as_ref()
+            .and_then(|record| record.auth_context_expires_at_epoch_ms),
         created_at: existing
             .as_ref()
             .map(|record| record.created_at)
             .unwrap_or(now),
         last_used: now,
     };
+    maybe_bind_session_auth_context(state, &mut record, incoming_headers, auth_context.as_ref());
     upsert_runtime_session(state, session_id.clone(), record).await;
 
     Some(session_id)
@@ -3323,9 +3530,7 @@ async fn handle_resume_transport_request(
         .unwrap_or(state.protocol_version())
         .to_string();
 
-    let keep_alive = KeepAlive::new()
-        .interval(Duration::from_secs(15))
-        .text("");
+    let keep_alive = KeepAlive::new().interval(Duration::from_secs(15)).text("");
     let poll_interval = state.event_store_poll_interval();
     let session_id = session_id.map(str::to_string);
     let stream_session_id = session_id.clone();
@@ -3388,11 +3593,12 @@ async fn handle_resume_transport_request(
         }
     };
 
-    let mut response = Sse::new(event_stream).keep_alive(keep_alive).into_response();
-    response.headers_mut().insert(
-        CONTENT_TYPE,
-        HeaderValue::from_static("text/event-stream"),
-    );
+    let mut response = Sse::new(event_stream)
+        .keep_alive(keep_alive)
+        .into_response();
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
     response.headers_mut().insert(
         HeaderName::from_static("cache-control"),
         HeaderValue::from_static("no-cache, no-transform"),
@@ -3416,6 +3622,15 @@ async fn handle_resume_transport_request(
     response.headers_mut().insert(
         HeaderName::from_static(RESUME_CORE_HEADER),
         HeaderValue::from_static("rust"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(SESSION_AUTH_REUSE_HEADER),
+        HeaderValue::from_str(if state.session_auth_reuse_enabled() {
+            "rust"
+        } else {
+            "python"
+        })
+        .unwrap_or_else(|_| HeaderValue::from_static("python")),
     );
     response.headers_mut().insert(
         HeaderName::from_static(LIVE_STREAM_CORE_HEADER),
@@ -3442,9 +3657,7 @@ async fn handle_live_stream_transport_request(
     uri: axum::http::Uri,
     session_id: Option<&str>,
 ) -> Response {
-    let keep_alive = KeepAlive::new()
-        .interval(Duration::from_secs(15))
-        .text("");
+    let keep_alive = KeepAlive::new().interval(Duration::from_secs(15)).text("");
     let state_cloned = state.clone();
     let backend_headers = incoming_headers.clone();
     let request_session_id = session_id.map(str::to_string);
@@ -3545,11 +3758,12 @@ async fn handle_live_stream_transport_request(
         }
     };
 
-    let mut response = Sse::new(event_stream).keep_alive(keep_alive).into_response();
-    response.headers_mut().insert(
-        CONTENT_TYPE,
-        HeaderValue::from_static("text/event-stream"),
-    );
+    let mut response = Sse::new(event_stream)
+        .keep_alive(keep_alive)
+        .into_response();
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
     response.headers_mut().insert(
         HeaderName::from_static("cache-control"),
         HeaderValue::from_static("no-cache, no-transform"),
@@ -3568,18 +3782,39 @@ async fn handle_live_stream_transport_request(
     );
     response.headers_mut().insert(
         HeaderName::from_static(SESSION_CORE_HEADER),
-        HeaderValue::from_str(if state.session_core_enabled() { "rust" } else { "python" })
-            .unwrap_or_else(|_| HeaderValue::from_static("python")),
+        HeaderValue::from_str(if state.session_core_enabled() {
+            "rust"
+        } else {
+            "python"
+        })
+        .unwrap_or_else(|_| HeaderValue::from_static("python")),
     );
     response.headers_mut().insert(
         HeaderName::from_static(EVENT_STORE_HEADER),
-        HeaderValue::from_str(if state.event_store_enabled() { "rust" } else { "python" })
-            .unwrap_or_else(|_| HeaderValue::from_static("python")),
+        HeaderValue::from_str(if state.event_store_enabled() {
+            "rust"
+        } else {
+            "python"
+        })
+        .unwrap_or_else(|_| HeaderValue::from_static("python")),
     );
     response.headers_mut().insert(
         HeaderName::from_static(RESUME_CORE_HEADER),
-        HeaderValue::from_str(if state.resume_core_enabled() { "rust" } else { "python" })
-            .unwrap_or_else(|_| HeaderValue::from_static("python")),
+        HeaderValue::from_str(if state.resume_core_enabled() {
+            "rust"
+        } else {
+            "python"
+        })
+        .unwrap_or_else(|_| HeaderValue::from_static("python")),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(SESSION_AUTH_REUSE_HEADER),
+        HeaderValue::from_str(if state.session_auth_reuse_enabled() {
+            "rust"
+        } else {
+            "python"
+        })
+        .unwrap_or_else(|_| HeaderValue::from_static("python")),
     );
     if let Some(session_id_value) = response_session_id.as_deref() {
         if let Ok(value) = HeaderValue::from_str(session_id_value) {
@@ -3679,7 +3914,8 @@ async fn forward_transport_request(
                 );
             };
 
-            let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+            let auth_context =
+                decode_internal_auth_context_from_headers_optional(&incoming_headers);
             if !runtime_session_allows_access(&record, auth_context.as_ref()) {
                 return json_response(
                     StatusCode::FORBIDDEN,
@@ -4806,7 +5042,10 @@ fn resource_row_to_value(row: tokio_postgres::Row) -> Value {
 fn resource_template_row_to_value(row: tokio_postgres::Row) -> Value {
     let mut resource_template = serde_json::Map::new();
     resource_template.insert("id".to_string(), Value::String(row.get("id")));
-    resource_template.insert("uriTemplate".to_string(), Value::String(row.get("uri_template")));
+    resource_template.insert(
+        "uriTemplate".to_string(),
+        Value::String(row.get("uri_template")),
+    );
     resource_template.insert("name".to_string(), Value::String(row.get("name")));
     if let Some(description) = row.get::<_, Option<String>>("description") {
         resource_template.insert("description".to_string(), Value::String(description));
@@ -5602,13 +5841,9 @@ async fn send_transport_to_backend(
     session_validated: bool,
 ) -> Result<reqwest::Response, Response> {
     let target_url = build_backend_transport_url(state.backend_transport_url(), uri);
-    let mut request = state
-        .client
-        .request(method, target_url)
-        .headers(build_forwarded_headers_with_session_validation(
-            incoming_headers,
-            session_validated,
-        ));
+    let mut request = state.client.request(method, target_url).headers(
+        build_forwarded_headers_with_session_validation(incoming_headers, session_validated),
+    );
     if let Some(body) = body {
         request = request.body(body);
     }

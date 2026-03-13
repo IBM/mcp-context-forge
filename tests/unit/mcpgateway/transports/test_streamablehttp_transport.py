@@ -5579,6 +5579,7 @@ async def test_session_manager_wrapper_rust_event_store(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.json_response_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.experimental_rust_mcp_runtime_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.experimental_rust_mcp_session_auth_reuse_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.experimental_rust_mcp_event_store_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.streamable_http_max_events_per_stream", 75)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.streamable_http_event_ttl", 2700)
@@ -5608,6 +5609,34 @@ async def test_session_manager_wrapper_redis_event_store_when_rust_event_store_d
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.json_response_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.experimental_rust_mcp_runtime_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.experimental_rust_mcp_event_store_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "redis")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.redis_url", "redis://localhost:6379/0")
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", capture_manager)
+
+    SessionManagerWrapper()
+
+    from mcpgateway.transports.redis_event_store import RedisEventStore
+
+    assert isinstance(captured_config["event_store"], RedisEventStore)
+
+
+@pytest.mark.asyncio
+async def test_session_manager_wrapper_falls_back_to_python_event_store_when_session_auth_reuse_disabled(monkeypatch):
+    """SessionManagerWrapper should not activate RustEventStore when public session auth reuse is disabled."""
+
+    captured_config = {}
+
+    def capture_manager(**kwargs):
+        captured_config.update(kwargs)
+        dummy = MagicMock()
+        dummy.run = MagicMock(return_value=asynccontextmanager(lambda: (yield dummy))())
+        return dummy
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.json_response_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.experimental_rust_mcp_runtime_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.experimental_rust_mcp_session_auth_reuse_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.experimental_rust_mcp_event_store_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "redis")
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.redis_url", "redis://localhost:6379/0")
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", capture_manager)
@@ -11996,6 +12025,8 @@ async def test_auth_jwt_returns_invalid_credentials_when_batched_lookup_raises_h
 
     assert await handler._auth_jwt(token="fake-token") is False
     send_error.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 async def test_complete_denied_by_token_scope(monkeypatch):
     """Token without tools.read should be denied completion/complete."""

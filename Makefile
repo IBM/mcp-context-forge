@@ -2264,6 +2264,19 @@ load-test-agentgateway-mcp-server-time:    ## Load test external MCP server (loc
 
 MCP_PROTOCOL_LOCUSTFILE ?= tests/loadtest/locustfile_mcp_protocol.py
 MCP_PROTOCOL_HOST ?= http://localhost:4444
+MCP_BENCHMARK_HOST ?= http://localhost:8080
+MCP_BENCHMARK_SERVER_ID ?= 9779b6698cbd4b4995ee04a4fab38737
+MCP_BENCHMARK_USERS ?= 125
+MCP_BENCHMARK_SPAWN_RATE ?= 30
+MCP_BENCHMARK_RUN_TIME ?= 60s
+MCP_BENCHMARK_HIGH_USERS ?= 300
+MCP_BENCHMARK_HIGH_SPAWN_RATE ?= 50
+MCP_BENCHMARK_HIGH_RUN_TIME ?= 60s
+MCP_BENCHMARK_WORKERS ?= 4
+MCP_BENCHMARK_MIXED_MASTER_PORT ?= 5567
+MCP_BENCHMARK_TOOLS_MASTER_PORT ?= 5569
+MCP_BENCHMARK_LOCUST_LOG_LEVEL ?= ERROR
+MCP_BENCHMARK_WORKER_LOG_DIR ?= reports/mcp_benchmark_workers
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
 	@echo "🔬 Running MCP STREAMABLE HTTP protocol load test..."
@@ -2299,6 +2312,119 @@ load-test-mcp-protocol-ui:                 ## MCP Streamable HTTP protocol test 
 			--spawn-rate=30 \
 			--run-time=120s \
 			--class-picker'
+
+# help: benchmark-mcp-mixed      - Quick mixed MCP benchmark against the testing stack
+# help: benchmark-mcp-tools      - Quick tools-only MCP benchmark against the testing stack
+# help: benchmark-mcp-mixed-300  - Distributed 300-user mixed MCP benchmark
+# help: benchmark-mcp-tools-300  - Distributed 300-user tools-only MCP benchmark
+
+.PHONY: benchmark-mcp-mixed
+benchmark-mcp-mixed:                        ## Quick mixed MCP benchmark against the testing stack
+	@echo "📊 Running mixed MCP benchmark..."
+	@echo "   Host: $(MCP_BENCHMARK_HOST)"
+	@echo "   Server: $(MCP_BENCHMARK_SERVER_ID)"
+	@echo "   Users: $(MCP_BENCHMARK_USERS), Spawn: $(MCP_BENCHMARK_SPAWN_RATE)/s, Duration: $(MCP_BENCHMARK_RUN_TIME)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_BENCHMARK_HOST) \
+			--users=$(MCP_BENCHMARK_USERS) \
+			--spawn-rate=$(MCP_BENCHMARK_SPAWN_RATE) \
+			--run-time=$(MCP_BENCHMARK_RUN_TIME) \
+			--headless \
+			--only-summary'
+
+.PHONY: benchmark-mcp-tools
+benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark against the testing stack
+	@echo "📊 Running tools-only MCP benchmark..."
+	@echo "   Host: $(MCP_BENCHMARK_HOST)"
+	@echo "   Server: $(MCP_BENCHMARK_SERVER_ID)"
+	@echo "   Users: $(MCP_BENCHMARK_USERS), Spawn: $(MCP_BENCHMARK_SPAWN_RATE)/s, Duration: $(MCP_BENCHMARK_RUN_TIME)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_BENCHMARK_HOST) \
+			--users=$(MCP_BENCHMARK_USERS) \
+			--spawn-rate=$(MCP_BENCHMARK_SPAWN_RATE) \
+			--run-time=$(MCP_BENCHMARK_RUN_TIME) \
+			--headless \
+			--only-summary \
+			MCPToolCallerUser'
+
+.PHONY: benchmark-mcp-mixed-300
+benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP benchmark
+	@echo "📊 Running distributed mixed MCP benchmark..."
+	@echo "   Host: $(MCP_BENCHMARK_HOST)"
+	@echo "   Server: $(MCP_BENCHMARK_SERVER_ID)"
+	@echo "   Users: $(MCP_BENCHMARK_HIGH_USERS), Spawn: $(MCP_BENCHMARK_HIGH_SPAWN_RATE)/s, Duration: $(MCP_BENCHMARK_HIGH_RUN_TIME), Workers: $(MCP_BENCHMARK_WORKERS)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(MCP_BENCHMARK_WORKER_LOG_DIR)
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate; \
+		pids=""; \
+		cleanup() { \
+			for pid in $$pids; do kill $$pid 2>/dev/null || true; done; \
+			wait $$pids 2>/dev/null || true; \
+		}; \
+		trap cleanup EXIT INT TERM; \
+		for i in $$(seq 1 $(MCP_BENCHMARK_WORKERS)); do \
+			LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+			locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+				--worker \
+				--master-host=127.0.0.1 \
+				--master-port=$(MCP_BENCHMARK_MIXED_MASTER_PORT) \
+				> $(MCP_BENCHMARK_WORKER_LOG_DIR)/mixed_worker_$$i.log 2>&1 & \
+			pids="$$pids $$!"; \
+		done; \
+		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_BENCHMARK_HOST) \
+			--master \
+			--headless \
+			--expect-workers=$(MCP_BENCHMARK_WORKERS) \
+			--master-bind-port=$(MCP_BENCHMARK_MIXED_MASTER_PORT) \
+			--users=$(MCP_BENCHMARK_HIGH_USERS) \
+			--spawn-rate=$(MCP_BENCHMARK_HIGH_SPAWN_RATE) \
+			--run-time=$(MCP_BENCHMARK_HIGH_RUN_TIME) \
+			--only-summary'
+
+.PHONY: benchmark-mcp-tools-300
+benchmark-mcp-tools-300:                    ## Distributed 300-user tools-only MCP benchmark
+	@echo "📊 Running distributed tools-only MCP benchmark..."
+	@echo "   Host: $(MCP_BENCHMARK_HOST)"
+	@echo "   Server: $(MCP_BENCHMARK_SERVER_ID)"
+	@echo "   Users: $(MCP_BENCHMARK_HIGH_USERS), Spawn: $(MCP_BENCHMARK_HIGH_SPAWN_RATE)/s, Duration: $(MCP_BENCHMARK_HIGH_RUN_TIME), Workers: $(MCP_BENCHMARK_WORKERS)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(MCP_BENCHMARK_WORKER_LOG_DIR)
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate; \
+		pids=""; \
+		cleanup() { \
+			for pid in $$pids; do kill $$pid 2>/dev/null || true; done; \
+			wait $$pids 2>/dev/null || true; \
+		}; \
+		trap cleanup EXIT INT TERM; \
+		for i in $$(seq 1 $(MCP_BENCHMARK_WORKERS)); do \
+			LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+			locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+				--worker \
+				--master-host=127.0.0.1 \
+				--master-port=$(MCP_BENCHMARK_TOOLS_MASTER_PORT) \
+				> $(MCP_BENCHMARK_WORKER_LOG_DIR)/tools_worker_$$i.log 2>&1 & \
+			pids="$$pids $$!"; \
+		done; \
+		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_BENCHMARK_HOST) \
+			--master \
+			--headless \
+			--expect-workers=$(MCP_BENCHMARK_WORKERS) \
+			--master-bind-port=$(MCP_BENCHMARK_TOOLS_MASTER_PORT) \
+			--users=$(MCP_BENCHMARK_HIGH_USERS) \
+			--spawn-rate=$(MCP_BENCHMARK_HIGH_SPAWN_RATE) \
+			--run-time=$(MCP_BENCHMARK_HIGH_RUN_TIME) \
+			--only-summary \
+			MCPToolCallerUser'
 
 load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy test (500 users, 5min)
 	@echo "🔬 Running MCP STREAMABLE HTTP protocol HEAVY load test..."

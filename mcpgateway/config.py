@@ -273,6 +273,10 @@ class Settings(BaseSettings):
         default=False,
         description="Enable the experimental Rust-owned MCP session-affinity forwarding path while keeping Python worker forwarding as the fallback.",
     )
+    experimental_rust_mcp_session_auth_reuse_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
+    )
 
     # Authentication
     basic_auth_user: str = "admin"

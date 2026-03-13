@@ -115,12 +115,22 @@ pub struct RuntimeConfig {
     )]
     pub live_stream_core_enabled: bool,
 
+    #[arg(long, env = "MCP_RUST_AFFINITY_CORE_ENABLED", default_value_t = false)]
+    pub affinity_core_enabled: bool,
+
     #[arg(
         long,
-        env = "MCP_RUST_AFFINITY_CORE_ENABLED",
+        env = "MCP_RUST_SESSION_AUTH_REUSE_ENABLED",
         default_value_t = false
     )]
-    pub affinity_core_enabled: bool,
+    pub session_auth_reuse_enabled: bool,
+
+    #[arg(
+        long,
+        env = "MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS",
+        default_value_t = 30
+    )]
+    pub session_auth_reuse_ttl_seconds: u64,
 
     #[arg(long, env = "MCP_RUST_SESSION_TTL_SECONDS", default_value_t = 3_600)]
     pub session_ttl_seconds: u64,
