@@ -6153,8 +6153,8 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 400
         assert "Invalid JSONPath expression" in str(excinfo.value.detail)
 
-    async def test_list_tools_apijsonpath_jsonpathmodifier_becomes_none_with_pagination(self, monkeypatch):
-        """Test list_tools when JsonPathModifier instance results in parsed_apijsonpath=None with pagination (lines 3676-3681)."""
+    async def test_list_tools_jsonpath_none_returns_pagination(self, monkeypatch):
+        """Test list_tools returns paginated response when jsonpath is None."""
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)

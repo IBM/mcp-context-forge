@@ -759,7 +759,9 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
     if not jsonpath:
         jsonpath = "$[*]"
 
-    logger.debug(f"jsonpath_modifier called with jsonpath='{jsonpath}', mappings={mappings}, data type={type(data)}, data length={len(data) if isinstance(data, list) else 'N/A'}")
+    # Log jsonpath_modifier invocation with structured data
+    data_length = len(data) if isinstance(data, list) else None
+    logger.debug(f"jsonpath_modifier: path='{jsonpath}', has_mappings={mappings is not None}, " f"data_type={type(data).__name__}, data_length={data_length}")
 
     try:
         main_expr: JSONPath = _parse_jsonpath(jsonpath)
@@ -3978,7 +3980,7 @@ async def list_tools(
     db: Session = Depends(get_db),
     apijsonpath: Optional[str] = Query(None, description="Optional JSONPath modifier as JSON string"),
     user=Depends(get_current_user_with_permissions),
-) -> Union[List[ToolRead], List[Dict], Dict]:
+) -> Union[List[ToolRead], List[Dict], Dict, ORJSONResponse]:
     """List all registered tools with team-based filtering and pagination support.
 
     Args:
@@ -4181,7 +4183,7 @@ async def get_tool(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
     apijsonpath: Optional[str] = Query(None, description="Optional JSONPath modifier as JSON string"),
-) -> Union[ToolRead, Dict]:
+) -> Union[ToolRead, Dict, ORJSONResponse]:
     """
     Retrieve a tool by ID, optionally applying a JSONPath post-filter.
 
@@ -4194,7 +4196,8 @@ async def get_tool(
 
     Returns:
         The raw ``ToolRead`` model **or** a JSON-transformed ``dict`` if
-        a JSONPath filter/mapping was supplied.
+        a JSONPath filter/mapping was supplied, **or** an ``ORJSONResponse``
+        when JSONPath modifiers are applied.
 
     Raises:
         HTTPException: If the tool does not exist or the transformation fails.
@@ -4205,18 +4208,9 @@ async def get_tool(
         _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
         data = await tool_service.get_tool(db, tool_id, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin, requesting_user_team_roles=_req_team_roles)
         _enforce_scoped_resource_access(request, db, user, f"/tools/{tool_id}")
-        # Allow apijsonpath as a direct model (internal/tests) or as JSON string via query
-        parsed_apijsonpath: Optional[JsonPathModifier] = None
-        if apijsonpath is None:
-            return data
 
-        if isinstance(apijsonpath, str):
-            try:
-                parsed_apijsonpath = JsonPathModifier.model_validate(__import__("json").loads(apijsonpath))
-            except Exception as ex:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid apijsonpath JSON: {ex}")
-        elif isinstance(apijsonpath, JsonPathModifier):
-            parsed_apijsonpath = apijsonpath
+        # Parse apijsonpath parameter (handles both string and JsonPathModifier inputs)
+        parsed_apijsonpath = _parse_apijsonpath(apijsonpath)
         if parsed_apijsonpath is None:
             return data
 
