@@ -2601,6 +2601,40 @@ class TestListServersTokenAccess:
         assert result == ["converted"]
 
     @pytest.mark.asyncio
+    async def test_list_servers_with_include_metrics_true(self, server_service, test_db):
+        """Test that list_servers eager loads metrics when include_metrics=True.
+
+        This test ensures that when include_metrics=True, the query includes
+        selectinload for both metrics and metrics_hourly relationships to prevent N+1 queries.
+        Regression test for PR #3649 performance optimization.
+        """
+        mock_server = MagicMock()
+        mock_server.team_id = None
+
+        mock_convert = MagicMock(return_value="converted_server_with_metrics")
+
+        with (
+            patch.object(server_service, "convert_server_to_read", mock_convert),
+            patch("mcpgateway.services.server_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.server_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.hash_filters = MagicMock(return_value="test-hash")
+            mock_cache_fn.return_value = mock_cache
+            mock_paginate.return_value = ([mock_server], None)
+            test_db.commit = Mock()
+
+            # Call with include_metrics=True to trigger eager loading code path
+            result, cursor = await server_service.list_servers(test_db, include_metrics=True)
+
+        assert result == ["converted_server_with_metrics"]
+        # Verify convert_server_to_read was called with include_metrics=True
+        mock_convert.assert_called_once_with(
+            mock_server, include_metrics=True
+        )
+
+    @pytest.mark.asyncio
     async def test_team_scoped_token(self, server_service, test_db):
         """token_teams=["team-1"] shows public + team servers."""
         mock_server = MagicMock()
