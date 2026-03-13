@@ -5,6 +5,7 @@ Revision ID: d8a534ca0f9c
 Revises: z1a2b3c4d5e6
 Create Date: 2026-03-13
 """
+# Third-Party
 from alembic import op
 import sqlalchemy as sa
 
@@ -15,6 +16,7 @@ depends_on = None
 
 
 def upgrade():
+    """Create Bell-LaPadula security clearance tables."""
     op.create_table(
         "sc_levels",
         sa.Column("id", sa.String(36), primary_key=True),
@@ -121,6 +123,7 @@ def upgrade():
 
 
 def downgrade():
+    """Drop Bell-LaPadula security clearance tables."""
     op.drop_table("sc_dynamic_rules")
     op.drop_table("sc_clearance_audit_log")
     op.drop_table("sc_server_classifications")

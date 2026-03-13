@@ -5,10 +5,13 @@ Revision ID: 3c272d7a6cee
 Revises: d8a534ca0f9c
 Create Date: 2026-03-13 00:00:00.000000
 """
-from alembic import op
-import sqlalchemy as sa
+# Standard
 from datetime import datetime, timezone
 import uuid
+
+# Third-Party
+from alembic import op
+import sqlalchemy as sa
 
 revision = "3c272d7a6cee"
 down_revision = "d8a534ca0f9c"
@@ -17,7 +20,7 @@ depends_on = None
 
 
 def upgrade():
-    # --- sc_resource_classifications ---
+    """Add missing sc_ tables and bootstrap default clearance levels."""
     op.create_table(
         "sc_resource_classifications",
         sa.Column("id", sa.String(36), primary_key=True),
@@ -31,7 +34,6 @@ def upgrade():
     op.create_index("ix_sc_resource_classifications_tenant_id", "sc_resource_classifications", ["tenant_id"])
     op.create_index("ix_sc_resource_classifications_uri", "sc_resource_classifications", ["resource_uri"])
 
-    # --- sc_a2a_agent_clearances ---
     op.create_table(
         "sc_a2a_agent_clearances",
         sa.Column("id", sa.String(36), primary_key=True),
@@ -72,6 +74,7 @@ def upgrade():
 
 
 def downgrade():
+    """Remove missing sc_ tables and bootstrap data."""
     # Remove bootstrap data
     op.execute("DELETE FROM sc_levels WHERE name IN ('PUBLIC','INTERNAL','CONFIDENTIAL','SECRET','TOP_SECRET','COMPARTMENTALIZED')")
     op.drop_table("sc_a2a_agent_clearances")
