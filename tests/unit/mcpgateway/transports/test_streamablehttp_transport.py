@@ -9138,7 +9138,7 @@ async def test_list_resources_gateway_not_found_log(monkeypatch, caplog):
         with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
             mock_rs.list_server_resources = AsyncMock(return_value=[])
 
-            with caplog.at_level("WARNING"):
+            with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
                 await list_resources()
                 # Case-insensitive check or matching the exact log output
                 assert "Gateway gw-missing specified in X-Context-Forge-Gateway-Id header not found" in caplog.text
@@ -9217,7 +9217,7 @@ async def test_get_request_context_no_request_object(monkeypatch, caplog):
 
     try:
         with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
-            with caplog.at_level("WARNING"):
+            with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
                 sid, headers, user = await _get_request_context_or_default()
 
                 assert sid == "default_server_id"
@@ -9293,7 +9293,7 @@ async def test_get_request_context_auth_failure(monkeypatch, caplog):
 
     try:
         with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
-            with caplog.at_level("WARNING"):
+            with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
                 sid, headers, user = await _get_request_context_or_default()
 
                 assert sid == "default_server_id"
