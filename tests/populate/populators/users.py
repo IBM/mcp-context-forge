@@ -96,11 +96,9 @@ class UserPopulator(BasePopulator):
                 self.progress_tracker.refresh()
 
         # Process in batches
-        for batch_start in range(0, count, self.batch_concurrency):
-            batch_end = min(batch_start + self.batch_concurrency, count)
-            await asyncio.gather(*[_create_and_login(i) for i in range(batch_start, batch_end)])
+        await asyncio.gather(*[_create_and_login(i) for i in range(count)])
 
-        # Final progress update
+        #  Process all users concurrently (semaphore in APIClient controls actual concurrency)
         if self.progress_tracker:
             remainder = update_count % self.progress_update_frequency
             if remainder > 0:

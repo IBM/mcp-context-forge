@@ -1053,8 +1053,12 @@ populate-small:                            ## Populate via REST API - small (100
 	@echo "📊 Populating via REST API (small profile)..."
 	@echo "   Target: 100 users, ~3K entities"
 	@echo "   Time: ~2 minutes"
+	@echo "   💡 Using fast Argon2 settings for performance"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=8192 && \
+		export ARGON2ID_PARALLELISM=1 && \
 		python -m tests.populate --profile small"
 	@echo ""
 	@echo "✅ Small API population complete!"
@@ -1065,8 +1069,12 @@ populate-medium:                           ## Populate via REST API - medium (10
 	@echo "   Target: 10K users, ~300K entities"
 	@echo "   Time: ~30-60 minutes"
 	@echo "   ⚠️  Recommended: PostgreSQL backend"
+	@echo "   💡 Using fast Argon2 settings from .env for performance"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=8192 && \
+		export ARGON2ID_PARALLELISM=1 && \
 		python -m tests.populate --profile medium"
 	@echo ""
 	@echo "✅ Medium API population complete!"

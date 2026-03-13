@@ -43,6 +43,7 @@ class BasePopulator(ABC):
         self.dry_run = dry_run
         self.email_domain = config.get("global", {}).get("email_domain", "loadtest.example.com")
         self.batch_concurrency = config.get("concurrency", {}).get("batch_size", 50)
+        self.chunk_size = config.get("concurrency", {}).get("chunk_size", 10000)
         self.progress_update_frequency = config.get("global", {}).get("progress_update_frequency", 10)
 
         # Results tracking
@@ -153,17 +154,19 @@ class BasePopulator(ABC):
                     errors += 1
             except Exception as exc:
                 errors += 1
-                logger.debug(f"Failed to create {self.get_name()}: {exc}")
+                logger.error(f"Failed to create {self.get_name()}: {exc}")
 
             update_count += 1
             if self.progress_tracker and update_count % self.progress_update_frequency == 0:
                 self.progress_tracker.update(self.get_name(), self.progress_update_frequency, errors=0)
                 self.progress_tracker.refresh()
 
-        # Process in batches
-        for i in range(0, len(payloads), self.batch_concurrency):
-            batch = payloads[i : i + self.batch_concurrency]
-            await asyncio.gather(*[_create_one(p) for p in batch])
+        # Process in chunks to avoid overwhelming asyncio.gather with millions of tasks
+        # APIClient semaphore still controls actual concurrency
+        for i in range(0, len(payloads), self.chunk_size):
+            chunk = payloads[i : i + self.chunk_size]
+            await asyncio.gather(*[_create_one(p) for p in chunk], return_exceptions=True)
+
 
         # Final progress update for remainder
         if self.progress_tracker:

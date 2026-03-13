@@ -25,6 +25,7 @@ concurrency:
   max_connections: 200
   max_concurrent: 100
   batch_size: 100
+  chunk_size: 10000
   max_retries: 3
   retry_base_delay: 1.0
   timeout: 30.0
@@ -74,8 +75,8 @@ scale:
 
 population_order:
   - users
-  - teams
   - rbac
+  - teams
   - gateways
   - tools
   - resources

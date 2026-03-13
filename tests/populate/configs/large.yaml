@@ -20,6 +20,7 @@ concurrency:
   max_connections: 500
   max_concurrent: 300
   batch_size: 300
+  chunk_size: 10000
   max_retries: 5
   retry_base_delay: 2.0
   timeout: 120.0

@@ -37,6 +37,7 @@ class TeamPopulator(BasePopulator):
         created = 0
         errors = 0
         team_ids: List[str] = []
+        team_owners: Dict[str, str] = {}  # team_id -> owner_email
         update_count = 0
 
         async def _create_team(user_i: int, team_j: int):
@@ -65,6 +66,7 @@ class TeamPopulator(BasePopulator):
                         tid = data.get("id")
                         if tid:
                             team_ids.append(tid)
+                            team_owners[tid] = email  # Track owner
                     except Exception:
                         pass
                 elif resp.status_code == 409:
@@ -83,9 +85,7 @@ class TeamPopulator(BasePopulator):
         # Build all (user_i, team_j) pairs and process in batches
         tasks = [(ui, tj) for ui in range(user_count) for tj in range(additional_per_user)]
 
-        for batch_start in range(0, len(tasks), self.batch_concurrency):
-            batch = tasks[batch_start : batch_start + self.batch_concurrency]
-            await asyncio.gather(*[_create_team(ui, tj) for ui, tj in batch])
+        await asyncio.gather(*[_create_team(ui, tj) for ui, tj in tasks])
 
         # Final progress update
         if self.progress_tracker:
@@ -94,11 +94,12 @@ class TeamPopulator(BasePopulator):
                 self.progress_tracker.update(self.get_name(), remainder)
 
         self.existing_data["team_ids"] = team_ids
+        self.existing_data["team_owners"] = team_owners
 
         # Invite members to teams (subset for performance)
         invite_count = 0
         if team_ids and len(self.client.user_tokens) > 1:
-            invite_count = await self._invite_members(team_ids, members_min, members_max)
+            invite_count = await self._invite_members(team_ids, team_owners, members_min, members_max)
 
         return {
             "created": created,
@@ -107,7 +108,7 @@ class TeamPopulator(BasePopulator):
             "invitations_sent": invite_count,
         }
 
-    async def _invite_members(self, team_ids: List[str], members_min: int, members_max: int) -> int:
+    async def _invite_members(self, team_ids: List[str], team_owners: Dict[str, str], members_min: int, members_max: int) -> int:
         """Invite random users to a subset of teams."""
         user_emails = self.existing_data.get("user_emails", [])
         if not user_emails or not team_ids:
@@ -120,14 +121,27 @@ class TeamPopulator(BasePopulator):
 
         async def _invite_to_team(team_id: str):
             nonlocal invite_count
+            # Get the owner's token for this team
+            owner_email = team_owners.get(team_id)
+            if not owner_email:
+                return  # Skip if we don't know the owner
+            
+            owner_token = self.client.user_tokens.get(owner_email, self.client.admin_token)
+            
             num_members = random.randint(members_min, min(members_max, len(user_emails)))
-            invitees = random.sample(user_emails, min(num_members, len(user_emails)))
+            # Don't invite the owner to their own team
+            available_invitees = [e for e in user_emails if e != owner_email]
+            if not available_invitees:
+                return
+            
+            invitees = random.sample(available_invitees, min(num_members, len(available_invitees)))
 
             for invitee_email in invitees:
                 try:
                     resp = await self.client.post(
                         f"/teams/{team_id}/invitations",
                         json={"email": invitee_email, "role": "member"},
+                        token=owner_token,  # Use owner's token
                         expected_status=[200, 201, 400, 409],  # 400/409 = already member
                     )
                     if resp.status_code in (200, 201):

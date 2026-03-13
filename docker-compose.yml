@@ -289,6 +289,10 @@ services:
       - SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM=${SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM:-false}
       - SSO_AUTO_CREATE_USERS=${SSO_AUTO_CREATE_USERS:-true}
       - SSO_PRESERVE_ADMIN_AUTH=${SSO_PRESERVE_ADMIN_AUTH:-true}
+      # Argon2 password hashing configuration (for load testing, use fast settings from .env)
+      - ARGON2ID_TIME_COST=${ARGON2ID_TIME_COST:-2}
+      - ARGON2ID_MEMORY_COST=${ARGON2ID_MEMORY_COST:-65536}
+      - ARGON2ID_PARALLELISM=${ARGON2ID_PARALLELISM:-4}
       # Security defaults (tokens require expiration and JTI for revocation)
       - REQUIRE_TOKEN_EXPIRATION=${REQUIRE_TOKEN_EXPIRATION:-true}
       - REQUIRE_JTI=${REQUIRE_JTI:-true}
@@ -865,7 +869,7 @@ services:
       # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=30    # Kill transactions idle > 30s to prevent connection pool exhaustion
+      - IDLE_TRANSACTION_TIMEOUT=300   # Kill transactions idle > 300s (5 min) to allow bulk operations while preventing connection pool exhaustion
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
