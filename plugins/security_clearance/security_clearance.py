@@ -397,7 +397,7 @@ class SecurityClearancePlugin(Plugin):
         Returns:
             PluginViolation instance.
         """
-        return PluginViolation(code=code, reason=reason)
+        return PluginViolation(code=code, reason=reason, description=reason)
 
 
     async def tool_pre_invoke(
@@ -511,7 +511,7 @@ class SecurityClearancePlugin(Plugin):
         """
         user_id, tenant_id = self._get_user_context(context)
         user_level = self._engine.resolve_user_clearance(user_id, tenant_id)
-        resource_level = self._clearance_config.default_user_clearance
+        resource_level = self._clearance_config.default_tool_classification
 
         if self._clearance_config.enforce_no_read_up and not self._engine.check_no_read_up(user_level, resource_level):
             logger.warning(
@@ -558,7 +558,7 @@ class SecurityClearancePlugin(Plugin):
         """
         user_id, tenant_id = self._get_user_context(context)
         user_level = self._engine.resolve_user_clearance(user_id, tenant_id)
-        prompt_level = self._clearance_config.default_user_clearance
+        prompt_level = self._clearance_config.default_tool_classification
 
         if self._clearance_config.enforce_no_read_up and not self._engine.check_no_read_up(user_level, prompt_level):
             logger.warning(
