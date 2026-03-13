@@ -90,7 +90,7 @@ from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_as
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span
-from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
+from mcpgateway.schemas import GatewayCreate, GatewayCredentialRevealResponse, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -2440,6 +2440,66 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return self.convert_gateway_to_read(gateway)
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+
+    async def get_gateway_with_credentials(self, db: Session, gateway_id: str) -> GatewayCredentialRevealResponse:
+        """Retrieve plaintext credentials for a gateway.
+
+        Fetches the gateway and returns its decrypted authentication credentials
+        without masking. This method must only be called from endpoints that
+        enforce strict authorization and audit logging.
+
+        Args:
+            db: Database session
+            gateway_id: Gateway ID
+
+        Returns:
+            GatewayCredentialRevealResponse with plaintext credential fields
+
+        Raises:
+            GatewayNotFoundError: If the gateway is not found
+
+        Examples:
+            >>> from unittest.mock import MagicMock
+            >>> service = GatewayService()
+            >>> db = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> import asyncio
+            >>> try:
+            ...     asyncio.run(service.get_gateway_with_credentials(db, 'missing_id'))
+            ... except GatewayNotFoundError as e:
+            ...     'Gateway not found: missing_id' in str(e)
+            True
+            >>> asyncio.run(service._http_client.aclose())
+        """
+        gateway = db.execute(select(DbGateway).options(joinedload(DbGateway.email_team)).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+
+        if not gateway:
+            raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+
+        # Build the same dict that convert_gateway_to_read uses, but skip .masked() so that
+        # _populate_auth() leaves the plaintext values in the _unmasked fields.
+        gateway_dict = gateway.__dict__.copy()
+        gateway_dict.pop("_sa_instance_state", None)
+        if isinstance(gateway.auth_value, dict):
+            gateway_dict["auth_value"] = encode_auth(gateway.auth_value)
+        if gateway.tags:
+            gateway_dict["tags"] = validate_tags_field(gateway.tags) if isinstance(gateway.tags[0], str) else gateway.tags
+        else:
+            gateway_dict["tags"] = []
+        for field in ("created_by", "modified_by", "created_at", "updated_at", "version", "team"):
+            gateway_dict[field] = getattr(gateway, field, None)
+        full_read = GatewayRead.model_validate(gateway_dict)
+
+        return GatewayCredentialRevealResponse(
+            gateway_id=gateway_id,
+            auth_type=full_read.auth_type,
+            auth_token=full_read.auth_token_unmasked,
+            auth_username=full_read.auth_username,
+            auth_password=full_read.auth_password_unmasked,
+            auth_header_key=full_read.auth_header_key,
+            auth_header_value=full_read.auth_header_value_unmasked,
+            auth_headers=full_read.auth_headers_unmasked,
+        )
 
     async def set_gateway_state(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None) -> GatewayRead:
         """

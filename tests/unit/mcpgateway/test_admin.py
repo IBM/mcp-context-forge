@@ -107,6 +107,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_get_all_team_ids,
     admin_get_all_tool_ids,
     admin_get_gateway,
+    admin_reveal_gateway_credentials,
     admin_get_grpc_methods,
     admin_get_grpc_service,
     admin_get_import_status,
@@ -256,6 +257,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.schemas import (
+    GatewayCredentialRevealResponse,
     GatewayTestRequest,
     GlobalConfigRead,
     GlobalConfigUpdate,
@@ -3056,6 +3058,83 @@ class TestAdminGatewayRoutes:
         response = await admin_set_gateway_state("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert "include_inactive=true" in response.headers["location"]
+
+
+class TestAdminRevealGatewayCredentials:
+    """Tests for POST /admin/gateways/{gateway_id}/reveal-credentials endpoint (issue #3435)."""
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.admin.gateway_service")
+    @patch("mcpgateway.admin.get_audit_trail_service")
+    async def test_reveal_returns_plaintext_credentials(self, mock_get_audit, mock_gateway_service, mock_db):
+        """AC1: Returns plaintext credentials for an authorized user."""
+        mock_audit = MagicMock()
+        mock_get_audit.return_value = mock_audit
+
+        expected = GatewayCredentialRevealResponse(
+            gateway_id="gw-1",
+            auth_type="bearer",
+            auth_token="supersecrettoken123",
+        )
+        mock_gateway_service.get_gateway_with_credentials = AsyncMock(return_value=expected)
+
+        result = await admin_reveal_gateway_credentials("gw-1", mock_db, user={"email": "admin@example.com"})
+
+        assert result.gateway_id == "gw-1"
+        assert result.auth_type == "bearer"
+        assert result.auth_token == "supersecrettoken123"
+        mock_audit.log_action.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.admin.gateway_service")
+    @patch("mcpgateway.admin.get_audit_trail_service")
+    async def test_reveal_gateway_not_found(self, mock_get_audit, mock_gateway_service, mock_db):
+        """AC2: Returns 404 for a non-existent gateway."""
+        mock_get_audit.return_value = MagicMock()
+        mock_gateway_service.get_gateway_with_credentials = AsyncMock(side_effect=GatewayNotFoundError("not found"))
+
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_reveal_gateway_credentials("missing-gw", mock_db, user={"email": "admin@example.com"})
+
+        assert excinfo.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_reveal_endpoint_requires_permission(self):
+        """AC3/AC4: Endpoint is decorated with require_permission gating gateways.read."""
+        import inspect
+        # The function must be wrapped by require_permission
+        assert hasattr(admin_reveal_gateway_credentials, "__wrapped__")
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.admin.gateway_service")
+    @patch("mcpgateway.admin.get_audit_trail_service")
+    async def test_reveal_audit_logged_before_return(self, mock_get_audit, mock_gateway_service, mock_db):
+        """AC5: Audit trail is logged on every successful reveal call."""
+        mock_audit = MagicMock()
+        mock_get_audit.return_value = mock_audit
+
+        mock_gateway_service.get_gateway_with_credentials = AsyncMock(
+            return_value=GatewayCredentialRevealResponse(gateway_id="gw-2", auth_type="basic", auth_username="admin", auth_password="secret")
+        )
+
+        await admin_reveal_gateway_credentials("gw-2", mock_db, user={"email": "admin@example.com"})
+
+        mock_audit.log_action.assert_called_once()
+        call_kwargs = mock_audit.log_action.call_args.kwargs
+        assert call_kwargs["action"] == "READ"
+        assert call_kwargs["resource_type"] == "gateway"
+        assert call_kwargs["resource_id"] == "gw-2"
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.admin.gateway_service")
+    @patch("mcpgateway.admin.get_audit_trail_service")
+    async def test_reveal_propagates_unexpected_errors(self, mock_get_audit, mock_gateway_service, mock_db):
+        """Unexpected errors are re-raised (not swallowed)."""
+        mock_get_audit.return_value = MagicMock()
+        mock_gateway_service.get_gateway_with_credentials = AsyncMock(side_effect=RuntimeError("db exploded"))
+
+        with pytest.raises(RuntimeError, match="db exploded"):
+            await admin_reveal_gateway_credentials("gw-3", mock_db, user={"email": "admin@example.com"})
 
 
 class TestAdminRootRoutes:
