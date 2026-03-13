@@ -267,19 +267,41 @@ class TestVirtualServerCRUD:
         try:
             delete_button.wait_for(state="visible", timeout=3_000)
         except PlaywrightTimeoutError:
-            pytest.skip("No servers available to delete")
+            # No servers available - create one first
+            add_button = admin_page.locator('button:has-text("Add Server"):visible, button:has-text("Create Server"):visible').first
+            expect(add_button).to_be_visible(timeout=5_000)
+            add_button.click()
+
+            server_name = f"regression-test-server-{admin_page.evaluate('Date.now()')}"
+            name_input = admin_page.locator('#server-name')
+            expect(name_input).to_be_visible(timeout=5_000)
+            name_input.fill(server_name)
+
+            submit_button = admin_page.locator('#catalog-panel button[type="submit"]:has-text("Add Server"):visible').first
+            expect(submit_button).to_be_visible(timeout=5_000)
+            submit_button.click()
+
+            # Wait for server creation and reload servers tab
+            admin_page.wait_for_timeout(2_000)
+            servers_tab.click()
+            admin_page.wait_for_selector("#servers-table-body", state="attached", timeout=10_000)
+            admin_page.wait_for_timeout(1_000)
+
+            # Now find the delete button again
+            delete_button = admin_page.locator('#catalog-panel button[type="submit"]:has-text("Delete"):visible').first
+            expect(delete_button).to_be_visible(timeout=5_000)
 
         initial_count = server_rows.count()
 
         # Step 3 & 4: Accept native confirm() dialogs and click delete.
         # handleDeleteSubmit shows two native confirm() dialogs, then
         # handleToggleSubmit does fetch(redirect:'manual') followed by
-        # _navigateAdmin() which reloads the page via location change.
+        # navigateAdmin() which reloads the page via location change.
         admin_page.on("dialog", lambda d: d.accept())
         delete_button.click()
 
         # Step 5: Wait for the async fetch to complete, then force a
-        # clean page reload.  The JS _navigateAdmin triggers a page
+        # clean page reload.  The JS navigateAdmin triggers a page
         # reload, but it may race with HTMX partial rendering and
         # produce stale counts.  Waiting briefly for the fetch, then
         # performing an explicit reload guarantees fresh server-side
