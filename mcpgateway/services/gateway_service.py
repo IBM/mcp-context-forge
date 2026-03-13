@@ -1127,7 +1127,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             # Add to DB
             db.add(db_gateway)
-            db.flush()  # Flush to get the ID without committing
+            db.commit()
             db.refresh(db_gateway)
 
             # Update tracking
@@ -1161,7 +1161,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 context={
                     "created_via": created_via,
                 },
-                db=db,
             )
 
             # Structured logging: Log successful gateway creation
@@ -2252,7 +2251,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     context={
                         "modified_via": modified_via,
                     },
-                    db=db,
                 )
 
                 # Structured logging: Log successful gateway update
@@ -2708,7 +2706,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         "action": "activate" if activate else "deactivate",
                         "only_update_reachable": only_update_reachable,
                     },
-                    db=db,
                 )
 
                 # Structured logging: Log successful gateway state change
@@ -2922,7 +2919,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     "name": gateway_name,
                     "url": gateway_info["url"],
                 },
-                db=db,
             )
 
             # Structured logging: Log successful gateway deletion
