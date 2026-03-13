@@ -12,6 +12,7 @@
 -->
 
 <div
+  x-data="Admin.paginationData()"
   data-base-url="{{ base_url }}"
   data-extra-params="{{ query_params | default({}) | tojson | forceescape }}"
   x-data="{
@@ -77,7 +78,7 @@
     }
 
     const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-    safeReplaceState({}, '', newUrl);
+    Admin.safeReplaceState({}, '', newUrl);
   },
 
   loadPage(page) {
@@ -315,26 +316,14 @@
   </div>
 </div>
 
-<!-- Keyboard Navigation Support -->
+{% if query_params %}
 <script>
-  document.addEventListener("alpine:init", () => {
-    // Add keyboard shortcuts for pagination
-    document.addEventListener("keydown", (e) => {
-      // Only handle if not in an input field
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")
-        return;
-
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        // Trigger previous page - the Alpine.js component will check hasPrev
-        const prevBtn = document.querySelector('[\\@click="prevPage()"]');
-        if (prevBtn && !prevBtn.disabled) prevBtn.click();
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        // Trigger next page - the Alpine.js component will check hasNext
-        const nextBtn = document.querySelector('[\\@click="nextPage()"]');
-        if (nextBtn && !nextBtn.disabled) nextBtn.click();
-      }
-    });
-  });
+  Admin.AppState._paginationQuerySetters[{{ table_name | default('') | tojson }}] = function(url) {
+    {% for key, value in query_params.items() %}
+    {% if key != 'include_inactive' and value is not none %}
+    url.searchParams.set({{ key | tojson }}, {{ value | tojson }});
+    {% endif %}
+    {% endfor %}
+  };
 </script>
+{% endif %}

@@ -463,48 +463,56 @@ class GatewaysPage(BasePage):
         # and re-opening the gateways tab so subsequent assertions see the
         # canonical gateway list.
         if self.get_gateway_count() == 0:
+            # Clear URL search params before reloading so the x-init HTMX load
+            # does not re-apply the search term and leave the table empty again.
+            self.page.evaluate(
+                "window.history.replaceState({}, '', window.location.pathname + window.location.hash)"
+            )
             self.page.reload(wait_until="domcontentloaded")
             self.navigate_to_gateways_tab()
             self.wait_for_gateways_table_loaded()
 
     def clear_search(self) -> None:
-        """Clear the gateway search.
+        """Clear the gateway search by clicking the dedicated clear button.
 
-        Triggers an HTMX reload of the gateways table, then waits for
-        table/indicator settling.
+        Drains any in-flight HTMX requests first, then uses expect_response to
+        capture the HTMX GET response triggered by Admin.clearSearch so we know
+        the outerHTML swap has completed before returning.
         """
-        request_seen = False
-        try:
-            with self.page.expect_response(
-                lambda response: "/admin/gateways/partial" in response.url and response.request.method == "GET",
-                timeout=5000,
-            ):
-                self.click_locator(self.clear_search_btn)
-            request_seen = True
-        except PlaywrightTimeoutError:
-            pass
-
-        if not request_seen:
-            # Fallback: invoke the same clear function the button uses and
-            # explicitly wait for the partial reload request.
-            try:
-                with self.page.expect_response(
-                    lambda response: "/admin/gateways/partial" in response.url and response.request.method == "GET",
-                    timeout=5000,
-                ):
-                    self.page.evaluate("window.clearSearch && window.clearSearch('gateways')")
-                request_seen = True
-            except PlaywrightTimeoutError:
-                # Last-resort best effort: force a reload call even if request
-                # observation missed due timing.
-                self.page.evaluate(
-                    "() => { const el = document.getElementById('gateways-search-input'); if (el) { el.value = ''; } if (window.loadSearchablePanel) { window.loadSearchablePanel('gateways'); } }",
-                )
-
+        # Drain any in-flight HTMX load so a stale response can't race with
+        # the clear request and overwrite the table back to 0 rows.
         self.page.wait_for_function(
             "() => !document.querySelector('#gateways-loading.htmx-request')",
             timeout=15000,
         )
+
+        # Click the button inside expect_response so we reliably capture the
+        # HTMX GET request that Admin.clearSearch triggers via htmx.ajax.
+        try:
+            with self.page.expect_response(
+                lambda r: "/admin/gateways/partial" in r.url and r.request.method == "GET",
+                timeout=15000,
+            ):
+                self.click_locator(self.clear_search_btn)
+        except PlaywrightTimeoutError:
+            # Fallback: indicator-based wait if the response wasn't captured.
+            try:
+                self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=3000)
+            except PlaywrightTimeoutError:
+                pass
+
+        # expect_response resolves when the network response is received, but HTMX
+        # processes the response and does the outerHTML swap asynchronously. Wait for
+        # the loading indicator to clear, which confirms the swap has completed.
+        try:
+            self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=2000)
+        except PlaywrightTimeoutError:
+            pass  # Request may have already finished before we checked
+        self.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
+        # Wait for the new #gateways-table-body to be attached after the swap.
         self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
 
     def toggle_show_inactive(self, show: bool = True) -> None:
@@ -1100,7 +1108,7 @@ class GatewaysPage(BasePage):
         where HTMX table swap hasn't yet reconnected event listeners.
         """
         self.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=15000)
-        self.page.wait_for_function("typeof window.viewGateway === 'function'", timeout=10000)
+        self.page.wait_for_function("typeof window.Admin?.viewGateway === 'function'", timeout=10000)
 
         self.click_view_button(gateway_index)
         try:
@@ -1122,7 +1130,7 @@ class GatewaysPage(BasePage):
         """
         # Ensure gateway rows are present and JS handlers are ready
         self.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=15000)
-        self.page.wait_for_function("typeof window.viewGateway === 'function'", timeout=10000)
+        self.page.wait_for_function("typeof window.Admin?.viewGateway === 'function'", timeout=10000)
 
         self.click_edit_button(gateway_index)
         try:

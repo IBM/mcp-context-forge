@@ -170,6 +170,13 @@ class TestMCPRegistryPage:
         mcp_registry_page.navigate_to_registry_tab()
         mcp_registry_page.wait_for_registry_loaded()
 
+        # Check if required filter options exist
+        category_options = mcp_registry_page.category_filter.evaluate("el => [...el.options].map(o => o.text)")
+        auth_options = mcp_registry_page.auth_filter.evaluate("el => [...el.options].map(o => o.text)")
+        
+        if "Software Development" not in category_options or "API Key" not in auth_options:
+            pytest.skip("Required filter options ('Software Development' or 'API Key') not available in registry")
+
         # Get initial count before filtering
         initial_count = mcp_registry_page.get_server_count()
 

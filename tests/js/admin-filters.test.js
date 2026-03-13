@@ -12,148 +12,124 @@ import {
 } from "vitest";
 import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
 
-let win;
+let env;
 let doc;
 
 beforeAll(() => {
-    win = loadAdminJs();
-    doc = win.document;
+  env = createDOMEnvironment();
+  doc = env.document;
+  global.document = doc;
 });
 
 afterAll(() => {
-    cleanupAdminJs();
+  env.cleanup();
+  delete global.document;
 });
 
 beforeEach(() => {
-    doc.body.textContent = "";
+  doc.body.textContent = "";
 });
-
-// ---------------------------------------------------------------------------
-// Helper: build a simple table with tbody
-// ---------------------------------------------------------------------------
-function buildTable(tbodyId, rows, { testIdAttr, startCol = 0 } = {}) {
-    const table = doc.createElement("table");
-    const tbody = doc.createElement("tbody");
-    tbody.id = tbodyId;
-    rows.forEach((cells) => {
-        const tr = doc.createElement("tr");
-        if (testIdAttr) tr.setAttribute("data-testid", testIdAttr);
-        cells.forEach((text) => {
-            const td = doc.createElement("td");
-            td.textContent = text;
-            tr.appendChild(td);
-        });
-        table.appendChild(tbody);
-        tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
-    return table;
-}
 
 // ---------------------------------------------------------------------------
 // filterServerTable
 // ---------------------------------------------------------------------------
 describe("filterServerTable", () => {
-    const f = () => win.filterServerTable;
-
-    function buildServerTable(rows) {
-        const table = doc.createElement("table");
-        const tbody = doc.createElement("tbody");
-        tbody.id = "servers-table-body";
-        rows.forEach((cells) => {
-            const tr = doc.createElement("tr");
-            tr.setAttribute("data-testid", "server-item");
-            cells.forEach((text) => {
-                const td = doc.createElement("td");
-                td.textContent = text;
-                tr.appendChild(td);
-            });
-            tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
-        doc.body.appendChild(table);
-        return tbody;
-    }
-
-    test("shows matching rows and hides non-matching", () => {
-        // Columns: Actions(0), Icon(1), S.No.(2), UUID(3), Name(4), ...
-        const tbody = buildServerTable([
-            ["act", "ico", "1", "uuid-1", "Alpha Server", "desc alpha"],
-            ["act", "ico", "2", "uuid-2", "Beta Server", "desc beta"],
-        ]);
-        f()("alpha");
-        const rows = tbody.querySelectorAll("tr");
-        expect(rows[0].style.display).toBe("");
-        expect(rows[1].style.display).toBe("none");
+  function buildServerTable(rows) {
+    const table = doc.createElement("table");
+    const tbody = doc.createElement("tbody");
+    tbody.id = "servers-table-body";
+    rows.forEach((cells) => {
+      const tr = doc.createElement("tr");
+      tr.setAttribute("data-testid", "server-item");
+      cells.forEach((text) => {
+        const td = doc.createElement("td");
+        td.textContent = text;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
     });
+    table.appendChild(tbody);
+    doc.body.appendChild(table);
+    return tbody;
+  }
 
-    test("empty search shows all rows", () => {
-        const tbody = buildServerTable([
-            ["act", "ico", "1", "uuid-1", "Alpha", "desc"],
-            ["act", "ico", "2", "uuid-2", "Beta", "desc"],
-        ]);
-        f()("");
-        const rows = tbody.querySelectorAll("tr");
-        expect(rows[0].style.display).toBe("");
-        expect(rows[1].style.display).toBe("");
+  test("shows matching rows and hides non-matching", () => {
+    // Columns: Actions(0), Icon(1), S.No.(2), UUID(3), Name(4), ...
+    const tbody = buildServerTable([
+      ["act", "ico", "1", "uuid-1", "Alpha Server", "desc alpha"],
+      ["act", "ico", "2", "uuid-2", "Beta Server", "desc beta"],
+    ]);
+    filterServerTable("alpha");
+    const rows = tbody.querySelectorAll("tr");
+    expect(rows[0].style.display).toBe("");
+    expect(rows[1].style.display).toBe("none");
+  });
+
+  test("empty search shows all rows", () => {
+    const tbody = buildServerTable([
+      ["act", "ico", "1", "uuid-1", "Alpha", "desc"],
+      ["act", "ico", "2", "uuid-2", "Beta", "desc"],
+    ]);
+    filterServerTable("");
+    const rows = tbody.querySelectorAll("tr");
+    expect(rows[0].style.display).toBe("");
+    expect(rows[1].style.display).toBe("");
+  });
+
+  test("case-insensitive search", () => {
+    const tbody = buildServerTable([
+      ["act", "ico", "1", "uuid-1", "MyServer", "test"],
+    ]);
+    filterServerTable("MYSERVER");
+    expect(tbody.querySelector("tr").style.display).toBe("");
+  });
+
+  test("no table does not throw", () => {
+    expect(() => filterServerTable("anything")).not.toThrow();
+  });
+
+  test("falls back to data-testid selector", () => {
+    // Build without #servers-table-body id
+    const table = doc.createElement("table");
+    const tbody = doc.createElement("tbody");
+    tbody.setAttribute("data-testid", "server-list");
+    const tr = doc.createElement("tr");
+    tr.setAttribute("data-testid", "server-item");
+    ["act", "ico", "1", "uuid", "Fallback Server", "desc"].forEach((t) => {
+      const td = doc.createElement("td");
+      td.textContent = t;
+      tr.appendChild(td);
     });
+    tbody.appendChild(tr);
+    table.appendChild(tbody);
+    doc.body.appendChild(table);
 
-    test("case-insensitive search", () => {
-        const tbody = buildServerTable([
-            ["act", "ico", "1", "uuid-1", "MyServer", "test"],
-        ]);
-        f()("MYSERVER");
-        expect(tbody.querySelector("tr").style.display).toBe("");
-    });
-
-    test("no table does not throw", () => {
-        expect(() => f()("anything")).not.toThrow();
-    });
-
-    test("falls back to data-testid selector", () => {
-        // Build without #servers-table-body id
-        const table = doc.createElement("table");
-        const tbody = doc.createElement("tbody");
-        tbody.setAttribute("data-testid", "server-list");
-        const tr = doc.createElement("tr");
-        tr.setAttribute("data-testid", "server-item");
-        ["act", "ico", "1", "uuid", "Fallback Server", "desc"].forEach((t) => {
-            const td = doc.createElement("td");
-            td.textContent = t;
-            tr.appendChild(td);
-        });
-        tbody.appendChild(tr);
-        table.appendChild(tbody);
-        doc.body.appendChild(table);
-
-        f()("fallback");
-        expect(tr.style.display).toBe("");
-    });
+    filterServerTable("fallback");
+    expect(tr.style.display).toBe("");
+  });
 });
 
 // ---------------------------------------------------------------------------
 // filterToolsTable
 // ---------------------------------------------------------------------------
 describe("filterToolsTable", () => {
-    const f = () => win.filterToolsTable;
-
-    function buildToolsTable(rows) {
-        const table = doc.createElement("table");
-        const tbody = doc.createElement("tbody");
-        tbody.id = "tools-table-body";
-        rows.forEach((cells) => {
-            const tr = doc.createElement("tr");
-            cells.forEach((text) => {
-                const td = doc.createElement("td");
-                td.textContent = text;
-                tr.appendChild(td);
-            });
-            tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
-        doc.body.appendChild(table);
-        return tbody;
-    }
+  function buildToolsTable(rows) {
+    const table = doc.createElement("table");
+    const tbody = doc.createElement("tbody");
+    tbody.id = "tools-table-body";
+    rows.forEach((cells) => {
+      const tr = doc.createElement("tr");
+      cells.forEach((text) => {
+        const td = doc.createElement("td");
+        td.textContent = text;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    doc.body.appendChild(table);
+    return tbody;
+  }
 
     test("shows matching rows and hides non-matching", () => {
         // Columns: Actions(0), S.No.(1), ToolID(2), Source(3), Name(4), ...
@@ -230,34 +206,32 @@ describe("filterToolsTable", () => {
         expect(rows[1].style.display).toBe("");
     });
 
-    test("no table does not throw", () => {
-        expect(() => f()("anything")).not.toThrow();
-    });
+  test("no table does not throw", () => {
+    expect(() => filterToolsTable("anything")).not.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
 // filterResourcesTable
 // ---------------------------------------------------------------------------
 describe("filterResourcesTable", () => {
-    const f = () => win.filterResourcesTable;
-
-    function buildResourcesTable(rows) {
-        const table = doc.createElement("table");
-        const tbody = doc.createElement("tbody");
-        tbody.id = "resources-table-body";
-        rows.forEach((cells) => {
-            const tr = doc.createElement("tr");
-            cells.forEach((text) => {
-                const td = doc.createElement("td");
-                td.textContent = text;
-                tr.appendChild(td);
-            });
-            tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
-        doc.body.appendChild(table);
-        return tbody;
-    }
+  function buildResourcesTable(rows) {
+    const table = doc.createElement("table");
+    const tbody = doc.createElement("tbody");
+    tbody.id = "resources-table-body";
+    rows.forEach((cells) => {
+      const tr = doc.createElement("tr");
+      cells.forEach((text) => {
+        const td = doc.createElement("td");
+        td.textContent = text;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    doc.body.appendChild(table);
+    return tbody;
+  }
 
     test("shows matching rows and hides non-matching", () => {
         // Columns: Actions(0), Source(1), Name(2), ...
@@ -289,45 +263,43 @@ describe("filterResourcesTable", () => {
         expect(rows[1].style.display).toBe("none");
     });
 
-    test("empty search shows all rows", () => {
-        const tbody = buildResourcesTable([
-            ["act", "gw", "res-a", "desc", "", "", "", ""],
-            ["act", "gw", "res-b", "desc", "", "", "", ""],
-        ]);
-        f()("");
-        const rows = tbody.querySelectorAll("tr");
-        expect(rows[0].style.display).toBe("");
-        expect(rows[1].style.display).toBe("");
-    });
+  test("empty search shows all rows", () => {
+    const tbody = buildResourcesTable([
+      ["act", "gw", "res-a", "desc", "", "", "", ""],
+      ["act", "gw", "res-b", "desc", "", "", "", ""],
+    ]);
+    filterResourcesTable("");
+    const rows = tbody.querySelectorAll("tr");
+    expect(rows[0].style.display).toBe("");
+    expect(rows[1].style.display).toBe("");
+  });
 
-    test("no table does not throw", () => {
-        expect(() => f()("anything")).not.toThrow();
-    });
+  test("no table does not throw", () => {
+    expect(() => filterResourcesTable("anything")).not.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
 // filterPromptsTable
 // ---------------------------------------------------------------------------
 describe("filterPromptsTable", () => {
-    const f = () => win.filterPromptsTable;
-
-    function buildPromptsTable(rows) {
-        const table = doc.createElement("table");
-        const tbody = doc.createElement("tbody");
-        tbody.id = "prompts-table-body";
-        rows.forEach((cells) => {
-            const tr = doc.createElement("tr");
-            cells.forEach((text) => {
-                const td = doc.createElement("td");
-                td.textContent = text;
-                tr.appendChild(td);
-            });
-            tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
-        doc.body.appendChild(table);
-        return tbody;
-    }
+  function buildPromptsTable(rows) {
+    const table = doc.createElement("table");
+    const tbody = doc.createElement("tbody");
+    tbody.id = "prompts-table-body";
+    rows.forEach((cells) => {
+      const tr = doc.createElement("tr");
+      cells.forEach((text) => {
+        const td = doc.createElement("td");
+        td.textContent = text;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    doc.body.appendChild(table);
+    return tbody;
+  }
 
     test("shows matching rows and hides non-matching", () => {
         // Columns: Actions(0), S.No.(1), GatewayName(2), Name(3), ...
@@ -361,47 +333,45 @@ describe("filterPromptsTable", () => {
         expect(rows[1].style.display).toBe("none");
     });
 
-    test("empty search shows all rows", () => {
-        const tbody = buildPromptsTable([
-            ["act", "1", "gw", "p-a", "desc", "", "", "", ""],
-            ["act", "2", "gw", "p-b", "desc", "", "", "", ""],
-        ]);
-        f()("");
-        const rows = tbody.querySelectorAll("tr");
-        expect(rows[0].style.display).toBe("");
-        expect(rows[1].style.display).toBe("");
-    });
+  test("empty search shows all rows", () => {
+    const tbody = buildPromptsTable([
+      ["act", "1", "gw", "p-a", "desc", "", "", "", ""],
+      ["act", "2", "gw", "p-b", "desc", "", "", "", ""],
+    ]);
+    filterPromptsTable("");
+    const rows = tbody.querySelectorAll("tr");
+    expect(rows[0].style.display).toBe("");
+    expect(rows[1].style.display).toBe("");
+  });
 
-    test("no table does not throw", () => {
-        expect(() => f()("anything")).not.toThrow();
-    });
+  test("no table does not throw", () => {
+    expect(() => filterPromptsTable("anything")).not.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
 // filterA2AAgentsTable
 // ---------------------------------------------------------------------------
 describe("filterA2AAgentsTable", () => {
-    const f = () => win.filterA2AAgentsTable;
-
-    function buildAgentsTable(rows, { usePanel = false } = {}) {
-        const wrapper = doc.createElement("div");
-        wrapper.id = usePanel ? "a2a-agents-panel" : "agents-table";
-        const table = doc.createElement("table");
-        const tbody = doc.createElement("tbody");
-        rows.forEach((cells) => {
-            const tr = doc.createElement("tr");
-            cells.forEach((text) => {
-                const td = doc.createElement("td");
-                td.textContent = text;
-                tr.appendChild(td);
-            });
-            tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
-        wrapper.appendChild(table);
-        doc.body.appendChild(wrapper);
-        return tbody;
-    }
+  function buildAgentsTable(rows, { usePanel = false } = {}) {
+    const wrapper = doc.createElement("div");
+    wrapper.id = usePanel ? "a2a-agents-panel" : "agents-table";
+    const table = doc.createElement("table");
+    const tbody = doc.createElement("tbody");
+    rows.forEach((cells) => {
+      const tr = doc.createElement("tr");
+      cells.forEach((text) => {
+        const td = doc.createElement("td");
+        td.textContent = text;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+    doc.body.appendChild(wrapper);
+    return tbody;
+  }
 
     test("shows matching rows via #agents-table", () => {
         // Columns: Actions(0), S.No.(1), AgentID(2), Name(3), ...
@@ -507,9 +477,9 @@ describe("filterA2AAgentsTable", () => {
         expect(rows[1].style.display).toBe("");
     });
 
-    test("no table does not throw", () => {
-        expect(() => f()("anything")).not.toThrow();
-    });
+  test("no table does not throw", () => {
+    expect(() => filterA2AAgentsTable("anything")).not.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -627,13 +597,13 @@ describe("filterGatewaysTable", () => {
         expect(rows[1].style.display).not.toBe("none");
     });
 
-    test("integrates inactive filter — hides disabled rows when checkbox unchecked", () => {
-        // Create the inactive checkbox
-        const cb = doc.createElement("input");
-        cb.type = "checkbox";
-        cb.id = "show-inactive-gateways";
-        cb.checked = false;
-        doc.body.appendChild(cb);
+  test("integrates inactive filter — hides disabled rows when checkbox unchecked", () => {
+    // Create the inactive checkbox
+    const cb = doc.createElement("input");
+    cb.type = "checkbox";
+    cb.id = "show-inactive-gateways";
+    cb.checked = false;
+    doc.body.appendChild(cb);
 
         const tbody = buildGatewaysTable(
             [
@@ -670,9 +640,9 @@ describe("filterGatewaysTable", () => {
         expect(rows[1].style.display).toBe("none");
     });
 
-    test("no table does not throw", () => {
-        expect(() => f()("anything")).not.toThrow();
-    });
+  test("no table does not throw", () => {
+    expect(() => filterGatewaysTable("anything")).not.toThrow();
+  });
 
     test("strategy 3: finds table by header matching", () => {
         // Build a table without gateways-panel, with matching headers
@@ -721,66 +691,64 @@ describe("filterGatewaysTable", () => {
         table.appendChild(tbody);
         doc.body.appendChild(table);
 
-        f()("found");
-        expect(tr.style.display).not.toBe("none");
-    });
+    filterGatewaysTable("found");
+    expect(tr.style.display).not.toBe("none");
+  });
 });
 
 // ---------------------------------------------------------------------------
 // addTagToFilter
 // ---------------------------------------------------------------------------
 describe("addTagToFilter", () => {
-    const f = () => win.addTagToFilter;
+  test("adds tag to empty filter input", () => {
+    const input = doc.createElement("input");
+    input.id = "tools-tag-filter";
+    input.value = "";
+    doc.body.appendChild(input);
 
-    test("adds tag to empty filter input", () => {
-        const input = doc.createElement("input");
-        input.id = "tools-tag-filter";
-        input.value = "";
-        doc.body.appendChild(input);
+    // Need the panel with tbody for filterEntitiesByTags to work
+    const panel = doc.createElement("div");
+    panel.id = "tools-panel";
+    const table = doc.createElement("table");
+    const tbody = doc.createElement("tbody");
+    table.appendChild(tbody);
+    panel.appendChild(table);
+    doc.body.appendChild(panel);
 
-        // Need the panel with tbody for filterEntitiesByTags to work
-        const panel = doc.createElement("div");
-        panel.id = "tools-panel";
-        const table = doc.createElement("table");
-        const tbody = doc.createElement("tbody");
-        table.appendChild(tbody);
-        panel.appendChild(table);
-        doc.body.appendChild(panel);
+    addTagToFilter("tools", "production");
+    expect(input.value).toBe("production");
+  });
 
-        f()("tools", "production");
-        expect(input.value).toBe("production");
-    });
+  test("appends tag to existing tags", () => {
+    const input = doc.createElement("input");
+    input.id = "tools-tag-filter";
+    input.value = "staging";
+    doc.body.appendChild(input);
 
-    test("appends tag to existing tags", () => {
-        const input = doc.createElement("input");
-        input.id = "tools-tag-filter";
-        input.value = "staging";
-        doc.body.appendChild(input);
+    const panel = doc.createElement("div");
+    panel.id = "tools-panel";
+    const table = doc.createElement("table");
+    table.appendChild(doc.createElement("tbody"));
+    panel.appendChild(table);
+    doc.body.appendChild(panel);
 
-        const panel = doc.createElement("div");
-        panel.id = "tools-panel";
-        const table = doc.createElement("table");
-        table.appendChild(doc.createElement("tbody"));
-        panel.appendChild(table);
-        doc.body.appendChild(panel);
+    addTagToFilter("tools", "production");
+    expect(input.value).toContain("staging");
+    expect(input.value).toContain("production");
+  });
 
-        f()("tools", "production");
-        expect(input.value).toContain("staging");
-        expect(input.value).toContain("production");
-    });
+  test("does not add duplicate tag", () => {
+    const input = doc.createElement("input");
+    input.id = "tools-tag-filter";
+    input.value = "production";
+    doc.body.appendChild(input);
 
-    test("does not add duplicate tag", () => {
-        const input = doc.createElement("input");
-        input.id = "tools-tag-filter";
-        input.value = "production";
-        doc.body.appendChild(input);
-
-        const panel = doc.createElement("div");
-        panel.id = "tools-panel";
-        const table = doc.createElement("table");
-        table.appendChild(doc.createElement("tbody"));
-        panel.appendChild(table);
-        doc.body.appendChild(panel);
+    const panel = doc.createElement("div");
+    panel.id = "tools-panel";
+    const table = doc.createElement("table");
+    table.appendChild(doc.createElement("tbody"));
+    panel.appendChild(table);
+    doc.body.appendChild(panel);
 
         f()("tools", "production");
         // Should still just be "production" (not duplicated)
@@ -791,9 +759,9 @@ describe("addTagToFilter", () => {
         expect(tags.filter((t) => t === "production")).toHaveLength(1);
     });
 
-    test("no filter input does not throw", () => {
-        expect(() => f()("nonexistent", "tag")).not.toThrow();
-    });
+  test("no filter input does not throw", () => {
+    expect(() => addTagToFilter("nonexistent", "tag")).not.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -830,68 +798,66 @@ describe("filterEntitiesByTags", () => {
         return tbody;
     }
 
-    // NOTE: Tests with non-empty filter tags are skipped because
-    // filterEntitiesByTags uses CSS comments (/* ... */) in its
-    // querySelectorAll selector, which JSDOM's nwsapi cannot parse.
+  // NOTE: Tests with non-empty filter tags are skipped because
+  // filterEntitiesByTags uses CSS comments (/* ... */) in its
+  // querySelectorAll selector, which JSDOM's nwsapi cannot parse.
 
-    test("empty filter shows all rows", () => {
-        const tbody = buildTaggedTable("tools", [
-            { text: "Tool A", tags: ["production"] },
-            { text: "Tool B", tags: ["staging"] },
-        ]);
-        f()("tools", "");
-        const rows = tbody.querySelectorAll("tr");
-        expect(rows[0].style.display).toBe("");
-        expect(rows[1].style.display).toBe("");
-    });
+  test("empty filter shows all rows", () => {
+    const tbody = buildTaggedTable("tools", [
+      { text: "Tool A", tags: ["production"] },
+      { text: "Tool B", tags: ["staging"] },
+    ]);
+    filterEntitiesByTags("tools", "");
+    const rows = tbody.querySelectorAll("tr");
+    expect(rows[0].style.display).toBe("");
+    expect(rows[1].style.display).toBe("");
+  });
 
-    test("whitespace-only filter shows all rows", () => {
-        const tbody = buildTaggedTable("tools", [
-            { text: "Tool A", tags: ["production"] },
-        ]);
-        f()("tools", "  ,  , ");
-        const rows = tbody.querySelectorAll("tr");
-        expect(rows[0].style.display).toBe("");
-    });
+  test("whitespace-only filter shows all rows", () => {
+    const tbody = buildTaggedTable("tools", [
+      { text: "Tool A", tags: ["production"] },
+    ]);
+    filterEntitiesByTags("tools", "  ,  , ");
+    const rows = tbody.querySelectorAll("tr");
+    expect(rows[0].style.display).toBe("");
+  });
 
-    test("no matching panel does not throw", () => {
-        expect(() => f()("nonexistent", "tag")).not.toThrow();
-    });
+  test("no matching panel does not throw", () => {
+    expect(() => filterEntitiesByTags("nonexistent", "tag")).not.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
 // clearTagFilter
 // ---------------------------------------------------------------------------
 describe("clearTagFilter", () => {
-    const f = () => win.clearTagFilter;
+  test("clears filter input and shows all rows", () => {
+    const input = doc.createElement("input");
+    input.id = "tools-tag-filter";
+    input.value = "production";
+    doc.body.appendChild(input);
 
-    test("clears filter input and shows all rows", () => {
-        const input = doc.createElement("input");
-        input.id = "tools-tag-filter";
-        input.value = "production";
-        doc.body.appendChild(input);
+    // Build a panel with rows to verify they become visible
+    const panel = doc.createElement("div");
+    panel.id = "tools-panel";
+    const table = doc.createElement("table");
+    const tbody = doc.createElement("tbody");
+    const tr = doc.createElement("tr");
+    tr.style.display = "none";
+    const td = doc.createElement("td");
+    td.textContent = "Tool";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    table.appendChild(tbody);
+    panel.appendChild(table);
+    doc.body.appendChild(panel);
 
-        // Build a panel with rows to verify they become visible
-        const panel = doc.createElement("div");
-        panel.id = "tools-panel";
-        const table = doc.createElement("table");
-        const tbody = doc.createElement("tbody");
-        const tr = doc.createElement("tr");
-        tr.style.display = "none";
-        const td = doc.createElement("td");
-        td.textContent = "Tool";
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-        table.appendChild(tbody);
-        panel.appendChild(table);
-        doc.body.appendChild(panel);
+    clearTagFilter("tools");
+    expect(input.value).toBe("");
+    expect(tr.style.display).toBe("");
+  });
 
-        f()("tools");
-        expect(input.value).toBe("");
-        expect(tr.style.display).toBe("");
-    });
-
-    test("no filter input does not throw", () => {
-        expect(() => f()("nonexistent")).not.toThrow();
-    });
+  test("no filter input does not throw", () => {
+    expect(() => clearTagFilter("nonexistent")).not.toThrow();
+  });
 });

@@ -581,6 +581,34 @@ class ServersPage(BasePage):
         """
         )
 
+    def get_edit_checked_resources(self) -> list[str]:
+        """Return values of checked resource checkboxes in the edit modal."""
+        return self.page.evaluate(
+            """
+            () => {
+                const container = document.getElementById('edit-server-resources');
+                if (!container) return [];
+                return Array.from(
+                    container.querySelectorAll('input[name="associatedResources"]:checked')
+                ).map(cb => cb.value);
+            }
+        """
+        )
+
+    def get_edit_checked_prompts(self) -> list[str]:
+        """Return values of checked prompt checkboxes in the edit modal."""
+        return self.page.evaluate(
+            """
+            () => {
+                const container = document.getElementById('edit-server-prompts');
+                if (!container) return [];
+                return Array.from(
+                    container.querySelectorAll('input[name="associatedPrompts"]:checked')
+                ).map(cb => cb.value);
+            }
+        """
+        )
+
     def get_edit_tool_store_size(self) -> int:
         """Read the in-memory editServerSelections store size for tools."""
         return self._get_edit_store_size("edit-server-tools")
@@ -598,7 +626,7 @@ class ServersPage(BasePage):
         return self.page.evaluate(
             """
             (key) => {
-                const store = window.editServerSelections && window.editServerSelections[key];
+                const store = window.AppState && window.AppState.editServerSelections && window.AppState.editServerSelections[key];
                 return store ? store.size : 0;
             }
         """,

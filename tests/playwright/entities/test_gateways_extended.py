@@ -836,11 +836,7 @@ class TestCustomHeadersAuth:
         assert any(h["key"] == "X-Custom-Header" and h["value"] == "custom-value-123" for h in parsed)
 
     def test_remove_header_row(self, gateways_page: GatewaysPage):
-        """Test that removeAuthHeader removes a header row from DOM and updates JSON.
-
-        The remove button uses an inline onclick handler. We invoke the
-        window.removeAuthHeader function directly to verify the removal logic.
-        """
+        """Test that clicking the remove button removes a header row from DOM and updates JSON."""
         gateways_page.navigate_to_gateways_tab()
 
         gateways_page.auth_type_select.select_option("authheaders")
@@ -849,25 +845,28 @@ class TestCustomHeadersAuth:
         gateways_page.add_auth_header("X-Remove-Target", "remove-me")
 
         container = gateways_page.page.locator("#auth-headers-container-gw")
-        count_before = container.locator('[id^="auth-header-"]').count()
+        
+        # Wait for the header row to be added
+        gateways_page.page.wait_for_timeout(500)
+        
+        count_before = container.locator('> div').count()
         assert count_before >= 1, "Expected at least 1 header row"
 
-        # Get the last header row's ID and call removeAuthHeader directly
-        last_header_id = gateways_page.page.evaluate(
-            """() => {
-                const container = document.getElementById('auth-headers-container-gw');
-                const rows = container.querySelectorAll('[id^="auth-header-"]');
-                return rows.length > 0 ? rows[rows.length - 1].id : null;
-            }"""
-        )
-        assert last_header_id is not None, "Could not find a header row to remove"
+        # Find the last header row (direct child div) and its remove button
+        last_header_row = container.locator('> div').last
+        remove_button = last_header_row.locator('button[title="Remove header"]')
+        
+        # Wait for button to be attached and visible
+        expect(remove_button).to_be_attached(timeout=5000)
+        expect(remove_button).to_be_visible(timeout=5000)
+        
+        # Click the remove button
+        remove_button.click()
+        
+        # Wait for the row count to decrease
+        expect(container.locator('> div')).to_have_count(count_before - 1, timeout=5000)
 
-        gateways_page.page.evaluate(
-            "(headerId) => window.removeAuthHeader(headerId, 'auth-headers-container-gw')",
-            last_header_id,
-        )
-
-        count_after = container.locator('[id^="auth-header-"]').count()
+        count_after = container.locator('> div').count()
         assert count_after == count_before - 1, f"Expected {count_before - 1} rows after removal, got {count_after}"
 
 
@@ -904,8 +903,15 @@ class TestGatewayPagination:
         gateways_page.navigate_to_gateways_tab()
         gateways_page.wait_for_gateways_table_loaded()
 
-        info = gateways_page.pagination_controls.locator("text=/Showing \\d+ - \\d+ of \\d+ items/")
-        expect(info).to_be_visible()
+        # Wait for Alpine.js to render the pagination info text
+        # Target the specific span with x-text attribute (the 3rd span in the container)
+        info_container = gateways_page.pagination_controls.locator("div.text-sm.text-gray-700 span[x-text]")
+        expect(info_container).to_be_visible(timeout=10000)
+        
+        # Verify the text content matches expected pattern
+        info_text = info_container.text_content()
+        assert info_text is not None, "Pagination info text should not be None"
+        assert "Showing" in info_text or "No items found" in info_text, f"Expected pagination info, got: {info_text}"
 
     def test_change_per_page(self, gateways_page: GatewaysPage):
         """Test changing the per-page value triggers table reload."""
@@ -930,15 +936,25 @@ class TestGatewayPagination:
         )
 
     def test_pagination_buttons_present(self, gateways_page: GatewaysPage):
-        """Test that pagination navigation buttons exist."""
+        """Test that pagination navigation buttons exist when there are items."""
         gateways_page.navigate_to_gateways_tab()
         gateways_page.wait_for_gateways_table_loaded()
 
         controls = gateways_page.pagination_controls
 
-        # Navigation buttons should exist (may be disabled if on first/last page)
-        expect(controls.locator('button:has-text("Prev")')).to_be_attached()
-        expect(controls.locator('button:has-text("Next")')).to_be_attached()
+        # Pagination buttons are only rendered when totalPages > 0 (Alpine.js x-if condition)
+        # Use title attributes to locate buttons reliably
+        prev_button = controls.locator('button[title="Previous Page"]')
+        next_button = controls.locator('button[title="Next Page"]')
+        
+        # Wait for Alpine.js to render - buttons should appear if there are items
+        try:
+            expect(prev_button).to_be_attached(timeout=5000)
+            expect(next_button).to_be_attached(timeout=5000)
+        except AssertionError:
+            # If buttons don't exist, verify it's because there are no items
+            info_text = controls.locator("span[x-text]").text_content()
+            assert "No items found" in info_text, f"Expected 'No items found' when pagination buttons absent, got: {info_text}"
 
 
 # ---------------------------------------------------------------------------

@@ -108,7 +108,7 @@ def _wait_for_admin_shell(page: Page, timeout: int = 60000, team_id: Optional[st
         raise
     # Wait for JS initialization
     try:
-        page.wait_for_function("typeof window.showTab === 'function' && typeof window.htmx !== 'undefined'", timeout=30000)
+        page.wait_for_function("typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined'", timeout=30000)
     except PlaywrightTimeoutError:
         pass
 
