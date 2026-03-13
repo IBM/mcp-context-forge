@@ -154,9 +154,13 @@ class TestAPIIntegration:
         textareas = page.locator("#tool-test-form-fields textarea")
         expect(textareas.first).to_be_visible(timeout=5000)
 
-        # Test valid JSON object — should succeed
+        # Test valid JSON object — intercept request to verify parsed payload
         textareas.first.fill('{"key": "value", "number": 42}')
-        page.click('button:has-text("Run Tool")')
+        with page.expect_request(lambda req: "/rpc" in req.url and req.method == "POST") as req_info:
+            page.click('button:has-text("Run Tool")')
+        payload = req_info.value.post_data_json
+        assert isinstance(payload["params"]["config"], dict), "config should be a parsed dict, not a string"
+        assert payload["params"]["config"] == {"key": "value", "number": 42}
         page.wait_for_selector("#tool-test-result", timeout=30000)
         expect(page.locator("#tool-test-result")).to_be_visible()
 
