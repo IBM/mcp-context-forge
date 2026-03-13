@@ -35,6 +35,7 @@ PLATFORM_ADMIN_PERMISSIONS = ["*"]
 TEAM_ADMIN_PERMISSIONS = sorted(
     [
         "admin.dashboard",
+        "admin.overview",
         "gateways.read",
         "servers.read",
         "servers.use",
@@ -79,6 +80,7 @@ TEAM_ADMIN_PERMISSIONS = sorted(
 DEVELOPER_PERMISSIONS = sorted(
     [
         "admin.dashboard",
+        "admin.overview",
         "gateways.read",
         "servers.read",
         "servers.use",
@@ -120,8 +122,10 @@ DEVELOPER_PERMISSIONS = sorted(
 VIEWER_PERMISSIONS = sorted(
     [
         "admin.dashboard",
+        "admin.overview",
         "gateways.read",
         "servers.read",
+        "servers.use",
         "teams.read",
         "teams.join",
         "tools.read",
@@ -139,8 +143,10 @@ VIEWER_PERMISSIONS = sorted(
 PLATFORM_VIEWER_PERMISSIONS = sorted(
     [
         "admin.dashboard",
+        "admin.overview",
         "gateways.read",
         "servers.read",
+        "servers.use",
         "teams.read",
         "teams.join",
         "tools.read",
