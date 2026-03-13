@@ -4560,7 +4560,6 @@ class TestGetGatewayWithCredentials:
         mock_full_read.auth_header_value_unmasked = None
         mock_full_read.auth_headers_unmasked = None
 
-        monkeypatch.setattr(gateway_service, "_prepare_gateway_for_read", Mock(return_value=MagicMock()))
         import mcpgateway.services.gateway_service as _gs
 
         monkeypatch.setattr(_gs.GatewayRead, "model_validate", staticmethod(lambda obj: mock_full_read))

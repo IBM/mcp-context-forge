@@ -2476,9 +2476,19 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if not gateway:
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
-        # model_validate triggers _populate_auth() which decrypts credentials into _unmasked fields.
-        # Deliberately NOT calling .masked() so the plaintext values are accessible.
-        full_read = GatewayRead.model_validate(self._prepare_gateway_for_read(gateway))
+        # Build the same dict that convert_gateway_to_read uses, but skip .masked() so that
+        # _populate_auth() leaves the plaintext values in the _unmasked fields.
+        gateway_dict = gateway.__dict__.copy()
+        gateway_dict.pop("_sa_instance_state", None)
+        if isinstance(gateway.auth_value, dict):
+            gateway_dict["auth_value"] = encode_auth(gateway.auth_value)
+        if gateway.tags:
+            gateway_dict["tags"] = validate_tags_field(gateway.tags) if isinstance(gateway.tags[0], str) else gateway.tags
+        else:
+            gateway_dict["tags"] = []
+        for field in ("created_by", "modified_by", "created_at", "updated_at", "version", "team"):
+            gateway_dict[field] = getattr(gateway, field, None)
+        full_read = GatewayRead.model_validate(gateway_dict)
 
         return GatewayCredentialRevealResponse(
             gateway_id=gateway_id,
