@@ -277,8 +277,9 @@ _SECTION_TO_ROUTE_PATH: Dict[str, str] = {
 def _extract_permission_from_route(route) -> Optional[str]:
     """Extract the required permission from a route's @require_permission decorator.
 
-    This function introspects the route's endpoint function to find the permission
-    string captured in the @require_permission decorator's closure.
+    This function reads the permission metadata set by the decorator as a function attribute.
+    This approach is more robust than closure introspection and immune to decorator
+    implementation changes.
 
     Args:
         route: FastAPI route object
@@ -292,20 +293,9 @@ def _extract_permission_from_route(route) -> Optional[str]:
 
         endpoint = route.endpoint
 
-        # The @require_permission decorator wraps the endpoint function
-        # The permission string is captured in the wrapper's closure
-        if hasattr(endpoint, "__closure__") and endpoint.__closure__:
-            for cell in endpoint.__closure__:
-                try:
-                    val = cell.cell_contents
-                    # Permission strings follow pattern: "resource.action" (e.g., "tools.read")
-                    if isinstance(val, str) and "." in val and not val.startswith("/"):
-                        # Validate it looks like a permission (not a path or other string)
-                        parts = val.split(".")
-                        if len(parts) >= 2 and all(p.replace("_", "").isalnum() for p in parts):
-                            return val
-                except (ValueError, AttributeError):
-                    continue
+        # Simply read the metadata attribute set by @require_permission decorator
+        return getattr(endpoint, "_required_permission", None)
+
     except Exception as e:
         LOGGER.debug(f"Error extracting permission from route {getattr(route, 'path', 'unknown')}: {e}")
 
@@ -495,7 +485,7 @@ async def get_hidden_sections_for_user(
                 user_email=user_email,
                 permission=required_permission,
                 token_teams=token_teams,
-                allow_admin_bypass=False,  # UI visibility matches API permissions
+                allow_admin_bypass=False,  # UI visibility matches team-scoped permissions (no admin bypass)
                 check_any_team=True,  # Check across all user's teams
             )
 
@@ -574,7 +564,7 @@ async def get_user_action_permissions(
                 user_email=user_email,
                 permission=permission,
                 token_teams=token_teams,
-                allow_admin_bypass=False,  # UI visibility matches API permissions
+                allow_admin_bypass=False,  # UI visibility matches team-scoped permissions (no admin bypass)
                 check_any_team=True,
             )
             result[flag] = has_permission
@@ -3495,13 +3485,16 @@ async def admin_ui(
 
     # --------------------------------------------------------------------------------
     # Get user action permissions for UI button visibility
+    # Only check permissions when email auth is enabled (same as section hiding)
     # --------------------------------------------------------------------------------
-    user_permissions = await get_user_action_permissions(
-        db=db,
-        user_email=user_email,
-        is_admin=is_admin_user,
-        token_teams=token_teams,
-    )
+    user_permissions = {}
+    if getattr(settings, "email_auth_enabled", False):
+        user_permissions = await get_user_action_permissions(
+            db=db,
+            user_email=user_email,
+            is_admin=is_admin_user,
+            token_teams=token_teams,
+        )
 
     # --------------------------------------------------------------------------------
     # Load user teams so we can validate team_id

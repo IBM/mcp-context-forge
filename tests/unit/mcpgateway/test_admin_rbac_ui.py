@@ -223,7 +223,7 @@ class TestGetUserActionPermissions:
 
             # Verify check_permission calls
             assert mock_service.check_permission.call_count == 9
-            
+
             # Check first call parameters
             first_call = mock_service.check_permission.call_args_list[0]
             assert first_call.kwargs["user_email"] == "user@example.com"
@@ -239,12 +239,12 @@ class TestGetUserActionPermissions:
         with patch("mcpgateway.admin.PermissionService") as mock_service_class:
             mock_service = AsyncMock()
             mock_service_class.return_value = mock_service
-            
+
             checked_permissions = []
             async def track_permission(user_email, permission, token_teams, allow_admin_bypass, check_any_team):
                 checked_permissions.append(permission)
                 return True
-            
+
             mock_service.check_permission = AsyncMock(side_effect=track_permission)
 
             result = await get_user_action_permissions(
