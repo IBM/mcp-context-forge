@@ -17,8 +17,6 @@ Indexes added:
 - idx_prompt_metrics_prompt_id_timestamp: (prompt_id, timestamp)
 - idx_server_metrics_server_id_timestamp: (server_id, timestamp)
 
-Note: A2A agent metrics not included as include_metrics support not added for agents in this PR.
-
 Related to PR #3649 - Performance optimization for metrics aggregation.
 """
 from typing import Sequence, Union
@@ -116,5 +114,3 @@ def downgrade() -> None:
 
     if _table_exists("tool_metrics") and _index_exists("tool_metrics", "idx_tool_metrics_tool_id_timestamp"):
         op.drop_index("idx_tool_metrics_tool_id_timestamp", table_name="tool_metrics")
-
-    # Note: Not reverting a2a_agents.auth_value type change (SQLite limitation)
