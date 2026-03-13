@@ -6343,7 +6343,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
                 else:
                     result = {"contents": [result]}
-            except ValueError:
+            except (ValueError, ResourceNotFoundError):
                 # Resource not found in the gateway
                 logger.error(f"Resource not found: {uri}")
                 raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri})
@@ -6711,8 +6711,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Catch-all for other completion/* methods (currently unsupported)
             result = {}
         elif method == "logging/setLevel":
-            # MCP spec-compliant logging endpoint
-            await _ensure_rpc_permission(user, db, "admin.system_config", method, request=request)
+            # MCP logging/setLevel is a standard MCP capability invoked by clients during
+            # initialization; servers.use (not admin.system_config) keeps the handshake working.
+            await _ensure_rpc_permission(user, db, "servers.use", method, request=request)
             level = LogLevel(params.get("level"))
             await logging_service.set_level(level)
             result = {}
