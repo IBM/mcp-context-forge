@@ -123,11 +123,11 @@ make serve-granian-http2      # Granian with HTTP/2 + TLS
 
 # Container with Gunicorn (default)
 make container-run
-make container-run-gunicorn-ssl
+make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn
 
 # Container with Granian (alternative)
-make container-run-granian
-make container-run-granian-ssl
+make container-run CONTAINER_HTTP_SERVER=granian
+make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian
 
 # Docker Compose (default uses Gunicorn)
 docker compose up

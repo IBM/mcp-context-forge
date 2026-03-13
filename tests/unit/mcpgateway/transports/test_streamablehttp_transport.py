@@ -3402,8 +3402,8 @@ async def test_set_logging_level_exception():
 
 
 @pytest.mark.asyncio
-async def test_set_logging_level_requires_admin_system_config(monkeypatch):
-    """logging/setLevel is process-wide and must require admin.system_config for authenticated users."""
+async def test_set_logging_level_requires_servers_use(monkeypatch):
+    """logging/setLevel requires servers.use permission for authenticated users."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import set_logging_level
 
@@ -3427,7 +3427,7 @@ async def test_set_logging_level_requires_admin_system_config(monkeypatch):
     mock_logging_service.set_level = AsyncMock()
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.logging_service", mock_logging_service)
 
-    # Should raise PermissionError for non-admin user without admin.system_config
+    # Should raise PermissionError for non-admin user without servers.use
     with pytest.raises(PermissionError, match="Access denied"):
         await set_logging_level("info")
     mock_logging_service.set_level.assert_not_called()
@@ -3435,7 +3435,7 @@ async def test_set_logging_level_requires_admin_system_config(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_set_logging_level_admin_allowed(monkeypatch):
-    """logging/setLevel succeeds when the caller has admin.system_config permission."""
+    """logging/setLevel succeeds when the caller has servers.use permission."""
     # Third-Party
     from mcp import types as mcp_types
 
@@ -11147,10 +11147,10 @@ def test_normalize_jwt_payload_with_scoped_permissions(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_set_logging_level_denied_by_token_scope(monkeypatch):
-    """Token without admin.system_config should be denied set_logging_level."""
+    """Token without servers.use should be denied set_logging_level."""
     from mcpgateway.transports.streamablehttp_transport import set_logging_level
 
-    _patch_request_context(monkeypatch, _scoped_user_context(["servers.use", "tools.read"]))
+    _patch_request_context(monkeypatch, _scoped_user_context(["tools.read"]))
 
     with pytest.raises(PermissionError, match="Access denied"):
         await set_logging_level("error")

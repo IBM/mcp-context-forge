@@ -886,7 +886,7 @@ async def test_verify_jwt_token_require_jti_disabled_accepts_missing_jti(monkeyp
     # Token without JTI claim (explicitly exclude JTI to test the warning)
     token = _token({"sub": "user-no-jti-allowed"}, include_jti=False)
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.verify_credentials"):
         payload = await vc.verify_jwt_token(token)
 
     assert payload["sub"] == "user-no-jti-allowed"
