@@ -620,6 +620,43 @@ class TestAdminResourceAPIs:
         response = await client.post("/admin/resources", data=valid_form_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 409
 
+    async def test_admin_add_resource_accepts_parameterized_mime_types(self, client: AsyncClient, mock_settings):
+        """Test admin resource create/list accepts and persists parameterized MIME types."""
+        accepted_mime_types = [
+            "text/plain; charset=utf-8",
+            "application/json; charset=utf-8",
+            "text/html; profile=interactive-app",
+        ]
+
+        created_resources: list[tuple[str, str]] = []
+        for mime_value in accepted_mime_types:
+            resource_name = f"Parameterized MIME Resource {uuid.uuid4().hex[:8]}"
+            resource_uri = f"ui://resource-{uuid.uuid4().hex[:8]}"
+
+            form_data = {
+                "uri": resource_uri,
+                "name": resource_name,
+                "description": "Resource with parameterized MIME type",
+                "mimeType": mime_value,
+                "content": "UI app payload",
+            }
+
+            create_response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER)
+            assert create_response.status_code == 200
+            create_json = create_response.json()
+            assert create_json.get("success") is True
+            created_resources.append((resource_name, mime_value))
+
+        list_response = await client.get("/admin/resources", headers=TEST_AUTH_HEADER)
+        assert list_response.status_code == 200
+        list_json = list_response.json()
+        resources = list_json["data"] if isinstance(list_json, dict) and "data" in list_json else list_json
+
+        for resource_name, mime_value in created_resources:
+            resource = next((r for r in resources if r.get("name") == resource_name), None)
+            assert resource is not None
+            assert resource.get("mimeType", resource.get("mime_type")) == mime_value
+
 
 # -------------------------
 # Test Prompt Admin APIs
