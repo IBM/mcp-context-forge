@@ -1134,13 +1134,13 @@ class EmailAuthService:
 
                     if not existing_assignment or not existing_assignment.is_active:
                         await self.role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
-                        logger.info(f"Assigned platform_admin role to {email} during create_platform_admin()")
+                        logger.info(f"Assigned platform_admin role to {SecurityValidator.sanitize_log_message(email)} during create_platform_admin()")
                     else:
-                        logger.debug(f"User {email} already has active platform_admin role")
+                        logger.debug(f"User {SecurityValidator.sanitize_log_message(email)} already has active platform_admin role")
                 else:
-                    logger.warning(f"platform_admin role not found. User {email} updated with is_admin=True but without platform_admin role assignment.")
+                    logger.warning(f"platform_admin role not found. User {SecurityValidator.sanitize_log_message(email)} updated with is_admin=True but without platform_admin role assignment.")
             except Exception as role_error:
-                logger.error(f"Failed to assign platform_admin role to {email}: {role_error}. User updated with is_admin=True but role assignment failed.")
+                logger.error(f"Failed to assign platform_admin role to {SecurityValidator.sanitize_log_message(email)}: {role_error}. User updated with is_admin=True but role assignment failed.")
                 # Don't fail the admin user update if role assignment fails
                 # bootstrap_default_roles() will sync it later
 
