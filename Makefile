@@ -625,9 +625,10 @@ clean:
 # help: benchmark           - Run all benchmarks (pytest, async, JSON script, Rust plugins)
 # help: benchmark-python    - Run Python benchmarks only (pytest + async + JSON serialization)
 # help: benchmark-rust      - Run Rust plugin benchmarks and Rust vs Python comparison
+# help: benchmark-a2a       - Run the supported A2A Rust vs Python comparison suite
 # help: bench               - Run pytest benchmarks only; use BENCH=name or "make bench <name>" to filter
 
-.PHONY: smoketest test-mcp-cli test-mcp-rbac test test-with-rust test-a2a test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time benchmark benchmark-ensure-rust benchmark-python benchmark-rust bench
+.PHONY: smoketest test-mcp-cli test-mcp-rbac test test-with-rust test-a2a test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time benchmark benchmark-ensure-rust benchmark-python benchmark-rust benchmark-a2a bench
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -861,7 +862,20 @@ benchmark-python: benchmark-ensure-rust
 	@uv run --active python scripts/benchmark_json_serialization.py
 	@echo "✅ Python benchmarks finished."
 
-benchmark-rust: rust-bench rust-bench-compare
+benchmark-rust: rust-bench
+
+A2A_BENCHMARK_ARGS ?= \
+	--scenario single \
+	--scenario batch_16_fast_sync \
+	--scenario batch_32_typical \
+	--scenario batch_32_typical_dup4 \
+	--scenario batch_128_typical \
+	--scenario singles_128_typical \
+	--scenario batch_128_io_100_1000ms
+
+benchmark-a2a: gateway-rs-install
+	@echo "🦀 Running A2A Rust vs Python comparison..."
+	@uv run python3 crates/gateway_rs/services/a2a_service/compare_performance.py $(A2A_BENCHMARK_ARGS)
 
 diff-cover:
 	@echo "📊  Running diff-cover against main branch..."

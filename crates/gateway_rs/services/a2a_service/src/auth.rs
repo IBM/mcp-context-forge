@@ -7,21 +7,24 @@
 use std::collections::HashMap;
 
 use aes_gcm::{
-    aead::{Aead, KeyInit},
     Aes256Gcm,
+    aead::{Aead, KeyInit},
 };
 use base64::Engine;
 use log::warn;
 use sha2::{Digest, Sha256};
-use url::form_urlencoded;
 use url::Url;
+use url::form_urlencoded;
 
 use crate::errors::A2AError;
 
 /// Decrypt a base64url-encoded AES-GCM ciphertext (nonce || ciphertext) into a string->string map.
 /// Matches Python `decode_auth`: key = SHA256(secret), 12-byte nonce, no AAD.
 /// Returns empty map on empty or invalid input; errors on decrypt failure.
-pub fn decrypt_auth(encoded_value: &str, secret: &str) -> Result<HashMap<String, String>, A2AError> {
+pub fn decrypt_auth(
+    encoded_value: &str,
+    secret: &str,
+) -> Result<HashMap<String, String>, A2AError> {
     if encoded_value.is_empty() {
         return Ok(HashMap::new());
     }
@@ -30,7 +33,9 @@ pub fn decrypt_auth(encoded_value: &str, secret: &str) -> Result<HashMap<String,
         .decode(padded.as_bytes())
         .map_err(|e| A2AError::Auth(format!("base64 decode failed: {}", e)))?;
     if combined.len() < 12 {
-        return Err(A2AError::Auth("ciphertext too short (missing nonce)".to_string()));
+        return Err(A2AError::Auth(
+            "ciphertext too short (missing nonce)".to_string(),
+        ));
     }
     let (nonce_slice, ciphertext) = combined.split_at(12);
     let key = Sha256::digest(secret.as_bytes());
@@ -39,9 +44,10 @@ pub fn decrypt_auth(encoded_value: &str, secret: &str) -> Result<HashMap<String,
     let plaintext = cipher
         .decrypt(nonce_slice.into(), ciphertext)
         .map_err(|e| A2AError::Auth(format!("decrypt failed: {}", e)))?;
-    let s = String::from_utf8(plaintext).map_err(|e| A2AError::Auth(format!("plaintext not UTF-8: {}", e)))?;
-    let value: HashMap<String, serde_json::Value> =
-        serde_json::from_str(&s).map_err(|e| A2AError::Auth(format!("JSON parse failed: {}", e)))?;
+    let s = String::from_utf8(plaintext)
+        .map_err(|e| A2AError::Auth(format!("plaintext not UTF-8: {}", e)))?;
+    let value: HashMap<String, serde_json::Value> = serde_json::from_str(&s)
+        .map_err(|e| A2AError::Auth(format!("JSON parse failed: {}", e)))?;
     let out: HashMap<String, String> = value
         .into_iter()
         .filter_map(|(k, v)| {
@@ -119,7 +125,10 @@ pub fn apply_invoke_auth(
     match url.scheme() {
         "http" | "https" => {}
         _ => {
-            let msg = format!("Invoke URL scheme not allowed: {} (only http/https)", url.scheme());
+            let msg = format!(
+                "Invoke URL scheme not allowed: {} (only http/https)",
+                url.scheme()
+            );
             warn!("{}", msg);
             return Err(A2AError::Other(msg));
         }
@@ -140,7 +149,11 @@ pub fn apply_invoke_auth(
                 ser.append_pair(k, v);
             }
             let new_query = ser.finish();
-            url.set_query(if new_query.is_empty() { None } else { Some(&new_query) });
+            url.set_query(if new_query.is_empty() {
+                None
+            } else {
+                Some(&new_query)
+            });
         }
     }
 
@@ -206,7 +219,10 @@ mod tests {
         };
         let (url, h) = apply_invoke_auth("https://api.example.com/mcp", &auth).unwrap();
         assert_eq!(url, "https://api.example.com/mcp");
-        assert_eq!(h.get("Authorization").map(String::as_str), Some("Bearer tok"));
+        assert_eq!(
+            h.get("Authorization").map(String::as_str),
+            Some("Bearer tok")
+        );
     }
 
     #[test]

@@ -19,12 +19,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use futures::future::{join_all, FutureExt};
+use futures::future::{FutureExt, join_all};
 use futures::stream::StreamExt;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use reqwest::Client;
-use serde_json::Value as JsonValue;
 use log::{debug, error};
+use reqwest::Client;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use serde_json::Value as JsonValue;
 use tokio::sync::Semaphore;
 use url::Url;
 
@@ -114,7 +114,9 @@ impl From<(usize, String, Vec<u8>, HashMap<String, String>)> for A2AInvokeReques
 impl TryFrom<(usize, String, JsonValue, HashMap<String, String>)> for A2AInvokeRequest {
     type Error = serde_json::Error;
 
-    fn try_from((id, url, payload, headers): (usize, String, JsonValue, HashMap<String, String>)) -> Result<Self, Self::Error> {
+    fn try_from(
+        (id, url, payload, headers): (usize, String, JsonValue, HashMap<String, String>),
+    ) -> Result<Self, Self::Error> {
         let body = serde_json::to_vec(&payload)?;
         Ok(Self {
             id,
@@ -158,9 +160,8 @@ pub struct A2AInvokeResult {
 /// Python validates endpoint_url at agent create/update (http/https/ws/wss); we enforce http/https
 /// here at invoke time for defense-in-depth (e.g. direct DB edits, legacy data).
 fn validate_url_scheme(url_str: &str) -> Result<(), A2AError> {
-    let url = Url::parse(url_str).map_err(|e| {
-        A2AError::Other(format!("Invalid invoke URL: {}", e))
-    })?;
+    let url =
+        Url::parse(url_str).map_err(|e| A2AError::Other(format!("Invalid invoke URL: {}", e)))?;
     match url.scheme() {
         "http" | "https" => Ok(()),
         _ => Err(A2AError::Other(format!(
@@ -282,11 +283,12 @@ fn is_retryable(err: &A2AError) -> bool {
         A2AError::Http(e) => {
             e.is_timeout()
                 || e.is_connect()
-                || e.status()
-                    .map(|s| s.is_server_error())
-                    .unwrap_or(false)
+                || e.status().map(|s| s.is_server_error()).unwrap_or(false)
         }
-        A2AError::CircuitOpen | A2AError::OversizedResponse | A2AError::Auth(_) | A2AError::Other(_) => false,
+        A2AError::CircuitOpen
+        | A2AError::OversizedResponse
+        | A2AError::Auth(_)
+        | A2AError::Other(_) => false,
     }
 }
 
@@ -304,9 +306,8 @@ async fn read_body_with_limit(
         }
         body.extend_from_slice(&chunk);
     }
-    String::from_utf8(body).map_err(|e| {
-        A2AError::Other(format!("Response body not valid UTF-8: {}", e))
-    })
+    String::from_utf8(body)
+        .map_err(|e| A2AError::Other(format!("Response body not valid UTF-8: {}", e)))
 }
 
 /// Execute a single A2A request: semaphore, circuit breaker, URL validation, retry loop, then build result.
@@ -364,7 +365,15 @@ async fn execute_one_request(
     }
     let url = req.url.clone();
     if let Err(e) = validate_url_scheme(&url) {
-        return make_invoke_result(id, Err(e), 0.0, agent_key, agent_name, agent_id, interaction_type);
+        return make_invoke_result(
+            id,
+            Err(e),
+            0.0,
+            agent_key,
+            agent_name,
+            agent_id,
+            interaction_type,
+        );
     }
     let body = Bytes::from(req.body);
     let header_map = req.headers.clone().into_header_map();
@@ -445,7 +454,15 @@ async fn execute_one_request(
             }
         }
     }
-    make_invoke_result(id, r, duration_secs, agent_key, agent_name, agent_id, interaction_type)
+    make_invoke_result(
+        id,
+        r,
+        duration_secs,
+        agent_key,
+        agent_name,
+        agent_id,
+        interaction_type,
+    )
 }
 
 impl A2AInvoker {
@@ -467,9 +484,7 @@ impl A2AInvoker {
                 config.circuit_max_entries,
             ))
         });
-        let semaphore = config
-            .max_concurrent
-            .map(|n| Arc::new(Semaphore::new(n)));
+        let semaphore = config.max_concurrent.map(|n| Arc::new(Semaphore::new(n)));
         Self {
             client,
             metrics,
@@ -644,7 +659,13 @@ mod tests {
     fn test_a2a_invoke_request_from_tuple() {
         let mut headers = HashMap::new();
         headers.insert("H".to_string(), "V".to_string());
-        let req: A2AInvokeRequest = (0, "https://example.com".to_string(), b"body".to_vec(), headers.clone()).into();
+        let req: A2AInvokeRequest = (
+            0,
+            "https://example.com".to_string(),
+            b"body".to_vec(),
+            headers.clone(),
+        )
+            .into();
         assert_eq!(req.id, 0);
         assert_eq!(req.url, "https://example.com");
         assert_eq!(req.body, b"body");
@@ -760,9 +781,7 @@ mod tests {
         let body_text = "<html><body>Error 500</body></html>";
         Mock::given(method("POST"))
             .and(path("/"))
-            .respond_with(
-                ResponseTemplate::new(500).set_body_string(body_text),
-            )
+            .respond_with(ResponseTemplate::new(500).set_body_string(body_text))
             .mount(&mock_server)
             .await;
 
@@ -898,9 +917,7 @@ mod tests {
         let oversized = "x".repeat(super::MAX_RESPONSE_BODY_BYTES_FOR_TEST + 1);
         Mock::given(method("POST"))
             .and(path("/"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_string(oversized),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_string(oversized))
             .mount(&mock_server)
             .await;
 
@@ -934,9 +951,7 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_string(r#"{"id":1}"#),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"id":1}"#))
             .mount(&mock_server)
             .await;
 

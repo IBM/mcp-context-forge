@@ -15,6 +15,7 @@ make benchmark
 | JSON serialization | `scripts/benchmark_json_serialization.py` | orjson vs stdlib json |
 | Rust plugin benches | `plugins_rust/` | `cargo bench` (PII filter, secrets detection, etc.) |
 | Rust vs Python | `plugins_rust/pii_filter/benchmarks/` | compare_pii_filter.py |
+| Rust vs Python A2A | `crates/gateway_rs/services/a2a_service/compare_performance.py` | real A2A invoke comparison: production Rust queue vs current Python fallback, including larger I/O-heavy scenarios and `>=2x` / `>=5x` / `>=10x` speedup tiers |
 
 Optional (requires running server):
 
@@ -39,15 +40,29 @@ make async-benchmark
 # Rust plugin benchmarks only
 make rust-bench
 
-# Rust vs Python comparison
-make rust-bench-compare
+# A2A-specific comparison
+make benchmark-a2a
+
+# A2A full/custom comparison including JSON report
+uv run python3 crates/gateway_rs/services/a2a_service/compare_performance.py \
+  --output benchmarks/reports/a2a_service_compare.json
 ```
 
-## A2A invoke benchmark
+Latency assumptions used by the A2A comparison:
 
-Compares speed of `POST /a2a/{agent_name}/invoke` on the current branch to a **fixed legacy main** baseline so that after merge you still compare latest vs that baseline.
+| Scenario type | Typical latency |
+| --- | --- |
+| Fast synchronous tool-like agent | ~50-200 ms |
+| Typical production A2A request | ~100-800 ms |
+| Agent calling an LLM or complex pipeline | 1-5+ seconds |
+| Long-running task (async with streaming/polling) | seconds to minutes |
 
-- **Prerequisite (branch with Rust A2A):** Install the gateway Rust extension so `gateway_rs` is available: `make gateway-rs-install` (or `make rust-install`). Without this, the benchmark fails with `ModuleNotFoundError: No module named 'gateway_rs'`.
-- **Run:** `make bench a2a_invoke` or `make bench BENCH=a2a_invoke`
-- **Baseline:** Stored in `benchmarks/a2a_invoke_baseline_main.json`. The commit used as baseline is hardcoded in `test_a2a_invoke_benchmark.py` (`A2A_INVOKE_MAIN_BASELINE_COMMIT`) so it does not change when main moves.
-- **Refresh baseline from main:** Stash your changes, checkout main (or the baseline commit), pop the benchmark files, run `SAVE_A2A_INVOKE_BASELINE=1 make bench a2a_invoke`, then checkout back and restore. Commit the updated `benchmarks/a2a_invoke_baseline_main.json`.
+`single` intentionally stays near-zero-latency to measure fixed invoke overhead. The multi-request scenarios are latency-bearing and map to the assumptions above.
+
+## A2A comparison
+
+Use the dedicated A2A benchmark command for the supported default suite:
+
+- Run `make benchmark-a2a` for the curated production-shaped A2A Rust vs Python comparison.
+- Run the script directly when you need custom `--scenario` flags or `--output benchmarks/reports/a2a_service_compare.json`.
+- The suite includes both pre-batched requests and a `singles_128_typical` scenario to verify how the Rust queue behaves when 128 requests arrive as separate single invokes.

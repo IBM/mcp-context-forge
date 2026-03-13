@@ -34,7 +34,6 @@ pub enum A2AError {
     Other(String),
 }
 
-
 /// Returns true if the HTTP status code indicates success (2xx).
 #[inline]
 pub fn is_success_http_status(code: u16) -> bool {
@@ -87,16 +86,25 @@ mod tests {
     #[test]
     fn test_a2a_error_other_display() {
         let error = A2AError::Other("something went wrong".to_string());
-        assert_eq!(error.to_string(), "A2A invocation error: something went wrong");
+        assert_eq!(
+            error.to_string(),
+            "A2A invocation error: something went wrong"
+        );
     }
 
     #[test]
     fn test_a2a_error_codes_and_status() {
-        assert_eq!(A2AError::Timeout(Duration::from_secs(5)).error_code(), "timeout");
+        assert_eq!(
+            A2AError::Timeout(Duration::from_secs(5)).error_code(),
+            "timeout"
+        );
         assert_eq!(A2AError::Timeout(Duration::from_secs(5)).http_status(), 504);
         assert_eq!(A2AError::CircuitOpen.error_code(), "circuit_open");
         assert_eq!(A2AError::CircuitOpen.http_status(), 503);
-        assert_eq!(A2AError::OversizedResponse.error_code(), "oversized_response");
+        assert_eq!(
+            A2AError::OversizedResponse.error_code(),
+            "oversized_response"
+        );
         assert_eq!(A2AError::OversizedResponse.http_status(), 413);
     }
 

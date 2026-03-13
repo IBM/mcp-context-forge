@@ -7,8 +7,8 @@
 //! Per-agent recent latencies are kept for adaptive timeout (P95-based suggestion when no per-request timeout is set).
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -213,9 +213,7 @@ impl MetricsCollector {
 
     /// Get aggregated metrics for a specific agent, if any.
     pub fn get_aggregate(&self, agent: &str) -> Option<AggregateMetrics> {
-        self.invocations
-            .get(agent)
-            .map(|m| m.snapshot())
+        self.invocations.get(agent).map(|m| m.snapshot())
     }
 
     /// Suggested timeout for an agent when no per-request timeout is set: P95 of recent latencies
@@ -228,10 +226,7 @@ impl MetricsCollector {
         min_duration: Duration,
         max_duration: Duration,
     ) -> Duration {
-        let p95_us = self
-            .invocations
-            .get(agent)
-            .and_then(|m| m.p95_latency_us());
+        let p95_us = self.invocations.get(agent).and_then(|m| m.p95_latency_us());
         match p95_us {
             None => default_duration,
             Some(us) => {
@@ -254,7 +249,9 @@ impl MetricsCollector {
         self.global.successful_calls.store(0, Ordering::Relaxed);
         self.global.failed_calls.store(0, Ordering::Relaxed);
         self.global.total_latency_us.store(0, Ordering::Relaxed);
-        self.global.min_latency_us.store(u64::MAX, Ordering::Relaxed);
+        self.global
+            .min_latency_us
+            .store(u64::MAX, Ordering::Relaxed);
         self.global.max_latency_us.store(0, Ordering::Relaxed);
     }
 }

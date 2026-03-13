@@ -9,26 +9,26 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aes_gcm::{
-    aead::{Aead, KeyInit},
     Aes256Gcm,
+    aead::{Aead, KeyInit},
 };
 use base64::Engine;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use a2a_service::{decrypt_auth, decrypt_map_values, A2AInvokeRequest, A2AInvoker, MetricsCollector};
+use a2a_service::{
+    A2AInvokeRequest, A2AInvoker, MetricsCollector, decrypt_auth, decrypt_map_values,
+};
 
 /// Produce a valid encrypted blob (same format as Python encode_auth) for benchmarking decrypt.
 fn make_encrypted_blob(secret: &str, payload: &str) -> String {
     let key = Sha256::digest(secret.as_bytes());
     let cipher = Aes256Gcm::new_from_slice(key.as_slice()).unwrap();
     let nonce: [u8; 12] = [0u8; 12]; // fixed for reproducibility
-    let ciphertext = cipher
-        .encrypt((&nonce).into(), payload.as_bytes())
-        .unwrap();
+    let ciphertext = cipher.encrypt((&nonce).into(), payload.as_bytes()).unwrap();
     let mut combined = nonce.to_vec();
     combined.extend_from_slice(&ciphertext);
     base64::engine::general_purpose::URL_SAFE.encode(combined)
@@ -148,9 +148,8 @@ fn bench_auth_decrypt(c: &mut Criterion) {
         b.iter(|| decrypt_map_values(&enc_map, SECRET).unwrap())
     });
 
-    let enc_map_10: HashMap<String, String> = (0..10)
-        .map(|i| (format!("k{}", i), blob.clone()))
-        .collect();
+    let enc_map_10: HashMap<String, String> =
+        (0..10).map(|i| (format!("k{}", i), blob.clone())).collect();
     group.throughput(Throughput::Elements(10));
     group.bench_function("decrypt_map_values_10", |b| {
         b.iter(|| decrypt_map_values(&enc_map_10, SECRET).unwrap())

@@ -11,17 +11,18 @@
 //! Graceful shutdown: call [`shutdown_queue`] (async) to stop accepting new work and
 //! drain pending jobs with a timeout.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
 use log::info;
 use tokio::runtime::Runtime;
-use tokio::sync::{mpsc, oneshot, Semaphore};
-use tokio::time::Instant;
+use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio::task::JoinSet;
+use tokio::time::Instant;
 
 use crate::invoker::{A2AInvokeRequest, A2AInvokeResult};
 
@@ -32,13 +33,104 @@ struct Job {
     result_tx: oneshot::Sender<Vec<A2AInvokeResult>>,
 }
 
-/// Run one job: acquire permit, invoke, drop permit, send results.
-async fn run_one_job(job: Job, semaphore: Arc<Semaphore>) {
+const MAX_COALESCED_REQUESTS: usize = 128;
+
+/// Run one job group: acquire permit once, invoke once, then fan results back to the original submitters.
+async fn run_job_group(jobs: Vec<Job>, semaphore: Arc<Semaphore>) {
     let _permit = semaphore.acquire_owned().await;
     let inv = crate::get_invoker();
-    let results = inv.invoke(job.requests, job.timeout).await;
+    let timeout = jobs.first().map(|job| job.timeout).unwrap_or_default();
+    let mut all_requests = Vec::new();
+    let mut result_channels = Vec::with_capacity(jobs.len());
+    let mut request_counts = Vec::with_capacity(jobs.len());
+    let mut original_ids_per_job = Vec::with_capacity(jobs.len());
+    let mut next_request_id = 0;
+    for mut job in jobs {
+        let original_ids: Vec<usize> = job.requests.iter().map(|request| request.id).collect();
+        for request in &mut job.requests {
+            request.id = next_request_id;
+            next_request_id += 1;
+        }
+        request_counts.push(job.requests.len());
+        original_ids_per_job.push(original_ids);
+        result_channels.push(job.result_tx);
+        all_requests.extend(job.requests);
+    }
+    let results = inv.invoke(all_requests, timeout).await;
     drop(_permit);
-    let _ = job.result_tx.send(results);
+    let mut cursor = 0;
+    for ((request_count, result_tx), original_ids) in request_counts
+        .into_iter()
+        .zip(result_channels.into_iter())
+        .zip(original_ids_per_job.into_iter())
+    {
+        let end = cursor + request_count;
+        let mut job_results = results[cursor..end].to_vec();
+        for (result, original_id) in job_results.iter_mut().zip(original_ids.into_iter()) {
+            result.id = original_id;
+        }
+        let _ = result_tx.send(job_results);
+        cursor = end;
+    }
+}
+
+struct ShutdownRequest {
+    ack: oneshot::Sender<()>,
+    drain_timeout: Duration,
+}
+
+fn coalesce_job(
+    first_job: Job,
+    pending_jobs: &mut VecDeque<Job>,
+    rx: &mut QueueReceiver,
+    pending_shutdown: &mut Option<ShutdownRequest>,
+) -> Vec<Job> {
+    let target_timeout = first_job.timeout;
+    let mut jobs = vec![first_job];
+    let mut total_requests = jobs[0].requests.len();
+
+    let mut remaining_pending = VecDeque::new();
+    while let Some(job) = pending_jobs.pop_front() {
+        let job_request_count = job.requests.len();
+        if job.timeout == target_timeout
+            && total_requests + job_request_count <= MAX_COALESCED_REQUESTS
+        {
+            total_requests += job_request_count;
+            jobs.push(job);
+            if total_requests >= MAX_COALESCED_REQUESTS {
+                break;
+            }
+        } else {
+            remaining_pending.push_back(job);
+        }
+    }
+    while let Some(job) = pending_jobs.pop_front() {
+        remaining_pending.push_back(job);
+    }
+    *pending_jobs = remaining_pending;
+
+    while total_requests < MAX_COALESCED_REQUESTS {
+        match rx.try_recv() {
+            Ok(QueueMessage::Job(job)) => {
+                let job_request_count = job.requests.len();
+                if job.timeout == target_timeout
+                    && total_requests + job_request_count <= MAX_COALESCED_REQUESTS
+                {
+                    total_requests += job_request_count;
+                    jobs.push(job);
+                } else {
+                    pending_jobs.push_back(job);
+                }
+            }
+            Ok(QueueMessage::Shutdown { ack, drain_timeout }) => {
+                *pending_shutdown = Some(ShutdownRequest { ack, drain_timeout });
+                break;
+            }
+            Err(QueueTryRecvError::Empty) | Err(QueueTryRecvError::Disconnected) => break,
+        }
+    }
+
+    jobs
 }
 
 /// Message to the queue worker: either a job or a shutdown request with ack and drain timeout.
@@ -114,25 +206,64 @@ pub fn init_queue(max_concurrent: usize, max_queued: Option<usize>, auth_secret:
             rt.block_on(async {
                 let semaphore = Arc::new(Semaphore::new(max_concurrent));
                 let mut joinset: JoinSet<()> = JoinSet::new();
+                let mut pending_jobs: VecDeque<Job> = VecDeque::new();
+                let mut pending_shutdown: Option<ShutdownRequest> = None;
                 loop {
-                    match rx.recv().await {
+                    let next_message = if let Some(shutdown) = pending_shutdown.take() {
+                        Some(QueueMessage::Shutdown {
+                            ack: shutdown.ack,
+                            drain_timeout: shutdown.drain_timeout,
+                        })
+                    } else if let Some(job) = pending_jobs.pop_front() {
+                        Some(QueueMessage::Job(job))
+                    } else {
+                        rx.recv().await
+                    };
+                    match next_message {
                         Some(QueueMessage::Job(job)) => {
+                            let jobs = coalesce_job(
+                                job,
+                                &mut pending_jobs,
+                                &mut rx,
+                                &mut pending_shutdown,
+                            );
                             let sem = semaphore.clone();
                             joinset.spawn(async move {
-                                run_one_job(job, sem).await;
+                                run_job_group(jobs, sem).await;
                             });
                         }
                         Some(QueueMessage::Shutdown { ack, drain_timeout }) => {
                             let deadline = Instant::now() + drain_timeout;
+                            while let Some(job) = pending_jobs.pop_front() {
+                                let jobs = coalesce_job(
+                                    job,
+                                    &mut pending_jobs,
+                                    &mut rx,
+                                    &mut pending_shutdown,
+                                );
+                                let sem = semaphore.clone();
+                                joinset.spawn(async move {
+                                    run_job_group(jobs, sem).await;
+                                });
+                            }
                             while Instant::now() < deadline {
                                 match rx.try_recv() {
                                     Ok(QueueMessage::Job(job)) => {
+                                        let jobs = coalesce_job(
+                                            job,
+                                            &mut pending_jobs,
+                                            &mut rx,
+                                            &mut pending_shutdown,
+                                        );
                                         let sem = semaphore.clone();
                                         joinset.spawn(async move {
-                                            run_one_job(job, sem).await;
+                                            run_job_group(jobs, sem).await;
                                         });
                                     }
-                                    Ok(QueueMessage::Shutdown { ack: _, drain_timeout: _ }) => {}
+                                    Ok(QueueMessage::Shutdown {
+                                        ack: _,
+                                        drain_timeout: _,
+                                    }) => {}
                                     Err(QueueTryRecvError::Empty) => break,
                                     Err(QueueTryRecvError::Disconnected) => break,
                                 }
@@ -179,12 +310,10 @@ pub fn try_submit_batch(
         result_tx,
     });
     match tx {
-        QueueSender::Bounded(tx) => tx
-            .try_send(msg)
-            .map_err(|e| match e {
-                mpsc::error::TrySendError::Full(_) => QueueError::Full,
-                mpsc::error::TrySendError::Closed(_) => QueueError::Shutdown,
-            })?,
+        QueueSender::Bounded(tx) => tx.try_send(msg).map_err(|e| match e {
+            mpsc::error::TrySendError::Full(_) => QueueError::Full,
+            mpsc::error::TrySendError::Closed(_) => QueueError::Shutdown,
+        })?,
         QueueSender::Unbounded(tx) => tx.send(msg).map_err(|_| QueueError::Shutdown)?,
     }
     Ok(result_rx)
@@ -244,12 +373,16 @@ impl QueueReceiver {
             QueueReceiver::Bounded(rx) => match rx.try_recv() {
                 Ok(msg) => Ok(msg),
                 Err(mpsc::error::TryRecvError::Empty) => Err(QueueTryRecvError::Empty),
-                Err(mpsc::error::TryRecvError::Disconnected) => Err(QueueTryRecvError::Disconnected),
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    Err(QueueTryRecvError::Disconnected)
+                }
             },
             QueueReceiver::Unbounded(rx) => match rx.try_recv() {
                 Ok(msg) => Ok(msg),
                 Err(mpsc::error::TryRecvError::Empty) => Err(QueueTryRecvError::Empty),
-                Err(mpsc::error::TryRecvError::Disconnected) => Err(QueueTryRecvError::Disconnected),
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    Err(QueueTryRecvError::Disconnected)
+                }
             },
         }
     }

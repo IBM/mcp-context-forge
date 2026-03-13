@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Fixtures for benchmarks (a2a invoke, etc.).
+"""Fixtures for pytest benchmarks.
 
 When running `pytest benchmarks/`, only this conftest and repo root conftest
 (if any) are loaded. We provide app, test client, and auth so benchmark tests
@@ -8,7 +8,6 @@ do not depend on tests/conftest.
 
 # Standard
 import os
-import sys
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -169,27 +168,6 @@ def a2a_bench_client(app_with_temp_db):
     doc_patcher.stop()
     if hasattr(PermissionService, "_original_check_permission"):
         PermissionService.check_permission = _original
-
-
-def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    """Print vs-baseline summary table for A2A invoke benchmarks."""
-    comparisons = []
-    for mod in sys.modules.values():
-        if mod is not None and hasattr(mod, "_BASELINE_COMPARISONS"):
-            comparisons = getattr(mod, "_BASELINE_COMPARISONS", [])
-            if comparisons:
-                break
-    if not comparisons:
-        return
-    lines = []
-    lines.append("---------------------------------------------------------------------- vs baseline (main) -----")
-    lines.append(f"{'Name (time in ms)':<42} {'Mean':>12} {'Baseline':>12} {'vs base':>16}")
-    lines.append("-------------------------------------------------------------------------------------------------")
-    for scenario_id, mean_ms, base_mean, x_mean in comparisons:
-        lines.append(f"{scenario_id:<42} {mean_ms:>11.3f} {base_mean:>11.3f} {x_mean:>16}")
-    lines.append("-------------------------------------------------------------------------------------------------")
-    for line in lines:
-        terminalreporter.write_line(line)
 
 
 @pytest.fixture

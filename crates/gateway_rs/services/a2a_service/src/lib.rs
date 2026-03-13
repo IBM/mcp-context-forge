@@ -27,17 +27,29 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use log::warn;
 use pyo3::conversion::IntoPyObject;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 use pythonize::{depythonize, pythonize};
 use serde_json::Value as JsonValue;
-use log::warn;
 
 // Queue-specific exceptions for stable cross-language error handling.
-pyo3::create_exception!(gateway_rs.a2a_service, QueueFullError, pyo3::exceptions::PyRuntimeError);
-pyo3::create_exception!(gateway_rs.a2a_service, QueueNotInitializedError, pyo3::exceptions::PyRuntimeError);
-pyo3::create_exception!(gateway_rs.a2a_service, QueueShutdownError, pyo3::exceptions::PyRuntimeError);
+pyo3::create_exception!(
+    gateway_rs.a2a_service,
+    QueueFullError,
+    pyo3::exceptions::PyRuntimeError
+);
+pyo3::create_exception!(
+    gateway_rs.a2a_service,
+    QueueNotInitializedError,
+    pyo3::exceptions::PyRuntimeError
+);
+pyo3::create_exception!(
+    gateway_rs.a2a_service,
+    QueueShutdownError,
+    pyo3::exceptions::PyRuntimeError
+);
 
 mod auth;
 mod circuit;
@@ -47,10 +59,14 @@ mod invoker;
 mod metrics;
 mod queue;
 
-pub use crate::auth::{apply_invoke_auth, decrypt_auth, decrypt_map_values, AuthConfig, InvokeAuth};
+pub use crate::auth::{
+    AuthConfig, InvokeAuth, apply_invoke_auth, decrypt_auth, decrypt_map_values,
+};
 pub use crate::errors::A2AError;
-pub use crate::invoker::{A2AInvokeRequest, A2AInvokeResult, A2AInvoker, A2AResponse, InvokerConfig};
-pub use crate::metrics::{AggregateMetrics, AgentMetrics, MetricsCollector};
+pub use crate::invoker::{
+    A2AInvokeRequest, A2AInvokeResult, A2AInvoker, A2AResponse, InvokerConfig,
+};
+pub use crate::metrics::{AgentMetrics, AggregateMetrics, MetricsCollector};
 
 /// Parsed Python request tuple with pre-serialized body bytes.
 struct ParsedRequestBytes {
@@ -68,7 +84,6 @@ struct ParsedRequestBytes {
     request_id: Option<String>,
 }
 
-
 /// Metric row for DB persistence (agent_id, timestamp_secs, response_time, is_success, interaction_type, error_message).
 struct MetricRow {
     agent_id: String,
@@ -84,9 +99,12 @@ fn request_field_error(i: usize, e: impl std::fmt::Display) -> PyErr {
     pyo3::exceptions::PyValueError::new_err(format!("request[{}]: {}", i, e))
 }
 
-
 /// Parse a plain (non-encrypted) request tuple into ParsedRequestBytes. Pads missing fields with None/empty.
-fn parse_plain_bytes_request(item: &Bound<'_, PyAny>, len: usize, i: usize) -> PyResult<ParsedRequestBytes> {
+fn parse_plain_bytes_request(
+    item: &Bound<'_, PyAny>,
+    len: usize,
+    i: usize,
+) -> PyResult<ParsedRequestBytes> {
     if len < 5 || !matches!(len, 5 | 7 | 8 | 10 | 11 | 12) {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "request[{}]: expected tuple of length 5, 7, 8, 10, 11 or 12, got {}",
@@ -94,22 +112,51 @@ fn parse_plain_bytes_request(item: &Bound<'_, PyAny>, len: usize, i: usize) -> P
         )));
     }
     let id: usize = depythonize(&item.get_item(0)?).map_err(|e| request_field_error(i, e))?;
-    let base_url: String = depythonize(&item.get_item(1)?).map_err(|e| request_field_error(i, e))?;
+    let base_url: String =
+        depythonize(&item.get_item(1)?).map_err(|e| request_field_error(i, e))?;
     let auth_query_params: Option<HashMap<String, String>> =
         depythonize(&item.get_item(2)?).map_err(|e| request_field_error(i, e))?;
     let mut auth_headers: HashMap<String, String> =
         depythonize(&item.get_item(3)?).ok().unwrap_or_default();
     let body: Vec<u8> = depythonize(&item.get_item(4)?).map_err(|e| request_field_error(i, e))?;
-    let correlation_id: Option<String> = if len >= 7 { depythonize(&item.get_item(5)?).ok() } else { None };
-    let traceparent: Option<String> = if len >= 7 { depythonize(&item.get_item(6)?).ok() } else { None };
+    let correlation_id: Option<String> = if len >= 7 {
+        depythonize(&item.get_item(5)?).ok()
+    } else {
+        None
+    };
+    let traceparent: Option<String> = if len >= 7 {
+        depythonize(&item.get_item(6)?).ok()
+    } else {
+        None
+    };
     if let Some(ref t) = traceparent {
         auth_headers.insert("traceparent".to_string(), t.clone());
     }
-    let agent_name = if len >= 8 { depythonize(&item.get_item(7)?).ok() } else { None };
-    let agent_id = if len >= 10 { depythonize(&item.get_item(8)?).ok() } else { None };
-    let interaction_type = if len >= 10 { depythonize(&item.get_item(9)?).ok() } else { None };
-    let scope_id = if len >= 11 { depythonize(&item.get_item(10)?).ok() } else { None };
-    let request_id = if len >= 12 { depythonize(&item.get_item(11)?).ok() } else { None };
+    let agent_name = if len >= 8 {
+        depythonize(&item.get_item(7)?).ok()
+    } else {
+        None
+    };
+    let agent_id = if len >= 10 {
+        depythonize(&item.get_item(8)?).ok()
+    } else {
+        None
+    };
+    let interaction_type = if len >= 10 {
+        depythonize(&item.get_item(9)?).ok()
+    } else {
+        None
+    };
+    let scope_id = if len >= 11 {
+        depythonize(&item.get_item(10)?).ok()
+    } else {
+        None
+    };
+    let request_id = if len >= 12 {
+        depythonize(&item.get_item(11)?).ok()
+    } else {
+        None
+    };
     Ok(ParsedRequestBytes {
         id,
         base_url,
@@ -176,7 +223,9 @@ impl A2AResponsePy {
     #[getter(parsed)]
     fn get_parsed(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match &self.parsed {
-            Some(v) => Ok(pythonize(py, v).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?.unbind()),
+            Some(v) => Ok(pythonize(py, v)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
+                .unbind()),
             None => Ok(py.None()),
         }
     }
@@ -185,7 +234,9 @@ impl A2AResponsePy {
     #[getter(details)]
     fn get_details(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match &self.details {
-            Some(v) => Ok(pythonize(py, v).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?.unbind()),
+            Some(v) => Ok(pythonize(py, v)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
+                .unbind()),
             None => Ok(py.None()),
         }
     }
@@ -203,7 +254,9 @@ impl A2AResponsePy {
                     row.interaction_type.as_str(),
                     row.error_message.as_deref(),
                 );
-                Ok(pythonize(py, &tup).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?.unbind())
+                Ok(pythonize(py, &tup)
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
+                    .unbind())
             }
             None => Ok(py.None()),
         }
@@ -217,7 +270,12 @@ impl A2AResponsePy {
         if self.success {
             dict.set_item("body", self.body.as_str())?;
             match &self.parsed {
-                Some(v) => dict.set_item("parsed", pythonize(py, v).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?.unbind())?,
+                Some(v) => dict.set_item(
+                    "parsed",
+                    pythonize(py, v)
+                        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
+                        .unbind(),
+                )?,
                 None => dict.set_item("parsed", py.None())?,
             }
         } else {
@@ -227,7 +285,12 @@ impl A2AResponsePy {
                 dict.set_item("agent_name", name.as_str())?;
             }
             if let Some(ref d) = self.details {
-                dict.set_item("details", pythonize(py, d).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?.unbind())?;
+                dict.set_item(
+                    "details",
+                    pythonize(py, d)
+                        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
+                        .unbind(),
+                )?;
             }
         }
         Ok(dict.into_any().unbind())
@@ -284,7 +347,10 @@ pub(crate) fn get_invoker() -> &'static A2AInvoker {
 
 /// Parse Python request list into Rust A2AInvokeRequest list (bytes payload).
 /// Payload is pre-serialized JSON bytes (to avoid serde_json in Rust).
-fn parse_requests_bytes(list: &Bound<'_, PyList>, auth_secret_override: Option<String>) -> PyResult<Vec<A2AInvokeRequest>> {
+fn parse_requests_bytes(
+    list: &Bound<'_, PyList>,
+    auth_secret_override: Option<String>,
+) -> PyResult<Vec<A2AInvokeRequest>> {
     let auth_secret: Option<&str> = match auth_secret_override.as_deref() {
         Some(s) if !s.is_empty() => Some(s),
         _ => queue::get_auth_secret(),
@@ -295,7 +361,12 @@ fn parse_requests_bytes(list: &Bound<'_, PyList>, auth_secret_override: Option<S
             .cast::<PyList>()
             .map(|l| l.len())
             .or_else(|_| item.cast::<PyTuple>().map(|t| t.len()))
-            .map_err(|_| pyo3::exceptions::PyValueError::new_err(format!("request[{}]: expected list or tuple", i)))?;
+            .map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "request[{}]: expected list or tuple",
+                    i
+                ))
+            })?;
         let parsed: ParsedRequestBytes = if let Some(secret) = auth_secret {
             if len < 5 || len > 12 {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -303,28 +374,70 @@ fn parse_requests_bytes(list: &Bound<'_, PyList>, auth_secret_override: Option<S
                     i, len
                 )));
             }
-            let id: usize = depythonize(&item.get_item(0)?).map_err(|e| request_field_error(i, e))?;
-            let base_url: String = depythonize(&item.get_item(1)?).map_err(|e| request_field_error(i, e))?;
+            let id: usize =
+                depythonize(&item.get_item(0)?).map_err(|e| request_field_error(i, e))?;
+            let base_url: String =
+                depythonize(&item.get_item(1)?).map_err(|e| request_field_error(i, e))?;
             let enc_query: Option<HashMap<String, String>> =
                 depythonize(&item.get_item(2)?).map_err(|e| request_field_error(i, e))?;
-            let enc_headers: Option<String> = depythonize(&item.get_item(3)?).map_err(|e| request_field_error(i, e))?;
+            let enc_headers: Option<String> =
+                depythonize(&item.get_item(3)?).map_err(|e| request_field_error(i, e))?;
             let auth_query_params = enc_query
                 .map(|m| crate::auth::decrypt_map_values(&m, secret))
                 .transpose()
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("request[{}]: auth decrypt: {}", i, e)))?;
+                .map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "request[{}]: auth decrypt: {}",
+                        i, e
+                    ))
+                })?;
             let mut auth_headers = enc_headers
                 .map(|s| crate::auth::decrypt_auth(&s, secret))
                 .transpose()
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("request[{}]: auth decrypt: {}", i, e)))?
+                .map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "request[{}]: auth decrypt: {}",
+                        i, e
+                    ))
+                })?
                 .unwrap_or_default();
-            let body: Vec<u8> = depythonize(&item.get_item(4)?).map_err(|e| request_field_error(i, e))?;
-            let correlation_id: Option<String> = if len >= 7 { depythonize(&item.get_item(5)?).ok() } else { None };
-            let traceparent: Option<String> = if len >= 7 { depythonize(&item.get_item(6)?).ok() } else { None };
-            let agent_name = if len >= 8 { depythonize(&item.get_item(7)?).ok() } else { None };
-            let agent_id = if len >= 10 { depythonize(&item.get_item(8)?).ok() } else { None };
-            let interaction_type = if len >= 10 { depythonize(&item.get_item(9)?).ok() } else { None };
-            let scope_id = if len >= 11 { depythonize(&item.get_item(10)?).ok() } else { None };
-            let request_id = if len >= 12 { depythonize(&item.get_item(11)?).ok() } else { None };
+            let body: Vec<u8> =
+                depythonize(&item.get_item(4)?).map_err(|e| request_field_error(i, e))?;
+            let correlation_id: Option<String> = if len >= 7 {
+                depythonize(&item.get_item(5)?).ok()
+            } else {
+                None
+            };
+            let traceparent: Option<String> = if len >= 7 {
+                depythonize(&item.get_item(6)?).ok()
+            } else {
+                None
+            };
+            let agent_name = if len >= 8 {
+                depythonize(&item.get_item(7)?).ok()
+            } else {
+                None
+            };
+            let agent_id = if len >= 10 {
+                depythonize(&item.get_item(8)?).ok()
+            } else {
+                None
+            };
+            let interaction_type = if len >= 10 {
+                depythonize(&item.get_item(9)?).ok()
+            } else {
+                None
+            };
+            let scope_id = if len >= 11 {
+                depythonize(&item.get_item(10)?).ok()
+            } else {
+                None
+            };
+            let request_id = if len >= 12 {
+                depythonize(&item.get_item(11)?).ok()
+            } else {
+                None
+            };
             auth_headers.insert("Content-Type".to_string(), "application/json".to_string());
             if let Some(ref c) = correlation_id {
                 auth_headers.insert("X-Correlation-ID".to_string(), c.clone());
@@ -373,7 +486,6 @@ fn parse_requests_bytes(list: &Bound<'_, PyList>, auth_secret_override: Option<S
     }
     Ok(rust_requests)
 }
-
 
 /// Extract success flag and optional error message from an invoke result.
 fn success_and_error_message(r: &crate::invoker::A2AInvokeResult) -> (bool, Option<String>) {
@@ -484,17 +596,21 @@ fn try_submit_invoke<'py>(
     let timeout = Duration::from_secs_f64(timeout_secs);
     let rx = queue::try_submit_batch(rust_requests, timeout).map_err(|e| match e {
         queue::QueueError::Full => QueueFullError::new_err("A2A invoke queue full"),
-        queue::QueueError::NotInitialized => QueueNotInitializedError::new_err("A2A invoke queue not initialized"),
+        queue::QueueError::NotInitialized => {
+            QueueNotInitializedError::new_err("A2A invoke queue not initialized")
+        }
         queue::QueueError::Shutdown => QueueShutdownError::new_err("A2A invoke queue shut down"),
     })?;
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let results = rx.await.map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("queue response channel closed: {}", e))
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "queue response channel closed: {}",
+                e
+            ))
         })?;
         Ok(invoke_results_to_py(results))
     })
 }
-
 
 /// Build A2A metrics batch and success IDs for Python to push to buffer and DB.
 /// Recording (what to record) is done in Rust; buffer and DB writes stay in Python.
@@ -521,8 +637,15 @@ fn build_a2a_metrics_batch<'py>(
     let success_ids = PyList::empty(py);
 
     for (i, item) in list.iter().enumerate() {
-        let (agent_id, interaction_type, status_code, body, duration_secs): (String, String, u16, String, f64) =
-            depythonize(&item).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("entries[{}]: {}", i, e)))?;
+        let (agent_id, interaction_type, status_code, body, duration_secs): (
+            String,
+            String,
+            u16,
+            String,
+            f64,
+        ) = depythonize(&item).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("entries[{}]: {}", i, e))
+        })?;
 
         let success = crate::errors::is_success_http_status(status_code);
         let error_message: Option<String> = if success {
@@ -557,7 +680,9 @@ fn build_a2a_metrics_batch<'py>(
 #[pyfunction]
 fn get_agent_metrics(agent_id: &str) -> Option<AggregateMetricsPy> {
     let inv = get_invoker();
-    inv.metrics().get_aggregate(agent_id).map(AggregateMetricsPy::from)
+    inv.metrics()
+        .get_aggregate(agent_id)
+        .map(AggregateMetricsPy::from)
 }
 
 /// Reset in-memory A2A invocation metrics (per-agent and global). Call from Python when DB metrics are reset.
@@ -602,7 +727,11 @@ impl From<AggregateMetrics> for AggregateMetricsPy {
 /// max_queued: optional cap; when set and queue is full, try_submit_invoke raises QueueFullError (map to 503).
 /// auth_secret: when provided, request tuples must carry encrypted auth (query params and headers); we decrypt in Rust.
 #[pyfunction]
-fn init_queue(max_concurrent: usize, max_queued: Option<usize>, auth_secret: Option<String>) -> PyResult<()> {
+fn init_queue(
+    max_concurrent: usize,
+    max_queued: Option<usize>,
+    auth_secret: Option<String>,
+) -> PyResult<()> {
     queue::init_queue(max_concurrent, max_queued, auth_secret);
     Ok(())
 }
@@ -625,8 +754,14 @@ pub fn a2a_service(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_class::<A2AResponsePy>()?;
     m.add("QueueFullError", m.py().get_type::<QueueFullError>())?;
-    m.add("QueueNotInitializedError", m.py().get_type::<QueueNotInitializedError>())?;
-    m.add("QueueShutdownError", m.py().get_type::<QueueShutdownError>())?;
+    m.add(
+        "QueueNotInitializedError",
+        m.py().get_type::<QueueNotInitializedError>(),
+    )?;
+    m.add(
+        "QueueShutdownError",
+        m.py().get_type::<QueueShutdownError>(),
+    )?;
     m.add_function(pyo3::wrap_pyfunction!(try_submit_invoke, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(build_a2a_metrics_batch, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(get_agent_metrics, m)?)?;
@@ -641,9 +776,9 @@ pub fn a2a_service(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::parse_plain_bytes_request;
-    use pyo3::types::{PyBytes, PyDict, PyDictMethods, PyTuple};
     use pyo3::IntoPyObject;
     use pyo3::Python;
+    use pyo3::types::{PyBytes, PyDict, PyDictMethods, PyTuple};
 
     #[test]
     fn test_parse_plain_bytes_request_injects_traceparent_header() {
@@ -673,7 +808,10 @@ mod tests {
                 parsed.auth_headers.get("traceparent").map(String::as_str),
                 Some(traceparent)
             );
-            assert_eq!(parsed.auth_headers.get("X-Test").map(String::as_str), Some("1"));
+            assert_eq!(
+                parsed.auth_headers.get("X-Test").map(String::as_str),
+                Some("1")
+            );
         })
         .expect("Python interpreter not initialized");
     }
