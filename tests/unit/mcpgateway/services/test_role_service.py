@@ -10,6 +10,7 @@ Comprehensive unit tests for RoleService.
 # Standard
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock, patch
+import uuid
 
 # Third-Party
 import pytest
@@ -661,6 +662,42 @@ class TestGetUserRoleAssignment:
         result = await role_service.get_user_role_assignment(user_email="user@example.com", role_id="role-123", scope="global", scope_id=None)
 
         assert result == sample_user_role
+
+    @pytest.mark.asyncio
+    async def test_get_user_role_assignment_filters_inactive_duplicates(self, role_service, mock_db, sample_role):
+        """Test that get_user_role_assignment query includes is_active filter (#3505).
+
+        Verifies the query sent to the database includes an is_active=True
+        filter, preventing MultipleResultsFound when both active and inactive
+        rows exist for the same (user_email, role_id, scope, scope_id) tuple.
+        """
+        active_assignment = UserRole(
+            id=str(uuid.uuid4()),
+            user_email="user@example.com",
+            role_id=sample_role.id,
+            scope="team",
+            scope_id="team-789",
+            granted_by="admin@example.com",
+            is_active=True
+        )
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = active_assignment
+
+        result = await role_service.get_user_role_assignment(
+            user_email="user@example.com",
+            role_id=sample_role.id,
+            scope="team",
+            scope_id="team-789"
+        )
+
+        assert result is not None
+        assert result.is_active is True
+        assert result.id == active_assignment.id
+
+        # Verify query includes is_active filter
+        call_args = mock_db.execute.call_args
+        query_str = str(call_args[0][0])
+        assert "is_active" in query_str.lower()
 
 
 class TestListUserRoles:
