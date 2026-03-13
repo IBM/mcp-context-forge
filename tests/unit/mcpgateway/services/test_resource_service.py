@@ -96,6 +96,8 @@ def mock_resource():
     resource.metrics = []
     resource.tags = []  # Ensure tags is a list, not a MagicMock
     resource.team_id = "1234"  # Ensure team_id is a valid string or None
+    resource.is_active = True
+    resource.gateway_id = None
     resource.team = "test-team"  # Ensure team is a valid string or None
     resource.visibility = "public"  # Ensure visibility is set for access checks
     resource.owner_email = None
@@ -135,6 +137,7 @@ def mock_resource_template():
     resource.metrics = []
     resource.tags = []  # Ensure tags is a list, not a MagicMock
     resource.team_id = "1234"  # Ensure team_id is a valid string or None
+    resource.gateway_id = None
     resource.team = "test-team"  # Ensure team is a valid string or None
     resource.visibility = "public"  # Ensure visibility is set for access checks
     resource.owner_email = None
@@ -174,6 +177,8 @@ def mock_inactive_resource():
     resource.metrics = []
     resource.tags = []  # Ensure tags is a list, not a MagicMock
     resource.team = "test-team"  # Ensure team is a valid string or None
+    resource.is_active = False     # Esențial
+    resource.gateway_id = None
     resource.visibility = "public"  # Ensure visibility is set for access checks
     resource.owner_email = None
 
@@ -563,6 +568,73 @@ class TestResourceListing:
 
         result = await resource_service.list_server_resources(mock_db, "server123", user_email="")
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_resources_filter_by_gateway_id(self, resource_service, mock_db, mock_resource):
+        """Test filtering resources by a specific gateway_id."""
+        mock_resource.gateway_id = "target-gateway-123"
+        
+        with (
+            patch.object(resource_service, "convert_resource_to_read", return_value="converted-res"),
+            patch("mcpgateway.services.resource_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.resource_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache = AsyncMock()
+            # FORȚĂM CACHE MISS PENTRU A AJUNGE LA UNIFIED_PAGINATE
+            mock_cache.get.return_value = None 
+            mock_cache_fn.return_value = mock_cache
+            
+            mock_paginate.return_value = ([mock_resource], "cursor-abc")
+
+            resources, cursor = await resource_service.list_resources(
+                mock_db, gateway_id="target-gateway-123"
+            )
+
+        assert resources == ["converted-res"]
+        assert cursor == "cursor-abc"
+
+    @pytest.mark.asyncio
+    async def test_list_resources_filter_by_gateway_id_null(self, resource_service, mock_db, mock_resource):
+        """Test listing resources where gateway_id is explicitly None."""
+        mock_resource.gateway_id = None
+
+        with (
+            patch.object(resource_service, "convert_resource_to_read", return_value="converted-res"),
+            patch("mcpgateway.services.resource_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.resource_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache.get.return_value = None
+            mock_cache_fn.return_value = mock_cache
+            
+            mock_paginate.return_value = ([mock_resource], None)
+
+            resources, cursor = await resource_service.list_resources(
+                mock_db, gateway_id=None
+            )
+
+        assert resources == ["converted-res"]
+        assert cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_resources_filter_by_gateway_id_nonexistent(self, resource_service, mock_db):
+        """Test filtering by a gateway_id that returns no resources."""
+        with (
+            patch("mcpgateway.services.resource_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.resource_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache.get.return_value = None
+            mock_cache_fn.return_value = mock_cache
+            
+            mock_paginate.return_value = ([], None)
+
+            resources, cursor = await resource_service.list_resources(
+                mock_db, gateway_id="invalid-gateway"
+            )
+
+        assert resources == []
+        assert cursor is None
 
 
 # --------------------------------------------------------------------------- #

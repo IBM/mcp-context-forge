@@ -782,6 +782,7 @@ The `/resources` endpoint supports several query parameters for filtering and pa
 | `tags` | Comma-separated list of tags to filter by (matches any). |
 | `visibility` | Filter by visibility: `private`, `team`, or `public`. |
 | `team_id` | Filter by team ID. |
+| `gateway_id` | Filter by gateway ID. |
 | `include_inactive` | Include disabled resources (default: `false`). |
 | `limit` | Maximum resources to return. Use `0` for all resources (no limit). Default: 50. |
 | `cursor` | Pagination cursor for fetching the next page. |
@@ -941,6 +942,7 @@ The `/prompts` endpoint supports several query parameters for filtering and pagi
 | `tags` | Comma-separated list of tags to filter by (matches any). |
 | `visibility` | Filter by visibility: `private`, `team`, or `public`. |
 | `team_id` | Filter by team ID. |
+| `gateway_id` | Filter by gateway ID. |
 | `include_inactive` | Include disabled prompts (default: `false`). |
 | `limit` | Maximum prompts to return. Use `0` for all prompts (no limit). Default: 50. |
 | `cursor` | Pagination cursor for fetching the next page. |
