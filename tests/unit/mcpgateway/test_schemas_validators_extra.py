@@ -639,10 +639,10 @@ def test_a2a_agent_create_and_update_more_branches(monkeypatch, caplog):
     assert len(A2AAgentCreate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert len(A2AAgentUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
 
-    with pytest.raises(ValueError):
-        A2AAgentCreate.validate_visibility("invalid")
-    with pytest.raises(ValueError):
-        A2AAgentUpdate.validate_visibility("invalid")
+    with pytest.raises((ValueError, ValidationError)):
+        A2AAgentCreate(name="agent", endpoint_url="http://agent.example.com", visibility="invalid")
+    with pytest.raises((ValueError, ValidationError)):
+        A2AAgentUpdate(visibility="invalid")
 
     with pytest.raises((ValidationError, ValueError)):
         A2AAgentCreate(name="agent", endpoint_url="http://agent.example.com", auth_type="basic", auth_username="u")
@@ -1216,3 +1216,121 @@ def test_a2a_agent_read_masked_preserves_empty_header_values():
     # Non-empty value should be masked
     secret_header = next(h for h in masked_agent.auth_headers if h["key"] == "X-Secret")
     assert secret_header["value"] == settings.masked_auth_value
+
+
+def test_visibility_literal_enum_validation():
+    """Schemas with Literal visibility reject invalid values and accept valid ones (issue #3525)."""
+    valid_values = ["private", "team", "public"]
+    invalid_values = ["invalid_value", "", "PUBLIC", "PRIVATE", "admin", "internal"]
+
+    # GatewayUpdate — the primary schema from the issue
+    for v in valid_values:
+        obj = GatewayUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GatewayUpdate(visibility=v)
+    assert GatewayUpdate().visibility is None  # default is None (optional)
+
+    # GatewayCreate
+    for v in valid_values:
+        assert GatewayCreate(name="gw", url="http://localhost:9000", visibility=v).visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GatewayCreate(name="gw", url="http://localhost:9000", visibility=v)
+
+    # ToolUpdate
+    for v in valid_values:
+        obj = ToolUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ToolUpdate(visibility=v)
+
+    # ToolCreate — default is "public"
+    for v in valid_values:
+        obj = ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST", visibility=v)
+
+    # ResourceUpdate
+    for v in valid_values:
+        obj = ResourceUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ResourceUpdate(visibility=v)
+
+    # PromptUpdate
+    for v in valid_values:
+        obj = PromptUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            PromptUpdate(visibility=v)
+
+    # GrpcServiceUpdate
+    for v in valid_values:
+        obj = GrpcServiceUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GrpcServiceUpdate(visibility=v)
+
+    # GrpcServiceCreate — required fields: name, target
+    for v in valid_values:
+        obj = GrpcServiceCreate(name="svc", target="localhost:50051", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GrpcServiceCreate(name="svc", target="localhost:50051", visibility=v)
+
+    # ResourceCreate — required fields: uri, name, content
+    for v in valid_values:
+        obj = ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data", visibility=v)
+
+    # PromptCreate — required fields: name, template
+    for v in valid_values:
+        obj = PromptCreate(name="p", template="hello", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            PromptCreate(name="p", template="hello", visibility=v)
+
+    # ServerCreate — required field: name
+    for v in valid_values:
+        obj = ServerCreate(name="srv", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ServerCreate(name="srv", visibility=v)
+
+    # ServerUpdate — all fields optional
+    for v in valid_values:
+        obj = ServerUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ServerUpdate(visibility=v)
+
+    # A2AAgentCreate — required fields: name, endpoint_url
+    for v in valid_values:
+        obj = A2AAgentCreate(name="agent", endpoint_url="http://localhost:8080", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            A2AAgentCreate(name="agent", endpoint_url="http://localhost:8080", visibility=v)
+
+    # A2AAgentUpdate — all fields optional
+    for v in valid_values:
+        obj = A2AAgentUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            A2AAgentUpdate(visibility=v)
