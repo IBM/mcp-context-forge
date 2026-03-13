@@ -31,6 +31,8 @@ Examples:
 import asyncio
 import copy
 import logging
+import os
+import sys
 import threading
 from typing import Any, Optional, Union
 
@@ -530,7 +532,8 @@ class PluginManager:
     _registry: PluginInstanceRegistry = PluginInstanceRegistry()
     _config: Config | None = None
     _config_path: str | None = None
-    _executor: PluginExecutor | None = None
+    _executor: PluginExecutor = PluginExecutor()
+    _added_plugin_dirs: list[str] = []
 
     def __init__(
         self,
@@ -647,6 +650,10 @@ class PluginManager:
             >>> manager = PluginManager("new_config.yaml")
         """
         with cls.__lock:
+            for d in cls.__shared_state.get("_added_plugin_dirs", []):
+                if d in sys.path:
+                    sys.path.remove(d)
+            cls._added_plugin_dirs = []
             cls.__shared_state.clear()
             cls._initialized = False
             cls._config = None
@@ -767,6 +774,16 @@ class PluginManager:
                 logger.debug("Plugin registry not empty before initialize; clearing stale plugins")
                 await self._registry.shutdown()
 
+            # Add configured plugin_dirs to sys.path for external plugin discovery
+            self._added_plugin_dirs = []
+            if self._config and self._config.plugin_dirs:
+                for plugin_dir in self._config.plugin_dirs:
+                    resolved = os.path.abspath(plugin_dir)
+                    if os.path.isdir(resolved) and resolved not in sys.path:
+                        sys.path.insert(0, resolved)
+                        self._added_plugin_dirs.append(resolved)
+                        logger.info("Added plugin directory to sys.path: %s", resolved)
+
             plugins = self._config.plugins if self._config and self._config.plugins else []
             loaded_count = 0
 
@@ -831,6 +848,12 @@ class PluginManager:
 
             # Shutdown all plugins
             await self._registry.shutdown()
+
+            # Remove plugin directories from sys.path
+            for d in getattr(self, "_added_plugin_dirs", []):
+                if d in sys.path:
+                    sys.path.remove(d)
+            self._added_plugin_dirs = []
 
             # Reset state to allow re-initialization
             self._initialized = False
