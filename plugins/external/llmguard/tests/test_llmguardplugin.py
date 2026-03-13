@@ -225,7 +225,7 @@ async def test_llmguardplugin_prehook_sanitizers_redisvault_expiry():
 
     ttl = 60
     # Initialize redis host and client values
-    redis_host = os.getenv("REDIS_HOST", "localhost")
+    redis_host = os.getenv("REDIS_HOST", "redis")
     redis_port = int(os.getenv("REDIS_PORT", "6379"))
     config_input_sanitizer = {"cache_ttl": ttl, "input": {"sanitizers": {"Anonymize": {"language": "en", "vault_ttl": 120}}}, "output": {"sanitizers": {"Deanonymize": {"matching_strategy": "exact"}}}}
 
