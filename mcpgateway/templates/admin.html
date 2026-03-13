@@ -999,7 +999,7 @@
         <!-- Tab Panels Container -->
         <main class="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-4 lg:p-6">
 
-      {% if is_admin and 'logs' not in hidden_sections %}
+      {% if 'logs' not in hidden_sections %}
       <!-- Logs Panel -->
       <div id="logs-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -1220,7 +1220,7 @@
       </div>
       {% endif %}
 
-      {% if is_admin and 'export-import' not in hidden_sections %}
+      {% if 'export-import' not in hidden_sections %}
       <!-- Export/Import Panel -->
       <div id="export-import-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -1652,17 +1652,17 @@
       </div>
       {% endif %}
 
-      {% if is_admin and 'version-info' not in hidden_sections %}
+      {% if 'version-info' not in hidden_sections %}
       <!-- Version Info Panel -->
       <div id="version-info-panel" class="tab-panel hidden"></div>
       {% endif %}
 
-      {% if is_admin and 'maintenance' not in hidden_sections %}
+      {% if 'maintenance' not in hidden_sections %}
       <!-- Maintenance Panel (admin only) -->
       <div id="maintenance-panel" class="tab-panel hidden"></div>
       {% endif %}
 
-      {% if is_admin and 'plugins' not in hidden_sections %}
+      {% if 'plugins' not in hidden_sections %}
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
       {% endif %}
@@ -6174,7 +6174,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- User Management Panel -->
-      {% if email_auth_enabled and is_admin and 'users' not in hidden_sections %}
+      {% if email_auth_enabled and 'users' not in hidden_sections %}
       <div id="users-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">User Management</h2>
@@ -7987,7 +7987,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       </div>
       {% endif %}
 
-      {% if is_admin and 'metrics' not in hidden_sections %}
+      {% if 'metrics' not in hidden_sections %}
       <!-- Metrics Panel -->
       <div id="metrics-panel" class="tab-panel hidden">
         <!-- System Metrics Section (isolated from JavaScript clearing) -->

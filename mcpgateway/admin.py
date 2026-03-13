@@ -309,8 +309,14 @@ def validate_section_permissions(router) -> None:
     SECTION_PERMISSIONS mapping is consistent with the @require_permission
     decorators on admin routes. Logs warnings for any mismatches.
 
+    In test/CI environments, raises ValueError on mismatches to fail fast.
+    In production, logs warnings only to avoid breaking deployments.
+
     Args:
         router: FastAPI APIRouter instance (admin_router)
+
+    Raises:
+        ValueError: In test/CI environments when mismatches are found
     """
     mismatches = []
 
@@ -333,9 +339,24 @@ def validate_section_permissions(router) -> None:
             mismatches.append({"section": section, "route": route_path, "expected": expected_perm, "actual": actual_perm})
 
     if mismatches:
-        LOGGER.warning(f"SECTION_PERMISSIONS validation found {len(mismatches)} mismatches with route decorators. " "This may indicate the mapping needs updating:")
+        error_msg = f"SECTION_PERMISSIONS validation found {len(mismatches)} mismatches with route decorators:"
         for m in mismatches:
-            LOGGER.warning(f"  Section '{m['section']}' (route: {m['route']}): " f"expected '{m['expected']}', found '{m['actual']}'")
+            error_msg += f"\n  Section '{m['section']}' (route: {m['route']}): expected '{m['expected']}', found '{m['actual']}'"
+
+        # Detect test/CI environment
+        is_test_env = (
+            os.getenv("PYTEST_CURRENT_TEST") is not None  # pytest is running
+            or os.getenv("CI") is not None  # CI environment (GitHub Actions, GitLab CI, etc.)
+            or os.getenv("GITHUB_ACTIONS") is not None  # GitHub Actions specifically
+        )
+
+        if is_test_env:
+            # Hard error in test/CI to fail fast
+            raise ValueError(error_msg)
+        else:
+            # Warning only in production to avoid breaking deployments
+            LOGGER.warning(error_msg)
+            LOGGER.warning("This may indicate the mapping needs updating.")
     else:
         LOGGER.info(f"SECTION_PERMISSIONS validation passed: all {len(SECTION_PERMISSIONS)} sections match route decorators")
 
@@ -475,7 +496,7 @@ async def get_hidden_sections_for_user(
         if section in hidden:
             continue
 
-        # Skip sections with no permission requirement (e.g., overview)
+        # Skip sections with no permission requirement (defensive check for future sections)
         if required_permission is None:
             continue
 
@@ -3486,8 +3507,8 @@ async def admin_ui(
     # --------------------------------------------------------------------------------
     # Get user action permissions for UI button visibility
     # Only check permissions when email auth is enabled (same as section hiding)
+    # When email auth is disabled, default to all permissions enabled
     # --------------------------------------------------------------------------------
-    user_permissions = {}
     if getattr(settings, "email_auth_enabled", False):
         user_permissions = await get_user_action_permissions(
             db=db,
@@ -3495,6 +3516,9 @@ async def admin_ui(
             is_admin=is_admin_user,
             token_teams=token_teams,
         )
+    else:
+        # Default to all permissions enabled when email auth is disabled
+        user_permissions = {flag: True for flag in UI_ACTION_PERMISSIONS}
 
     # --------------------------------------------------------------------------------
     # Load user teams so we can validate team_id
