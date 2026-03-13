@@ -1998,6 +1998,28 @@ class TestRPCEndpoints:
         assert body["error"]["code"] == -32002
         assert "Resource not found" in body["error"]["message"]
 
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_rpc_resources_read_not_found_error(self, mock_read, test_client, auth_headers):
+        """Test resources/read returns -32002 when ResourceNotFoundError is raised."""
+        from mcpgateway.services.resource_service import ResourceNotFoundError
+
+        mock_read.side_effect = ResourceNotFoundError("Resource template not found for 'file:///nonexistent/bad-resource'")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "resources/read",
+            "params": {"uri": "file:///nonexistent/bad-resource"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32002
+        assert "Resource not found" in body["error"]["message"]
+        assert body["error"]["message"] != "Internal error"
+
     @patch("mcpgateway.main.get_user_email", return_value="user_1")
     @patch("mcpgateway.main.resource_service.subscribe_resource", new_callable=AsyncMock)
     @patch("mcpgateway.main.resource_service.unsubscribe_resource", new_callable=AsyncMock)

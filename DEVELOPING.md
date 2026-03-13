@@ -271,11 +271,12 @@ volumes:
 
 ```bash
 # Format code
-make black              # Python formatter
-make isort              # Import sorter
+make black              # Python formatter (CHECK=1 for dry-run)
+make isort              # Import sorter (CHECK=1 for dry-run)
 make autoflake          # Remove unused imports
 
 # Lint code
+make ruff               # Ruff linter (RUFF_MODE=check|fix|format)
 make flake8             # Style checker
 make pylint             # Advanced linting
 make mypy               # Type checking
