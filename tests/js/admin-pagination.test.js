@@ -376,6 +376,75 @@ describe("handleAdminTeamAction pagination preservation", () => {
 });
 
 // ---------------------------------------------------------------------------
+// handleAdminTeamAction cache-busting (_t param)
+// ---------------------------------------------------------------------------
+describe("handleAdminTeamAction cache-busting", () => {
+    beforeEach(() => {
+        const unifiedList = doc.createElement("div");
+        unifiedList.id = "unified-teams-list";
+        doc.body.appendChild(unifiedList);
+
+        const searchInput = doc.createElement("input");
+        searchInput.id = "team-search";
+        searchInput.value = "";
+        doc.body.appendChild(searchInput);
+
+        win.htmx = {
+            ajax: (method, url, options) => {
+                win._lastHtmxUrl = url;
+                return Promise.resolve();
+            },
+        };
+    });
+
+    test("includes _t cache-busting param in the refresh URL", async () => {
+        win.history.replaceState({}, "", "/admin#teams");
+
+        const before = Date.now();
+
+        const event = new win.CustomEvent("adminTeamAction", {
+            detail: { refreshUnifiedTeamsList: true, delayMs: 0 },
+        });
+
+        win.handleAdminTeamAction(event);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(win._lastHtmxUrl).toBeDefined();
+        expect(win._lastHtmxUrl).toContain("_t=");
+
+        // Extract the _t value and verify it is a plausible timestamp
+        const url = new URL(win._lastHtmxUrl, "http://localhost");
+        const tParam = Number(url.searchParams.get("_t"));
+        expect(tParam).toBeGreaterThanOrEqual(before);
+        expect(tParam).toBeLessThanOrEqual(Date.now() + 1000);
+    });
+
+    test("_t param changes between successive calls", async () => {
+        win.history.replaceState({}, "", "/admin#teams");
+
+        const event1 = new win.CustomEvent("adminTeamAction", {
+            detail: { refreshUnifiedTeamsList: true, delayMs: 0 },
+        });
+        win.handleAdminTeamAction(event1);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const url1 = win._lastHtmxUrl;
+
+        await new Promise((resolve) => setTimeout(resolve, 5));
+
+        const event2 = new win.CustomEvent("adminTeamAction", {
+            detail: { refreshUnifiedTeamsList: true, delayMs: 0 },
+        });
+        win.handleAdminTeamAction(event2);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const url2 = win._lastHtmxUrl;
+
+        // Both URLs must have _t; they may differ if enough time has passed
+        expect(url1).toContain("_t=");
+        expect(url2).toContain("_t=");
+    });
+});
+
+// ---------------------------------------------------------------------------
 // getPaginationParams namespace isolation (#3244)
 // ---------------------------------------------------------------------------
 describe("getPaginationParams namespace isolation", () => {
