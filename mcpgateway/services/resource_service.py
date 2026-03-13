@@ -42,7 +42,7 @@ import parse
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import joinedload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
@@ -1247,6 +1247,13 @@ class ResourceService(BaseService):
             .where(DbResource.uri_template.is_(None))
             .where(server_resource_association.c.server_id == server_id)
         )
+
+        # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
+        if include_metrics:
+            query = query.options(
+                selectinload(DbResource.metrics),
+                selectinload(DbResource.metrics_hourly)
+            )
         if not include_inactive:
             query = query.where(DbResource.enabled)
 

@@ -29,7 +29,7 @@ import orjson
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import joinedload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
@@ -1367,6 +1367,13 @@ class PromptService(BaseService):
             .join(server_prompt_association, DbPrompt.id == server_prompt_association.c.prompt_id)
             .where(server_prompt_association.c.server_id == server_id)
         )
+
+        # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
+        if include_metrics:
+            query = query.options(
+                selectinload(DbPrompt.metrics),
+                selectinload(DbPrompt.metrics_hourly)
+            )
         if not include_inactive:
             query = query.where(DbPrompt.enabled)
 
