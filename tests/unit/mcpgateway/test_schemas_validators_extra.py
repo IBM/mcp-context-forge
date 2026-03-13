@@ -855,3 +855,124 @@ class TestMaskOauthConfig:
         masked = server.masked()
         assert masked.oauth_config["client_secret"] == settings.masked_auth_value
         assert masked.oauth_config["authorization_server"] == "https://idp.example.com"
+
+
+
+def test_a2a_agent_read_populates_auth_headers_single():
+    """Test A2AAgentRead populates auth_headers from single custom header."""
+    auth_value = encode_auth({"X-API-Key": "secret123"})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers is not None
+    assert isinstance(agent.auth_headers, list)
+    assert len(agent.auth_headers) == 1
+    assert agent.auth_headers[0]["key"] == "X-API-Key"
+    assert agent.auth_headers[0]["value"] == "secret123"
+    # Backward compatibility
+    assert agent.auth_header_key == "X-API-Key"
+    assert agent.auth_header_value == "secret123"
+
+
+def test_a2a_agent_read_populates_auth_headers_multiple():
+    """Test A2AAgentRead populates auth_headers from multiple custom headers."""
+    auth_value = encode_auth({
+        "X-API-Key": "secret123",
+        "X-Client-ID": "client456",
+        "X-Region": "us-east-1"
+    })
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers is not None
+    assert len(agent.auth_headers) == 3
+    keys = [h["key"] for h in agent.auth_headers]
+    assert "X-API-Key" in keys
+    assert "X-Client-ID" in keys
+    assert "X-Region" in keys
+
+
+def test_a2a_agent_read_masked_hides_auth_header_values():
+    """Test A2AAgentRead.masked() masks auth_headers values."""
+    auth_value = encode_auth({
+        "X-API-Key": "secret123",
+        "X-Client-ID": "client456"
+    })
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        last_interaction=None,
+        auth_type="authheaders",
+        auth_value=auth_value
+    )
+    agent = agent._populate_auth()
+    masked_agent = agent.masked()
+
+    assert masked_agent.auth_headers is not None
+    assert len(masked_agent.auth_headers) == 2
+    # Keys should be visible
+    assert masked_agent.auth_headers[0]["key"] == "X-API-Key"
+    assert masked_agent.auth_headers[1]["key"] == "X-Client-ID"
+    # Values should be masked
+    assert masked_agent.auth_headers[0]["value"] == settings.masked_auth_value
+    assert masked_agent.auth_headers[1]["value"] == settings.masked_auth_value
+
+
+def test_a2a_agent_read_auth_headers_empty_values():
+    """Test A2AAgentRead handles empty header values correctly."""
+    auth_value = encode_auth({"X-Empty-Header": ""})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers[0]["value"] == ""

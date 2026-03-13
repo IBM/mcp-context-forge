@@ -4453,6 +4453,14 @@ async function editA2AAgent(agentId) {
                     if (authHeaderValueField) {
                         authHeaderValueField.value = "*****"; // mask header value
                     }
+                    // Load existing auth_headers if present
+                    if (agent.authHeaders && Array.isArray(agent.authHeaders)) {
+                        loadAuthHeaders(
+                            "auth-headers-container-a2a-edit",
+                            agent.authHeaders,
+                            { maskValues: true },
+                        );
+                    }
                 }
                 break;
             case "oauth":
@@ -16717,6 +16725,24 @@ async function handleEditA2AAgentFormSubmit(e) {
             "passthrough_headers",
             JSON.stringify(passthroughHeaders),
         );
+
+        // Handle auth_headers JSON field
+        const authHeadersJson = formData.get("auth_headers");
+        if (authHeadersJson) {
+            try {
+                const authHeaders = JSON.parse(authHeadersJson);
+                if (Array.isArray(authHeaders) && authHeaders.length > 0) {
+                    // Remove the JSON string and add as parsed data for backend processing
+                    formData.delete("auth_headers");
+                    formData.append(
+                        "auth_headers",
+                        JSON.stringify(authHeaders),
+                    );
+                }
+            } catch (e) {
+                console.error("Invalid auth_headers JSON:", e);
+            }
+        }
 
         // Handle OAuth configuration
         // NOTE: OAuth config assembly is now handled by the backend (mcpgateway/admin.py)
