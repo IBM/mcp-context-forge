@@ -12270,7 +12270,8 @@ async function testTool(toolId) {
                     // Input field with validation (with multiline support)
                     let fieldInput;
                     const isTextType = prop.type === "text";
-                    if (isTextType) {
+                    const isObjectType = prop.type === "object";
+                    if (isTextType || isObjectType) {
                         fieldInput = document.createElement("textarea");
                         fieldInput.rows = 4;
                     } else {
@@ -12300,6 +12301,12 @@ async function testTool(toolId) {
                             fieldInput.checked = prop.default === true;
                         } else if (isTextType) {
                             fieldInput.value = prop.default;
+                        } else if (isObjectType) {
+                            // For object types, stringify the default value
+                            fieldInput.value =
+                                typeof prop.default === "object"
+                                    ? JSON.stringify(prop.default, null, 2)
+                                    : prop.default;
                         } else {
                             fieldInput.value = prop.default;
                         }
@@ -14296,8 +14303,8 @@ async function runToolTest() {
                 } else {
                     value = formData.get(key);
                     if (value === null || value === undefined || value === "") {
-                        if (schema.required && schema.required.includes(key)) {
-                            params[keyValidation.value] = "";
+                        if (schema.required?.includes(key)) {
+                            throw new Error(`Field "${key}" is required`);
                         }
                         continue;
                     }
@@ -14309,6 +14316,23 @@ async function runToolTest() {
                     } else if (prop.enum) {
                         if (prop.enum.includes(value)) {
                             params[keyValidation.value] = value;
+                        }
+                    } else if (prop.type === "object") {
+                        try {
+                            const parsed = JSON.parse(value);
+                            if (
+                                parsed === null ||
+                                typeof parsed !== "object" ||
+                                Array.isArray(parsed)
+                            ) {
+                                throw new Error("Value must be an object");
+                            }
+                            params[keyValidation.value] = parsed;
+                        } catch (error) {
+                            showErrorMessage(
+                                `Invalid JSON object for ${key}: ${error.message}`,
+                            );
+                            throw error;
                         }
                     } else {
                         params[keyValidation.value] = value;
