@@ -41,9 +41,9 @@ permissions:
   actions: read
 
 jobs:
-  test:
+  test-python-fallback:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    name: pytest (py${{ matrix.python }})
+    name: pytest python-fallback (py${{ matrix.python }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
 
@@ -84,29 +84,9 @@ jobs:
           python-version: ${{ matrix.python }}
 
       # -----------------------------------------------------------
-      # 2.5  Setup Rust toolchain for Rust plugins
-      # -----------------------------------------------------------
-      - name: 🦀  Install Rust stable
-        run: rustup default stable
-
-      - name: 📦  Cache Cargo dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: 🔨  Build Rust plugins (clean, install, verify stubs)
-        run: make rust-clean-stubs && make rust-install && make rust-verify-stubs
-
-      # -----------------------------------------------------------
       # 3️⃣  Run the tests with coverage (fail under 95% coverage)
       # -----------------------------------------------------------
-      - name: 🧪  Run pytest
+      - name: 🧪  Run pytest without Rust extension
         run: |
           uv run pytest -n auto \
             --durations=5 \
@@ -118,8 +98,6 @@ jobs:
             --cov-report=term \
             --cov-branch \
             --cov-fail-under=95
-        env:
-          REQUIRE_RUST: "1"
 
       # -----------------------------------------------------------
       # 3.5  Diff-cover: enforce 95% coverage on changed lines (PRs only)
@@ -161,6 +139,57 @@ jobs:
               print(result.stderr.decode())
               sys.exit(1)
           "
+
+  test-rust:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: pytest rust-required (py3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      REQUIRE_RUST: "1"
+
+    steps:
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 🐍  Setup Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: ⚡ Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.2"
+          python-version: "3.12"
+
+      - name: 🦀  Install Rust stable
+        run: rustup default stable
+
+      - name: 📦  Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: 🧪  Run Rust-required full suite
+        run: |
+          make test-with-rust
+
+      - name: 🧪  Run serial A2A Rust coverage
+        run: |
+          make test-a2a
 
     # -----------------------------------------------------------
     # 4️⃣  Upload coverage artifacts (XML + HTML)

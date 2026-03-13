@@ -948,24 +948,24 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             if Mock is not None and isinstance(a2a_service, Mock):
                 logger.info("A2A service is mocked; skipping Rust A2A initialization")
             else:
-                # Rust A2A extension is required when A2A is enabled.
                 try:
                     from gateway_rs import a2a_service as rust_a2a  # pylint: disable=import-outside-toplevel
                 except ImportError as e:
-                    raise RuntimeError("A2A is enabled but gateway_rs is not available; install/build the Rust extension.") from e
-
-                rust_a2a.init_invoker(
-                    settings.mcpgateway_a2a_invoke_max_concurrent,
-                    settings.mcpgateway_a2a_max_retries,
-                )
-                auth_secret: Optional[str] = None
-                if getattr(settings, "auth_encryption_secret", None):
-                    auth_secret = settings.auth_encryption_secret.get_secret_value()
-                rust_a2a.init_queue(
-                    settings.mcpgateway_a2a_invoke_queue_workers,
-                    settings.mcpgateway_a2a_invoke_max_queued,
-                    auth_secret,
-                )
+                    logger.warning("gateway_rs is unavailable; A2A will run with Python fallback only: %s", e)
+                else:
+                    rust_a2a.init_invoker(
+                        settings.mcpgateway_a2a_invoke_max_concurrent,
+                        settings.mcpgateway_a2a_max_retries,
+                    )
+                    auth_secret: Optional[str] = None
+                    if getattr(settings, "auth_encryption_secret", None):
+                        auth_secret = settings.auth_encryption_secret.get_secret_value()
+                    rust_a2a.init_queue(
+                        settings.mcpgateway_a2a_invoke_queue_workers,
+                        settings.mcpgateway_a2a_invoke_max_queued,
+                        auth_secret,
+                    )
+                    logger.info("Rust A2A queue initialized")
         await resource_cache.initialize()
         await streamable_http_session.initialize()
         await session_registry.initialize()
@@ -3833,9 +3833,13 @@ async def _run_a2a_invoke_queued(
     try:
         return await a2a_service.invoke_agent(db, requests_list, traceparent=traceparent)
     except Exception as e:  # pylint: disable=broad-except
+        rust_a2a = None
         try:
             from gateway_rs import a2a_service as rust_a2a  # pylint: disable=import-outside-toplevel
+        except ImportError:
+            rust_a2a = None
 
+        if rust_a2a is not None:
             queue_full_error = getattr(rust_a2a, "QueueFullError", None)
             queue_not_initialized_error = getattr(rust_a2a, "QueueNotInitializedError", None)
             queue_shutdown_error = getattr(rust_a2a, "QueueShutdownError", None)
@@ -3845,8 +3849,6 @@ async def _run_a2a_invoke_queued(
                 raise HTTPException(status_code=503, detail="A2A invoke queue not initialized") from e
             if queue_shutdown_error and isinstance(e, queue_shutdown_error):
                 raise HTTPException(status_code=503, detail="A2A invoke queue shut down") from e
-        except Exception:
-            pass
 
         # Backward compatibility for older Rust extension versions.
         if isinstance(e, RuntimeError):

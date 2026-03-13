@@ -14,6 +14,7 @@ These tests verify the expected behavior and will fail until the issues are fixe
 """
 
 # Standard
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
@@ -29,6 +30,21 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ToolRead
 from mcpgateway.services.a2a_service import A2AAgentService
 from mcpgateway.services.tool_service import ToolService
+
+
+def _force_backend(service: A2AAgentService, backend: str):
+    """Force a specific invoke backend for the A2A service."""
+    if backend == "python":
+        return patch.object(service, "_invoke_phase2_rust", new=AsyncMock(side_effect=ImportError("forced python fallback")))
+    return nullcontext()
+
+
+@pytest.fixture(params=["python", "rust"], ids=["python-fallback", "rust"])
+def invoke_backend(request, rust_available):
+    """Run selected issue-840 tests against both invoke backends."""
+    if request.param == "rust" and not rust_available:
+        pytest.skip("Real gateway_rs not available for Rust backend variant")
+    return request.param
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +128,7 @@ class TestIssue840UserInputForA2AAgentTest:
         mock_fresh_db,
         mock_get_client,
         mock_try_submit_invoke,
+        invoke_backend,
         a2a_service,
         mock_db,
         sample_a2a_agent,
@@ -167,7 +184,8 @@ class TestIssue840UserInputForA2AAgentTest:
                 "interaction_type": "user_test",
             }
         ]
-        result_list = await a2a_service.invoke_agent(mock_db, requests)
+        with _force_backend(a2a_service, invoke_backend):
+            result_list = await a2a_service.invoke_agent(mock_db, requests)
 
         # Verify the result (one slot per request; parsed contains response)
         assert len(result_list) == 1
@@ -247,6 +265,7 @@ class TestIssue840UserInputForA2AAgentTest:
         mock_fresh_db,
         mock_get_client,
         mock_try_submit_invoke,
+        invoke_backend,
         a2a_service,
         mock_db,
         sample_a2a_agent,
@@ -304,16 +323,17 @@ class TestIssue840UserInputForA2AAgentTest:
         test_params = {"query": "weather: Dallas", "message": "weather: Dallas", "test": True}
 
         # Invoke the agent (invoke_agent takes db + list of requests)
-        await a2a_service.invoke_agent(
-            mock_db,
-            [
-                {
-                    "agent_name": "calculator-agent",
-                    "parameters": test_params,
-                    "interaction_type": "admin_test",
-                }
-            ],
-        )
+        with _force_backend(a2a_service, invoke_backend):
+            await a2a_service.invoke_agent(
+                mock_db,
+                [
+                    {
+                        "agent_name": "calculator-agent",
+                        "parameters": test_params,
+                        "interaction_type": "admin_test",
+                    }
+                ],
+            )
 
         # Same Issue #840 check for both paths: request body must contain user query.
         assert mock_try_submit_invoke.called or mock_client.post.called, "Either Rust or Python path must be exercised"

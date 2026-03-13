@@ -11,6 +11,8 @@ Comprehensive tests for the main API endpoints with full coverage.
 
 # Standard
 import asyncio
+import builtins
+from contextlib import nullcontext
 from copy import deepcopy
 import datetime
 import json
@@ -182,6 +184,26 @@ def _make_validation_error() -> ValidationError:
 
 VALIDATION_ERROR = _make_validation_error()
 INTEGRITY_ERROR = sa.exc.IntegrityError("stmt", {}, Exception("orig"))
+
+
+def _force_main_a2a_backend(backend: str):
+    """Force the main A2A service to use a specific invoke backend for tests."""
+    if backend == "python":
+        import mcpgateway.main as main_mod
+
+        return patch.object(main_mod.a2a_service, "_invoke_phase2_rust", new=AsyncMock(side_effect=ImportError("forced python fallback")))
+    return nullcontext()
+
+
+@pytest.fixture(params=["python", "rust"], ids=["python-fallback", "rust"])
+def a2a_backend(request, rust_available):
+    """Run A2A route tests in Python mode everywhere and Rust mode where the real queue is reliable."""
+    if request.param == "rust":
+        if not rust_available:
+            pytest.skip("Real gateway_rs not available for Rust backend variant")
+        if os.environ.get("PYTEST_XDIST_WORKER"):
+            pytest.skip("Rust-backed route variant is validated in serial A2A runs")
+    return request.param
 
 
 def _make_a2a_agent_read(**overrides):
@@ -2902,46 +2924,49 @@ class TestA2AAgentEndpoints:
         assert response.status_code == 200
         mock_service.delete_agent.assert_called_once()
 
-    def test_invoke_a2a_agent(self, test_client, auth_headers, real_a2a_agent_in_db):
-        """Test invoking A2A agent: real stack (Rust queue + invoker, stub HTTP agent)."""
+    def test_invoke_a2a_agent(self, test_client, auth_headers, real_a2a_agent_in_db, a2a_backend):
+        """Test invoking A2A agent through both route backends."""
         agent_name = real_a2a_agent_in_db
-        response = test_client.post(
-            f"/a2a/{agent_name}/invoke",
-            json={"parameters": {"query": "test"}, "interaction_type": "query"},
-            headers=auth_headers,
-        )
+        with _force_main_a2a_backend(a2a_backend):
+            response = test_client.post(
+                f"/a2a/{agent_name}/invoke",
+                json={"parameters": {"query": "test"}, "interaction_type": "query"},
+                headers=auth_headers,
+            )
         assert response.status_code == 200
         data = response.json()
         assert data.get("ok") is True
         assert data.get("status") == "success"
         assert data.get("response") == "Test response"
 
-    def test_invoke_a2a_unified_single(self, test_client, auth_headers, real_a2a_agent_in_db):
-        """Test unified POST /a2a/invoke with single object: real stack, no mocks."""
+    def test_invoke_a2a_unified_single(self, test_client, auth_headers, real_a2a_agent_in_db, a2a_backend):
+        """Test unified POST /a2a/invoke with single object through both backends."""
         agent_name = real_a2a_agent_in_db
-        response = test_client.post(
-            "/a2a/invoke",
-            json={"agent_name": agent_name, "parameters": {}, "interaction_type": "query"},
-            headers=auth_headers,
-        )
+        with _force_main_a2a_backend(a2a_backend):
+            response = test_client.post(
+                "/a2a/invoke",
+                json={"agent_name": agent_name, "parameters": {}, "interaction_type": "query"},
+                headers=auth_headers,
+            )
         assert response.status_code == 200
         data = response.json()
         assert data.get("ok") is True
         assert data.get("status") == "success"
 
-    def test_invoke_a2a_unified_list(self, test_client, auth_headers, real_a2a_agent_in_db):
-        """Test unified POST /a2a/invoke with invokes list (N>1): real stack, same agent twice."""
+    def test_invoke_a2a_unified_list(self, test_client, auth_headers, real_a2a_agent_in_db, a2a_backend):
+        """Test unified POST /a2a/invoke with invokes list through both backends."""
         agent_name = real_a2a_agent_in_db
-        response = test_client.post(
-            "/a2a/invoke",
-            json={
-                "invokes": [
-                    {"agent_name": agent_name, "parameters": {}},
-                    {"agent_name": agent_name, "parameters": {}},
-                ]
-            },
-            headers=auth_headers,
-        )
+        with _force_main_a2a_backend(a2a_backend):
+            response = test_client.post(
+                "/a2a/invoke",
+                json={
+                    "invokes": [
+                        {"agent_name": agent_name, "parameters": {}},
+                        {"agent_name": agent_name, "parameters": {}},
+                    ]
+                },
+                headers=auth_headers,
+            )
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -2961,6 +2986,112 @@ class TestA2AAgentEndpoints:
         )
         assert response.status_code == 503
         assert "queue full" in response.json().get("detail", "").lower()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_returns_503_when_typed_queue_full_error(self, mock_service, test_client, auth_headers):
+        """Typed gateway_rs queue errors should also map to 503."""
+        class FakeQueueFullError(RuntimeError):
+            pass
+
+        mock_service.invoke_agent = AsyncMock(side_effect=FakeQueueFullError("queue full"))
+        with patch("gateway_rs.a2a_service.QueueFullError", FakeQueueFullError):
+            response = test_client.post(
+                "/a2a/invoke",
+                json={"agent_name": "agent-1", "parameters": {}, "interaction_type": "query"},
+                headers=auth_headers,
+            )
+        assert response.status_code == 503
+        assert "queue full" in response.json().get("detail", "").lower()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_returns_503_when_queue_shutdown(self, mock_service, test_client, auth_headers):
+        """Queue shutdown runtime errors still map to 503 rather than using any fallback in the route layer."""
+        mock_service.invoke_agent = AsyncMock(
+            side_effect=RuntimeError("A2A invoke queue shut down")
+        )
+        response = test_client.post(
+            "/a2a/invoke",
+            json={"agent_name": "agent-1", "parameters": {}, "interaction_type": "query"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 503
+        assert "queue shut down" in response.json().get("detail", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_lifespan_allows_python_fallback_when_gateway_rs_missing(self, monkeypatch):
+        """Startup should keep A2A enabled and log fallback mode when gateway_rs cannot be imported."""
+        import mcpgateway.main as main_mod
+
+        class FakeA2AService:
+            def __init__(self):
+                self.initialize = AsyncMock()
+                self.shutdown = AsyncMock()
+
+        def make_service():
+            service = MagicMock()
+            service.initialize = AsyncMock()
+            service.shutdown = AsyncMock()
+            return service
+
+        for flag, value in (
+            ("mcp_session_pool_enabled", False),
+            ("mcpgateway_session_affinity_enabled", False),
+            ("enable_header_passthrough", False),
+            ("mcpgateway_tool_cancellation_enabled", False),
+            ("mcpgateway_elicitation_enabled", False),
+            ("metrics_buffer_enabled", False),
+            ("metrics_cleanup_enabled", False),
+            ("metrics_rollup_enabled", False),
+            ("sso_enabled", False),
+            ("metrics_aggregation_enabled", False),
+        ):
+            monkeypatch.setattr(main_mod.settings, flag, value)
+
+        monkeypatch.setattr(main_mod, "plugin_manager", None)
+        monkeypatch.setattr(main_mod, "logging_service", make_service())
+        for attr in (
+            "tool_service",
+            "resource_service",
+            "prompt_service",
+            "gateway_service",
+            "root_service",
+            "completion_service",
+            "sampling_handler",
+            "resource_cache",
+            "streamable_http_session",
+            "session_registry",
+            "export_service",
+            "import_service",
+        ):
+            monkeypatch.setattr(main_mod, attr, make_service())
+
+        fake_a2a = FakeA2AService()
+        monkeypatch.setattr(main_mod, "a2a_service", fake_a2a)
+        monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
+        monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
+        monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
+        monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+        monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
+        monkeypatch.setattr(main_mod, "attempt_to_bootstrap_sso_providers", AsyncMock())
+        monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
+
+        real_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "gateway_rs":
+                raise ImportError("gateway_rs missing for test")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        monkeypatch.setattr(main_mod.logger, "warning", MagicMock())
+
+        async with main_mod.lifespan(main_mod.app):
+            await asyncio.sleep(0)
+
+        fake_a2a.initialize.assert_awaited_once()
+        main_mod.logger.warning.assert_any_call("gateway_rs is unavailable; A2A will run with Python fallback only: %s", ANY)
 
 
 # ----------------------------------------------------- #

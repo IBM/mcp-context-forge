@@ -383,8 +383,8 @@ class TestA2AServiceLocking:
     """Test row-level locking in A2AAgentService."""
 
     @pytest.mark.asyncio
-    async def test_invoke_agent_uses_select(self):
-        """Verify A2A agent invocation loads agents via select."""
+    async def test_invoke_agent_uses_get_for_update(self):
+        """Verify A2A agent invocation reacquires row locks before building payloads."""
         service = A2AAgentService()
         db = MagicMock(spec=Session)
 
@@ -403,21 +403,23 @@ class TestA2AServiceLocking:
         mock_agent.owner_email = None
 
         mock_select_result = MagicMock()
-        mock_select_result.scalars.return_value.all.return_value = [mock_agent]
+        mock_select_result.scalars.return_value.all.return_value = ["agent-id"]
         db.execute.return_value = mock_select_result
         db.commit = MagicMock()
         db.close = MagicMock()
 
-        with patch("gateway_rs.a2a_service.try_submit_invoke", new_callable=AsyncMock) as mock_try_submit:
-            mock_resp = MagicMock(status_code=200, body="{}", parsed={"result": "success"})
-            mock_try_submit.return_value = [(0, mock_resp, 0.5)]
-            with patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service"):
-                with patch("mcpgateway.utils.correlation_id.get_correlation_id", return_value="test-id"):
-                    with patch("mcpgateway.services.structured_logger.get_structured_logger"):
-                        await service.invoke_agent(
-                            db, [{"agent_name": "test-agent", "parameters": {}}]
-                        )
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=mock_agent) as mock_get:
+            with patch("gateway_rs.a2a_service.try_submit_invoke", new_callable=AsyncMock) as mock_try_submit:
+                mock_resp = MagicMock(status_code=200, body="{}", parsed={"result": "success"})
+                mock_try_submit.return_value = [(0, mock_resp, 0.5)]
+                with patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service"):
+                    with patch("mcpgateway.utils.correlation_id.get_correlation_id", return_value="test-id"):
+                        with patch("mcpgateway.services.structured_logger.get_structured_logger"):
+                            await service.invoke_agent(
+                                db, [{"agent_name": "test-agent", "parameters": {}}]
+                            )
 
+        mock_get.assert_called_once_with(db, A2AAgent, "agent-id")
 
     @pytest.mark.asyncio
     async def test_update_agent_uses_for_update(self):

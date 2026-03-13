@@ -8,12 +8,11 @@ Tests for A2A Agent Service functionality.
 """
 
 # Standard
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
-
-# gateway_rs is required by conftest; tests fail at collection if the Rust extension is not installed.
 
 # Third-Party
 import orjson
@@ -60,6 +59,21 @@ def _mock_a2a_response(status_code=200, body="{}", parsed=None):
         return_value={"status_code": status_code, "body": body, "parsed": parsed}
     )
     return resp
+
+
+def _force_backend(service: A2AAgentService, backend: str):
+    """Force a service invoke backend for tests."""
+    if backend == "python":
+        return patch.object(service, "_invoke_phase2_rust", new=AsyncMock(side_effect=ImportError("forced python fallback")))
+    return nullcontext()
+
+
+@pytest.fixture(params=["python", "rust"], ids=["python-fallback", "rust"])
+def invoke_backend(request, rust_available):
+    """Run selected tests against both execution backends."""
+    if request.param == "rust" and not rust_available:
+        pytest.skip("Real gateway_rs not available for Rust backend variant")
+    return request.param
 
 
 @pytest.fixture
@@ -449,35 +463,71 @@ class TestA2AAgentService:
         return req
 
     @patch("mcpgateway.services.metrics_buffer_service.record_a2a_invoke_results_batch")
-    async def test_invoke_agent_success(self, mock_record_batch, a2a_decrypted_auth_config, service, real_a2a_invoke_context):
-        """Test successful agent invocation: real Rust queue + invoker, stub HTTP agent (no Rust mock)."""
+    async def test_invoke_agent_success(self, mock_record_batch, a2a_decrypted_auth_config, service, real_a2a_invoke_context, invoke_backend):
+        """Test successful agent invocation through both Rust and Python execution backends."""
         db, agent_name = real_a2a_invoke_context
         request_list = [self._invoke_request(agent_name, {"test": "data"})]
-        result = await service.invoke_agent(db, request_list)
+        with _force_backend(service, invoke_backend):
+            result = await service.invoke_agent(db, request_list)
 
         assert isinstance(result, list)
         assert len(result) == 1
         assert result[0]["status_code"] == 200
         assert result[0]["parsed"]["response"] == "Test response"
         assert result[0]["parsed"]["status"] == "success"
-        mock_record_batch.assert_called_once()
+        if invoke_backend == "rust":
+            mock_record_batch.assert_called_once()
+        else:
+            mock_record_batch.assert_not_called()
 
     @patch("mcpgateway.services.metrics_buffer_service.record_a2a_invoke_results_batch")
-    async def test_invoke_request_id_coalescing(self, mock_record_batch, a2a_decrypted_auth_config, service, real_a2a_invoke_context):
-        """Two requests with the same request_id get two results with identical content (Rust coalesces to one HTTP call, expands)."""
+    async def test_invoke_request_id_coalescing(self, mock_record_batch, a2a_decrypted_auth_config, service, real_a2a_invoke_context, invoke_backend):
+        """Two requests with the same request_id return stable ordered results in both backends."""
         db, agent_name = real_a2a_invoke_context
         request_list = [
             self._invoke_request(agent_name, {"n": 1}, request_id="idem-1"),
             self._invoke_request(agent_name, {"n": 2}, request_id="idem-1"),
         ]
-        result = await service.invoke_agent(db, request_list)
+        with _force_backend(service, invoke_backend):
+            result = await service.invoke_agent(db, request_list)
 
         assert isinstance(result, list)
         assert len(result) == 2
         assert result[0]["status_code"] == result[1]["status_code"] == 200
         assert result[0]["body"] == result[1]["body"]
         assert result[0]["parsed"] == result[1]["parsed"]
-        mock_record_batch.assert_called_once()
+        if invoke_backend == "rust":
+            mock_record_batch.assert_called_once()
+        else:
+            mock_record_batch.assert_not_called()
+
+    async def test_invoke_request_id_coalescing_python_fallback_calls_http_once(self, service, mock_db):
+        """Python fallback should share one outbound invoke for duplicate request IDs."""
+        agent = SimpleNamespace(
+            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            visibility="public", team_id=None, owner_email=None,
+            agent_type="generic", protocol_version="1.0",
+        )
+        mock_db.execute.return_value.scalars.return_value.all.return_value = ["a1"]
+
+        with (
+            patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent),
+            patch.object(service, "_invoke_phase2_rust", new=AsyncMock(side_effect=ImportError("forced python fallback"))),
+            patch.object(service, "_invoke_single_python", new=AsyncMock(return_value=({"status_code": 200, "parsed": {"ok": True}}, 0.1))) as mock_single,
+            patch.object(service, "_record_python_invoke_metrics", new=AsyncMock()),
+        ):
+            result = await service.invoke_agent(
+                mock_db,
+                [
+                    self._invoke_request("ag", {"n": 1}, request_id="idem-1"),
+                    self._invoke_request("ag", {"n": 2}, request_id="idem-1"),
+                ],
+            )
+
+        assert len(result) == 2
+        assert result[0]["parsed"] == result[1]["parsed"] == {"ok": True}
+        mock_single.assert_awaited_once()
 
     async def test_invoke_agent_disabled(self, service, mock_db, sample_db_agent):
         """Test invoking disabled agent."""
@@ -2271,6 +2321,172 @@ class TestInvokeAgentEdgeCases:
             await service.invoke_agent(mock_db, [{"agent_name": "any", "parameters": {}}])
         mock_db.rollback.assert_called_once()
 
+    async def test_invoke_falls_back_to_python_when_rust_import_fails(self, service, mock_db):
+        """ImportError from the Rust phase uses Python fallback instead of failing the invoke."""
+        agent = SimpleNamespace(
+            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            visibility="public", team_id=None, owner_email=None,
+            agent_type="generic", protocol_version="1.0",
+        )
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [agent]
+
+        with (
+            patch.object(service, "_invoke_phase2_rust", new=AsyncMock(side_effect=ImportError("no module named gateway_rs"))),
+            patch.object(service, "_invoke_phase2_python", new=AsyncMock(return_value=([{"status_code": 200, "parsed": {"ok": True}}], {}))) as mock_python,
+        ):
+            result = await service.invoke_agent(mock_db, [{"agent_name": "ag", "parameters": {}}])
+
+        assert result == [{"status_code": 200, "parsed": {"ok": True}}]
+        mock_python.assert_awaited_once()
+
+    async def test_invoke_falls_back_to_python_when_rust_queue_not_initialized(self, service, mock_db):
+        """Queue-not-initialized style Rust failures downgrade to Python fallback."""
+        agent = SimpleNamespace(
+            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            visibility="public", team_id=None, owner_email=None,
+            agent_type="generic", protocol_version="1.0",
+        )
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [agent]
+
+        with (
+            patch.object(service, "_invoke_phase2_rust", new=AsyncMock(side_effect=RuntimeError("A2A invoke queue not initialized"))),
+            patch.object(service, "_invoke_phase2_python", new=AsyncMock(return_value=([{"status_code": 200, "parsed": {"ok": True}}], {}))) as mock_python,
+        ):
+            result = await service.invoke_agent(mock_db, [{"agent_name": "ag", "parameters": {}}])
+
+        assert result[0]["status_code"] == 200
+        mock_python.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("auth_type", "auth_headers"),
+        [
+            ("basic", {"Authorization": "Basic dGVzdDp0ZXN0"}),
+            ("bearer", {"Authorization": "Bearer token-123"}),
+            ("authheaders", {"X-API-Key": "secret", "X-Custom-Header": "custom"}),
+        ],
+    )
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_python_fallback_preserves_header_auth(
+        self,
+        mock_get_client,
+        mock_fresh_db,
+        mock_metrics_buffer_service,
+        auth_type,
+        auth_headers,
+        service,
+        mock_db,
+        monkeypatch,
+    ):
+        """Python fallback decodes encrypted auth and forwards it to the outbound request."""
+        from pydantic import SecretStr
+
+        encrypted_auth = encode_auth(auth_headers, secret="test-secret")
+        agent = SimpleNamespace(
+            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/",
+            auth_type=auth_type, auth_value=encrypted_auth, auth_query_params=None,
+            visibility="public", team_id=None, owner_email=None,
+            agent_type="generic", protocol_version="1.0",
+        )
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [agent]
+        monkeypatch.setattr(
+            "mcpgateway.config.get_settings",
+            lambda: SimpleNamespace(auth_encryption_secret=SecretStr("test-secret"), httpx_read_timeout=60),
+        )
+
+        mock_response = MagicMock(status_code=200, text='{"ok": true}')
+        mock_response.json.return_value = {"ok": True}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        mock_ts_db = MagicMock()
+        mock_db_agent = SimpleNamespace(enabled=True, last_interaction=None)
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer_service.return_value = mock_metrics_buffer
+
+        with (
+            patch.object(service, "_invoke_phase2_rust", new=AsyncMock(side_effect=ImportError("no module named gateway_rs"))),
+            patch("mcpgateway.services.a2a_service.get_for_update", return_value=mock_db_agent),
+        ):
+            result = await service.invoke_agent(
+                mock_db,
+                [{"agent_name": "ag", "parameters": {"msg": "hi"}}],
+                traceparent="00-trace-id-span-id-01",
+            )
+
+        assert result[0]["status_code"] == 200
+        headers_used = mock_client.post.await_args.kwargs["headers"]
+        for key, value in auth_headers.items():
+            assert headers_used[key] == value
+        assert headers_used["traceparent"] == "00-trace-id-span-id-01"
+        mock_metrics_buffer.record_a2a_agent_metric_with_duration.assert_called_once()
+        mock_ts_db.commit.assert_called_once()
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_python_fallback_preserves_query_param_auth_and_batch_order(
+        self,
+        mock_get_client,
+        mock_fresh_db,
+        mock_metrics_buffer_service,
+        service,
+        mock_db,
+        monkeypatch,
+    ):
+        """Python fallback keeps mixed batch ordering and applies decrypted query param auth."""
+        from pydantic import SecretStr
+
+        encrypted_qp = encode_auth({"api_key": "secret123"}, secret="test-secret")
+        agent = SimpleNamespace(
+            id="a1", name="ag", enabled=True, endpoint_url="https://x.com/api",
+            auth_type="query_param", auth_value=None, auth_query_params={"api_key": encrypted_qp},
+            visibility="public", team_id=None, owner_email=None,
+            agent_type="custom", protocol_version="2.0",
+        )
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [agent]
+        monkeypatch.setattr(
+            "mcpgateway.config.get_settings",
+            lambda: SimpleNamespace(auth_encryption_secret=SecretStr("test-secret"), httpx_read_timeout=60),
+        )
+
+        mock_response = MagicMock(status_code=200, text='{"ok": true, "order": 2}')
+        mock_response.json.return_value = {"ok": True, "order": 2}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        mock_fresh_db.return_value.__enter__.return_value = MagicMock()
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer_service.return_value = MagicMock()
+
+        with (
+            patch.object(service, "_invoke_phase2_rust", new=AsyncMock(side_effect=RuntimeError("A2A invoke queue not initialized"))),
+            patch("mcpgateway.services.a2a_service.get_for_update", return_value=SimpleNamespace(enabled=True, last_interaction=None)),
+        ):
+            result = await service.invoke_agent(
+                mock_db,
+                [
+                    {"agent_name": "missing", "parameters": {}},
+                    {"agent_name": "ag", "parameters": {"test": "data"}, "interaction_type": "query"},
+                ],
+            )
+
+        assert len(result) == 2
+        assert result[0]["status_code"] == 404
+        assert result[0]["code"] == "not_found"
+        assert result[1]["status_code"] == 200
+        call_url = mock_client.post.await_args.args[0]
+        assert "api_key=secret123" in call_url
+        payload_used = mock_client.post.await_args.kwargs["json"]
+        assert payload_used["protocol_version"] == "2.0"
+
 
 class TestResultFromDbError:
     """Unit tests for _result_from_db_error."""
@@ -2310,8 +2526,10 @@ class TestRustA2AQueue:
     """Verify the Rust A2A batch queue (init_queue, try_submit_invoke) runs HTTP batches."""
 
     @pytest.mark.asyncio
-    async def test_queue_runs_submitted_batch(self):
+    async def test_queue_runs_submitted_batch(self, rust_available):
         """The Rust queue accepts a batch via try_submit_invoke and returns results (batch queue, no Python callables). Requires Rust extension with init_queue(max_concurrent, max_queued)."""
+        if not rust_available:
+            pytest.skip("gateway_rs.a2a_service not available (build: make gateway-rs-install)")
         try:
             from gateway_rs import a2a_service as rust_a2a
         except ImportError:

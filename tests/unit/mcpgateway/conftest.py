@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import types
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from unittest.mock import AsyncMock, MagicMock
@@ -23,15 +24,42 @@ from sqlalchemy import select
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.utils.create_slug import slugify
 
-# Require the gateway_rs Rust extension before any mcpgateway import (metrics_buffer_service
-# imports it). No mock fallback: if not installed, crash with a clear error.
-if "gateway_rs" not in sys.modules:
-    try:
-        import gateway_rs.a2a_service  # noqa: F401
-    except ImportError as e:
-        raise ImportError(
-            "gateway_rs Rust extension is required for tests. Install it with: make gateway-rs-install"
-        ) from e
+try:
+    import gateway_rs.a2a_service as _gateway_rs_a2a  # noqa: F401
+
+    RUST_A2A_AVAILABLE = True
+except ImportError:
+    RUST_A2A_AVAILABLE = False
+
+    async def _stub_try_submit_invoke(*_args, **_kwargs):
+        raise RuntimeError("A2A invoke queue not initialized")
+
+    def _stub_build_a2a_metrics_batch(entries, end_time_ts):
+        metrics = []
+        success_agent_ids = []
+        for agent_id, interaction_type, status_code, body, duration_secs in entries:
+            is_success = int(status_code) == 200
+            error_message = None if is_success else (body or f"HTTP {status_code}")
+            metrics.append((agent_id, end_time_ts, float(duration_secs), is_success, interaction_type, error_message))
+            if is_success:
+                success_agent_ids.append(agent_id)
+        return metrics, success_agent_ids
+
+    gateway_rs_module = types.ModuleType("gateway_rs")
+    gateway_rs_a2a_module = types.ModuleType("gateway_rs.a2a_service")
+    gateway_rs_a2a_module.try_submit_invoke = _stub_try_submit_invoke
+    gateway_rs_a2a_module.build_a2a_metrics_batch = _stub_build_a2a_metrics_batch
+    gateway_rs_a2a_module.init_invoker = lambda *_args, **_kwargs: None
+    gateway_rs_a2a_module.init_queue = lambda *_args, **_kwargs: None
+    gateway_rs_a2a_module.reset_metrics = lambda *_args, **_kwargs: None
+
+    async def _stub_shutdown_queue(*_args, **_kwargs):
+        return None
+
+    gateway_rs_a2a_module.shutdown_queue = _stub_shutdown_queue
+    gateway_rs_module.a2a_service = gateway_rs_a2a_module
+    sys.modules.setdefault("gateway_rs", gateway_rs_module)
+    sys.modules.setdefault("gateway_rs.a2a_service", gateway_rs_a2a_module)
 
 # First-Party
 # Save original RBAC decorator functions at conftest import time.
@@ -87,6 +115,12 @@ def clear_plugins_settings_cache():
     settings.cache_clear()
     yield
     settings.cache_clear()
+
+
+@pytest.fixture(scope="session")
+def rust_available():
+    """Whether the real gateway_rs A2A extension is importable in this test run."""
+    return RUST_A2A_AVAILABLE
 
 
 # ---------------------------------------------------------------------------
@@ -145,20 +179,21 @@ def real_a2a_agent_in_db(app_with_temp_db, a2a_stub_server):
     """
     from mcpgateway.db import SessionLocal
 
-    # Ensure Rust queue is ready (idempotent)
-    from gateway_rs import a2a_service as rust_a2a
+    if RUST_A2A_AVAILABLE:
+        # Ensure Rust queue is ready (idempotent)
+        from gateway_rs import a2a_service as rust_a2a
 
-    rust_a2a.init_invoker(30, 3)
-    try:
-        sig = __import__("inspect").signature(rust_a2a.init_queue)
-        if len(sig.parameters) >= 3:
-            rust_a2a.init_queue(2, None, None)
-        elif len(sig.parameters) >= 2:
-            rust_a2a.init_queue(2, None)
-        else:
+        rust_a2a.init_invoker(30, 3)
+        try:
+            sig = __import__("inspect").signature(rust_a2a.init_queue)
+            if len(sig.parameters) >= 3:
+                rust_a2a.init_queue(2, None, None)
+            elif len(sig.parameters) >= 2:
+                rust_a2a.init_queue(2, None)
+            else:
+                rust_a2a.init_queue(2)
+        except Exception:
             rust_a2a.init_queue(2)
-    except Exception:
-        rust_a2a.init_queue(2)
 
     db = SessionLocal()
     try:
@@ -196,19 +231,20 @@ def real_a2a_invoke_context(app_with_temp_db, a2a_stub_server):
     """
     from mcpgateway.db import SessionLocal
 
-    from gateway_rs import a2a_service as rust_a2a
+    if RUST_A2A_AVAILABLE:
+        from gateway_rs import a2a_service as rust_a2a
 
-    rust_a2a.init_invoker(30, 3)
-    try:
-        sig = __import__("inspect").signature(rust_a2a.init_queue)
-        if len(sig.parameters) >= 3:
-            rust_a2a.init_queue(2, None, None)
-        elif len(sig.parameters) >= 2:
-            rust_a2a.init_queue(2, None)
-        else:
+        rust_a2a.init_invoker(30, 3)
+        try:
+            sig = __import__("inspect").signature(rust_a2a.init_queue)
+            if len(sig.parameters) >= 3:
+                rust_a2a.init_queue(2, None, None)
+            elif len(sig.parameters) >= 2:
+                rust_a2a.init_queue(2, None)
+            else:
+                rust_a2a.init_queue(2)
+        except Exception:
             rust_a2a.init_queue(2)
-    except Exception:
-        rust_a2a.init_queue(2)
 
     db = SessionLocal()
     try:

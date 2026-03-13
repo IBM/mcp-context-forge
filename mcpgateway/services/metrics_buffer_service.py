@@ -22,9 +22,26 @@ from typing import Any, Deque, Dict, List, Optional
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, fresh_db_session, get_for_update, PromptMetric, ResourceMetric, ServerMetric, ToolMetric
-from gateway_rs import a2a_service as rust_a2a
+
+try:
+    from gateway_rs import a2a_service as rust_a2a
+except ImportError:  # pragma: no cover - exercised in no-Rust environments
+    rust_a2a = None
 
 logger = logging.getLogger(__name__)
+
+
+def _build_a2a_metrics_batch_python(entries: List[tuple], end_time_ts: float) -> tuple[List[tuple], List[str]]:
+    """Build A2A metrics rows without Rust so tests and fallback mode can run without gateway_rs."""
+    metrics_tuples: List[tuple] = []
+    success_agent_ids: List[str] = []
+    for agent_id, interaction_type, status_code, body, duration_secs in entries:
+        is_success = int(status_code) == 200
+        error_message = None if is_success else (body or f"HTTP {status_code}")
+        metrics_tuples.append((agent_id, end_time_ts, float(duration_secs), is_success, interaction_type, error_message))
+        if is_success:
+            success_agent_ids.append(agent_id)
+    return metrics_tuples, success_agent_ids
 
 
 @dataclass
@@ -901,7 +918,10 @@ def record_a2a_invoke_results_batch(
         if not entries:
             return
 
-        metrics_tuples, success_agent_ids = rust_a2a.build_a2a_metrics_batch(entries, end_time.timestamp())
+        if rust_a2a is not None and hasattr(rust_a2a, "build_a2a_metrics_batch"):
+            metrics_tuples, success_agent_ids = rust_a2a.build_a2a_metrics_batch(entries, end_time.timestamp())
+        else:
+            metrics_tuples, success_agent_ids = _build_a2a_metrics_batch_python(entries, end_time.timestamp())
         metrics_list = [
             BufferedA2AAgentMetric(
                 a2a_agent_id=t[0],

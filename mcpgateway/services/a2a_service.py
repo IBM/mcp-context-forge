@@ -13,6 +13,7 @@ and interactions with A2A-compatible agents.
 """
 
 # Standard
+import asyncio
 import binascii
 from datetime import datetime, timezone
 import time
@@ -125,6 +126,20 @@ def _result_from_db_error(p: Dict[str, Any]) -> Dict[str, Any]:
     return {"error": p["error"], "code": code, "agent_name": p.get("agent_name"), "status_code": status_code}
 
 
+def _is_rust_unavailable_error(exc: Exception) -> bool:
+    """Return True when Rust invoke should fall back to Python instead of failing the request."""
+    msg = str(exc).lower()
+    fallback_markers = (
+        "not available",
+        "missing try_submit_invoke",
+        "queue not initialized",
+        "not initialized",
+        "no module named 'gateway_rs'",
+        "cannot import name",
+    )
+    return isinstance(exc, (ImportError, ModuleNotFoundError, AttributeError)) or any(marker in msg for marker in fallback_markers)
+
+
 class A2AAgentNameConflictError(A2AAgentError):
     """Raised when an A2A agent name conflicts with an existing one."""
 
@@ -184,6 +199,8 @@ class A2AAgentService(BaseService):
         """Initialize a new A2AAgentService instance."""
         self._initialized = False
         self._event_streams: List[AsyncGenerator[str, None]] = []
+        self._python_inflight_invokes: Dict[str, asyncio.Task[tuple[Dict[str, Any], float]]] = {}
+        self._python_inflight_lock: Optional[asyncio.Lock] = None
 
     async def initialize(self) -> None:
         """Initialize the A2A agent service."""
@@ -1363,12 +1380,13 @@ class A2AAgentService(BaseService):
         phase1_start = time.perf_counter()
         try:
             unique_names = list(dict.fromkeys(req["agent_name"] for req in requests))
-            agent_rows = (
-                db.execute(select(DbA2AAgent).where(DbA2AAgent.name.in_(unique_names)).order_by(DbA2AAgent.id))
+            agent_ids = (
+                db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name.in_(unique_names)).order_by(DbA2AAgent.id))
                 .scalars()
                 .all()
             )
-            agents_by_name: Dict[str, DbA2AAgent] = {row.name: row for row in agent_rows}
+            locked_agent_rows = [agent for agent_id in agent_ids if (agent := get_for_update(db, DbA2AAgent, agent_id)) is not None]
+            agents_by_name: Dict[str, DbA2AAgent] = {row.name: row for row in locked_agent_rows}
 
             from mcpgateway.config import get_settings  # pylint: disable=import-outside-toplevel
 
@@ -1467,6 +1485,322 @@ class A2AAgentService(BaseService):
             db.rollback()
             raise A2AAgentError(f"A2A agent DB phase failed: {e!s}") from e
 
+    def _build_request_data(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Build outbound request payload in the same shape for Rust and Python execution."""
+        base_url = payload["base_url"]
+        params = payload["parameters"]
+        agent_type = payload["agent_type"]
+        agent_protocol_version = payload["agent_protocol_version"]
+        interaction_type = payload["interaction_type"]
+
+        if agent_type in ["generic", "jsonrpc"] or base_url.endswith("/"):
+            return {"jsonrpc": "2.0", "method": params.get("method", "message/send"), "params": params.get("params", params), "id": 1}
+        return {"interaction_type": interaction_type, "parameters": params, "protocol_version": agent_protocol_version}
+
+    def _build_ordered_results(
+        self,
+        batch_payloads: List[Dict[str, Any]],
+        result_by_id: Dict[int, Any],
+    ) -> List[Dict[str, Any]]:
+        """Return results in request order, merging DB-phase errors with invoke results."""
+        ordered_results: List[Dict[str, Any]] = []
+        for idx, payload in enumerate(batch_payloads):
+            if "code" in payload:
+                ordered_results.append(_result_from_db_error(payload))
+                continue
+
+            response = result_by_id[idx]
+            if isinstance(response, dict):
+                ordered_results.append(response)
+            else:
+                ordered_results.append(response.to_unified_result())
+        return ordered_results
+
+    async def _invoke_phase2_rust(
+        self,
+        batch_payloads: List[Dict[str, Any]],
+        traceparent: Optional[str] = None,
+    ) -> tuple[List[Dict[str, Any]], Dict[int, tuple]]:
+        """Execute invoke batch via Rust when the extension and queue are available."""
+        from gateway_rs import a2a_service as rust_a2a  # pylint: disable=import-outside-toplevel
+
+        from mcpgateway.config import get_settings  # pylint: disable=import-outside-toplevel
+
+        settings_obj = get_settings()
+        use_rust_auth_decrypt = bool(settings_obj.auth_encryption_secret)
+        default_timeout_secs = settings_obj.httpx_read_timeout + 60
+        correlation_id = get_correlation_id()
+
+        if not hasattr(rust_a2a, "try_submit_invoke"):
+            raise A2AAgentError("Rust A2A extension missing try_submit_invoke; rebuild gateway_rs")
+
+        rust_requests: List[tuple] = []
+        for idx, payload in enumerate(batch_payloads):
+            if "code" in payload:
+                continue
+
+            request_data = self._build_request_data(payload)
+            if use_rust_auth_decrypt:
+                auth_elem3 = payload.get("auth_query_params_encrypted")
+                auth_elem4 = payload.get("auth_value_encrypted")
+            else:
+                headers = {"Content-Type": "application/json"}
+                headers.update(payload["auth_headers"])
+                if correlation_id:
+                    headers["X-Correlation-ID"] = correlation_id
+                if traceparent:
+                    headers["traceparent"] = traceparent
+                auth_elem3 = payload.get("auth_query_params_plain")
+                auth_elem4 = headers
+
+            token_teams = payload.get("token_teams") or []
+            scope_id: Optional[str] = token_teams[0] if token_teams else None
+            request_id: Optional[str] = payload.get("request_id")
+            try:
+                request_payload = orjson.dumps(request_data)
+            except Exception as e:
+                raise A2AAgentError(f"Failed to serialize A2A request payload: {e!s}") from e
+
+            rust_requests.append(
+                (
+                    idx,
+                    payload["base_url"],
+                    auth_elem3,
+                    auth_elem4,
+                    request_payload,
+                    correlation_id,
+                    traceparent,
+                    payload.get("agent_name"),
+                    str(payload["agent_id"]),
+                    payload.get("interaction_type", "query"),
+                    scope_id,
+                    request_id,
+                )
+            )
+
+        if not rust_requests:
+            return ([_result_from_db_error(payload) for payload in batch_payloads], {})
+
+        auth_secret_for_rust = None
+        if settings_obj.auth_encryption_secret:
+            auth_secret_for_rust = settings_obj.auth_encryption_secret.get_secret_value()
+
+        raw_results = await rust_a2a.try_submit_invoke(rust_requests, default_timeout_secs, auth_secret_for_rust)
+        result_by_id: Dict[int, tuple] = {rid: (resp, duration_secs) for rid, resp, duration_secs in raw_results}
+        ordered_results = self._build_ordered_results(batch_payloads, {rid: resp for rid, (resp, _secs) in result_by_id.items()})
+        return ordered_results, result_by_id
+
+    async def _invoke_single_python(
+        self,
+        payload: Dict[str, Any],
+        traceparent: Optional[str] = None,
+    ) -> tuple[Dict[str, Any], float]:
+        """Execute a single invoke through the original Python HTTP flow."""
+        # First-Party
+        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging  # pylint: disable=import-outside-toplevel
+
+        agent_name = payload["agent_name"]
+        agent_id = payload["agent_id"]
+        agent_endpoint_url = payload["base_url"]
+        auth_query_params_decrypted: Optional[Dict[str, str]] = None
+        if payload.get("auth_query_params_encrypted"):
+            auth_query_params_decrypted = {}
+            for param_key, encrypted_value in payload["auth_query_params_encrypted"].items():
+                if encrypted_value:
+                    try:
+                        decrypted = decode_auth(encrypted_value)
+                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
+                    except Exception:
+                        logger.debug("Failed to decrypt query param '%s' for A2A agent invocation", param_key)
+            if auth_query_params_decrypted:
+                agent_endpoint_url = apply_query_param_auth(agent_endpoint_url, auth_query_params_decrypted)
+
+        auth_headers = dict(payload.get("auth_headers", {}))
+        if payload.get("auth_value_encrypted"):
+            try:
+                auth_headers.update(decode_auth(payload["auth_value_encrypted"]))
+            except Exception as e:
+                raise A2AAgentError(f"Failed to decrypt authentication for agent '{agent_name}': {e!s}") from e
+
+        request_data = self._build_request_data(payload)
+        correlation_id = get_correlation_id()
+        headers = {"Content-Type": "application/json"}
+        headers.update(auth_headers)
+        if correlation_id:
+            headers["X-Correlation-ID"] = correlation_id
+        if traceparent:
+            headers["traceparent"] = traceparent
+
+        sanitized_endpoint_url = sanitize_url_for_logging(agent_endpoint_url, auth_query_params_decrypted)
+        client = await get_http_client()
+        call_started_at = datetime.now(timezone.utc)
+
+        structured_logger.log(
+            level="INFO",
+            message=f"A2A external call started: {agent_name}",
+            component="a2a_service",
+            user_id=payload.get("user_id"),
+            user_email=payload.get("user_email"),
+            correlation_id=correlation_id,
+            metadata={
+                "event": "a2a_call_started",
+                "agent_name": agent_name,
+                "agent_id": agent_id,
+                "endpoint_url": sanitized_endpoint_url,
+                "interaction_type": payload.get("interaction_type"),
+                "protocol_version": payload.get("agent_protocol_version"),
+            },
+        )
+
+        try:
+            http_response = await client.post(agent_endpoint_url, json=request_data, headers=headers)
+        except Exception as e:
+            error_message = sanitize_exception_message(str(e), auth_query_params_decrypted)
+            logger.error("Failed to invoke A2A agent '%s': %s", agent_name, error_message)
+            raise A2AAgentError(f"Failed to invoke A2A agent: {error_message}") from e
+
+        duration_secs = (datetime.now(timezone.utc) - call_started_at).total_seconds()
+        duration_ms = duration_secs * 1000
+
+        parsed_response = None
+        if getattr(http_response, "status_code", 500) == 200:
+            try:
+                parsed_response = http_response.json()
+            except Exception:
+                parsed_response = None
+
+            structured_logger.log(
+                level="INFO",
+                message=f"A2A external call completed: {agent_name}",
+                component="a2a_service",
+                user_id=payload.get("user_id"),
+                user_email=payload.get("user_email"),
+                correlation_id=correlation_id,
+                duration_ms=duration_ms,
+                metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code, "success": True},
+            )
+            return {
+                "status_code": http_response.status_code,
+                "body": getattr(http_response, "text", None),
+                "parsed": parsed_response,
+            }, duration_secs
+
+        raw_error = f"HTTP {http_response.status_code}: {getattr(http_response, 'text', '')}"
+        error_message = sanitize_exception_message(raw_error, auth_query_params_decrypted)
+        structured_logger.log(
+            level="ERROR",
+            message=f"A2A external call failed: {agent_name}",
+            component="a2a_service",
+            user_id=payload.get("user_id"),
+            user_email=payload.get("user_email"),
+            correlation_id=correlation_id,
+            duration_ms=duration_ms,
+            error_details={"error_type": "A2AHTTPError", "error_message": error_message},
+            metadata={"event": "a2a_call_failed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code},
+        )
+        return {
+            "status_code": http_response.status_code,
+            "body": getattr(http_response, "text", None),
+            "parsed": None,
+            "error": error_message,
+            "code": "agent_error",
+            "agent_name": agent_name,
+        }, duration_secs
+
+    async def _invoke_single_python_shared(
+        self,
+        payload: Dict[str, Any],
+        traceparent: Optional[str] = None,
+    ) -> tuple[Dict[str, Any], float]:
+        """Reuse the same Python invoke task for duplicate request IDs within a batch or while in flight."""
+        request_id = payload.get("request_id")
+        if not request_id:
+            return await self._invoke_single_python(payload, traceparent=traceparent)
+
+        if self._python_inflight_lock is None:
+            self._python_inflight_lock = asyncio.Lock()
+        lock = self._python_inflight_lock
+
+        created_task = False
+        async with lock:
+            shared_task = self._python_inflight_invokes.get(request_id)
+            if shared_task is None:
+                shared_task = asyncio.create_task(self._invoke_single_python(payload, traceparent=traceparent))
+                self._python_inflight_invokes[request_id] = shared_task
+                created_task = True
+
+        try:
+            result, duration_secs = await shared_task
+            return dict(result), duration_secs
+        finally:
+            if created_task:
+                async with lock:
+                    if self._python_inflight_invokes.get(request_id) is shared_task:
+                        self._python_inflight_invokes.pop(request_id, None)
+
+    async def _record_python_invoke_metrics(
+        self,
+        payload: Dict[str, Any],
+        result: Dict[str, Any],
+        duration_secs: float,
+    ) -> None:
+        """Persist Python fallback metrics and last_interaction updates."""
+        error_message = result.get("error")
+        success = int(result.get("status_code", 500)) == 200
+
+        try:
+            from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+
+            metrics_buffer = get_metrics_buffer_service()
+            metrics_buffer.record_a2a_agent_metric_with_duration(
+                a2a_agent_id=payload["agent_id"],
+                response_time=duration_secs,
+                success=success,
+                interaction_type=payload["interaction_type"],
+                error_message=error_message,
+            )
+        except Exception as metrics_error:
+            logger.warning("Failed to record A2A metrics for '%s': %s", payload["agent_name"], metrics_error)
+
+        try:
+            with fresh_db_session() as ts_db:
+                db_agent = get_for_update(ts_db, DbA2AAgent, payload["agent_id"])
+                if db_agent and getattr(db_agent, "enabled", False):
+                    db_agent.last_interaction = datetime.now(timezone.utc)
+                    ts_db.commit()
+        except Exception as ts_error:
+            logger.warning("Failed to update last_interaction for '%s': %s", payload["agent_name"], ts_error)
+
+    async def _invoke_phase2_python(
+        self,
+        batch_payloads: List[Dict[str, Any]],
+        traceparent: Optional[str] = None,
+    ) -> tuple[List[Dict[str, Any]], Dict[int, tuple]]:
+        """Execute invoke batch via the original Python HTTP flow."""
+        ordered_results: List[Dict[str, Any]] = []
+        result_by_id: Dict[int, tuple] = {}
+        batch_request_cache: Dict[str, tuple[Dict[str, Any], float]] = {}
+
+        for idx, payload in enumerate(batch_payloads):
+            if "code" in payload:
+                ordered_results.append(_result_from_db_error(payload))
+                continue
+
+            request_id = payload.get("request_id")
+            cached_result = batch_request_cache.get(request_id) if request_id else None
+            if cached_result is not None:
+                result, duration_secs = dict(cached_result[0]), cached_result[1]
+            else:
+                result, duration_secs = await self._invoke_single_python_shared(payload, traceparent=traceparent)
+                if request_id:
+                    batch_request_cache[request_id] = (dict(result), duration_secs)
+            ordered_results.append(result)
+            result_by_id[idx] = (result, duration_secs)
+            await self._record_python_invoke_metrics(payload, result, duration_secs)
+
+        return ordered_results, result_by_id
+
     async def invoke_agent(
         self,
         db: Session,
@@ -1491,93 +1825,24 @@ class A2AAgentService(BaseService):
             raise A2AAgentError("At least one invoke request is required")
 
         batch_payloads = self._invoke_phase1(db, requests)
+        used_rust_phase2 = True
+        try:
+            ordered_results, result_by_id = await self._invoke_phase2_rust(batch_payloads, traceparent=traceparent)
+        except Exception as e:
+            if not _is_rust_unavailable_error(e):
+                raise
 
-        # PHASE 2: Batch HTTP via Rust invoker. Rust is first and only choice; no Python fallback.
-        from gateway_rs import a2a_service as rust_a2a  # pylint: disable=import-outside-toplevel
-
-        from mcpgateway.config import get_settings  # pylint: disable=import-outside-toplevel
-
-        use_rust_auth_decrypt = bool(get_settings().auth_encryption_secret)
-        default_timeout_secs = get_settings().httpx_read_timeout + 60
-        correlation_id = get_correlation_id()
-
-        if not hasattr(rust_a2a, "try_submit_invoke"):
-            raise A2AAgentError("Rust A2A extension missing try_submit_invoke; rebuild gateway_rs")
-        rust_requests: List[tuple] = []
-        for idx, p in enumerate(batch_payloads):
-            if "code" in p:
-                continue
-            base_url = p["base_url"]
-            params = p["parameters"]
-            interaction_type = p["interaction_type"]
-            agent_type = p["agent_type"]
-            agent_protocol_version = p["agent_protocol_version"]
-            if agent_type in ["generic", "jsonrpc"] or base_url.endswith("/"):
-                request_data = {"jsonrpc": "2.0", "method": params.get("method", "message/send"), "params": params.get("params", params), "id": 1}
-            else:
-                request_data = {"interaction_type": interaction_type, "parameters": params, "protocol_version": agent_protocol_version}
-            # When use_rust_auth_decrypt: pass encrypted only; Rust decrypts. Else: plain headers only (Rust uses as-is).
-            if use_rust_auth_decrypt:
-                auth_elem3 = p.get("auth_query_params_encrypted")
-                auth_elem4 = p.get("auth_value_encrypted")
-            else:
-                headers = {"Content-Type": "application/json"}
-                headers.update(p["auth_headers"])
-                if correlation_id:
-                    headers["X-Correlation-ID"] = correlation_id
-                if traceparent:
-                    headers["traceparent"] = traceparent
-                auth_elem3 = p.get("auth_query_params_plain")
-                auth_elem4 = headers
-            # Scope id for circuit breaker isolation (e.g. first token_team or "default")
-            token_teams = p.get("token_teams") or []
-            scope_id: Optional[str] = token_teams[0] if token_teams else None
-            request_id: Optional[str] = p.get("request_id")
-            try:
-                request_payload = orjson.dumps(request_data)
-            except Exception as e:
-                raise A2AAgentError(f"Failed to serialize A2A request payload: {e!s}") from e
-            rust_requests.append(
-                (
-                    idx,
-                    base_url,
-                    auth_elem3,
-                    auth_elem4,
-                    request_payload,
-                    correlation_id,
-                    traceparent,
-                    p.get("agent_name"),
-                    str(p["agent_id"]),
-                    p.get("interaction_type", "query"),
-                    scope_id,
-                    request_id,
-                )
-            )
-
-        if not rust_requests:
-            return [_result_from_db_error(p) for p in batch_payloads]
-
-        auth_secret_for_rust = None
-        if get_settings().auth_encryption_secret:
-            auth_secret_for_rust = get_settings().auth_encryption_secret.get_secret_value()
-        raw_results = await rust_a2a.try_submit_invoke(rust_requests, default_timeout_secs, auth_secret_for_rust)
-        result_by_id: Dict[int, tuple] = {rid: (resp, duration_secs) for rid, resp, duration_secs in raw_results}
-
-        ordered_results: List[Dict[str, Any]] = []
-        for idx, p in enumerate(batch_payloads):
-            if "code" in p:
-                ordered_results.append(_result_from_db_error(p))
-            else:
-                resp, _ = result_by_id[idx]
-                # Rust returns unified shape (to_unified_result); no normalization needed.
-                ordered_results.append(resp.to_unified_result())
+            logger.warning("Rust A2A invoke unavailable, falling back to Python HTTP execution: %s", e)
+            used_rust_phase2 = False
+            ordered_results, result_by_id = await self._invoke_phase2_python(batch_payloads, traceparent=traceparent)
 
         try:
             from mcpgateway.services.metrics_buffer_service import (  # pylint: disable=import-outside-toplevel
                 record_a2a_invoke_results_batch,
             )
 
-            record_a2a_invoke_results_batch(batch_payloads, result_by_id, datetime.now(timezone.utc))
+            if used_rust_phase2 and result_by_id:
+                record_a2a_invoke_results_batch(batch_payloads, result_by_id, datetime.now(timezone.utc))
         except Exception as e:
             logger.warning("Failed to record A2A invoke metrics batch: %s", e)
 
