@@ -323,7 +323,7 @@ describe("runGlobalSearch visible entity filtering", () => {
         expect(fetchSpy).toHaveBeenCalledTimes(1);
         const requestUrl = new URL(fetchSpy.mock.calls[0][0], "http://localhost");
         expect(requestUrl.searchParams.get("entity_types")).toBe(
-            "servers,gateways,resources,agents,users",
+            "servers,gateways,resources,agents,users,roots",
         );
     });
 
@@ -343,6 +343,7 @@ describe("runGlobalSearch visible entity filtering", () => {
             "agents",
             "teams",
             "users",
+            "roots",
         ];
         const fetchSpy = vi.spyOn(win, "fetchWithAuth");
 
