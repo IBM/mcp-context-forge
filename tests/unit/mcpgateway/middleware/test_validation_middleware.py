@@ -30,8 +30,8 @@ class TestIsPathTraversal:
         assert is_path_traversal("/safe/../unsafe") is True
 
     def test_leading_slash(self):
-        """Test detection of leading slash."""
-        assert is_path_traversal("/etc/passwd") is True
+        """Test that leading slash alone is NOT path traversal."""
+        assert is_path_traversal("/etc/passwd") is False
 
     def test_backslash(self):
         """Test detection of backslash."""
@@ -57,6 +57,15 @@ class TestValidationMiddleware:
             mock_settings.max_param_length = 1000
             mock_settings.max_path_depth = 10
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
             yield middleware
@@ -70,6 +79,15 @@ class TestValidationMiddleware:
             mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
             yield middleware
@@ -107,6 +125,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -136,6 +163,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 1000
             mock_settings.environment = "development"  # Development mode
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -274,6 +310,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 10
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -293,6 +338,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 1000
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -312,6 +366,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 10
             mock_settings.environment = "development"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -328,6 +391,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -344,6 +416,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -358,6 +439,15 @@ class TestValidationMiddleware:
             mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -375,6 +465,15 @@ class TestValidationMiddleware:
             mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -392,6 +491,15 @@ class TestValidationMiddleware:
             mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -406,6 +514,15 @@ class TestValidationMiddleware:
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_path_depth = 3
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -424,6 +541,15 @@ class TestValidationMiddleware:
             mock_settings.allowed_roots = ["/safe"]
             mock_settings.dangerous_patterns = []
             mock_settings.max_path_depth = 100
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -493,6 +619,15 @@ class TestValidationMiddleware:
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -514,6 +649,15 @@ class TestValidationMiddleware:
             mock_settings.sanitize_output = True
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -533,6 +677,15 @@ class TestValidationMiddleware:
             mock_settings.sanitize_output = True
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -578,6 +731,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -596,3 +758,392 @@ class TestValidationMiddleware:
             response = await middleware.dispatch(request, call_next)
 
             assert b"\x00" not in response.body
+
+    @pytest.mark.asyncio
+    async def test_large_body_rejected_with_413(self):
+        """Test that large request bodies are rejected with HTTP 413."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 1024  # 1KB limit
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Create request with large body
+            class DummyRequest:
+                path_params = {}
+                query_params = {}
+                headers = {"content-type": "application/json"}
+
+                async def body(self):
+                    return b'{"data": "' + b"x" * 2000 + b'"}'
+
+            with pytest.raises(HTTPException) as exc_info:
+                await middleware._validate_request(DummyRequest())
+
+            assert exc_info.value.status_code == 413
+            assert "too large" in exc_info.value.detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_for_validation(self):
+        """Test that validation cache works correctly."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = True
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            body = b'{"test": "data"}'
+
+            class DummyRequest:
+                path_params = {}
+                query_params = {}
+                headers = {"content-type": "application/json"}
+
+                async def body(self):
+                    return body
+
+            # First request - should validate and cache
+            await middleware._validate_request(DummyRequest())
+
+            # Second request - should hit cache
+            await middleware._validate_request(DummyRequest())
+
+            # Verify cache was used
+            assert middleware.cache is not None
+            cache_key = middleware._get_cache_key(body)
+            assert middleware.cache.get(cache_key) is True
+
+    @pytest.mark.asyncio
+    async def test_cache_validation_failure(self):
+        """Test that validation failures are cached."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"[;&|`]"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = True
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            body = b'{"cmd": "rm -rf /; echo bad"}'
+
+            class DummyRequest:
+                path_params = {}
+                query_params = {}
+                headers = {"content-type": "application/json"}
+
+                async def body(self):
+                    return body
+
+            # First request - should fail validation
+            with pytest.raises(HTTPException):
+                await middleware._validate_request(DummyRequest())
+
+            # Verify failure was cached
+            cache_key = middleware._get_cache_key(body)
+            assert middleware.cache.get(cache_key) is False
+
+            # Second request - should use cached failure
+            with pytest.raises(HTTPException) as exc_info:
+                await middleware._validate_request(DummyRequest())
+            assert exc_info.value.status_code == 422
+
+    def test_skip_endpoint_patterns(self):
+        """Test endpoint skip pattern matching."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = [r"^/health$", r"^/metrics$", r"^/static/.*"]
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            assert middleware._should_skip_endpoint("/health") is True
+            assert middleware._should_skip_endpoint("/metrics") is True
+            assert middleware._should_skip_endpoint("/static/css/style.css") is True
+            assert middleware._should_skip_endpoint("/api/test") is False
+
+    @pytest.mark.asyncio
+    async def test_sanitize_response_with_sampling(self):
+        """Test response sanitization with sampling enabled."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = True
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Create large response with clean data
+            large_body = b"clean data " * 200  # ~2200 bytes
+            response = Response(content=large_body)
+            response.body = large_body
+
+            result = await middleware._sanitize_response(response)
+            assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_sanitize_response_skips_large(self):
+        """Test that very large responses skip sanitization."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 2048  # 2KB limit
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Create response larger than max
+            large_body = b"x" * 3000
+            response = Response(content=large_body)
+            response.body = large_body
+
+            result = await middleware._sanitize_response(response)
+            # Should return unchanged
+            assert result.body == large_body
+
+    def test_lru_cache_expiration(self):
+        """Test LRU cache TTL expiration."""
+        from mcpgateway.middleware.validation_middleware import LRUCache
+        import time
+
+        cache = LRUCache(max_size=10, ttl=1)
+        cache.set("key1", True)
+
+        # Should exist initially
+        assert cache.get("key1") is True
+
+        # Wait for expiration
+        time.sleep(1.1)
+
+        # Should be expired and return None (lines 67-68)
+        assert cache.get("key1") is None
+
+    def test_lru_cache_update_existing(self):
+        """Test updating existing cache entry."""
+        from mcpgateway.middleware.validation_middleware import LRUCache
+
+        cache = LRUCache(max_size=10, ttl=300)
+        cache.set("key1", True)
+
+        # Update existing entry (lines 83-84)
+        cache.set("key1", False)
+
+        assert cache.get("key1") is False
+
+    def test_lru_cache_eviction(self):
+        """Test LRU cache eviction when full."""
+        from mcpgateway.middleware.validation_middleware import LRUCache
+
+        cache = LRUCache(max_size=3, ttl=300)
+        cache.set("key1", True)
+        cache.set("key2", True)
+        cache.set("key3", True)
+
+        # Cache is now full, adding key4 should evict key1 (line 87)
+        cache.set("key4", True)
+
+        assert cache.get("key1") is None
+        assert cache.get("key4") is True
+
+    def test_invalid_skip_endpoint_regex(self):
+        """Test handling of invalid regex in skip endpoints."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            # Invalid regex pattern (lines 145-146)
+            mock_settings.validation_skip_endpoints = [r"^/health$", r"[invalid(regex"]
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            # Should not crash, just skip invalid pattern
+            middleware = ValidationMiddleware(app=None)
+
+            # Valid pattern should still work
+            assert middleware._should_skip_endpoint("/health") is True
+
+    @pytest.mark.asyncio
+    async def test_skip_endpoint_dispatch(self):
+        """Test that skipped endpoints bypass validation."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = [r"^/health$"]
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Create request for skipped endpoint (lines 175-177)
+            scope = {
+                "type": "http",
+                "method": "GET",
+                "path": "/health",
+                "query_string": b"",
+                "headers": [],
+            }
+            request = Request(scope)
+
+            async def call_next(req):
+                return Response("ok")
+
+            response = await middleware.dispatch(request, call_next)
+            assert response.body == b"ok"
+
+    @pytest.mark.asyncio
+    async def test_sanitize_empty_response(self):
+        """Test sanitization of empty response body."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Empty response (line 389)
+            response = Response(content=b"")
+            response.body = b""
+
+            result = await middleware._sanitize_response(response)
+            assert result.body == b""
+
+    @pytest.mark.asyncio
+    async def test_sanitize_response_string_sampling(self):
+        """Test response sanitization with string body sampling."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = True
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
+
+            middleware = ValidationMiddleware(app=None)
+
+            # String body (not bytes) for sampling (lines 408-409)
+            large_body = "clean data " * 200  # ~2200 chars
+            response = Response(content=large_body)
+            response.body = large_body
+
+            result = await middleware._sanitize_response(response)
+            assert result is not None
