@@ -487,10 +487,10 @@ class ToolCreate(BaseModel):
 
         # Note: backticks (`) are allowed as they are commonly used in Markdown
         # for inline code examples in tool descriptions
-        forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
-        for pat in forbidden_patterns:
-            if pat in v:
-                raise ValueError(f"Description contains unsafe characters: '{pat}'")
+        if settings.tool_description_forbidden_patterns_enabled:
+            for pat in settings.tool_description_forbidden_patterns:
+                if pat in v:
+                    raise ValueError(f"Description contains unsafe characters: '{pat}'")
 
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
