@@ -42,7 +42,7 @@ import parse
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import joinedload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
@@ -1199,6 +1199,7 @@ class ResourceService(BaseService):
         db: Session,
         server_id: str,
         include_inactive: bool = False,
+        include_metrics: bool = False,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> List[ResourceRead]:
@@ -1246,6 +1247,13 @@ class ResourceService(BaseService):
             .where(DbResource.uri_template.is_(None))
             .where(server_resource_association.c.server_id == server_id)
         )
+
+        # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
+        if include_metrics:
+            query = query.options(
+                selectinload(DbResource.metrics),
+                selectinload(DbResource.metrics_hourly)
+            )
         if not include_inactive:
             query = query.where(DbResource.enabled)
 
@@ -1295,7 +1303,7 @@ class ResourceService(BaseService):
         for t in resources:
             try:
                 t.team = team_map.get(str(t.team_id)) if t.team_id else None
-                result.append(self.convert_resource_to_read(t, include_metrics=False))
+                result.append(self.convert_resource_to_read(t, include_metrics=include_metrics))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                 logger.exception(f"Failed to convert resource {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
                 # Continue with remaining resources instead of failing completely

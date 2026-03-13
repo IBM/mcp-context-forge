@@ -754,6 +754,7 @@ class ServerService(BaseService):
         self,
         db: Session,
         include_inactive: bool = False,
+        include_metrics: bool = False,
         tags: Optional[List[str]] = None,
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
@@ -769,6 +770,7 @@ class ServerService(BaseService):
         Args:
             db: Database session.
             include_inactive: Whether to include inactive servers.
+            include_metrics: Whether to include aggregated metrics in the results.
             tags: Filter servers by tags. If provided, only servers with at least one matching tag will be returned.
             cursor: Cursor for pagination (encoded last created_at and id).
             limit: Maximum number of servers to return. None for default, 0 for unlimited.
@@ -826,6 +828,13 @@ class ServerService(BaseService):
             .order_by(desc(DbServer.created_at), desc(DbServer.id))
         )
 
+        # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
+        if include_metrics:
+            query = query.options(
+                selectinload(DbServer.metrics),
+                selectinload(DbServer.metrics_hourly)
+            )
+
         # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbServer.enabled)
@@ -867,7 +876,7 @@ class ServerService(BaseService):
         result = []
         for s in servers_db:
             try:
-                result.append(self.convert_server_to_read(s, include_metrics=False))
+                result.append(self.convert_server_to_read(s, include_metrics=include_metrics))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                 logger.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
                 # Continue with remaining servers instead of failing completely

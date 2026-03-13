@@ -29,7 +29,7 @@ import orjson
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import joinedload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
@@ -1317,6 +1317,7 @@ class PromptService(BaseService):
         db: Session,
         server_id: str,
         include_inactive: bool = False,
+        include_metrics: bool = False,
         cursor: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
@@ -1333,6 +1334,8 @@ class PromptService(BaseService):
             db (Session): The SQLAlchemy database session.
             server_id (str): Server ID
             include_inactive (bool): If True, include inactive prompts in the result.
+                Defaults to False.
+            include_metrics (bool): If True, include metrics data in the response.
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
                 this parameter is ignored. Defaults to None.
@@ -1364,6 +1367,13 @@ class PromptService(BaseService):
             .join(server_prompt_association, DbPrompt.id == server_prompt_association.c.prompt_id)
             .where(server_prompt_association.c.server_id == server_id)
         )
+
+        # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
+        if include_metrics:
+            query = query.options(
+                selectinload(DbPrompt.metrics),
+                selectinload(DbPrompt.metrics_hourly)
+            )
         if not include_inactive:
             query = query.where(DbPrompt.enabled)
 
@@ -1411,7 +1421,7 @@ class PromptService(BaseService):
         for t in prompts:
             try:
                 t.team = team_map.get(str(t.team_id)) if t.team_id else None
-                result.append(self.convert_prompt_to_read(t, include_metrics=False))
+                result.append(self.convert_prompt_to_read(t, include_metrics=include_metrics))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                 logger.exception(f"Failed to convert prompt {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
                 # Continue with remaining prompts instead of failing completely
