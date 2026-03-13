@@ -1124,6 +1124,26 @@ class EmailAuthService:
             existing_admin.is_admin = True
             existing_admin.is_active = True
 
+            # Synchronize platform_admin RBAC role with is_admin flag
+            # This ensures atomicity: when setting is_admin=True, also assign the platform_admin role
+            try:
+                platform_admin_role = await self.role_service.get_role_by_name("platform_admin", "global")
+                if platform_admin_role:
+                    # Check if role assignment already exists
+                    existing_assignment = await self.role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+
+                    if not existing_assignment or not existing_assignment.is_active:
+                        await self.role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
+                        logger.info(f"Assigned platform_admin role to {email} during create_platform_admin()")
+                    else:
+                        logger.debug(f"User {email} already has active platform_admin role")
+                else:
+                    logger.warning(f"platform_admin role not found. User {email} updated with is_admin=True but without platform_admin role assignment.")
+            except Exception as role_error:
+                logger.error(f"Failed to assign platform_admin role to {email}: {role_error}. User updated with is_admin=True but role assignment failed.")
+                # Don't fail the admin user update if role assignment fails
+                # bootstrap_default_roles() will sync it later
+
             self.db.commit()
             logger.info(f"Updated platform admin user: {SecurityValidator.sanitize_log_message(email)}")
             return existing_admin
