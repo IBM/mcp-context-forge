@@ -1,7 +1,7 @@
 # CONC-01 Gateway Parallel Create: Runbook + Results
 
-Date: 2026-03-02  
-Ticket scope: CONC-01 for gateway endpoint (`POST /gateways`)  
+Date: 2026-03-02
+Ticket scope: CONC-01 for gateway endpoint (`POST /gateways`)
 Out of scope: server endpoint results
 
 ## Objective
@@ -25,7 +25,11 @@ Validate CONC-01 acceptance for gateway create under concurrency:
 
 ## Steps to run (copy/paste)
 
-### 1) Start Postgres + Redis in Docker (Colima runtime)
+Note for reviewers:
+- The commands below were executed on macOS with Colima.
+- On Linux, run equivalent Docker runtime/container startup commands for Postgres and Redis.
+
+### 1) Start Postgres + Redis in Docker
 
 ```bash
 colima start
@@ -44,10 +48,10 @@ docker run -d --name conc-redis -p 6379:6379 redis:7
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | rg 'conc-postgres|conc-redis'
 ```
 
-### 2) Terminal A: start gateway (Postgres + Redis + local SSRF overrides)
+### 2) Terminal A: start gateway
 
 ```bash
-# from repo root
+cd <repo-root>
 pkill -f "mcpgateway.main|uvicorn" || true
 
 DATABASE_URL='postgresql+psycopg://postgres:postgres@127.0.0.1:5432/concurrent_test' \
@@ -62,14 +66,14 @@ make dev
 ### 3) Terminal B: start translator
 
 ```bash
-# from repo root
+cd <repo-root>
 python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 ```
 
-### 4) Terminal C: generate token and run matrix
+### 4) Terminal C: generate token and run CONC-01
 
 ```bash
-# from repo root
+cd <repo-root>
 export CONC_TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 120 --secret <your-jwt-secret>)"
 make conc-01-gateways
 ```
@@ -77,11 +81,18 @@ make conc-01-gateways
 ### 5) Optional sanity checks
 
 ```bash
-curl -i -H "Authorization: Bearer $CONC_TOKEN" "http://127.0.0.1:8000/servers?limit=1"
-curl -i "http://127.0.0.1:8000/health"
+curl -sS --max-time 5 -o /dev/null -w "health=%{http_code}\n" http://127.0.0.1:8000/health
+curl -sS --max-time 5 -o /dev/null -w "servers=%{http_code}\n" -H "Authorization: Bearer $CONC_TOKEN" "http://127.0.0.1:8000/servers?limit=1"
 ```
 
 Expected: both return `200`.
+
+### 6) Optional custom run controls
+
+```bash
+CONC_CASES=api_smoke_20 make conc-01-gateways
+CONC_CASES=api_100,api_db_100 CONC_TIMEOUT_OVERRIDE=30 make conc-01-gateways
+```
 
 ## Expected vs observed
 
@@ -136,3 +147,10 @@ This artifact captures reproducible evidence that current `/gateways` behavior d
 - Duplicate rows are persisted for same-name concurrent creates.
 
 This PR does not change gateway behavior; it adds reproducible CONC-01 gateway test coverage and evidence.
+
+## Final statement
+
+- PASS/FAIL: FAIL (duplicate rows persisted for same-name concurrent creates)
+- Notes:
+  - This is intentionally a manual test flow, to keep reproduction straightforward and explicit.
+  - The fix for CONC-01 acceptance is tracked separately; this PR only adds the test runner and evidence.
