@@ -91,21 +91,20 @@ async def test_ensure_rpc_permission_denies_when_rbac_denies():
 
 
 @pytest.mark.asyncio
-async def test_ensure_rpc_permission_non_session_token_uses_check_any_team_false():
-    """Non-session (API) tokens must NOT use check_any_team — preserves existing behaviour.
+async def test_ensure_rpc_permission_api_token_without_team_id_uses_check_any_team():
+    """API tokens without team_id must use check_any_team=True.
 
-    This test verifies that the fix is scoped only to session tokens and does not
-    change the behaviour for API tokens that carry explicit team scoping via
-    token_teams.
-
-    This test may PASS before the fix if the current code happens to omit the kwarg
-    (defaulting to False) or FAIL if check_any_team is added unconditionally.
+    The /rpc endpoint has no route-level team_id.  When the user dict does not
+    carry a team_id (multi-team or team-less API tokens), check_any_team must be
+    True so that team-scoped roles (developer, team_admin) are found.
+    Layer 1 (token scope cap) already restricts what the token can do.
     """
     user = {
         "email": "user@example.com",
         "is_admin": False,
-        "token_use": "access",  # API token, not session
+        "token_use": "api",
         "token_teams": ["team-abc"],
+        # No team_id — multi-team or general API token
     }
     db = MagicMock(spec=Session)
     mock_checker = _make_mock_checker(grants=True)
@@ -114,8 +113,39 @@ async def test_ensure_rpc_permission_non_session_token_uses_check_any_team_false
         await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
 
     call_kwargs = mock_checker.has_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team", False) is False, (
-        "Non-session tokens must not use check_any_team=True; "
+    assert call_kwargs.get("check_any_team") is True, (
+        "API tokens without team_id must use check_any_team=True; "
+        "got call_kwargs=%r" % call_kwargs
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_rpc_permission_api_token_with_team_id_passes_team_id():
+    """Single-team API tokens with team_id must pass it to has_permission.
+
+    When the user dict carries a team_id (set by auth for single-team API tokens),
+    it must be forwarded so that the permission check uses the specific team's roles.
+    """
+    user = {
+        "email": "user@example.com",
+        "is_admin": False,
+        "token_use": "api",
+        "token_teams": ["team-abc"],
+        "team_id": "team-abc",
+    }
+    db = MagicMock(spec=Session)
+    mock_checker = _make_mock_checker(grants=True)
+
+    with patch("mcpgateway.main.PermissionChecker", return_value=mock_checker):
+        await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
+
+    call_kwargs = mock_checker.has_permission.call_args.kwargs
+    assert call_kwargs.get("team_id") == "team-abc", (
+        "Single-team API tokens must pass team_id to has_permission; "
+        "got call_kwargs=%r" % call_kwargs
+    )
+    assert call_kwargs.get("check_any_team") is False, (
+        "When team_id is available, check_any_team should be False; "
         "got call_kwargs=%r" % call_kwargs
     )
 

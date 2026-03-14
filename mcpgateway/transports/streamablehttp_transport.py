@@ -2667,9 +2667,10 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
         if not _check_scoped_permission(user_context, "admin.system_config"):
             raise PermissionError(_ACCESS_DENIED_MSG)
         # Layer 2: RBAC check
+        # No route-level team_id in MCP transport; check all team-scoped roles.
         has_permission = await _check_streamable_permission(
             user_context=user_context,
-            permission="admin.system_config",
+            permission="servers.use",
             check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
         )
         if not has_permission:
