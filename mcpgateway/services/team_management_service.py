@@ -141,6 +141,22 @@ class TeamMemberAddError(TeamManagementError):
     """
 
 
+def get_effective_max_members(team: "EmailTeam") -> Optional[int]:
+    """Return the effective member limit for a team.
+
+    If the team has an explicit ``max_members`` value stored in the DB, that
+    value is used.  Otherwise the global ``MAX_MEMBERS_PER_TEAM`` setting is
+    returned so that changing the environment variable takes effect for all
+    teams that have not been individually overridden.
+
+    Returns ``None`` only when neither the team nor the global setting
+    specifies a limit (no cap enforced).
+    """
+    if team.max_members is not None:
+        return team.max_members
+    return getattr(settings, "max_members_per_team", 100)
+
+
 class TeamManagementService:
     """Service for team management operations.
 
@@ -246,6 +262,11 @@ class TeamManagementService:
                 close()
             raise
 
+    @staticmethod
+    def _get_effective_max_members(team: "EmailTeam") -> Optional[int]:
+        """Return the effective member limit for a team. Delegates to module-level helper."""
+        return get_effective_max_members(team)
+
     def _log_team_member_action(self, team_member_id: str, team_id: str, user_email: str, role: str, action: str, action_by: Optional[str]):
         """
         Log a team member action to EmailTeamMemberHistory.
@@ -347,9 +368,9 @@ class TeamManagementService:
                 if self._get_user_team_count(created_by) >= max_teams:
                     raise ValueError(f"User has reached the maximum team limit of {max_teams}")
 
-            # Apply default max members from settings
-            if max_members is None:
-                max_members = getattr(settings, "max_members_per_team", 100)
+            # If max_members is not explicitly provided, leave it as None in the DB.
+            # The effective limit will be resolved at check time from settings.max_members_per_team,
+            # so changing the env var affects all teams that don't have an explicit override.
 
             # Check for existing inactive team with same name
 
@@ -666,13 +687,14 @@ class TeamManagementService:
             logger.warning(f"User {SecurityValidator.sanitize_log_message(user_email)} is already a member of team {SecurityValidator.sanitize_log_message(team_id)}")
             raise MemberAlreadyExistsError("User is already a member of this team")
 
-        # Check team member limit
-        if team.max_members:
+        # Check team member limit (explicit per-team value or global default)
+        effective_max = self._get_effective_max_members(team)
+        if effective_max:
             current_member_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).count()
 
-            if current_member_count >= team.max_members:
-                logger.warning(f"Team {SecurityValidator.sanitize_log_message(team_id)} has reached maximum member limit of {team.max_members}")
-                raise TeamMemberLimitExceededError(f"Team has reached maximum member limit of {team.max_members}")
+            if current_member_count >= effective_max:
+                logger.warning(f"Team {SecurityValidator.sanitize_log_message(team_id)} has reached maximum member limit of {effective_max}")
+                raise TeamMemberLimitExceededError(f"Team has reached maximum member limit of {effective_max}")
 
         # Add or reactivate membership
         try:
@@ -1586,6 +1608,15 @@ class TeamManagementService:
             max_teams = getattr(settings, "max_teams_per_user", 50)
             if self._get_user_team_count(join_request.user_email) >= max_teams:
                 raise ValueError(f"User has reached the maximum team limit of {max_teams}")
+
+            # Check team member limit
+            team = self.db.query(EmailTeam).filter(EmailTeam.id == join_request.team_id, EmailTeam.is_active.is_(True)).first()
+            if team:
+                effective_max = self._get_effective_max_members(team)
+                if effective_max:
+                    current_member_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == join_request.team_id, EmailTeamMember.is_active.is_(True)).count()
+                    if current_member_count >= effective_max:
+                        raise ValueError(f"Team has reached maximum member limit of {effective_max}")
 
             # Add user to team
             member = EmailTeamMember(team_id=join_request.team_id, user_email=join_request.user_email, role="member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
