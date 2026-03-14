@@ -1571,6 +1571,7 @@ class TestExecuteForwardedRequest:
             is_success = True
             def __init__(self, data):
                 self._data = data
+            is_success = True
             def json(self):
                 return self._data
 
@@ -1609,6 +1610,7 @@ class TestExecuteForwardedRequest:
             is_success = True
             def __init__(self, data):
                 self._data = data
+            is_success = True
             def json(self):
                 return self._data
 

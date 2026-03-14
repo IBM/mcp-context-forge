@@ -747,6 +747,81 @@ class TestPooledSession:
         session_set = {session}
         assert session in session_set
 
+    def test_is_closed_detects_explicitly_closed_write_stream(self):
+        """is_closed must return True when the underlying write stream is explicitly closed."""
+        mock_write_stream = MagicMock()
+        mock_write_stream._closed = True
+        mock_mcp_session = MagicMock()
+        mock_mcp_session._write_stream = mock_write_stream
+
+        pooled = PooledSession(
+            session=mock_mcp_session,
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="test",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+
+        assert pooled.is_closed is True
+
+    def test_is_closed_detects_broken_receive_channels(self):
+        """is_closed must return True when the receiving end of the write stream has closed."""
+        mock_state = MagicMock()
+        mock_state.open_receive_channels = 0
+        mock_write_stream = MagicMock()
+        mock_write_stream._closed = False
+        mock_write_stream._state = mock_state
+        mock_mcp_session = MagicMock()
+        mock_mcp_session._write_stream = mock_write_stream
+
+        pooled = PooledSession(
+            session=mock_mcp_session,
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="test",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+
+        assert pooled.is_closed is True
+
+    def test_is_closed_false_when_stream_healthy(self):
+        """is_closed must return False when the write stream is open and healthy."""
+        mock_state = MagicMock()
+        mock_state.open_receive_channels = 1
+        mock_write_stream = MagicMock()
+        mock_write_stream._closed = False
+        mock_write_stream._state = mock_state
+        mock_mcp_session = MagicMock()
+        mock_mcp_session._write_stream = mock_write_stream
+
+        pooled = PooledSession(
+            session=mock_mcp_session,
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="test",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+
+        assert pooled.is_closed is False
+
+    def test_is_closed_degrades_gracefully_without_write_stream(self):
+        """is_closed must not raise when session has no _write_stream attribute."""
+        mock_mcp_session = MagicMock(spec=[])  # no attributes at all
+
+        pooled = PooledSession(
+            session=mock_mcp_session,
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="test",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+
+        assert pooled.is_closed is False
+
 
 class TestPoolMetrics:
     """Tests for pool metrics."""
@@ -999,6 +1074,28 @@ class TestAcquireAndRelease:
 
         pool._semaphores[pool_key].release.assert_called_once()
         mock_failure.assert_called_once_with(url)
+
+    @pytest.mark.asyncio
+    async def test_release_with_discard_closes_session(self, pool):
+        """release(discard=True) must close the session instead of returning it to the pool."""
+        url = "http://test:8080"
+        pooled = PooledSession(
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+        pool_key = pool._make_pool_key(url, None, TransportType.STREAMABLE_HTTP, "anonymous", None)
+        await pool._get_or_create_pool(pool_key)
+
+        with patch.object(pool, "_close_session", new_callable=AsyncMock) as mock_close:
+            await pool.release(pooled, discard=True)
+
+        mock_close.assert_awaited_once_with(pooled)
+        # Session must not have been put back into the queue
+        assert pool._pools[pool_key].qsize() == 0
 
     @pytest.mark.asyncio
     async def test_release_closed_session_warns(self, pool):
@@ -1435,5 +1532,62 @@ class TestContextManager:
             # Session should be back in pool
             pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
             assert pool._pools[pool_key].qsize() == 1
+
+        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_session_context_manager_discards_on_exception(self):
+        """Broken sessions must not be returned to the pool when an exception is raised."""
+        pool = MCPSessionPool()
+
+        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
+            mock_session = PooledSession(
+                session=MagicMock(),
+                transport_context=MagicMock(),
+                url="http://test:8080",
+                identity_key="anonymous",
+                transport_type=TransportType.STREAMABLE_HTTP,
+                headers={},
+            )
+            mock_create.return_value = mock_session
+
+            with patch.object(pool, '_close_session', new_callable=AsyncMock) as mock_close:
+                with pytest.raises(RuntimeError):
+                    async with pool.session("http://test:8080") as pooled:
+                        assert pooled is not None
+                        raise RuntimeError("simulated transport error")
+
+                # Session must have been closed, not returned to pool
+                mock_close.assert_awaited_once_with(mock_session)
+                pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
+                assert pool_key not in pool._pools or pool._pools[pool_key].qsize() == 0
+
+        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_session_context_manager_discards_on_base_exception(self):
+        """Broken sessions must not be returned to the pool on BaseException (e.g. cancellation)."""
+        pool = MCPSessionPool()
+
+        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
+            mock_session = PooledSession(
+                session=MagicMock(),
+                transport_context=MagicMock(),
+                url="http://test:8080",
+                identity_key="anonymous",
+                transport_type=TransportType.STREAMABLE_HTTP,
+                headers={},
+            )
+            mock_create.return_value = mock_session
+
+            with patch.object(pool, '_close_session', new_callable=AsyncMock) as mock_close:
+                with pytest.raises(BaseException):
+                    async with pool.session("http://test:8080") as pooled:
+                        assert pooled is not None
+                        raise BaseException("simulated cancellation")
+
+                mock_close.assert_awaited_once_with(mock_session)
+                pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
+                assert pool_key not in pool._pools or pool._pools[pool_key].qsize() == 0
 
         await pool.close_all()
