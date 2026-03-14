@@ -96,8 +96,19 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
         True
     """
     try:
-        if not settings.allow_team_creation and not current_user_ctx.get("is_admin"):
+        is_admin = bool(current_user_ctx.get("is_admin"))
+
+        if not settings.allow_team_creation and not is_admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team creation is currently disabled")
+
+        # Enforce max_members_per_team limit for non-admin users
+        if not is_admin and request.max_members is not None:
+            limit = getattr(settings, "max_members_per_team", 100)
+            if request.max_members > limit:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"max_members cannot exceed {limit} for non-admin users",
+                )
 
         service = TeamManagementService(db)
         team = await service.create_team(
@@ -106,7 +117,7 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
             created_by=current_user_ctx["email"],
             visibility=request.visibility,
             max_members=request.max_members,
-            skip_limits=bool(current_user_ctx.get("is_admin")),
+            skip_limits=is_admin,
         )
 
         # Build response BEFORE closing session to avoid lazy-load issues with get_member_count()
@@ -359,12 +370,22 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
         HTTPException: If team not found, access denied, or update fails
     """
     try:
+        is_admin = bool(current_user.get("is_admin"))
         service = TeamManagementService(db)
 
         # Check if user is team owner
         role = await service.get_user_role_in_team(current_user["email"], team_id)
         if role != "owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+        # Enforce max_members_per_team limit for non-admin users
+        if not is_admin and request.max_members is not None:
+            limit = getattr(settings, "max_members_per_team", 100)
+            if request.max_members > limit:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"max_members cannot exceed {limit} for non-admin users",
+                )
 
         success = await service.update_team(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members)
 
