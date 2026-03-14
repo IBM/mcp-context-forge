@@ -182,6 +182,7 @@ pub enum ListenTarget {
 }
 
 impl RuntimeConfig {
+    #[must_use]
     pub fn effective_supported_protocol_versions(&self) -> Vec<String> {
         let mut versions = self.supported_protocol_versions.clone();
 
@@ -202,6 +203,11 @@ impl RuntimeConfig {
         versions
     }
 
+    /// Returns the primary listen target for the runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `listen_http` is configured with an invalid socket address.
     pub fn listen_target(&self) -> Result<ListenTarget, String> {
         if let Some(path) = &self.listen_uds {
             return Ok(ListenTarget::Uds(path.clone()));
@@ -213,6 +219,12 @@ impl RuntimeConfig {
             .map_err(|err| format!("invalid listen address '{}': {err}", self.listen_http))
     }
 
+    /// Returns the optional public HTTP listen address when it differs from the primary listener.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `public_listen_http` is configured with an invalid socket address
+    /// or when deriving the primary listen target fails.
     pub fn public_listen_addr(&self) -> Result<Option<SocketAddr>, String> {
         let Some(addr) = self.public_listen_http.as_deref() else {
             return Ok(None);
@@ -220,7 +232,7 @@ impl RuntimeConfig {
 
         let parsed = addr
             .parse::<SocketAddr>()
-            .map_err(|err| format!("invalid public listen address '{}': {err}", addr))?;
+            .map_err(|err| format!("invalid public listen address '{addr}': {err}"))?;
 
         match self.listen_target()? {
             ListenTarget::Http(existing) if existing == parsed => Ok(None),

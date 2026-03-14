@@ -16,9 +16,11 @@ use std::{
 };
 use uuid::Uuid;
 
+type ObservedBackendCall = (String, Option<String>, Option<String>);
+
 #[derive(Clone, Default)]
 struct BackendObservation {
-    calls: Arc<Mutex<Vec<(String, Option<String>, Option<String>)>>>,
+    calls: Arc<Mutex<Vec<ObservedBackendCall>>>,
 }
 
 async fn spawn_router(router: Router) -> String {
@@ -1436,18 +1438,20 @@ async fn session_core_redis_shares_sessions_across_runtime_instances() {
         .expect("get response");
     assert_eq!(get_response.status(), StatusCode::OK);
 
-    let calls = transport_calls.lock().expect("lock");
-    assert_eq!(calls[0].0, "POST");
-    assert_eq!(calls[0].2.as_deref(), Some("server-redis"));
-    assert_eq!(
-        calls[1],
-        (
-            "GET".to_string(),
-            Some("redis-session-1".to_string()),
-            Some("server-redis".to_string()),
-            Some("session_id=redis-session-1".to_string()),
-        )
-    );
+    {
+        let calls = transport_calls.lock().expect("lock");
+        assert_eq!(calls[0].0, "POST");
+        assert_eq!(calls[0].2.as_deref(), Some("server-redis"));
+        assert_eq!(
+            calls[1],
+            (
+                "GET".to_string(),
+                Some("redis-session-1".to_string()),
+                Some("server-redis".to_string()),
+                Some("session_id=redis-session-1".to_string()),
+            )
+        );
+    }
 
     cleanup_redis_prefix(redis_url, &cache_prefix).await;
 }
@@ -1558,10 +1562,11 @@ async fn affinity_core_forwards_session_post_to_owner_worker_channel() {
                 "result": {"forwarded": true}
             }))
             .expect("response json");
-            let response_hex = response_body
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>();
+            let mut response_hex = String::with_capacity(response_body.len() * 2);
+            for byte in &response_body {
+                use std::fmt::Write as _;
+                let _ = write!(&mut response_hex, "{byte:02x}");
+            }
             let response = serde_json::to_string(&json!({
                 "status": 200,
                 "headers": {
@@ -1643,8 +1648,10 @@ async fn affinity_core_forwards_session_post_to_owner_worker_channel() {
     );
 
     responder.await.expect("responder");
-    let calls = backend_calls.lock().expect("lock");
-    assert_eq!(calls.as_slice(), &["initialize".to_string()]);
+    {
+        let calls = backend_calls.lock().expect("lock");
+        assert_eq!(calls.as_slice(), &["initialize".to_string()]);
+    }
     cleanup_redis_prefix(redis_url, &format!("mcpgw:pool_owner:{session_id}")).await;
 }
 
@@ -1908,8 +1915,10 @@ async fn resume_core_replays_public_get_from_rust_event_store() {
     assert!(replay_text.contains(&format!("id: {second_event_id}")));
     assert!(replay_text.contains("\"data\":\"second\""));
 
-    let calls = transport_calls.lock().expect("lock");
-    assert_eq!(calls.as_slice(), &["POST".to_string()]);
+    {
+        let calls = transport_calls.lock().expect("lock");
+        assert_eq!(calls.as_slice(), &["POST".to_string()]);
+    }
 
     cleanup_redis_prefix(redis_url, &cache_prefix).await;
 }

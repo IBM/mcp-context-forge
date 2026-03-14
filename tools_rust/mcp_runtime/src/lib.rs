@@ -411,6 +411,12 @@ impl JsonRpcRequest {
 }
 
 impl AppState {
+    /// Builds the shared application state for the Rust MCP runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the HTTP client, database pool, or Redis client cannot be
+    /// initialized from the provided configuration.
     pub fn new(config: &RuntimeConfig) -> Result<Self, RuntimeError> {
         let client = Client::builder()
             .connect_timeout(Duration::from_millis(config.client_connect_timeout_ms))
@@ -534,114 +540,142 @@ impl AppState {
         })
     }
 
+    #[must_use]
     pub fn backend_rpc_url(&self) -> &str {
         &self.backend_rpc_url
     }
 
+    #[must_use]
     pub fn backend_authenticate_url(&self) -> &str {
         &self.backend_authenticate_url
     }
 
+    #[must_use]
     pub fn backend_initialize_url(&self) -> &str {
         &self.backend_initialize_url
     }
 
+    #[must_use]
     pub fn backend_notifications_initialized_url(&self) -> &str {
         &self.backend_notifications_initialized_url
     }
 
+    #[must_use]
     pub fn backend_notifications_message_url(&self) -> &str {
         &self.backend_notifications_message_url
     }
 
+    #[must_use]
     pub fn backend_notifications_cancelled_url(&self) -> &str {
         &self.backend_notifications_cancelled_url
     }
 
+    #[must_use]
     pub fn backend_transport_url(&self) -> &str {
         &self.backend_transport_url
     }
 
+    #[must_use]
     pub fn backend_tools_list_url(&self) -> &str {
         &self.backend_tools_list_url
     }
 
+    #[must_use]
     pub fn backend_resources_list_url(&self) -> &str {
         &self.backend_resources_list_url
     }
 
+    #[must_use]
     pub fn backend_resources_read_url(&self) -> &str {
         &self.backend_resources_read_url
     }
 
+    #[must_use]
     pub fn backend_resources_subscribe_url(&self) -> &str {
         &self.backend_resources_subscribe_url
     }
 
+    #[must_use]
     pub fn backend_resources_unsubscribe_url(&self) -> &str {
         &self.backend_resources_unsubscribe_url
     }
 
+    #[must_use]
     pub fn backend_resource_templates_list_url(&self) -> &str {
         &self.backend_resource_templates_list_url
     }
 
+    #[must_use]
     pub fn backend_prompts_list_url(&self) -> &str {
         &self.backend_prompts_list_url
     }
 
+    #[must_use]
     pub fn backend_prompts_get_url(&self) -> &str {
         &self.backend_prompts_get_url
     }
 
+    #[must_use]
     pub fn backend_roots_list_url(&self) -> &str {
         &self.backend_roots_list_url
     }
 
+    #[must_use]
     pub fn backend_completion_complete_url(&self) -> &str {
         &self.backend_completion_complete_url
     }
 
+    #[must_use]
     pub fn backend_sampling_create_message_url(&self) -> &str {
         &self.backend_sampling_create_message_url
     }
 
+    #[must_use]
     pub fn backend_logging_set_level_url(&self) -> &str {
         &self.backend_logging_set_level_url
     }
 
+    #[must_use]
     pub fn backend_tools_list_authz_url(&self) -> &str {
         &self.backend_tools_list_authz_url
     }
 
+    #[must_use]
     pub fn backend_resources_list_authz_url(&self) -> &str {
         &self.backend_resources_list_authz_url
     }
 
+    #[must_use]
     pub fn backend_resources_read_authz_url(&self) -> &str {
         &self.backend_resources_read_authz_url
     }
 
+    #[must_use]
     pub fn backend_resource_templates_list_authz_url(&self) -> &str {
         &self.backend_resource_templates_list_authz_url
     }
 
+    #[must_use]
     pub fn backend_prompts_list_authz_url(&self) -> &str {
         &self.backend_prompts_list_authz_url
     }
 
+    #[must_use]
     pub fn backend_prompts_get_authz_url(&self) -> &str {
         &self.backend_prompts_get_authz_url
     }
 
+    #[must_use]
     pub fn backend_tools_call_url(&self) -> &str {
         &self.backend_tools_call_url
     }
 
+    #[must_use]
     pub fn backend_tools_call_resolve_url(&self) -> &str {
         &self.backend_tools_call_resolve_url
     }
 
+    #[must_use]
     pub fn protocol_version(&self) -> &str {
         &self.protocol_version
     }
@@ -665,22 +699,27 @@ impl AppState {
         Some(manager)
     }
 
+    #[must_use]
     pub fn supported_protocol_versions(&self) -> &[String] {
         self.supported_protocol_versions.as_slice()
     }
 
+    #[must_use]
     pub fn server_name(&self) -> &str {
         &self.server_name
     }
 
+    #[must_use]
     pub fn server_version(&self) -> &str {
         &self.server_version
     }
 
+    #[must_use]
     pub fn instructions(&self) -> &str {
         &self.instructions
     }
 
+    #[allow(clippy::unused_self)]
     fn use_rmcp_upstream_client(&self) -> bool {
         #[cfg(feature = "rmcp-upstream-client")]
         {
@@ -692,26 +731,32 @@ impl AppState {
         }
     }
 
+    #[must_use]
     pub fn session_core_enabled(&self) -> bool {
         self.session_core_enabled
     }
 
+    #[must_use]
     pub fn event_store_enabled(&self) -> bool {
         self.event_store_enabled
     }
 
+    #[must_use]
     pub fn resume_core_enabled(&self) -> bool {
         self.resume_core_enabled
     }
 
+    #[must_use]
     pub fn live_stream_core_enabled(&self) -> bool {
         self.live_stream_core_enabled
     }
 
+    #[must_use]
     pub fn affinity_core_enabled(&self) -> bool {
         self.affinity_core_enabled
     }
 
+    #[must_use]
     pub fn session_auth_reuse_enabled(&self) -> bool {
         self.session_auth_reuse_enabled
     }
@@ -732,6 +777,7 @@ impl AppState {
         self.event_store_poll_interval
     }
 
+    #[must_use]
     pub fn db_pool(&self) -> Option<&Pool> {
         self.db_pool.as_ref()
     }
@@ -808,6 +854,12 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Runs the Rust MCP runtime with the configured listeners.
+///
+/// # Errors
+///
+/// Returns an error when configuration parsing fails, listener startup fails, or a listener
+/// exits with an application-level runtime error.
 pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
     let state = AppState::new(&config)?;
     let app = build_router(state);
@@ -1438,12 +1490,11 @@ async fn rpc_inner(
         );
     }
 
-    if request.method == "initialize" {
-        if let Err(response) =
-            validate_initialize_params(&state, &request.params, request.id.clone())
-        {
-            return response;
-        }
+    if request.method == "initialize"
+        && let Err(response) =
+            validate_initialize_params(&state, &request.params, request.id.as_ref())
+    {
+        return response;
     }
 
     if specialized_initialize {
@@ -1992,8 +2043,7 @@ fn build_db_pool(config: &RuntimeConfig) -> Result<Option<Pool>, RuntimeError> {
     let normalized_url = database_url.replace("postgresql+psycopg://", "postgresql://");
     let pg_config = tokio_postgres::Config::from_str(&normalized_url).map_err(|err| {
         RuntimeError::Config(format!(
-            "invalid MCP_RUST_DATABASE_URL '{}': {err}",
-            normalized_url
+            "invalid MCP_RUST_DATABASE_URL '{normalized_url}': {err}"
         ))
     })?;
     let mgr_config = ManagerConfig {
@@ -2014,7 +2064,7 @@ fn build_redis_client(config: &RuntimeConfig) -> Result<Option<redis::Client>, R
     };
 
     let client = redis::Client::open(redis_url).map_err(|err| {
-        RuntimeError::Config(format!("invalid MCP_RUST_REDIS_URL '{}': {err}", redis_url))
+        RuntimeError::Config(format!("invalid MCP_RUST_REDIS_URL '{redis_url}': {err}"))
     })?;
     Ok(Some(client))
 }
@@ -2100,10 +2150,13 @@ fn public_client_ip(incoming_headers: &HeaderMap) -> Option<String> {
 }
 
 fn unix_epoch_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
 }
 
 fn current_encoded_auth_context_header(incoming_headers: &HeaderMap) -> Option<String> {
@@ -2166,6 +2219,7 @@ fn can_reuse_session_auth(
     record.encoded_auth_context.clone()
 }
 
+#[allow(clippy::result_large_err)]
 fn encode_internal_auth_context_header(auth_context: &Value) -> Result<HeaderValue, Response> {
     let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(auth_context).map_err(|err| {
         json_response(
@@ -2194,7 +2248,7 @@ async fn authenticate_public_request_if_needed(
     server_id: Option<&str>,
 ) -> Result<(HeaderMap, String), Response> {
     if let Some(server_id) = server_id {
-        inject_server_id_header(&mut incoming_headers, server_id.to_string());
+        inject_server_id_header(&mut incoming_headers, server_id);
     }
 
     let public_path = public_mcp_path(uri, server_id);
@@ -2205,29 +2259,25 @@ async fn authenticate_public_request_if_needed(
         return Ok((incoming_headers, public_path));
     }
 
-    if state.session_core_enabled() {
-        if let Some(session_id) = runtime_session_id_from_request(&incoming_headers, uri) {
-            if let Some(record) = get_runtime_session(state, &session_id).await {
-                if let Some(encoded_auth_context) =
-                    can_reuse_session_auth(state, &record, &incoming_headers, server_id)
-                {
-                    let encoded_auth_context = HeaderValue::from_str(&encoded_auth_context)
-                        .map_err(|err| {
-                            json_response(
-                                StatusCode::BAD_GATEWAY,
-                                json!({
-                                    "detail": format!("Stored MCP auth context header encoding failed: {err}"),
-                                }),
-                            )
-                        })?;
-                    incoming_headers.insert(
-                        HeaderName::from_static("x-contextforge-auth-context"),
-                        encoded_auth_context,
-                    );
-                    return Ok((incoming_headers, public_path));
-                }
-            }
-        }
+    if state.session_core_enabled()
+        && let Some(session_id) = runtime_session_id_from_request(&incoming_headers, uri)
+        && let Some(record) = get_runtime_session(state, &session_id).await
+        && let Some(encoded_auth_context) =
+            can_reuse_session_auth(state, &record, &incoming_headers, server_id)
+    {
+        let encoded_auth_context = HeaderValue::from_str(&encoded_auth_context).map_err(|err| {
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "detail": format!("Stored MCP auth context header encoding failed: {err}"),
+                }),
+            )
+        })?;
+        incoming_headers.insert(
+            HeaderName::from_static("x-contextforge-auth-context"),
+            encoded_auth_context,
+        );
+        return Ok((incoming_headers, public_path));
     }
 
     let request_body = InternalAuthenticateRequest {
@@ -2281,6 +2331,7 @@ async fn authenticate_public_request_if_needed(
     Ok((incoming_headers, public_path))
 }
 
+#[allow(clippy::result_large_err)]
 fn decode_request(body: &[u8]) -> Result<JsonRpcRequest, Response> {
     let parsed: Value = serde_json::from_slice(body).map_err(|_| parse_error_response())?;
 
@@ -2290,19 +2341,19 @@ fn decode_request(body: &[u8]) -> Result<JsonRpcRequest, Response> {
 
     let object = parsed
         .as_object()
-        .ok_or_else(|| invalid_request_response(Value::Null))?;
+        .ok_or_else(|| invalid_request_response(&Value::Null))?;
 
     let request_id = object.get("id").cloned().unwrap_or(Value::Null);
-    if let Some(version) = object.get("jsonrpc").and_then(Value::as_str) {
-        if version != JSONRPC_VERSION {
-            return Err(invalid_request_response(request_id));
-        }
+    if let Some(version) = object.get("jsonrpc").and_then(Value::as_str)
+        && version != JSONRPC_VERSION
+    {
+        return Err(invalid_request_response(&request_id));
     }
 
     let method = object
         .get("method")
         .and_then(Value::as_str)
-        .ok_or_else(|| invalid_request_response(request_id.clone()))?;
+        .ok_or_else(|| invalid_request_response(&request_id))?;
 
     Ok(JsonRpcRequest {
         jsonrpc: Some(JSONRPC_VERSION.to_string()),
@@ -2312,6 +2363,7 @@ fn decode_request(body: &[u8]) -> Result<JsonRpcRequest, Response> {
     })
 }
 
+#[allow(clippy::result_large_err)]
 fn validate_protocol_version(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
     let protocol_version = headers
         .get(MCP_PROTOCOL_VERSION_HEADER)
@@ -2338,10 +2390,11 @@ fn validate_protocol_version(state: &AppState, headers: &HeaderMap) -> Result<()
     ))
 }
 
+#[allow(clippy::result_large_err)]
 fn validate_initialize_params(
     state: &AppState,
     params: &Value,
-    request_id: Option<Value>,
+    request_id: Option<&Value>,
 ) -> Result<(), Response> {
     let params: InitializeParams = match serde_json::from_value(params.clone()) {
         Ok(params) => params,
@@ -2350,7 +2403,7 @@ fn validate_initialize_params(
                 StatusCode::OK,
                 json!({
                     "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
+                    "id": request_id.cloned(),
                     "error": {
                         "code": -32602,
                         "message": "Invalid params",
@@ -2365,7 +2418,7 @@ fn validate_initialize_params(
             StatusCode::OK,
             json!({
                 "jsonrpc": JSONRPC_VERSION,
-                "id": request_id,
+                "id": request_id.cloned(),
                 "error": {
                     "code": -32602,
                     "message": "Missing protocolVersion",
@@ -2409,7 +2462,7 @@ fn parse_error_response() -> Response {
     )
 }
 
-fn invalid_request_response(id: Value) -> Response {
+fn invalid_request_response(id: &Value) -> Response {
     json_response(
         StatusCode::BAD_REQUEST,
         json!({
@@ -2482,26 +2535,26 @@ async fn handle_initialize_with_session_core(
     let session_id = requested_initialize_session_id(&incoming_headers, &uri, request)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-    if let Some(existing) = get_runtime_session(state, &session_id).await {
-        if !runtime_session_allows_access(&existing, auth_context.as_ref(), &incoming_headers) {
-            return json_response(
-                StatusCode::OK,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request.id,
-                    "error": {
-                        "code": -32003,
-                        "message": "Access denied",
-                        "data": {"method": "initialize"},
-                    }
-                }),
-            );
-        }
+    if let Some(existing) = get_runtime_session(state, &session_id).await
+        && !runtime_session_allows_access(&existing, auth_context.as_ref(), &incoming_headers)
+    {
+        return json_response(
+            StatusCode::OK,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request.id,
+                "error": {
+                    "code": -32003,
+                    "message": "Access denied",
+                    "data": {"method": "initialize"},
+                }
+            }),
+        );
     }
 
     inject_session_header(&mut incoming_headers, &session_id);
     if let Some(server_id) = extract_server_id_header(&incoming_headers) {
-        inject_server_id_header(&mut incoming_headers, server_id);
+        inject_server_id_header(&mut incoming_headers, &server_id);
     }
 
     let backend_response = match send_transport_to_backend(
@@ -2523,8 +2576,7 @@ async fn handle_initialize_with_session_core(
         .headers()
         .get("mcp-session-id")
         .and_then(|value| value.to_str().ok())
-        .map(str::to_string)
-        .unwrap_or_else(|| session_id.clone());
+        .map_or_else(|| session_id.clone(), str::to_string);
 
     if status.is_success() {
         let mut record = RuntimeSessionRecord {
@@ -2602,10 +2654,10 @@ async fn active_runtime_session_count(state: &AppState) -> usize {
     let local_count = sessions.len();
     drop(sessions);
 
-    if state.redis().await.is_some() {
-        if let Some(redis_count) = count_runtime_sessions_in_redis(state).await {
-            return redis_count;
-        }
+    if state.redis().await.is_some()
+        && let Some(redis_count) = count_runtime_sessions_in_redis(state).await
+    {
+        return redis_count;
     }
 
     local_count
@@ -2678,9 +2730,9 @@ async fn get_runtime_session_from_redis(
     let key = runtime_session_key(state, session_id);
     match redis.get::<_, Option<String>>(&key).await {
         Ok(Some(payload)) => {
-            let _ = redis
-                .expire::<_, bool>(&key, state.session_ttl().as_secs() as i64)
-                .await;
+            if let Ok(ttl_i64) = i64::try_from(state.session_ttl().as_secs()) {
+                let _ = redis.expire::<_, bool>(&key, ttl_i64).await;
+            }
             match serde_json::from_str::<StoredRuntimeSessionRecord>(&payload) {
                 Ok(record) => Some(record.into()),
                 Err(err) => {
@@ -2919,10 +2971,8 @@ fn response_from_affinity_forward_response(
     if !has_content_type {
         builder = builder.header(CONTENT_TYPE, "application/json");
     }
-    if !has_session_id {
-        if let Some(session_id) = session_hint {
-            builder = builder.header("mcp-session-id", session_id);
-        }
+    if !has_session_id && let Some(session_id) = session_hint {
+        builder = builder.header("mcp-session-id", session_id);
     }
 
     builder
@@ -2961,7 +3011,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(input: &[u8]) -> Option<Vec<u8>> {
-    if input.len() % 2 != 0 {
+    if !input.len().is_multiple_of(2) {
         return None;
     }
 
@@ -2983,7 +3033,7 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-const STORE_EVENT_LUA: &str = r#"
+const STORE_EVENT_LUA: &str = r"
 local meta_key = KEYS[1]
 local events_key = KEYS[2]
 local messages_key = KEYS[3]
@@ -3033,7 +3083,7 @@ redis.call('EXPIRE', events_key, ttl)
 redis.call('EXPIRE', messages_key, ttl)
 
 return seq_num
-"#;
+";
 
 async fn store_event_in_rust_event_store(
     state: &AppState,
@@ -3060,6 +3110,18 @@ async fn store_event_in_rust_event_store(
     let max_events = request
         .max_events_per_stream
         .unwrap_or(state.event_store_max_events_per_stream());
+    let ttl_i64 = i64::try_from(ttl).map_err(|_| {
+        json_response(
+            StatusCode::BAD_REQUEST,
+            json!({"detail": "Rust event store ttl exceeds supported range"}),
+        )
+    })?;
+    let max_events_i64 = i64::try_from(max_events).map_err(|_| {
+        json_response(
+            StatusCode::BAD_REQUEST,
+            json!({"detail": "Rust event store max events exceeds supported range"}),
+        )
+    })?;
 
     let meta_key = format!("{key_prefix}:{}:meta", request.stream_id);
     let events_key = format!("{key_prefix}:{}:events", request.stream_id);
@@ -3072,8 +3134,8 @@ async fn store_event_in_rust_event_store(
         .key(messages_key)
         .arg(event_id.clone())
         .arg(message_json)
-        .arg(ttl as i64)
-        .arg(max_events as i64)
+        .arg(ttl_i64)
+        .arg(max_events_i64)
         .arg(index_prefix)
         .arg(request.stream_id)
         .invoke_async::<i64>(&mut redis)
@@ -3138,13 +3200,12 @@ async fn replay_events_from_rust_event_store(
                 json!({"detail": format!("Rust event store meta lookup failed: {err}")}),
             )
         })?
+        && index_record.seq_num < start_seq
     {
-        if index_record.seq_num < start_seq {
-            return Ok(EventStoreReplayResponse {
-                stream_id: None,
-                events: Vec::new(),
-            });
-        }
+        return Ok(EventStoreReplayResponse {
+            stream_id: None,
+            events: Vec::new(),
+        });
     }
 
     let event_ids = redis::cmd("ZRANGEBYSCORE")
@@ -3217,15 +3278,14 @@ async fn validate_runtime_session_request(
     if let (Some(session_server_id), Some(request_server_id)) = (
         record.server_id.as_deref(),
         extract_server_id_header(incoming_headers).as_deref(),
-    ) {
-        if session_server_id != request_server_id {
-            return Err(json_response(
-                StatusCode::FORBIDDEN,
-                json!({
-                    "detail": "Session access denied",
-                }),
-            ));
-        }
+    ) && session_server_id != request_server_id
+    {
+        return Err(json_response(
+            StatusCode::FORBIDDEN,
+            json!({
+                "detail": "Session access denied",
+            }),
+        ));
     }
 
     let auth_context = decode_internal_auth_context_from_headers_optional(incoming_headers);
@@ -3239,10 +3299,10 @@ async fn validate_runtime_session_request(
     }
 
     inject_session_header(incoming_headers, &session_id);
-    if let Some(server_id) = record.server_id.as_deref() {
-        if !incoming_headers.contains_key("x-contextforge-server-id") {
-            inject_server_id_header(incoming_headers, server_id.to_string());
-        }
+    if let Some(server_id) = record.server_id.as_deref()
+        && !incoming_headers.contains_key("x-contextforge-server-id")
+    {
+        inject_server_id_header(incoming_headers, server_id);
     }
 
     Ok(Some(session_id))
@@ -3367,8 +3427,10 @@ fn maybe_bind_session_auth_context(
 
     record.encoded_auth_context = Some(encoded_auth_context);
     record.auth_binding_fingerprint = Some(fingerprint);
+    let auth_context_ttl_ms =
+        u64::try_from(state.session_auth_reuse_ttl().as_millis()).unwrap_or(u64::MAX);
     record.auth_context_expires_at_epoch_ms =
-        Some(unix_epoch_millis() + state.session_auth_reuse_ttl().as_millis() as u64);
+        Some(unix_epoch_millis().saturating_add(auth_context_ttl_ms));
 }
 
 fn inject_session_header(incoming_headers: &mut HeaderMap, session_id: &str) {
@@ -3377,8 +3439,8 @@ fn inject_session_header(incoming_headers: &mut HeaderMap, session_id: &str) {
     }
 }
 
-fn inject_server_id_header(incoming_headers: &mut HeaderMap, server_id: String) {
-    if let Ok(value) = HeaderValue::from_str(&server_id) {
+fn inject_server_id_header(incoming_headers: &mut HeaderMap, server_id: &str) {
+    if let Ok(value) = HeaderValue::from_str(server_id) {
         incoming_headers.insert(HeaderName::from_static("x-contextforge-server-id"), value);
     }
 }
@@ -3412,9 +3474,7 @@ async fn maybe_upsert_runtime_session_from_transport_response(
         return response_session_id;
     }
 
-    let Some(session_id) = response_session_id.clone() else {
-        return None;
-    };
+    let session_id = response_session_id.clone()?;
 
     let existing = get_runtime_session(state, &session_id).await;
     let auth_context = decode_internal_auth_context_from_headers_optional(incoming_headers);
@@ -3448,10 +3508,7 @@ async fn maybe_upsert_runtime_session_from_transport_response(
         auth_context_expires_at_epoch_ms: existing
             .as_ref()
             .and_then(|record| record.auth_context_expires_at_epoch_ms),
-        created_at: existing
-            .as_ref()
-            .map(|record| record.created_at)
-            .unwrap_or(now),
+        created_at: existing.as_ref().map_or(now, |record| record.created_at),
         last_used: now,
     };
     maybe_bind_session_auth_context(state, &mut record, incoming_headers, auth_context.as_ref());
@@ -3464,7 +3521,7 @@ fn accepts_sse(headers: &HeaderMap) -> bool {
     headers
         .get("accept")
         .and_then(|value| value.to_str().ok())
-        .map(|value| {
+        .is_some_and(|value| {
             value.split(',').any(|part| {
                 let normalized = part.trim().to_ascii_lowercase();
                 normalized == "text/event-stream"
@@ -3472,7 +3529,6 @@ fn accepts_sse(headers: &HeaderMap) -> bool {
                     || normalized == "*/*"
             })
         })
-        .unwrap_or(false)
 }
 
 fn parse_sse_line(frame: &mut PendingSseFrame, raw_line: &str) {
@@ -3482,8 +3538,7 @@ fn parse_sse_line(frame: &mut PendingSseFrame, raw_line: &str) {
 
     let (field, value) = raw_line
         .split_once(':')
-        .map(|(field, value)| (field, value.trim_start()))
-        .unwrap_or((raw_line, ""));
+        .map_or((raw_line, ""), |(field, value)| (field, value.trim_start()));
 
     match field {
         "id" => {
@@ -3525,10 +3580,10 @@ fn finalize_sse_frame(frame: &mut PendingSseFrame) -> Option<FinalizedSseFrame> 
 fn build_forwarded_sse_event(frame: &FinalizedSseFrame) -> Event {
     let mut event = Event::default();
     if let Some(id) = frame.id.as_deref() {
-        event = event.id(id.to_string());
+        event = event.id(id);
     }
     if let Some(name) = frame.event.as_deref() {
-        event = event.event(name.to_string());
+        event = event.event(name);
     }
     if let Some(retry_ms) = frame.retry_ms {
         event = event.retry(Duration::from_millis(retry_ms));
@@ -3582,13 +3637,13 @@ async fn handle_resume_transport_request(
 
     let event_stream = async_stream::stream! {
         for event in initial_events.drain(..) {
-            replay_cursor = event.event_id.clone();
+            replay_cursor.clone_from(&event.event_id);
             yield Ok::<Event, Infallible>(build_sse_event(&event.event_id, &event.message));
         }
 
         if let Some(stream_id_value) = stream_id {
-            if protocol_version.as_str() >= "2025-11-25" {
-                if let Ok(priming_event_id) = store_event_in_rust_event_store(
+            if protocol_version.as_str() >= "2025-11-25"
+                && let Ok(priming_event_id) = store_event_in_rust_event_store(
                     &state_cloned,
                     EventStoreStoreRequest {
                         stream_id: stream_id_value.clone(),
@@ -3598,16 +3653,15 @@ async fn handle_resume_transport_request(
                         ttl_seconds: None,
                     },
                 ).await {
-                    replay_cursor = priming_event_id.clone();
+                    replay_cursor.clone_from(&priming_event_id);
                     yield Ok::<Event, Infallible>(Event::default().id(priming_event_id).data(""));
                 }
-            }
 
             loop {
-                if let Some(session_id_value) = stream_session_id.as_deref() {
-                    if get_runtime_session(&state_cloned, session_id_value).await.is_none() {
-                        break;
-                    }
+                if let Some(session_id_value) = stream_session_id.as_deref()
+                    && get_runtime_session(&state_cloned, session_id_value).await.is_none()
+                {
+                    break;
                 }
 
                 match replay_events_from_rust_event_store(
@@ -3624,7 +3678,7 @@ async fn handle_resume_transport_request(
                             continue;
                         }
                         for event in replay.events {
-                            replay_cursor = event.event_id.clone();
+                            replay_cursor.clone_from(&event.event_id);
                             yield Ok::<Event, Infallible>(build_sse_event(&event.event_id, &event.message));
                         }
                     }
@@ -3682,20 +3736,20 @@ async fn handle_resume_transport_request(
         })
         .unwrap_or_else(|_| HeaderValue::from_static("python")),
     );
-    if let Some(session_id_value) = session_id.as_deref() {
-        if let Ok(value) = HeaderValue::from_str(session_id_value) {
-            response
-                .headers_mut()
-                .insert(HeaderName::from_static("mcp-session-id"), value);
-        }
+    if let Some(session_id_value) = session_id.as_deref()
+        && let Ok(value) = HeaderValue::from_str(session_id_value)
+    {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static("mcp-session-id"), value);
     }
     response
 }
 
-async fn handle_live_stream_transport_request(
+fn handle_live_stream_transport_request(
     state: &AppState,
-    incoming_headers: HeaderMap,
-    uri: axum::http::Uri,
+    incoming_headers: &HeaderMap,
+    uri: &axum::http::Uri,
     session_id: Option<&str>,
 ) -> Response {
     let keep_alive = KeepAlive::new().interval(Duration::from_secs(15)).text("");
@@ -3857,18 +3911,18 @@ async fn handle_live_stream_transport_request(
         })
         .unwrap_or_else(|_| HeaderValue::from_static("python")),
     );
-    if let Some(session_id_value) = response_session_id.as_deref() {
-        if let Ok(value) = HeaderValue::from_str(session_id_value) {
-            response
-                .headers_mut()
-                .insert(HeaderName::from_static("mcp-session-id"), value);
-        }
+    if let Some(session_id_value) = response_session_id.as_deref()
+        && let Ok(value) = HeaderValue::from_str(session_id_value)
+    {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static("mcp-session-id"), value);
     }
     response
 }
 
 fn build_sse_event(event_id: &str, message: &Value) -> Event {
-    let event = Event::default().id(event_id.to_string());
+    let event = Event::default().id(event_id);
     if message.is_null() {
         return event.data("");
     }
@@ -3966,10 +4020,10 @@ async fn forward_transport_request(
                 );
             }
             inject_session_header(&mut incoming_headers, session_id_value);
-            if let Some(server_id) = record.server_id.as_deref() {
-                if !incoming_headers.contains_key("x-contextforge-server-id") {
-                    inject_server_id_header(&mut incoming_headers, server_id.to_string());
-                }
+            if let Some(server_id) = record.server_id.as_deref()
+                && !incoming_headers.contains_key("x-contextforge-server-id")
+            {
+                inject_server_id_header(&mut incoming_headers, server_id);
             }
         } else {
             return json_response(
@@ -4029,11 +4083,10 @@ async fn forward_transport_request(
     {
         return handle_live_stream_transport_request(
             state,
-            incoming_headers,
-            uri,
+            &incoming_headers,
+            &uri,
             session_id.as_deref(),
-        )
-        .await;
+        );
     }
 
     if state.session_core_enabled() && method == reqwest::Method::DELETE && session_id.is_some() {
@@ -4044,10 +4097,10 @@ async fn forward_transport_request(
                 Err(response) => return response,
             };
 
-        if backend_response.status().is_success() {
-            if let Some(session_id_value) = session_id.as_deref() {
-                remove_runtime_session(state, session_id_value).await;
-            }
+        if backend_response.status().is_success()
+            && let Some(session_id_value) = session_id.as_deref()
+        {
+            remove_runtime_session(state, session_id_value).await;
         }
 
         let mut response =
@@ -4117,11 +4170,9 @@ async fn forward_transport_request(
     if state.session_core_enabled()
         && method == reqwest::Method::DELETE
         && backend_response.status().is_success()
-        && session_id.is_some()
+        && let Some(session_id_value) = session_id.as_deref()
     {
-        if let Some(session_id_value) = session_id.as_deref() {
-            remove_runtime_session(state, session_id_value).await;
-        }
+        remove_runtime_session(state, session_id_value).await;
     }
 
     let mut response =
@@ -4194,7 +4245,7 @@ async fn forward_server_tools_list_to_backend(
                 StatusCode::BAD_GATEWAY,
                 json!({
                     "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
+                    "id": request_id.clone(),
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP tools/list decode failed",
@@ -4761,11 +4812,7 @@ async fn query_server_resources_list_from_db(
             .await?
     } else {
         let team_ids = auth_context.teams.clone().unwrap_or_default();
-        let is_public_only = auth_context
-            .teams
-            .as_ref()
-            .map(|teams| teams.is_empty())
-            .unwrap_or(true);
+        let is_public_only = auth_context.teams.as_ref().is_none_or(Vec::is_empty);
         let allow_owner_access = !is_public_only && auth_context.email.is_some();
         let owner_email = auth_context.email.as_deref();
 
@@ -4787,7 +4834,10 @@ async fn query_server_resources_list_from_db(
             .await?
     };
 
-    Ok(rows.into_iter().map(resource_row_to_value).collect())
+    Ok(rows
+        .into_iter()
+        .map(|row| resource_row_to_value(&row))
+        .collect())
 }
 
 async fn query_server_resource_templates_list_from_db(
@@ -4815,11 +4865,7 @@ async fn query_server_resource_templates_list_from_db(
             .await?
     } else {
         let team_ids = auth_context.teams.clone().unwrap_or_default();
-        let is_public_only = auth_context
-            .teams
-            .as_ref()
-            .map(|teams| teams.is_empty())
-            .unwrap_or(true);
+        let is_public_only = auth_context.teams.as_ref().is_none_or(Vec::is_empty);
         let allow_owner_access = !is_public_only && auth_context.email.is_some();
         let owner_email = auth_context.email.as_deref();
 
@@ -4843,7 +4889,7 @@ async fn query_server_resource_templates_list_from_db(
 
     Ok(rows
         .into_iter()
-        .map(resource_template_row_to_value)
+        .map(|row| resource_template_row_to_value(&row))
         .collect())
 }
 
@@ -4872,11 +4918,7 @@ async fn query_server_prompts_list_from_db(
             .await?
     } else {
         let team_ids = auth_context.teams.clone().unwrap_or_default();
-        let is_public_only = auth_context
-            .teams
-            .as_ref()
-            .map(|teams| teams.is_empty())
-            .unwrap_or(true);
+        let is_public_only = auth_context.teams.as_ref().is_none_or(Vec::is_empty);
         let allow_owner_access = !is_public_only && auth_context.email.is_some();
         let owner_email = auth_context.email.as_deref();
 
@@ -4897,7 +4939,10 @@ async fn query_server_prompts_list_from_db(
             .await?
     };
 
-    Ok(rows.into_iter().map(prompt_row_to_value).collect())
+    Ok(rows
+        .into_iter()
+        .map(|row| prompt_row_to_value(&row))
+        .collect())
 }
 
 async fn query_server_resource_read_from_db(
@@ -4927,11 +4972,7 @@ async fn query_server_resource_read_from_db(
             .await?
     } else {
         let team_ids = auth_context.teams.clone().unwrap_or_default();
-        let is_public_only = auth_context
-            .teams
-            .as_ref()
-            .map(|teams| teams.is_empty())
-            .unwrap_or(true);
+        let is_public_only = auth_context.teams.as_ref().is_none_or(Vec::is_empty);
         let allow_owner_access = !is_public_only && auth_context.email.is_some();
         let owner_email = auth_context.email.as_deref();
 
@@ -5022,11 +5063,7 @@ async fn query_server_prompt_get_from_db(
             .await?
     } else {
         let team_ids = auth_context.teams.clone().unwrap_or_default();
-        let is_public_only = auth_context
-            .teams
-            .as_ref()
-            .map(|teams| teams.is_empty())
-            .unwrap_or(true);
+        let is_public_only = auth_context.teams.as_ref().is_none_or(Vec::is_empty);
         let allow_owner_access = !is_public_only && auth_context.email.is_some();
         let owner_email = auth_context.email.as_deref();
 
@@ -5064,7 +5101,7 @@ async fn query_server_prompt_get_from_db(
     })))
 }
 
-fn resource_row_to_value(row: tokio_postgres::Row) -> Value {
+fn resource_row_to_value(row: &tokio_postgres::Row) -> Value {
     let mut resource = serde_json::Map::new();
     resource.insert("uri".to_string(), Value::String(row.get("uri")));
     resource.insert("name".to_string(), Value::String(row.get("name")));
@@ -5080,7 +5117,7 @@ fn resource_row_to_value(row: tokio_postgres::Row) -> Value {
     Value::Object(resource)
 }
 
-fn resource_template_row_to_value(row: tokio_postgres::Row) -> Value {
+fn resource_template_row_to_value(row: &tokio_postgres::Row) -> Value {
     let mut resource_template = serde_json::Map::new();
     resource_template.insert("id".to_string(), Value::String(row.get("id")));
     resource_template.insert(
@@ -5097,7 +5134,7 @@ fn resource_template_row_to_value(row: tokio_postgres::Row) -> Value {
     Value::Object(resource_template)
 }
 
-fn prompt_row_to_value(row: tokio_postgres::Row) -> Value {
+fn prompt_row_to_value(row: &tokio_postgres::Row) -> Value {
     let mut prompt = serde_json::Map::new();
     prompt.insert("name".to_string(), Value::String(row.get("name")));
     if let Some(description) = row.get::<_, Option<String>>("description") {
@@ -6341,12 +6378,11 @@ async fn resolve_tools_call_plan_via_backend(
         .map_err(|err| ResolveToolsCallError::Fallback(format!("resolve read failed: {err}")))?;
 
     if !status.is_success() {
-        if let Ok(payload) = serde_json::from_slice::<Value>(&response_body) {
-            if payload.get("jsonrpc") == Some(&Value::String(JSONRPC_VERSION.to_string()))
-                && payload.get("error").is_some()
-            {
-                return Err(ResolveToolsCallError::JsonRpcError { payload, headers });
-            }
+        if let Ok(payload) = serde_json::from_slice::<Value>(&response_body)
+            && payload.get("jsonrpc") == Some(&Value::String(JSONRPC_VERSION.to_string()))
+            && payload.get("error").is_some()
+        {
+            return Err(ResolveToolsCallError::JsonRpcError { payload, headers });
         }
         return Err(ResolveToolsCallError::Fallback(format!(
             "resolve returned status {status}"
@@ -6354,12 +6390,11 @@ async fn resolve_tools_call_plan_via_backend(
     }
 
     serde_json::from_slice::<ResolvedMcpToolCallPlan>(&response_body).map_err(|err| {
-        if let Ok(payload) = serde_json::from_slice::<Value>(&response_body) {
-            if payload.get("jsonrpc") == Some(&Value::String(JSONRPC_VERSION.to_string()))
-                && payload.get("error").is_some()
-            {
-                return ResolveToolsCallError::JsonRpcError { payload, headers };
-            }
+        if let Ok(payload) = serde_json::from_slice::<Value>(&response_body)
+            && payload.get("jsonrpc") == Some(&Value::String(JSONRPC_VERSION.to_string()))
+            && payload.get("error").is_some()
+        {
+            return ResolveToolsCallError::JsonRpcError { payload, headers };
         }
         ResolveToolsCallError::Fallback(format!("resolve decode failed: {err}"))
     })
@@ -6375,11 +6410,11 @@ async fn resolve_tools_call(
         .map_err(ResolveToolsCallError::Fallback)?;
     {
         let mut cached_plans = state.resolved_tool_call_plans().lock().await;
-        if let Some(cached) = cached_plans.get_mut(&cache_key) {
-            if cached.cached_at.elapsed() < state.tools_call_plan_ttl() {
-                cached.cached_at = Instant::now();
-                return Ok(cached.plan.clone());
-            }
+        if let Some(cached) = cached_plans.get_mut(&cache_key)
+            && cached.cached_at.elapsed() < state.tools_call_plan_ttl()
+        {
+            cached.cached_at = Instant::now();
+            return Ok(cached.plan.clone());
         }
     }
 
@@ -6513,12 +6548,12 @@ async fn execute_tools_call_direct(
         .map_err(|err| format!("direct tools/call decode failed: {err}"))?;
 
     let mut response = json_response(status, payload);
-    if let Some(session_id) = downstream_session_id {
-        if let Ok(value) = HeaderValue::from_str(&session_id) {
-            response
-                .headers_mut()
-                .insert(HeaderName::from_static("mcp-session-id"), value);
-        }
+    if let Some(session_id) = downstream_session_id
+        && let Ok(value) = HeaderValue::from_str(&session_id)
+    {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static("mcp-session-id"), value);
     }
     response.headers_mut().insert(
         HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
@@ -6572,12 +6607,12 @@ async fn execute_tools_call_via_rmcp(
     };
 
     let mut response = response;
-    if let Some(session_id) = downstream_session_id {
-        if let Ok(value) = HeaderValue::from_str(&session_id) {
-            response
-                .headers_mut()
-                .insert(HeaderName::from_static("mcp-session-id"), value);
-        }
+    if let Some(session_id) = downstream_session_id
+        && let Ok(value) = HeaderValue::from_str(&session_id)
+    {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static("mcp-session-id"), value);
     }
     response.headers_mut().insert(
         HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
@@ -6595,11 +6630,11 @@ async fn ensure_upstream_session(
 ) -> Result<Option<String>, String> {
     let session_key = build_upstream_session_key(downstream_session_id, plan)?;
     let mut sessions = state.upstream_tool_sessions().lock().await;
-    if let Some(existing) = sessions.get_mut(&session_key) {
-        if existing.last_used.elapsed() < state.upstream_session_ttl() {
-            existing.last_used = Instant::now();
-            return Ok(existing.session_id.clone());
-        }
+    if let Some(existing) = sessions.get_mut(&session_key)
+        && existing.last_used.elapsed() < state.upstream_session_ttl()
+    {
+        existing.last_used = Instant::now();
+        return Ok(existing.session_id.clone());
     }
 
     let upstream_session_id =
@@ -6698,6 +6733,7 @@ async fn send_initialized_notification(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_direct_tools_call(
     state: &AppState,
     server_url: &str,
@@ -7017,7 +7053,7 @@ fn build_forwarded_headers_with_session_validation(
 ) -> reqwest::header::HeaderMap {
     let mut forwarded_headers = reqwest::header::HeaderMap::new();
 
-    for (name, value) in incoming_headers.iter() {
+    for (name, value) in incoming_headers {
         if should_forward_header(name) {
             forwarded_headers.insert(name.clone(), value.clone());
         }
@@ -7079,10 +7115,10 @@ fn response_from_backend_with_session_hint(
         }
     }
 
-    if headers.get("mcp-session-id").is_none() {
-        if let Some(session_id) = session_hint {
-            builder = builder.header("mcp-session-id", session_id);
-        }
+    if headers.get("mcp-session-id").is_none()
+        && let Some(session_id) = session_hint
+    {
+        builder = builder.header("mcp-session-id", session_id);
     }
 
     builder
@@ -7109,10 +7145,10 @@ fn response_from_json_with_headers(
         "x-request-id",
         "x-correlation-id",
     ] {
-        if let Some(value) = headers.get(header_name) {
-            if let Ok(name) = HeaderName::from_bytes(header_name.as_bytes()) {
-                response_headers.insert(name, value.clone());
-            }
+        if let Some(value) = headers.get(header_name)
+            && let Ok(name) = HeaderName::from_bytes(header_name.as_bytes())
+        {
+            response_headers.insert(name, value.clone());
         }
     }
 
@@ -7439,9 +7475,8 @@ mod unit_tests {
         config.database_url =
             Some("postgresql+psycopg://user:pass@127.0.0.1:notaport/db".to_string());
 
-        let error = match AppState::new(&config) {
-            Ok(_) => panic!("invalid db url should fail"),
-            Err(err) => err,
+        let Err(error) = AppState::new(&config) else {
+            panic!("invalid db url should fail");
         };
 
         match error {
@@ -7457,9 +7492,8 @@ mod unit_tests {
         let mut config = test_config();
         config.redis_url = Some("not a redis url".to_string());
 
-        let error = match AppState::new(&config) {
-            Ok(_) => panic!("invalid redis url should fail"),
-            Err(err) => err,
+        let Err(error) = AppState::new(&config) else {
+            panic!("invalid redis url should fail");
         };
 
         match error {
@@ -7964,11 +7998,11 @@ mod unit_tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut seen_ok = false;
         while Instant::now() < deadline {
-            if let Ok(response) = client.get(format!("http://{addr}/health")).send().await {
-                if response.status() == StatusCode::OK {
-                    seen_ok = true;
-                    break;
-                }
+            if let Ok(response) = client.get(format!("http://{addr}/health")).send().await
+                && response.status() == StatusCode::OK
+            {
+                seen_ok = true;
+                break;
             }
             sleep(Duration::from_millis(10)).await;
         }
@@ -8031,26 +8065,26 @@ mod unit_tests {
         assert_eq!(unsupported_protocol.status(), StatusCode::BAD_REQUEST);
 
         let invalid_params =
-            validate_initialize_params(&state, &json!({"protocolVersion": 5}), Some(json!(7)))
+            validate_initialize_params(&state, &json!({"protocolVersion": 5}), Some(&json!(7)))
                 .expect_err("invalid params");
         assert_eq!(invalid_params.status(), StatusCode::OK);
 
         let missing_protocol =
-            validate_initialize_params(&state, &json!({"capabilities": {}}), Some(json!(8)))
+            validate_initialize_params(&state, &json!({"capabilities": {}}), Some(&json!(8)))
                 .expect_err("missing protocol");
         assert_eq!(missing_protocol.status(), StatusCode::OK);
 
         let unsupported_initialize = validate_initialize_params(
             &state,
             &json!({"protocolVersion": "2099-01-01", "capabilities": {}}),
-            Some(json!(9)),
+            Some(&json!(9)),
         )
         .expect_err("unsupported initialize protocol");
         assert_eq!(unsupported_initialize.status(), StatusCode::OK);
 
         assert_eq!(parse_error_response().status(), StatusCode::BAD_REQUEST);
         assert_eq!(
-            invalid_request_response(json!(1)).status(),
+            invalid_request_response(&json!(1)).status(),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(batch_rejected_response().status(), StatusCode::BAD_REQUEST);
@@ -8248,7 +8282,7 @@ mod unit_tests {
 
         let mut headers = HeaderMap::new();
         inject_session_header(&mut headers, "header-session-id");
-        inject_server_id_header(&mut headers, "server-123".to_string());
+        inject_server_id_header(&mut headers, "server-123");
         assert_eq!(
             runtime_session_id_from_request(&headers, &uri),
             Some("header-session-id".to_string())
@@ -8280,8 +8314,12 @@ mod unit_tests {
                 encoded_auth_context: None,
                 auth_binding_fingerprint: None,
                 auth_context_expires_at_epoch_ms: None,
-                created_at: std::time::Instant::now() - Duration::from_secs(5),
-                last_used: std::time::Instant::now() - Duration::from_secs(5),
+                created_at: std::time::Instant::now()
+                    .checked_sub(Duration::from_secs(5))
+                    .expect("subtract"),
+                last_used: std::time::Instant::now()
+                    .checked_sub(Duration::from_secs(5))
+                    .expect("subtract"),
             },
         );
 
@@ -8815,7 +8853,7 @@ mod unit_tests {
 
         let mut invalid_headers = HeaderMap::new();
         inject_session_header(&mut invalid_headers, "bad\nsession");
-        inject_server_id_header(&mut invalid_headers, "bad\nserver".to_string());
+        inject_server_id_header(&mut invalid_headers, "bad\nserver");
         assert!(!invalid_headers.contains_key("mcp-session-id"));
         assert!(!invalid_headers.contains_key("x-contextforge-server-id"));
 
