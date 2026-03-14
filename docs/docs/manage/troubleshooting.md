@@ -134,6 +134,59 @@ See the [Configuration Reference](./configuration.md) for all available options.
 
 ---
 
+## PostgreSQL: `ModuleNotFoundError: No module named 'psycopg2'`
+
+If the gateway fails at startup with `ModuleNotFoundError: No module named 'psycopg2'`, your `DATABASE_URL` is using the wrong SQLAlchemy driver dialect.
+
+ContextForge ships with [psycopg 3](https://www.psycopg.org/psycopg3/) (`psycopg`), the modern PostgreSQL adapter. However, SQLAlchemy's default `postgresql://` scheme loads the **deprecated** `psycopg2` driver, which is not installed.
+
+### Fix
+
+Change your `DATABASE_URL` to use the `postgresql+psycopg://` scheme:
+
+```bash
+# Wrong — triggers psycopg2 import
+DATABASE_URL=postgresql://user:pass@localhost:5432/mydb
+
+# Correct — uses the installed psycopg (v3) driver
+DATABASE_URL=postgresql+psycopg://user:pass@localhost:5432/mydb
+```
+
+The `+psycopg` suffix tells SQLAlchemy to use the psycopg 3 dialect instead of the legacy psycopg2 dialect. See the [SQLAlchemy Engine Configuration](https://docs.sqlalchemy.org/en/20/core/engines.html) and [PostgreSQL dialect](https://docs.sqlalchemy.org/en/20/core/engines.html#postgresql) documentation for details on database URL schemes.
+
+!!! tip
+    If you also see `postgres://` (without the `ql`), note that SQLAlchemy requires the full `postgresql` prefix. Some providers (e.g., Heroku) supply URLs starting with `postgres://` — these need to be rewritten to `postgresql+psycopg://`.
+
+---
+
+## Team Member Limit Exceeded
+
+If you see an error such as `"Team has reached maximum member limit of 100"` when adding members or sending invitations, the team has hit its membership cap.
+
+Each team has a `max_members` value that defaults to the global `MAX_MEMBERS_PER_TEAM` setting (default: **100**). The limit applies to active members plus pending invitations.
+
+### Fix
+
+Increase the global default by setting `MAX_MEMBERS_PER_TEAM` in your environment:
+
+```bash
+# .env
+MAX_MEMBERS_PER_TEAM=500
+```
+
+Alternatively, update the limit on a specific team via the Admin API:
+
+```bash
+curl -X PATCH http://localhost:4444/api/v1/teams/{team_id} \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"max_members": 500}'
+```
+
+See the [Configuration Reference](./configuration.md) for all team-related settings.
+
+---
+
 ## Common Issues
 
 | Issue | Solution |
