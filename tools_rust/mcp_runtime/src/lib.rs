@@ -7162,11 +7162,12 @@ fn empty_response(status: StatusCode) -> Response {
 #[cfg(test)]
 mod unit_tests {
     use super::{
-        AppState, Bytes, EventStoreReplayRequest, EventStoreStoreRequest, RuntimeConfig,
-        RuntimeError, RuntimeSessionRecord, auth_binding_fingerprint,
-        authenticate_public_request_if_needed, batch_rejected_response, can_reuse_session_auth,
-        can_use_direct_prompts_get, can_use_direct_resources_read, decode_request,
-        derive_backend_authenticate_url, derive_backend_completion_complete_url,
+        AffinityForwardResponse, AppState, Bytes, EventStoreReplayRequest, EventStoreStoreRequest,
+        InternalAuthContext, JsonRpcRequest, RuntimeConfig, RuntimeError, RuntimeSessionRecord,
+        accepts_sse, active_runtime_session_count, affinity_forward_error_response,
+        auth_binding_fingerprint, authenticate_public_request_if_needed, batch_rejected_response,
+        can_reuse_session_auth, can_use_direct_prompts_get, can_use_direct_resources_read,
+        decode_request, derive_backend_authenticate_url, derive_backend_completion_complete_url,
         derive_backend_initialize_url, derive_backend_logging_set_level_url,
         derive_backend_notifications_cancelled_url, derive_backend_notifications_initialized_url,
         derive_backend_notifications_message_url, derive_backend_prompts_get_authz_url,
@@ -7179,10 +7180,19 @@ mod unit_tests {
         derive_backend_sampling_create_message_url, derive_backend_session_delete_url,
         derive_backend_tools_call_resolve_url, derive_backend_tools_call_url,
         derive_backend_tools_list_authz_url, derive_backend_tools_list_url,
-        derive_backend_transport_url, has_server_scope, invalid_request_response,
-        parse_error_response, public_client_ip, replay_events_endpoint, run, serve_http, serve_uds,
+        derive_backend_transport_url, encode_internal_auth_context_header, event_store_key_prefix,
+        extract_client_capabilities, forward_initialize_to_backend, forward_to_backend,
+        get_runtime_session, handle_initialize_with_session_core, has_server_scope, hex_decode,
+        hex_encode, inject_server_id_header, inject_session_header, invalid_request_response,
+        is_affinity_forwarded_request, maybe_bind_session_auth_context,
+        maybe_upsert_runtime_session_from_transport_response, parse_error_response, pool_owner_key,
+        public_client_ip, query_param, remove_runtime_session, replay_events_endpoint,
+        requested_initialize_session_id, requested_protocol_version,
+        response_from_affinity_forward_response, run, runtime_session_allows_access,
+        runtime_session_id_from_request, runtime_session_key, serve_http, serve_uds,
         store_event_endpoint, transport_delete_server_scoped, transport_get_server_scoped,
-        validate_initialize_params, validate_protocol_version,
+        upsert_runtime_session, validate_initialize_params, validate_protocol_version,
+        validate_runtime_session_request,
     };
     use axum::{
         Json, Router,
@@ -8191,5 +8201,694 @@ mod unit_tests {
         .await
         .expect_err("backend denial should be forwarded");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn runtime_session_request_helpers_cover_headers_params_and_injection() {
+        let request = JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            method: "initialize".to_string(),
+            params: json!({
+                "sessionId": "param-session-id",
+                "protocolVersion": "2025-03-26",
+                "capabilities": {"roots": {"listChanged": true}},
+            }),
+            id: Some(json!(1)),
+        };
+        let uri = "/mcp?session_id=query-session-id"
+            .parse::<Uri>()
+            .expect("uri");
+        let empty_headers = HeaderMap::new();
+
+        assert_eq!(
+            runtime_session_id_from_request(&empty_headers, &uri),
+            Some("query-session-id".to_string())
+        );
+        assert_eq!(
+            requested_initialize_session_id(
+                &empty_headers,
+                &"/mcp".parse::<Uri>().expect("uri"),
+                &request
+            ),
+            Some("param-session-id".to_string())
+        );
+        assert_eq!(
+            requested_protocol_version(&request),
+            Some("2025-03-26".to_string())
+        );
+        assert_eq!(
+            extract_client_capabilities(&request),
+            Some(json!({"roots": {"listChanged": true}}))
+        );
+        assert_eq!(
+            query_param(&uri, "session_id"),
+            Some("query-session-id".to_string())
+        );
+        assert_eq!(query_param(&uri, "missing"), None);
+
+        let mut headers = HeaderMap::new();
+        inject_session_header(&mut headers, "header-session-id");
+        inject_server_id_header(&mut headers, "server-123".to_string());
+        assert_eq!(
+            runtime_session_id_from_request(&headers, &uri),
+            Some("header-session-id".to_string())
+        );
+        assert_eq!(
+            requested_initialize_session_id(&headers, &uri, &request),
+            Some("header-session-id".to_string())
+        );
+        assert_eq!(
+            headers
+                .get("x-contextforge-server-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("server-123")
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_session_local_cache_helpers_cover_lifecycle_and_keys() {
+        let mut config = test_config();
+        config.session_ttl_seconds = 1;
+        let state = AppState::new(&config).expect("state");
+        state.runtime_sessions().lock().await.insert(
+            "stale-session".to_string(),
+            RuntimeSessionRecord {
+                owner_email: Some("stale@example.com".to_string()),
+                server_id: None,
+                protocol_version: None,
+                client_capabilities: None,
+                encoded_auth_context: None,
+                auth_binding_fingerprint: None,
+                auth_context_expires_at_epoch_ms: None,
+                created_at: std::time::Instant::now() - Duration::from_secs(5),
+                last_used: std::time::Instant::now() - Duration::from_secs(5),
+            },
+        );
+
+        assert_eq!(active_runtime_session_count(&state).await, 0);
+        assert!(get_runtime_session(&state, "stale-session").await.is_none());
+
+        let record = RuntimeSessionRecord {
+            owner_email: Some("owner@example.com".to_string()),
+            server_id: Some("server-1".to_string()),
+            protocol_version: Some("2025-03-26".to_string()),
+            client_capabilities: Some(json!({"roots": {"listChanged": true}})),
+            encoded_auth_context: None,
+            auth_binding_fingerprint: None,
+            auth_context_expires_at_epoch_ms: None,
+            created_at: std::time::Instant::now(),
+            last_used: std::time::Instant::now(),
+        };
+        upsert_runtime_session(&state, "session-1".to_string(), record.clone()).await;
+        let fetched = get_runtime_session(&state, "session-1")
+            .await
+            .expect("session cached");
+        assert_eq!(fetched.owner_email, record.owner_email);
+        assert_eq!(
+            runtime_session_key(&state, "session-1"),
+            "mcpgw:test:rust:mcp:session:session-1"
+        );
+        assert_eq!(pool_owner_key("session-1"), "mcpgw:pool_owner:session-1");
+
+        let mut forwarded_headers = HeaderMap::new();
+        assert!(!is_affinity_forwarded_request(&forwarded_headers));
+        forwarded_headers.insert(
+            HeaderName::from_static("x-contextforge-affinity-forwarded"),
+            HeaderValue::from_static("rust"),
+        );
+        assert!(is_affinity_forwarded_request(&forwarded_headers));
+
+        remove_runtime_session(&state, "session-1").await;
+        assert!(get_runtime_session(&state, "session-1").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn session_auth_binding_and_validation_helpers_cover_access_controls() {
+        let mut config = test_config();
+        config.session_auth_reuse_enabled = true;
+        let state = AppState::new(&config).expect("state");
+
+        let auth_context_json = json!({
+            "email": "owner@example.com",
+            "teams": ["team-1"],
+            "is_admin": false,
+            "is_authenticated": true
+        });
+        let auth_context = InternalAuthContext {
+            email: Some("owner@example.com".to_string()),
+            teams: Some(vec!["team-1".to_string()]),
+            is_admin: false,
+            is_authenticated: true,
+        };
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer alpha"),
+        );
+        headers.insert(
+            HeaderName::from_static("x-contextforge-auth-context"),
+            encode_internal_auth_context_header(&auth_context_json).expect("encode auth context"),
+        );
+        headers.insert(
+            HeaderName::from_static("x-contextforge-server-id"),
+            HeaderValue::from_static("server-1"),
+        );
+
+        let mut record = RuntimeSessionRecord {
+            owner_email: Some("owner@example.com".to_string()),
+            server_id: Some("server-1".to_string()),
+            protocol_version: None,
+            client_capabilities: None,
+            encoded_auth_context: None,
+            auth_binding_fingerprint: None,
+            auth_context_expires_at_epoch_ms: None,
+            created_at: std::time::Instant::now(),
+            last_used: std::time::Instant::now(),
+        };
+        maybe_bind_session_auth_context(&state, &mut record, &headers, Some(&auth_context));
+        assert_eq!(
+            record.encoded_auth_context,
+            Some(
+                headers
+                    .get("x-contextforge-auth-context")
+                    .and_then(|value| value.to_str().ok())
+                    .expect("header value")
+                    .to_string()
+            )
+        );
+        assert!(record.auth_binding_fingerprint.is_some());
+        assert!(
+            record.auth_context_expires_at_epoch_ms.expect("ttl is set")
+                > super::unix_epoch_millis()
+        );
+        assert!(runtime_session_allows_access(
+            &record,
+            Some(&auth_context),
+            &headers
+        ));
+
+        upsert_runtime_session(&state, "session-validate".to_string(), record.clone()).await;
+
+        let mut validation_headers = headers.clone();
+        validation_headers.remove("x-contextforge-server-id");
+        let validated = validate_runtime_session_request(
+            &state,
+            &mut validation_headers,
+            &"/mcp?session_id=session-validate"
+                .parse::<Uri>()
+                .expect("uri"),
+        )
+        .await
+        .expect("validation succeeds");
+        assert_eq!(validated, Some("session-validate".to_string()));
+        assert_eq!(
+            validation_headers
+                .get("x-contextforge-server-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("server-1")
+        );
+
+        let mut wrong_server_headers = headers.clone();
+        wrong_server_headers.insert(
+            HeaderName::from_static("x-contextforge-server-id"),
+            HeaderValue::from_static("server-2"),
+        );
+        let response = validate_runtime_session_request(
+            &state,
+            &mut wrong_server_headers,
+            &"/mcp?session_id=session-validate"
+                .parse::<Uri>()
+                .expect("uri"),
+        )
+        .await
+        .expect_err("server mismatch is denied");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let mut wrong_auth_headers = headers.clone();
+        wrong_auth_headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer beta"),
+        );
+        let response = validate_runtime_session_request(
+            &state,
+            &mut wrong_auth_headers,
+            &"/mcp?session_id=session-validate"
+                .parse::<Uri>()
+                .expect("uri"),
+        )
+        .await
+        .expect_err("auth mismatch is denied");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn affinity_response_and_hex_helpers_cover_edge_cases() {
+        assert_eq!(hex_encode(b"Hi"), "4869");
+        assert_eq!(hex_decode(b"4869"), Some(b"Hi".to_vec()));
+        assert_eq!(hex_decode(b"486"), None);
+        assert_eq!(hex_decode(b"GG"), None);
+
+        let response = response_from_affinity_forward_response(
+            AffinityForwardResponse {
+                status: 200,
+                headers: [
+                    ("x-custom".to_string(), "present".to_string()),
+                    ("bad header".to_string(), "ignored".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                body: hex_encode(br#"{"ok":true}"#),
+            },
+            Some("session-hint"),
+        );
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("x-contextforge-mcp-runtime")
+                .and_then(|value| value.to_str().ok()),
+            Some("rust")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("content-type")
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("mcp-session-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("session-hint")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-custom")
+                .and_then(|value| value.to_str().ok()),
+            Some("present")
+        );
+    }
+
+    #[tokio::test]
+    async fn maybe_upsert_runtime_session_from_transport_response_persists_session_metadata() {
+        let state = AppState::new(&test_config()).expect("state");
+        let auth_context_json = json!({
+            "email": "owner@example.com",
+            "teams": ["team-1"],
+            "is_authenticated": true
+        });
+
+        let mut request_headers = HeaderMap::new();
+        request_headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer alpha"),
+        );
+        request_headers.insert(
+            HeaderName::from_static("x-contextforge-auth-context"),
+            encode_internal_auth_context_header(&auth_context_json).expect("encode auth context"),
+        );
+        request_headers.insert(
+            HeaderName::from_static("x-contextforge-server-id"),
+            HeaderValue::from_static("server-1"),
+        );
+        request_headers.insert(
+            HeaderName::from_static("mcp-protocol-version"),
+            HeaderValue::from_static("2025-03-26"),
+        );
+
+        let mut response_headers = reqwest::header::HeaderMap::new();
+        response_headers.insert(
+            "mcp-session-id",
+            reqwest::header::HeaderValue::from_static("response-session"),
+        );
+        let session_id = maybe_upsert_runtime_session_from_transport_response(
+            &state,
+            &request_headers,
+            Some("request-session"),
+            &response_headers,
+        )
+        .await
+        .expect("session id returned");
+        assert_eq!(session_id, "response-session");
+
+        let stored = get_runtime_session(&state, "response-session")
+            .await
+            .expect("stored session");
+        assert_eq!(stored.owner_email.as_deref(), Some("owner@example.com"));
+        assert_eq!(stored.server_id.as_deref(), Some("server-1"));
+        assert_eq!(stored.protocol_version.as_deref(), Some("2025-03-26"));
+        assert!(stored.encoded_auth_context.is_some());
+        assert!(stored.auth_binding_fingerprint.is_some());
+
+        let mut disabled_config = test_config();
+        disabled_config.session_core_enabled = false;
+        let disabled_state = AppState::new(&disabled_config).expect("state");
+        let passthrough = maybe_upsert_runtime_session_from_transport_response(
+            &disabled_state,
+            &HeaderMap::new(),
+            Some("request-session"),
+            &reqwest::header::HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(passthrough, Some("request-session".to_string()));
+    }
+
+    #[tokio::test]
+    async fn backend_forward_helpers_and_initialize_session_core_cover_error_and_denial_paths() {
+        let mut error_config = test_config();
+        error_config.backend_rpc_url = "http://127.0.0.1:1/rpc".to_string();
+        let error_state = AppState::new(&error_config).expect("state");
+
+        let response =
+            forward_to_backend(&error_state, HeaderMap::new(), Bytes::from_static(b"{}")).await;
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+
+        let response = forward_initialize_to_backend(
+            &error_state,
+            HeaderMap::new(),
+            Bytes::from_static(b"{}"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+
+        let state = AppState::new(&test_config()).expect("state");
+        let auth_context_json = json!({
+            "email": "owner@example.com",
+            "teams": ["team-1"],
+            "is_authenticated": true
+        });
+        let mut incoming_headers = HeaderMap::new();
+        incoming_headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer beta"),
+        );
+        incoming_headers.insert(
+            HeaderName::from_static("x-contextforge-auth-context"),
+            encode_internal_auth_context_header(&auth_context_json).expect("encode auth context"),
+        );
+        incoming_headers.insert(
+            HeaderName::from_static("mcp-session-id"),
+            HeaderValue::from_static("denied-session"),
+        );
+        upsert_runtime_session(
+            &state,
+            "denied-session".to_string(),
+            RuntimeSessionRecord {
+                owner_email: Some("owner@example.com".to_string()),
+                server_id: None,
+                protocol_version: None,
+                client_capabilities: None,
+                encoded_auth_context: Some("cached".to_string()),
+                auth_binding_fingerprint: Some("different-fingerprint".to_string()),
+                auth_context_expires_at_epoch_ms: Some(super::unix_epoch_millis() + 60_000),
+                created_at: std::time::Instant::now(),
+                last_used: std::time::Instant::now(),
+            },
+        )
+        .await;
+
+        let request = JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            method: "initialize".to_string(),
+            params: json!({"protocolVersion": "2025-03-26"}),
+            id: Some(json!(42)),
+        };
+        let response = handle_initialize_with_session_core(
+            &state,
+            incoming_headers,
+            "/mcp".parse::<Uri>().expect("uri"),
+            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"initialize"}"#),
+            &request,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn session_auth_binding_helper_clears_reuse_state_for_disabled_or_invalid_inputs() {
+        let stale_value = Some("stale".to_string());
+        let stale_ttl = Some(super::unix_epoch_millis() + 60_000);
+        let authenticated_context = InternalAuthContext {
+            email: Some("owner@example.com".to_string()),
+            teams: Some(vec!["team-1".to_string()]),
+            is_admin: false,
+            is_authenticated: true,
+        };
+        let unauthenticated_context = InternalAuthContext {
+            is_authenticated: false,
+            ..authenticated_context.clone()
+        };
+
+        let mut base_record = RuntimeSessionRecord {
+            owner_email: Some("owner@example.com".to_string()),
+            server_id: None,
+            protocol_version: None,
+            client_capabilities: None,
+            encoded_auth_context: stale_value.clone(),
+            auth_binding_fingerprint: stale_value.clone(),
+            auth_context_expires_at_epoch_ms: stale_ttl,
+            created_at: std::time::Instant::now(),
+            last_used: std::time::Instant::now(),
+        };
+
+        let disabled_state = AppState::new(&{
+            let mut config = test_config();
+            config.session_auth_reuse_enabled = false;
+            config
+        })
+        .expect("state");
+        maybe_bind_session_auth_context(
+            &disabled_state,
+            &mut base_record,
+            &HeaderMap::new(),
+            Some(&authenticated_context),
+        );
+        assert!(base_record.encoded_auth_context.is_none());
+        assert!(base_record.auth_binding_fingerprint.is_none());
+        assert!(base_record.auth_context_expires_at_epoch_ms.is_none());
+
+        let enabled_state = AppState::new(&test_config()).expect("state");
+        let mut record = RuntimeSessionRecord {
+            encoded_auth_context: stale_value.clone(),
+            auth_binding_fingerprint: stale_value.clone(),
+            auth_context_expires_at_epoch_ms: stale_ttl,
+            ..base_record.clone()
+        };
+        maybe_bind_session_auth_context(&enabled_state, &mut record, &HeaderMap::new(), None);
+        assert!(record.encoded_auth_context.is_none());
+
+        let mut record = RuntimeSessionRecord {
+            encoded_auth_context: stale_value.clone(),
+            auth_binding_fingerprint: stale_value.clone(),
+            auth_context_expires_at_epoch_ms: stale_ttl,
+            ..base_record.clone()
+        };
+        maybe_bind_session_auth_context(
+            &enabled_state,
+            &mut record,
+            &HeaderMap::new(),
+            Some(&unauthenticated_context),
+        );
+        assert!(record.encoded_auth_context.is_none());
+
+        let auth_context_json = json!({
+            "email": "owner@example.com",
+            "teams": ["team-1"],
+            "is_authenticated": true
+        });
+        let mut missing_fingerprint_headers = HeaderMap::new();
+        missing_fingerprint_headers.insert(
+            HeaderName::from_static("x-contextforge-auth-context"),
+            encode_internal_auth_context_header(&auth_context_json).expect("encode auth context"),
+        );
+        let mut record = RuntimeSessionRecord {
+            encoded_auth_context: stale_value.clone(),
+            auth_binding_fingerprint: stale_value.clone(),
+            auth_context_expires_at_epoch_ms: stale_ttl,
+            ..base_record.clone()
+        };
+        maybe_bind_session_auth_context(
+            &enabled_state,
+            &mut record,
+            &missing_fingerprint_headers,
+            Some(&authenticated_context),
+        );
+        assert!(record.encoded_auth_context.is_none());
+
+        let mut missing_auth_context_headers = HeaderMap::new();
+        missing_auth_context_headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer alpha"),
+        );
+        let mut record = RuntimeSessionRecord {
+            encoded_auth_context: stale_value,
+            auth_binding_fingerprint: Some("fingerprint".to_string()),
+            auth_context_expires_at_epoch_ms: stale_ttl,
+            ..base_record
+        };
+        maybe_bind_session_auth_context(
+            &enabled_state,
+            &mut record,
+            &missing_auth_context_headers,
+            Some(&authenticated_context),
+        );
+        assert!(record.encoded_auth_context.is_none());
+    }
+
+    #[tokio::test]
+    async fn validate_runtime_session_request_covers_missing_and_ownerless_sessions() {
+        let state = AppState::new(&test_config()).expect("state");
+
+        let response = validate_runtime_session_request(
+            &state,
+            &mut HeaderMap::new(),
+            &"/mcp?session_id=missing".parse::<Uri>().expect("uri"),
+        )
+        .await
+        .expect_err("missing session is not found");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        upsert_runtime_session(
+            &state,
+            "ownerless".to_string(),
+            RuntimeSessionRecord {
+                owner_email: None,
+                server_id: None,
+                protocol_version: None,
+                client_capabilities: None,
+                encoded_auth_context: None,
+                auth_binding_fingerprint: None,
+                auth_context_expires_at_epoch_ms: None,
+                created_at: std::time::Instant::now(),
+                last_used: std::time::Instant::now(),
+            },
+        )
+        .await;
+
+        let validated = validate_runtime_session_request(
+            &state,
+            &mut HeaderMap::new(),
+            &"/mcp?session_id=ownerless".parse::<Uri>().expect("uri"),
+        )
+        .await
+        .expect("ownerless session is allowed");
+        assert_eq!(validated, Some("ownerless".to_string()));
+    }
+
+    #[test]
+    fn accepts_sse_event_store_prefix_and_injection_helpers_cover_edge_cases() {
+        let state = AppState::new(&test_config()).expect("state");
+        let mut headers = HeaderMap::new();
+        assert!(!accepts_sse(&headers));
+        headers.insert(
+            HeaderName::from_static("accept"),
+            HeaderValue::from_static("application/json"),
+        );
+        assert!(!accepts_sse(&headers));
+        headers.insert(
+            HeaderName::from_static("accept"),
+            HeaderValue::from_static("text/event-stream; charset=utf-8"),
+        );
+        assert!(accepts_sse(&headers));
+        headers.insert(
+            HeaderName::from_static("accept"),
+            HeaderValue::from_static("*/*"),
+        );
+        assert!(accepts_sse(&headers));
+
+        assert_eq!(
+            event_store_key_prefix(&state, None),
+            "mcpgw:test:eventstore"
+        );
+        assert_eq!(
+            event_store_key_prefix(&state, Some("custom")),
+            "mcpgw:test:custom"
+        );
+        assert_eq!(
+            event_store_key_prefix(&state, Some("already:scoped:prefix:")),
+            "already:scoped:prefix"
+        );
+
+        let mut invalid_headers = HeaderMap::new();
+        inject_session_header(&mut invalid_headers, "bad\nsession");
+        inject_server_id_header(&mut invalid_headers, "bad\nserver".to_string());
+        assert!(!invalid_headers.contains_key("mcp-session-id"));
+        assert!(!invalid_headers.contains_key("x-contextforge-server-id"));
+
+        let snake_case_request = JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            method: "initialize".to_string(),
+            params: json!({"protocol_version": "2025-11-25"}),
+            id: Some(json!(1)),
+        };
+        assert_eq!(
+            requested_protocol_version(&snake_case_request),
+            Some("2025-11-25".to_string())
+        );
+
+        let weird_uri = "/mcp?broken&session_id=kept".parse::<Uri>().expect("uri");
+        assert_eq!(
+            query_param(&weird_uri, "session_id"),
+            Some("kept".to_string())
+        );
+    }
+
+    #[test]
+    fn affinity_response_helpers_preserve_existing_headers_and_errors() {
+        let response = response_from_affinity_forward_response(
+            AffinityForwardResponse {
+                status: 204,
+                headers: [
+                    ("content-type".to_string(), "text/plain".to_string()),
+                    ("mcp-session-id".to_string(), "already-present".to_string()),
+                    ("content-length".to_string(), "99".to_string()),
+                    ("connection".to_string(), "keep-alive".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                body: "invalid-hex".to_string(),
+            },
+            Some("ignored-hint"),
+        );
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-type")
+                .and_then(|value| value.to_str().ok()),
+            Some("text/plain")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("mcp-session-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("already-present")
+        );
+        assert!(!response.headers().contains_key("content-length"));
+        assert!(!response.headers().contains_key("connection"));
+
+        let error = affinity_forward_error_response("publish failed", "boom");
+        assert_eq!(error.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn maybe_upsert_runtime_session_from_transport_response_returns_none_without_session_id()
+    {
+        let state = AppState::new(&test_config()).expect("state");
+        assert_eq!(
+            maybe_upsert_runtime_session_from_transport_response(
+                &state,
+                &HeaderMap::new(),
+                None,
+                &reqwest::header::HeaderMap::new(),
+            )
+            .await,
+            None
+        );
     }
 }
