@@ -935,6 +935,9 @@ async def request_to_join_team(
             requested_at=join_req.requested_at,
             expires_at=join_req.expires_at,
         )
+    except ValueError as e:
+        # Handle validation errors with 400 Bad Request
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
@@ -1109,6 +1112,12 @@ async def approve_join_request(
             invited_by=member.invited_by,
             is_active=member.is_active,
         )
+    except ValueError as e:
+        # Handle validation errors with 400 Bad Request
+        error_msg = str(e)
+        if "maximum team limit" in error_msg:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Cannot approve: {error_msg.lower()}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
     except HTTPException:
         raise
     except Exception as e:

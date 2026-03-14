@@ -637,3 +637,62 @@ class TestRejectJoinRequestErrors:
             with pytest.raises(HTTPException) as exc:
                 await teams.reject_join_request("tid", "rid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+# ===========================================================================
+# request_to_join_team — ValueError branch (line 940)
+# ===========================================================================
+
+
+class TestRequestToJoinTeamValueError:
+    @pytest.mark.asyncio
+    async def test_value_error_raises_400(self, user_ctx, db, mock_team):
+        """ValueError from create_join_request surfaces as 400 Bad Request."""
+        mock_team.visibility = "public"
+        with _svc(
+            get_team_by_id=AsyncMock(return_value=mock_team),
+            get_user_role_in_team=AsyncMock(return_value=None),
+            create_join_request=AsyncMock(side_effect=ValueError("max team limit reached")),
+        ):
+            from mcpgateway.schemas import TeamJoinRequest
+
+            req = TeamJoinRequest(message="please")
+            with patch("mcpgateway.routers.teams.settings") as mock_settings:
+                mock_settings.allow_team_join_requests = True
+                with pytest.raises(HTTPException) as exc:
+                    await teams.request_to_join_team(mock_team.id, req, current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "max team limit reached" in exc.value.detail
+
+
+# ===========================================================================
+# approve_join_request — ValueError branches (lines 1117-1120)
+# ===========================================================================
+
+
+class TestApproveJoinRequestValueError:
+    @pytest.mark.asyncio
+    async def test_value_error_with_max_team_limit_raises_400_with_prefix(self, user_ctx, db, mock_team):
+        """ValueError containing 'maximum team limit' is surfaced with 'Cannot approve:' prefix."""
+        with _svc(
+            get_team_by_id=AsyncMock(return_value=mock_team),
+            get_user_role_in_team=AsyncMock(return_value="owner"),
+            approve_join_request=AsyncMock(side_effect=ValueError("User has reached the maximum team limit of 50")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "Cannot approve:" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_value_error_without_max_team_limit_raises_400(self, user_ctx, db, mock_team):
+        """Generic ValueError is surfaced directly as 400 Bad Request detail."""
+        with _svc(
+            get_team_by_id=AsyncMock(return_value=mock_team),
+            get_user_role_in_team=AsyncMock(return_value="owner"),
+            approve_join_request=AsyncMock(side_effect=ValueError("request already approved")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "request already approved" in exc.value.detail
