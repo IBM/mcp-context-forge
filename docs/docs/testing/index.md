@@ -93,6 +93,38 @@ Access the Locust dashboard at `http://localhost:8089` when running with the web
 
 ---
 
+## 🦀 Rust MCP Runtime Validation
+
+For the Rust MCP runtime path, the most important stack-backed checks are:
+
+```bash
+make testing-rebuild-rust-full
+make test-mcp-cli
+make test-mcp-rbac
+make test-mcp-session-isolation
+cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml
+```
+
+Use these mode-specific rebuild targets when validating rollout behavior:
+
+```bash
+make testing-rebuild-rust-shadow
+make testing-rebuild-rust
+make testing-rebuild-rust-full
+```
+
+These validate, respectively:
+
+- `shadow`: Rust sidecar present while public `/mcp` stays on Python
+- `edge`: direct Rust public ingress without the full Rust session/runtime cores
+- `full`: direct Rust public ingress plus Rust session/event/resume/live-stream
+  and affinity cores
+
+For throughput benchmarks and Locust wrappers, see
+[Performance Testing](performance.md).
+
+---
+
 ## 🌐 Frontend JavaScript Testing
 
 Frontend JavaScript unit tests are **not yet implemented**. The codebase uses plain JavaScript (not TypeScript) with:
