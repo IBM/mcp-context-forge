@@ -1062,3 +1062,57 @@ plugins:
     conditions: []
     config:
       context_key: jwt_claims
+
+  # Security Clearance Plugin - Bell-LaPadula MAC enforcement
+  - name: "SecurityClearancePlugin"
+    kind: "plugins.security_clearance.security_clearance.SecurityClearancePlugin"
+    description: "Enforces Bell-LaPadula MAC security model with hierarchical clearance levels"
+    version: "1.1.0"
+    author: "Katia Neli"
+    hooks:
+      - tool_pre_invoke
+      - tool_post_invoke
+      - resource_pre_fetch
+      - resource_post_fetch
+      - prompt_pre_fetch
+    tags: ["security", "mac", "clearance", "bell-lapadula", "compliance"]
+    mode: "disabled" # enforce | permissive | disabled
+    priority: 5
+    conditions: []
+    config:
+      # Bell-LaPadula enforcement policies
+      enforce_no_read_up: true       # Block users from reading above their clearance level
+      enforce_no_write_down: true    # Block high-classification outputs to lower contexts
+      allow_lateral: true            # Allow communication within the same security band
+      # Default clearances
+      default_user_clearance: 0      # PUBLIC by default
+      default_tool_classification: 1 # INTERNAL by default
+      # Security level bands
+      level_bands:
+        - [0, 1]   # PUBLIC / INTERNAL
+        - [2, 3]   # CONFIDENTIAL / SECRET
+        - [4, 5]   # TOP_SECRET / COMPARTMENTALIZED
+      user_clearances: {}
+      team_clearances: {}
+      tool_levels: {}
+      server_levels: {}
+      downgrade_rules:
+        enable: false
+        redact_fields: [password, ssn, api_key, secret, token]
+        redaction_strategy: "redact"  # redact | remove | partial
+        watermark_text: "[DOWNGRADED FROM LEVEL {source}]"
+      audit_all_access: true
+      audit_denied_access: true
+      # Explicit level hierarchy
+      levels:
+        PUBLIC: 0
+        INTERNAL: 1
+        CONFIDENTIAL: 2
+        SECRET: 3
+        TOP_SECRET: 4
+        COMPARTMENTALIZED: 5
+      # Additional audit settings
+      log_level_violations: true
+      audit_log_retention_days: 90
+      # Dynamic clearance rules
+      dynamic_rules: []
