@@ -242,3 +242,44 @@ than from small Rust micro-optimizations inside the current crate.
 - [Session/auth isolation testing design](TESTING-DESIGN.md)
 - [Rust MCP runtime architecture](../../docs/docs/architecture/rust-mcp-runtime.md)
 - [ADR-043: Rust MCP runtime sidecar + mode model](../../docs/docs/architecture/adr/043-rust-mcp-runtime-sidecar-mode-model.md)
+
+## Next steps checklist
+
+This PR should stay open until the Rust MCP path is revalidated against the
+items below and any remaining issues are either fixed or explicitly understood.
+
+- [ ] Re-run the full Rust validation battery on the exact PR head after each
+  substantive change:
+  - `make testing-rebuild-rust-full`
+  - `make test`
+  - `make test-mcp-cli`
+  - `make test-mcp-rbac`
+  - `make test-mcp-session-isolation`
+  - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
+- [ ] Add observability for the session-auth fast path:
+  - reuse hits
+  - reuse misses
+  - fallback-to-Python reasons
+  - owner mismatch denials
+  - server-id mismatch denials
+  - internal Python auth round-trips
+- [ ] Extend the isolation suite with explicit revocation-after-initialize
+  coverage.
+- [ ] Extend the isolation suite with explicit membership/role-change coverage
+  after initialize.
+- [ ] Add forced cross-worker affinity ownership coverage so forwarded and
+  local handling prove the same ownership rules.
+- [ ] Add a dedicated multi-user load/correctness harness separate from the
+  throughput benchmarks.
+- [ ] Investigate and explain the remaining low-rate failures in sustained
+  tools-only runs.
+- [ ] Use the new observability to identify and reduce avoidable Rust -> Python
+  control/auth seam work before attempting more micro-optimizations inside the
+  crate.
+- [ ] Re-run the sustained tools-only benchmark after each meaningful
+  control/auth seam change:
+  - `make benchmark-mcp-tools-300 MCP_BENCHMARK_HIGH_USERS=1000 MCP_BENCHMARK_HIGH_RUN_TIME=300s`
+- [ ] Keep broader Playwright/admin UI flakiness tracked separately unless the
+  failing path clearly exercises `/mcp`.
+- [ ] Do not merge until the MCP/Rust-specific validation, isolation tests, and
+  benchmark results are green and understood.
