@@ -50,6 +50,30 @@ make benchmark-mcp-mixed-300
 make benchmark-mcp-tools-300
 ```
 
+Rust-local crate checks and profiling:
+
+```bash
+make -C tools_rust/mcp_runtime fmt-check
+make -C tools_rust/mcp_runtime check
+make -C tools_rust/mcp_runtime clippy
+make -C tools_rust/mcp_runtime clippy-all
+make -C tools_rust/mcp_runtime test
+make -C tools_rust/mcp_runtime test-rmcp
+make -C tools_rust/mcp_runtime flamegraph-test
+make -C tools_rust/mcp_runtime flamegraph-test-rmcp
+```
+
+Generated Rust profiling artifacts are written to:
+
+```text
+tools_rust/mcp_runtime/profiles/
+```
+
+`flamegraph-test` and `flamegraph-test-rmcp` require a working `perf`
+installation. On Ubuntu/WSL, installing `linux-tools-*` may be necessary; the
+runtime Makefile will prefer a real `/usr/lib/linux-tools-*/perf` binary when
+present instead of Ubuntu's wrapper script.
+
 Verify active runtime:
 
 ```bash

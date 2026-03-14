@@ -16,11 +16,13 @@ use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use futures_util::{StreamExt, TryStreamExt};
 use redis::{AsyncCommands, Script, aio::ConnectionManager as RedisConnectionManager};
 use reqwest::Client;
+#[cfg(feature = "rmcp-upstream-client")]
+use reqwest_rmcp::Client as RmcpReqwestClient;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap, hash_map::DefaultHasher},
+    collections::{HashMap, hash_map::DefaultHasher},
     convert::Infallible,
     hash::{Hash, Hasher},
     path::Path,
@@ -108,6 +110,8 @@ pub struct AppState {
     backend_tools_call_url: Arc<str>,
     backend_tools_call_resolve_url: Arc<str>,
     client: Client,
+    #[cfg(feature = "rmcp-upstream-client")]
+    rmcp_client: RmcpReqwestClient,
     redis_client: Option<redis::Client>,
     redis_manager: Arc<Mutex<Option<RedisConnectionManager>>>,
     protocol_version: Arc<str>,
@@ -233,6 +237,10 @@ struct ResolvedMcpToolCallPlan {
     timeout_ms: Option<u64>,
     #[serde(default)]
     transport: Option<String>,
+    #[serde(skip)]
+    parsed_headers: Option<Vec<(HeaderName, HeaderValue)>>,
+    #[serde(skip)]
+    headers_hash: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -425,6 +433,15 @@ impl AppState {
             .tcp_keepalive(Duration::from_secs(config.client_tcp_keepalive_seconds))
             .timeout(Duration::from_millis(config.request_timeout_ms))
             .build()?;
+        #[cfg(feature = "rmcp-upstream-client")]
+        let rmcp_client = RmcpReqwestClient::builder()
+            .connect_timeout(Duration::from_millis(config.client_connect_timeout_ms))
+            .pool_idle_timeout(Duration::from_secs(config.client_pool_idle_timeout_seconds))
+            .pool_max_idle_per_host(config.client_pool_max_idle_per_host)
+            .tcp_keepalive(Duration::from_secs(config.client_tcp_keepalive_seconds))
+            .timeout(Duration::from_millis(config.request_timeout_ms))
+            .build()
+            .map_err(|err| RuntimeError::Config(format!("rmcp http client error: {err}")))?;
         let db_pool = build_db_pool(config)?;
         let redis_client = build_redis_client(config)?;
 
@@ -507,6 +524,8 @@ impl AppState {
                 &config.backend_rpc_url,
             )),
             client,
+            #[cfg(feature = "rmcp-upstream-client")]
+            rmcp_client,
             redis_client,
             redis_manager: Arc::new(Mutex::new(None)),
             protocol_version: Arc::from(config.protocol_version.clone()),
@@ -6389,15 +6408,18 @@ async fn resolve_tools_call_plan_via_backend(
         )));
     }
 
-    serde_json::from_slice::<ResolvedMcpToolCallPlan>(&response_body).map_err(|err| {
-        if let Ok(payload) = serde_json::from_slice::<Value>(&response_body)
-            && payload.get("jsonrpc") == Some(&Value::String(JSONRPC_VERSION.to_string()))
-            && payload.get("error").is_some()
-        {
-            return ResolveToolsCallError::JsonRpcError { payload, headers };
-        }
-        ResolveToolsCallError::Fallback(format!("resolve decode failed: {err}"))
-    })
+    let mut plan =
+        serde_json::from_slice::<ResolvedMcpToolCallPlan>(&response_body).map_err(|err| {
+            if let Ok(payload) = serde_json::from_slice::<Value>(&response_body)
+                && payload.get("jsonrpc") == Some(&Value::String(JSONRPC_VERSION.to_string()))
+                && payload.get("error").is_some()
+            {
+                return ResolveToolsCallError::JsonRpcError { payload, headers };
+            }
+            ResolveToolsCallError::Fallback(format!("resolve decode failed: {err}"))
+        })?;
+    prepare_resolved_tools_call_plan(&mut plan).map_err(ResolveToolsCallError::Fallback)?;
+    Ok(plan)
 }
 
 async fn resolve_tools_call(
@@ -6786,7 +6808,11 @@ fn build_upstream_headers(
             .map_err(|err| format!("invalid protocol version header: {err}"))?,
     );
 
-    if let Some(header_values) = plan.headers.as_ref() {
+    if let Some(parsed_headers) = plan.parsed_headers.as_ref() {
+        for (header_name, header_value) in parsed_headers {
+            headers.insert(header_name.clone(), header_value.clone());
+        }
+    } else if let Some(header_values) = plan.headers.as_ref() {
         for (name, value) in header_values {
             let header_name = reqwest::header::HeaderName::from_str(name)
                 .map_err(|err| format!("invalid upstream header name '{name}': {err}"))?;
@@ -6827,10 +6853,10 @@ async fn get_or_create_rmcp_upstream_client(
         }
     }
 
-    let transport = StreamableHttpClientTransport::from_config(build_rmcp_transport_config(
-        plan,
-        protocol_version,
-    )?);
+    let transport = StreamableHttpClientTransport::with_client(
+        state.rmcp_client.clone(),
+        build_rmcp_transport_config(plan, protocol_version)?,
+    );
     let client_info = build_rmcp_client_info(state, protocol_version)?;
     let client = Arc::new(
         rmcp_serve_client(client_info, transport)
@@ -6864,7 +6890,11 @@ fn build_rmcp_transport_config(
             .map_err(|err| format!("invalid protocol version header: {err}"))?,
     );
 
-    if let Some(header_values) = plan.headers.as_ref() {
+    if let Some(parsed_headers) = plan.parsed_headers.as_ref() {
+        for (header_name, header_value) in parsed_headers {
+            custom_headers.insert(header_name.clone(), header_value.clone());
+        }
+    } else if let Some(header_values) = plan.headers.as_ref() {
         for (name, value) in header_values {
             let header_name = HeaderName::from_str(name)
                 .map_err(|err| format!("invalid upstream header name '{name}': {err}"))?;
@@ -7002,9 +7032,15 @@ fn build_upstream_session_key(
         .ok_or_else(|| "resolved tools/call plan missing server_url".to_string())?;
     let mut hasher = DefaultHasher::new();
     server_url.hash(&mut hasher);
-    if let Some(header_values) = plan.headers.as_ref() {
-        let ordered: BTreeMap<_, _> = header_values.iter().collect();
-        ordered.hash(&mut hasher);
+    if let Some(headers_hash) = plan.headers_hash {
+        headers_hash.hash(&mut hasher);
+    } else if let Some(header_values) = plan.headers.as_ref() {
+        hash_ordered_pairs(
+            header_values
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+        )
+        .hash(&mut hasher);
     }
     match downstream_session_id {
         Some(session_id) => Ok(format!("downstream:{session_id}:{}", hasher.finish())),
@@ -7024,18 +7060,57 @@ fn build_tools_call_plan_cache_key(
     let mut hasher = DefaultHasher::new();
     tool_name.hash(&mut hasher);
 
-    let mut header_pairs = BTreeMap::new();
+    let mut header_pairs = Vec::new();
     for (name, value) in incoming_headers {
         if should_cache_plan_header(name) {
             let header_value = value
                 .to_str()
                 .map_err(|err| format!("invalid cacheable header '{}': {err}", name.as_str()))?;
-            header_pairs.insert(name.as_str().to_string(), header_value.to_string());
+            header_pairs.push((name.as_str(), header_value));
         }
     }
-    header_pairs.hash(&mut hasher);
+    hash_ordered_pairs(header_pairs).hash(&mut hasher);
 
     Ok(format!("tool-plan:{}", hasher.finish()))
+}
+
+fn prepare_resolved_tools_call_plan(plan: &mut ResolvedMcpToolCallPlan) -> Result<(), String> {
+    let Some(header_values) = plan.headers.as_ref() else {
+        plan.parsed_headers = None;
+        plan.headers_hash = None;
+        return Ok(());
+    };
+
+    let mut parsed_headers = Vec::with_capacity(header_values.len());
+    for (name, value) in header_values {
+        let header_name = HeaderName::from_str(name)
+            .map_err(|err| format!("invalid upstream header name '{name}': {err}"))?;
+        let header_value = HeaderValue::from_str(value)
+            .map_err(|err| format!("invalid upstream header value for '{name}': {err}"))?;
+        parsed_headers.push((header_name, header_value));
+    }
+
+    plan.headers_hash = Some(hash_ordered_pairs(
+        header_values
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+    ));
+    plan.parsed_headers = Some(parsed_headers);
+    Ok(())
+}
+
+fn hash_ordered_pairs<'a, I>(pairs: I) -> u64
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    let mut ordered_pairs: Vec<_> = pairs.into_iter().collect();
+    ordered_pairs.sort_unstable();
+    let mut hasher = DefaultHasher::new();
+    for (name, value) in ordered_pairs {
+        name.hash(&mut hasher);
+        value.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 fn should_cache_plan_header(name: &HeaderName) -> bool {

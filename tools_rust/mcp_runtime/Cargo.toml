@@ -7,7 +7,7 @@ description = "Experimental Rust MCP runtime edge for ContextForge"
 
 [features]
 default = []
-rmcp-upstream-client = ["dep:rmcp"]
+rmcp-upstream-client = ["dep:rmcp", "dep:reqwest-rmcp"]
 
 [dependencies]
 async-stream = "0.3.6"
@@ -18,6 +18,7 @@ deadpool-postgres = "0.14.1"
 futures-util = "0.3.31"
 redis = { version = "0.32.7", features = ["aio", "tokio-comp", "connection-manager"] }
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "stream", "http2", "rustls-tls-native-roots"] }
+reqwest-rmcp = { package = "reqwest", version = "0.13.2", default-features = false, features = ["json", "stream", "rustls"], optional = true }
 rmcp = { version = "1.1.1", optional = true, default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"

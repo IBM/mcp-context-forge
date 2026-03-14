@@ -17,6 +17,18 @@ FEATURE_RMCP := rmcp-upstream-client
 CLIPPY_FLAGS ?= -W clippy::pedantic
 CLIPPY_CONF_DIR ?= $(CURDIR)
 RUN_ARGS ?=
+PROFILE_DIR ?= $(CURDIR)/profiles
+PERF_CMD := $(firstword $(wildcard /usr/lib/linux-tools-*/perf))
+ifeq ($(strip $(PERF_CMD)),)
+PERF_CMD := perf
+endif
+PERF_SHIM_DIR ?= $(PROFILE_DIR)/bin
+PERF_SHIM ?= $(PERF_SHIM_DIR)/perf
+FLAMEGRAPH_TEST_TARGET ?= runtime
+FLAMEGRAPH_TEST_FILTER ?= tools_call_uses_rust_direct_execution_and_reuses_upstream_session
+FLAMEGRAPH_RMCP_TEST_FILTER ?= tools_call_can_use_rmcp_upstream_client
+FLAMEGRAPH_OUTPUT ?= $(PROFILE_DIR)/runtime-test-flamegraph.svg
+FLAMEGRAPH_RMCP_OUTPUT ?= $(PROFILE_DIR)/runtime-test-rmcp-flamegraph.svg
 export CLIPPY_CONF_DIR
 
 .DEFAULT_GOAL := help
@@ -193,7 +205,7 @@ lint-rmcp:
 # COVERAGE & TOOLING
 # =============================================================================
 
-.PHONY: coverage setup-coverage deny
+.PHONY: coverage setup-coverage setup-profiling flamegraph-test flamegraph-test-rmcp deny
 
 # help: setup-coverage             - Install llvm coverage prerequisites
 setup-coverage:
@@ -207,6 +219,38 @@ coverage cov:
 	@$(MAKE) setup-coverage
 	@$(CARGO) llvm-cov --html --all-features
 	@echo "Coverage report generated at target/llvm-cov/html/index.html"
+
+# help: setup-profiling            - Install cargo flamegraph for local Rust profiling
+setup-profiling:
+	@echo "Installing Rust profiling prerequisites..."
+	@$(CARGO) install flamegraph --locked
+
+# help: flamegraph-test            - Generate a flamegraph for the default runtime hot-path test
+flamegraph-test:
+	@echo "Generating flamegraph for $(FLAMEGRAPH_TEST_TARGET)::$(FLAMEGRAPH_TEST_FILTER)..."
+	@mkdir -p $(PROFILE_DIR) $(PERF_SHIM_DIR)
+	@$(MAKE) setup-profiling
+	@printf '%s\n' '#!/bin/sh' 'exec "$(PERF_CMD)" "$$@"' > $(PERF_SHIM)
+	@chmod +x $(PERF_SHIM)
+	@PATH="$(PERF_SHIM_DIR):$$PATH" CARGO_PROFILE_RELEASE_DEBUG=true $(CARGO) flamegraph \
+		-o $(FLAMEGRAPH_OUTPUT) \
+		--test $(FLAMEGRAPH_TEST_TARGET) -- \
+		$(FLAMEGRAPH_TEST_FILTER) --exact --nocapture
+	@echo "Flamegraph generated at $(FLAMEGRAPH_OUTPUT)"
+
+# help: flamegraph-test-rmcp       - Generate a flamegraph for the RMCP upstream-client runtime test
+flamegraph-test-rmcp:
+	@echo "Generating RMCP flamegraph for $(FLAMEGRAPH_TEST_TARGET)::$(FLAMEGRAPH_RMCP_TEST_FILTER)..."
+	@mkdir -p $(PROFILE_DIR) $(PERF_SHIM_DIR)
+	@$(MAKE) setup-profiling
+	@printf '%s\n' '#!/bin/sh' 'exec "$(PERF_CMD)" "$$@"' > $(PERF_SHIM)
+	@chmod +x $(PERF_SHIM)
+	@PATH="$(PERF_SHIM_DIR):$$PATH" CARGO_PROFILE_RELEASE_DEBUG=true $(CARGO) flamegraph \
+		-o $(FLAMEGRAPH_RMCP_OUTPUT) \
+		--features $(FEATURE_RMCP) \
+		--test $(FLAMEGRAPH_TEST_TARGET) -- \
+		$(FLAMEGRAPH_RMCP_TEST_FILTER) --exact --nocapture
+	@echo "Flamegraph generated at $(FLAMEGRAPH_RMCP_OUTPUT)"
 
 # help: deny                       - Run cargo deny checks if installed
 deny:
