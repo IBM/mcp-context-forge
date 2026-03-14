@@ -36,21 +36,35 @@ Committed scenarios now live in:
 benchmarks/contextforge/scenarios/
 ```
 
+The benchmark launcher now lives in:
+
+```bash
+tools_rust/benchmark_console/
+```
+
 ## Quick Start
 
-List available scenarios:
+Open the interactive launcher:
 
 ```bash
-make benchmark MODE=list
-python3 -m benchmarks.contextforge --list
+make benchmark
 ```
 
-Check runtime prerequisites without executing a suite:
+Inside the launcher you can choose:
 
-```bash
-make benchmark MODE=check-runtime SCENARIO=modular-design-300
-python3 -m benchmarks.contextforge --scenario modular-design-300 --check-runtime
-```
+- `Run`
+- `Validate`
+- `Smoke`
+- `Check Runtime`
+- `List`
+- `Report`
+- `Compare`
+- `Generate`
+
+The `Generate` action opens a template builder that saves a new scenario file
+under `benchmarks/contextforge/scenarios/`. It fills in the important fields in
+the UI and writes a full TOML template containing all supported sections and
+keys, including commented optional settings for advanced tuning.
 
 Build the benchmark image expected by scenarios with `rebuild_policy = "never"`:
 
@@ -61,23 +75,23 @@ make container-build CONTAINER_FILE=benchmarks/contextforge/Containerfile ENABLE
 Validate the suite:
 
 ```bash
-make benchmark MODE=validate SCENARIO=modular-design-300
 python3 -m benchmarks.contextforge --scenario modular-design-300 --validate
 ```
 
 Run the smoke suite:
 
 ```bash
-make benchmark MODE=smoke SCENARIO=a2a-invoke-300
 python3 -m benchmarks.contextforge --scenario a2a-invoke-300 --smoke
 ```
 
 Run the suite:
 
 ```bash
-make benchmark SCENARIO=modular-design-300
-python3 -m benchmarks.contextforge --all
+python3 -m benchmarks.contextforge --scenario modular-design-300
 ```
+
+The TUI discovers committed scenarios automatically from
+`benchmarks/contextforge/scenarios/`.
 
 ## Scenario Contract
 
@@ -169,11 +183,11 @@ Key reporting behaviors:
 Re-render a saved run:
 
 ```bash
-make benchmark MODE=report RUN=reports/benchmarks/<run-dir>
+python3 -m benchmarks.contextforge --report-run reports/benchmarks/<run-dir>
 ```
 
 Rebuild comparisons for a saved run:
 
 ```bash
-make benchmark MODE=compare RUN=reports/benchmarks/<run-dir>
+python3 -m benchmarks.contextforge --compare-run reports/benchmarks/<run-dir>
 ```
