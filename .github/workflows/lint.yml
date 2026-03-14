@@ -43,30 +43,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [mcpgateway, plugins]
-        tool:
-          - id: flake8
-            setup: pip install flake8
-            cmd: "flake8 $TARGET"
-          - id: ruff
-            setup: pip install ruff
-            cmd: "ruff check $TARGET"
-          - id: unimport
-            setup: pip install unimport
-            cmd: "unimport $TARGET"
-          - id: vulture
-            setup: pip install vulture
-            cmd: 'vulture $TARGET --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"'
-          - id: pylint
-            setup: "true"
-            cmd: "uv run pylint $TARGET --rcfile=.pylintrc.$TARGET --fail-on E --fail-under=10"
-          - id: interrogate
-            setup: pip install interrogate
-            cmd: "interrogate -vv $TARGET --fail-under 100"
-          - id: radon
-            setup: pip install radon
-            cmd: "radon cc $TARGET --min C --show-complexity && radon mi $TARGET --min B"
-
-    name: "${{ matrix.tool.id }} (${{ matrix.target }})"
+    name: "Python Linters (${{ matrix.target }})"
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -85,50 +62,39 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Install project (editable mode)
+      - name: Install project and linters
         run: |
           python3 -m pip install --upgrade pip
           pip install -e .[dev]
+          pip install flake8 ruff unimport vulture interrogate radon
 
-      - name: Install tool
-        run: ${{ matrix.tool.setup }}
+      - name: Run flake8
+        run: flake8 ${{ matrix.target }}
 
-      - name: Run linter
-        env:
-          TARGET: ${{ matrix.target }}
-        run: ${{ matrix.tool.cmd }}
+      - name: Run ruff
+        run: ruff check ${{ matrix.target }}
+
+      - name: Run unimport
+        run: unimport ${{ matrix.target }}
+
+      - name: Run vulture
+        run: vulture ${{ matrix.target }} --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"
+
+      - name: Run pylint
+        run: uv run pylint ${{ matrix.target }} --rcfile=.pylintrc.${{ matrix.target }} --fail-on E --fail-under=10
+
+      - name: Run interrogate
+        run: interrogate -vv ${{ matrix.target }} --fail-under 100
+
+      - name: Run radon
+        run: radon cc ${{ matrix.target }} --min C --show-complexity && radon mi ${{ matrix.target }} --min B
 
   # ---------------------------------------------------------------
   # Repo-wide syntax/format checkers (run once, not per-target)
   # ---------------------------------------------------------------
   syntax-check:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: yamllint
-            setup: pip install yamllint
-            cmd: yamllint -c .yamllint .
-
-          - id: jsonlint
-            setup: |
-              sudo apt-get update -qq
-              sudo apt-get install -y jq
-            cmd: |
-              find . -type f -name '*.json' -not -path './node_modules/*' -print0 |
-                xargs -0 -I{} jq empty "{}"
-
-          - id: tomllint
-            setup: pip install tomlcheck
-            cmd: |
-              find . -type f -name '*.toml' \
-                -not -path './plugin_templates/*' \
-                -not -path './mcp-servers/templates/*' \
-                -print0 |
-                xargs -0 -I{} tomlcheck "{}"
-
-    name: ${{ matrix.id }}
+    name: Syntax Checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -144,8 +110,24 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install tool
-        run: ${{ matrix.setup }}
+      - name: Install syntax checkers
+        run: |
+          pip install yamllint tomlcheck
+          sudo apt-get update -qq
+          sudo apt-get install -y jq
 
-      - name: Run check
-        run: ${{ matrix.cmd }}
+      - name: Run yamllint
+        run: yamllint -c .yamllint .
+
+      - name: Run jsonlint
+        run: |
+          find . -type f -name '*.json' -not -path './node_modules/*' -print0 |
+            xargs -0 -I{} jq empty "{}"
+
+      - name: Run tomllint
+        run: |
+          find . -type f -name '*.toml' \
+            -not -path './plugin_templates/*' \
+            -not -path './mcp-servers/templates/*' \
+            -print0 |
+            xargs -0 -I{} tomlcheck "{}"
