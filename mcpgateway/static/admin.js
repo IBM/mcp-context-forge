@@ -4050,6 +4050,65 @@ async function viewAgent(agentId) {
                 container.appendChild(p);
             });
 
+            // Gateway Endpoint (only shown when A2A gateway is enabled)
+            if (window.A2A_GATEWAY_ENABLED) {
+                const gwPrefix = window.A2A_GATEWAY_ROUTE_PREFIX || "a2a/agent";
+                const baseUrl = window.location.origin + (window.ROOT_PATH || "");
+                const gwJsonrpcUrl = `${baseUrl}/${gwPrefix}/${agent.id}`;
+                const gwCardUrl = `${gwJsonrpcUrl}/.well-known/agent-card.json`;
+
+                const gwDiv = document.createElement("div");
+                gwDiv.className =
+                    "mt-3 p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg";
+
+                const gwTitle = document.createElement("strong");
+                gwTitle.className = "text-sm text-indigo-700 dark:text-indigo-300";
+                gwTitle.textContent = "Gateway Endpoint";
+                gwDiv.appendChild(gwTitle);
+
+                // JSON-RPC endpoint
+                const rpcP = document.createElement("p");
+                rpcP.className = "mt-1.5 text-sm";
+                const rpcLabel = document.createElement("span");
+                rpcLabel.className =
+                    "font-medium text-gray-600 dark:text-gray-400";
+                rpcLabel.textContent = "JSON-RPC: ";
+                rpcP.appendChild(rpcLabel);
+                const rpcCode = document.createElement("code");
+                rpcCode.className =
+                    "text-xs bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 select-all";
+                rpcCode.textContent = gwJsonrpcUrl;
+                rpcP.appendChild(rpcCode);
+                rpcP.appendChild(makeCopyIdButton(gwJsonrpcUrl));
+                gwDiv.appendChild(rpcP);
+
+                // Agent Card URL
+                const cardP = document.createElement("p");
+                cardP.className = "mt-1 text-sm";
+                const cardLabel = document.createElement("span");
+                cardLabel.className =
+                    "font-medium text-gray-600 dark:text-gray-400";
+                cardLabel.textContent = "Agent Card: ";
+                cardP.appendChild(cardLabel);
+                const cardCode = document.createElement("code");
+                cardCode.className =
+                    "text-xs bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 select-all";
+                cardCode.textContent = gwCardUrl;
+                cardP.appendChild(cardCode);
+                cardP.appendChild(makeCopyIdButton(gwCardUrl));
+                gwDiv.appendChild(cardP);
+
+                // Hint
+                const hintP = document.createElement("p");
+                hintP.className =
+                    "mt-2 text-xs text-indigo-600 dark:text-indigo-400 italic";
+                hintP.textContent =
+                    "Use these URLs to connect from an A2A client to this agent via the ContextForge Gateway.";
+                gwDiv.appendChild(hintP);
+
+                container.appendChild(gwDiv);
+            }
+
             // Status
             const statusP = document.createElement("p");
             const statusStrong = document.createElement("strong");

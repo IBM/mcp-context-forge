@@ -3583,6 +3583,8 @@ async def admin_ui(
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
             "a2a_enabled": settings.mcpgateway_a2a_enabled,
+            "a2a_gateway_enabled": settings.mcpgateway_a2a_enabled and settings.mcpgateway_a2a_gateway_enabled,
+            "a2a_gateway_route_prefix": settings.a2a_gateway_route_prefix.strip("/"),
             "grpc_enabled": GRPC_AVAILABLE and settings.mcpgateway_grpc_enabled,
             "catalog_enabled": settings.mcpgateway_catalog_enabled,
             "llmchat_enabled": getattr(settings, "llmchat_enabled", False),
