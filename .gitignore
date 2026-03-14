@@ -353,8 +353,13 @@ docs/docs/test/license-check-report.json
 # Generated performance test files
 nginx.conf
 docker-compose.perf.yml
+cosign.key
+cosign.pub
 
 # JMeter test results and local installation
 tests/jmeter/results/*.jtl
 tests/jmeter/results/*/
 .jmeter/
+cosign.key
+cosign.pub
+scanner-report.json

@@ -1,0 +1,648 @@
+<!-- htmlhint doctype-first:false -->
+<!-- Location: ./mcpgateway/templates/image_signing_partial.html -->
+
+<!-- Register Alpine component BEFORE the x-data div so HTMX injection works -->
+
+<div class="space-y-6" x-data="imageSigningApp()" x-init="init()">
+
+    <!-- Header Card -->
+    <div class="bg-gradient-to-r from-blue-500 to-indigo-700 rounded-lg shadow-lg p-6 text-white">
+        <h2 class="text-2xl font-bold mb-4 flex items-center">
+            <svg class="h-8 w-8 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+            Container Image Signing &amp; Verification
+        </h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="text-center">
+                <div class="text-3xl font-bold" x-text="stats.total_verifications">—</div>
+                <div class="text-purple-100 text-sm">Total Verifications</div>
+            </div>
+            <div class="text-center">
+                <div class="text-3xl font-bold text-green-300" x-text="stats.verified_count">—</div>
+                <div class="text-purple-100 text-sm">Verified</div>
+            </div>
+            <div class="text-center">
+                <div class="text-3xl font-bold text-red-300" x-text="stats.blocked_count">—</div>
+                <div class="text-purple-100 text-sm">Blocked</div>
+            </div>
+            <div class="text-center">
+                <div class="text-3xl font-bold" x-text="stats.total_signers">—</div>
+                <div class="text-purple-100 text-sm">Trusted Signers</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="border-b border-gray-200 dark:border-gray-700">
+            <nav class="flex space-x-0" aria-label="Tabs">
+                <button @click="activeTab = 'signers'" :class="activeTab === 'signers'
+            ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20'
+            : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'"
+                    class="flex items-center gap-2 px-6 py-4 text-sm font-medium border-b-2 transition-colors rounded-tl-lg">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                    </svg>
+                    Trusted Signers
+                </button>
+                <button @click="activeTab = 'verifications'" :class="activeTab === 'verifications'
+            ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20'
+            : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'"
+                    class="flex items-center gap-2 px-6 py-4 text-sm font-medium border-b-2 transition-colors">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    Verification History
+                </button>
+                <button @click="activeTab = 'verify'" :class="activeTab === 'verify'
+            ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20'
+            : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'"
+                    class="flex items-center gap-2 px-6 py-4 text-sm font-medium border-b-2 transition-colors">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    Manual Verify
+                </button>
+            </nav>
+        </div>
+
+        <!-- ── TAB: Trusted Signers ── -->
+        <div x-show="activeTab === 'signers'" class="p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Trusted Signers</h3>
+                <button @click="openCreateSignerModal()"
+                    class="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                    </svg>
+                    Add Signer
+                </button>
+            </div>
+
+            <!-- Loading -->
+            <div x-show="loadingSigners" class="flex justify-center py-8">
+                <svg class="animate-spin h-8 w-8 text-indigo-600" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                    </path>
+                </svg>
+            </div>
+
+            <!-- Empty state -->
+            <div x-show="!loadingSigners && signers.length === 0"
+                class="text-center py-12 text-gray-400 dark:text-gray-500">
+                <svg class="mx-auto h-12 w-12 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                        d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+                <p class="text-sm font-medium">No trusted signers configured</p>
+                <p class="text-xs mt-1">Add a signer to start verifying image signatures</p>
+            </div>
+
+            <!-- Signers Table -->
+            <div x-show="!loadingSigners && signers.length > 0" class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <thead class="bg-gray-50 dark:bg-gray-700">
+                        <tr>
+                            <th
+                                class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Name</th>
+                            <th
+                                class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Type</th>
+                            <th
+                                class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Identity</th>
+                            <th
+                                class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Status</th>
+                            <th
+                                class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Expires</th>
+                            <th
+                                class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                        <template x-for="signer in signers" :key="signer.id">
+                            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                                <td class="px-4 py-3">
+                                    <span class="text-sm font-medium text-gray-900 dark:text-gray-100"
+                                        x-text="signer.name"></span>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span :class="signerTypeBadge(signer.type)"
+                                        class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                                        x-text="signer.type.replace('_', ' ').toUpperCase()"></span>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <div class="text-xs text-gray-500 dark:text-gray-400 font-mono">
+                                        <span x-show="signer.oidc_issuer" x-text="signer.oidc_issuer"
+                                            class="block truncate max-w-xs"></span>
+                                        <span x-show="signer.subject" x-text="'Subject: ' + signer.subject"
+                                            class="block truncate max-w-xs"></span>
+                                        <span x-show="signer.subject_regex" x-text="'Regex: ' + signer.subject_regex"
+                                            class="block truncate max-w-xs"></span>
+                                        <span x-show="!signer.oidc_issuer && !signer.subject && !signer.subject_regex"
+                                            class="text-gray-400">—</span>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span x-show="signer.enabled"
+                                        class="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 text-xs font-medium rounded-full">
+                                        <span class="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+                                        Enabled
+                                    </span>
+                                    <span x-show="!signer.enabled"
+                                        class="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 text-xs font-medium rounded-full">
+                                        <span class="w-1.5 h-1.5 bg-gray-400 rounded-full"></span>
+                                        Disabled
+                                    </span>
+                                </td>
+                                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
+                                    <span x-show="signer.expires_at" x-text="formatDate(signer.expires_at)"></span>
+                                    <span x-show="!signer.expires_at"
+                                        class="text-gray-300 dark:text-gray-600">Never</span>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <div class="flex items-center gap-2">
+                                        <button @click="openEditSignerModal(signer)"
+                                            class="text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 text-xs font-medium transition-colors">
+                                            Edit
+                                        </button>
+                                        <span class="text-gray-300 dark:text-gray-600">|</span>
+                                        <button @click="confirmDeleteSigner(signer)"
+                                            class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-xs font-medium transition-colors">
+                                            Delete
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ── TAB: Verification History ── -->
+        <div x-show="activeTab === 'verifications'" class="p-6">
+            <div class="flex flex-col md:flex-row gap-3 mb-4">
+                <div class="flex-1">
+                    <input type="text" x-model="verificationFilter.image_ref"
+                        @input.debounce.400ms="loadVerifications()" placeholder="Filter by image reference..."
+                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" />
+                </div>
+                <button @click="loadVerifications()"
+                    class="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+
+            <!-- Loading -->
+            <div x-show="loadingVerifications" class="flex justify-center py-8">
+                <svg class="animate-spin h-8 w-8 text-indigo-600" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                    </path>
+                </svg>
+            </div>
+
+            <!-- Empty state -->
+            <div x-show="!loadingVerifications && verifications.length === 0"
+                class="text-center py-12 text-gray-400 dark:text-gray-500">
+                <svg class="mx-auto h-12 w-12 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                <p class="text-sm font-medium">No verification records yet</p>
+                <p class="text-xs mt-1">Verification results will appear here after images are scanned</p>
+            </div>
+
+            <!-- Verifications Table -->
+            <div x-show="!loadingVerifications && verifications.length > 0" class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <thead class="bg-gray-50 dark:bg-gray-700">
+                        <tr>
+                            <th
+                                class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Image</th>
+                            <th
+                                class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Signature</th>
+                            <th
+                                class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Signer</th>
+                            <th
+                                class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                SLSA</th>
+                            <th
+                                class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Rekor</th>
+                            <th
+                                class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Decision</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                        <template x-for="v in verifications" :key="v.image_ref + v.image_digest">
+                            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                                <td class="px-4 py-3">
+                                    <div class="text-sm font-mono text-gray-800 dark:text-gray-200 truncate max-w-xs"
+                                        x-text="v.image_ref"></div>
+                                    <div x-show="v.image_digest"
+                                        class="text-xs font-mono text-gray-400 dark:text-gray-500 truncate max-w-xs"
+                                        x-text="v.image_digest ? v.image_digest.substring(0, 19) + '…' : ''"></div>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span x-show="v.signature_valid"
+                                        class="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 text-xs font-medium rounded-full">
+                                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M5 13l4 4L19 7" />
+                                        </svg>
+                                        Valid
+                                    </span>
+                                    <span x-show="v.signature_found && !v.signature_valid"
+                                        class="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 text-xs font-medium rounded-full">
+                                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                        Invalid
+                                    </span>
+                                    <span x-show="!v.signature_found"
+                                        class="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 text-xs font-medium rounded-full">
+                                        Not Found
+                                    </span>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <div class="text-xs text-gray-600 dark:text-gray-300 truncate max-w-xs font-mono"
+                                        x-text="v.signer_identity || '—'"></div>
+                                    <div class="text-xs text-gray-400 dark:text-gray-500 truncate max-w-xs"
+                                        x-text="v.signer_issuer || ''"></div>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span x-show="v.slsa && v.slsa.level !== null && v.slsa.level !== undefined"
+                                        class="inline-flex items-center px-2 py-1 bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 text-xs font-medium rounded-full"
+                                        x-text="v.slsa ? 'L' + v.slsa.level : ''"></span>
+                                    <span x-show="!v.slsa || v.slsa.level === null || v.slsa.level === undefined"
+                                        class="text-xs text-gray-400 dark:text-gray-500">—</span>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span x-show="v.rekor_verified === true"
+                                        class="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-medium">
+                                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M5 13l4 4L19 7" />
+                                        </svg>
+                                        Verified
+                                    </span>
+                                    <span x-show="v.rekor_verified === false"
+                                        class="text-xs text-red-500 dark:text-red-400 font-medium">Failed</span>
+                                    <span x-show="v.rekor_verified === null || v.rekor_verified === undefined"
+                                        class="text-xs text-gray-400 dark:text-gray-500">—</span>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span x-show="v.blocked"
+                                        class="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 text-xs font-semibold rounded-full">
+                                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                                        </svg>
+                                        Blocked
+                                    </span>
+                                    <span x-show="!v.blocked"
+                                        class="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 text-xs font-semibold rounded-full">
+                                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M5 13l4 4L19 7" />
+                                        </svg>
+                                        Allowed
+                                    </span>
+                                    <div x-show="v.reason"
+                                        class="text-xs text-gray-400 dark:text-gray-500 mt-1 max-w-xs truncate"
+                                        x-text="v.reason"></div>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+
+                <!-- Pagination -->
+                <div class="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div class="text-sm text-gray-500 dark:text-gray-400">
+                        Showing <span x-text="verificationOffset + 1"></span>–<span
+                            x-text="Math.min(verificationOffset + verifications.length, verificationOffset + 50)"></span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button @click="verificationOffset = Math.max(0, verificationOffset - 50); loadVerifications()"
+                            :disabled="verificationOffset === 0"
+                            class="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                            Previous
+                        </button>
+                        <button @click="verificationOffset += 50; loadVerifications()"
+                            :disabled="verifications.length < 50"
+                            class="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                            Next
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── TAB: Manual Verify ── -->
+        <div x-show="activeTab === 'verify'" class="p-6">
+            <div class="max-w-xl">
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">
+                    Manually trigger signature verification for any container image.
+                </p>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Image Reference <span class="text-red-500">*</span>
+                        </label>
+                        <input type="text" x-model="manualVerify.image_ref"
+                            placeholder="e.g. ghcr.io/myorg/myapp:v1.0.0"
+                            class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white font-mono" />
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Image Digest <span class="text-gray-400 font-normal">(optional, recommended)</span>
+                        </label>
+                        <input type="text" x-model="manualVerify.image_digest" placeholder="sha256:abc123…"
+                            class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white font-mono" />
+                    </div>
+                    <button @click="runManualVerify()" :disabled="!manualVerify.image_ref || manualVerifyLoading"
+                        class="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                        <svg x-show="manualVerifyLoading" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4">
+                            </circle>
+                            <path class="opacity-75" fill="currentColor"
+                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                            </path>
+                        </svg>
+                        <svg x-show="!manualVerifyLoading" class="h-4 w-4" fill="none" stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                        </svg>
+                        <span x-text="manualVerifyLoading ? 'Verifying…' : 'Verify Image'"></span>
+                    </button>
+                </div>
+
+                <!-- Result -->
+                <div x-show="manualVerifyResult" class="mt-6 p-4 rounded-lg border" :class="manualVerifyResult && manualVerifyResult.blocked
+            ? 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800'
+            : 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800'">
+                    <div class="flex items-center gap-2 mb-3">
+                        <svg x-show="manualVerifyResult && !manualVerifyResult.blocked"
+                            class="h-5 w-5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                        </svg>
+                        <svg x-show="manualVerifyResult && manualVerifyResult.blocked"
+                            class="h-5 w-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                        </svg>
+                        <span class="font-semibold text-sm"
+                            :class="manualVerifyResult && manualVerifyResult.blocked ? 'text-red-800 dark:text-red-300' : 'text-green-800 dark:text-green-300'"
+                            x-text="manualVerifyResult && manualVerifyResult.blocked ? 'Image Blocked' : 'Image Verified'"></span>
+                    </div>
+                    <dl class="space-y-1 text-sm" x-show="manualVerifyResult">
+                        <div class="flex gap-2">
+                            <dt class="text-gray-500 dark:text-gray-400 w-36 shrink-0">Signature</dt>
+                            <dd class="font-medium text-gray-800 dark:text-gray-200"
+                                x-text="manualVerifyResult ? (manualVerifyResult.signature_valid ? 'Valid ✓' : (manualVerifyResult.signature_found ? 'Invalid ✗' : 'Not found')) : ''">
+                            </dd>
+                        </div>
+                        <div class="flex gap-2" x-show="manualVerifyResult && manualVerifyResult.signer_identity">
+                            <dt class="text-gray-500 dark:text-gray-400 w-36 shrink-0">Signer</dt>
+                            <dd class="font-mono text-xs text-gray-800 dark:text-gray-200 break-all"
+                                x-text="manualVerifyResult ? manualVerifyResult.signer_identity : ''"></dd>
+                        </div>
+                        <div class="flex gap-2" x-show="manualVerifyResult && manualVerifyResult.signer_issuer">
+                            <dt class="text-gray-500 dark:text-gray-400 w-36 shrink-0">Issuer</dt>
+                            <dd class="font-mono text-xs text-gray-800 dark:text-gray-200 break-all"
+                                x-text="manualVerifyResult ? manualVerifyResult.signer_issuer : ''"></dd>
+                        </div>
+                        <div class="flex gap-2"
+                            x-show="manualVerifyResult && manualVerifyResult.rekor_verified !== null && manualVerifyResult.rekor_verified !== undefined">
+                            <dt class="text-gray-500 dark:text-gray-400 w-36 shrink-0">Rekor</dt>
+                            <dd class="font-medium text-gray-800 dark:text-gray-200"
+                                x-text="manualVerifyResult && manualVerifyResult.rekor_verified ? 'Verified ✓' : 'Not verified'">
+                            </dd>
+                        </div>
+                        <div class="flex gap-2"
+                            x-show="manualVerifyResult && manualVerifyResult.slsa && manualVerifyResult.slsa.level !== null">
+                            <dt class="text-gray-500 dark:text-gray-400 w-36 shrink-0">SLSA Level</dt>
+                            <dd class="font-medium text-gray-800 dark:text-gray-200"
+                                x-text="manualVerifyResult && manualVerifyResult.slsa ? 'Level ' + manualVerifyResult.slsa.level : ''">
+                            </dd>
+                        </div>
+                        <div class="flex gap-2" x-show="manualVerifyResult && manualVerifyResult.reason">
+                            <dt class="text-gray-500 dark:text-gray-400 w-36 shrink-0">Reason</dt>
+                            <dd class="text-red-700 dark:text-red-300"
+                                x-text="manualVerifyResult ? manualVerifyResult.reason : ''"></dd>
+                        </div>
+                    </dl>
+                </div>
+
+                <!-- Error -->
+                <div x-show="manualVerifyError"
+                    class="mt-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300"
+                    x-text="manualVerifyError"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Create / Edit Signer Modal ── -->
+    <div x-show="signerModal.open"
+        class="fixed inset-0 bg-gray-600 bg-opacity-50 dark:bg-opacity-70 overflow-y-auto h-full w-full z-50"
+        @click.self="signerModal.open = false">
+        <div
+            class="relative top-16 mx-auto p-6 border w-full max-w-lg shadow-xl rounded-lg bg-white dark:bg-gray-800 dark:border-gray-700 mb-16">
+            <div class="flex justify-between items-start mb-5">
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100"
+                    x-text="signerModal.mode === 'create' ? 'Add Trusted Signer' : 'Edit Trusted Signer'"></h3>
+                <button @click="signerModal.open = false"
+                    class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <!-- Name -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name <span
+                            class="text-red-500">*</span></label>
+                    <input type="text" x-model="signerModal.form.name" placeholder="e.g. GitHub Actions (myorg)"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" />
+                </div>
+
+                <!-- Type -->
+                <div x-show="signerModal.mode === 'create'">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Type <span
+                            class="text-red-500">*</span></label>
+                    <select x-model="signerModal.form.type"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white">
+                        <option value="keyless">Keyless (OIDC)</option>
+                        <option value="public_key">Public Key (PEM)</option>
+                        <option value="kms">KMS</option>
+                    </select>
+                </div>
+                <div x-show="signerModal.mode === 'edit'" class="flex items-center gap-2">
+                    <span class="text-sm text-gray-500 dark:text-gray-400">Type:</span>
+                    <span :class="signerTypeBadge(signerModal.form.type)"
+                        class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                        x-text="signerModal.form.type ? signerModal.form.type.replace('_',' ').toUpperCase() : ''"></span>
+                </div>
+
+                <!-- Keyless fields -->
+                <template x-if="signerModal.form.type === 'keyless'">
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">OIDC Issuer
+                                <span class="text-red-500">*</span></label>
+                            <input type="text" x-model="signerModal.form.oidc_issuer"
+                                placeholder="https://token.actions.githubusercontent.com"
+                                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Subject
+                                (exact)</label>
+                            <input type="text" x-model="signerModal.form.subject" placeholder="builder@example.com"
+                                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Subject
+                                Regex</label>
+                            <input type="text" x-model="signerModal.form.subject_regex"
+                                placeholder="https://github.com/myorg/.*"
+                                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white" />
+                            <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Use either subject or subject
+                                regex, not both.</p>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Public key fields -->
+                <template x-if="signerModal.form.type === 'public_key'">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Public Key (PEM)
+                            <span class="text-red-500">*</span></label>
+                        <textarea x-model="signerModal.form.public_key" rows="5"
+                            placeholder="-----BEGIN PUBLIC KEY-----&#10;MFkwEwYHKoZIzj0...&#10;-----END PUBLIC KEY-----"
+                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white"></textarea>
+                    </div>
+                </template>
+
+                <!-- KMS fields -->
+                <template x-if="signerModal.form.type === 'kms'">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">KMS Key Reference
+                            <span class="text-red-500">*</span></label>
+                        <input type="text" x-model="signerModal.form.kms_key_ref"
+                            placeholder="gcpkms://projects/my-project/locations/global/keyRings/my-ring/cryptoKeys/my-key"
+                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white" />
+                    </div>
+                </template>
+
+                <!-- Enabled & Expiry -->
+                <div class="flex items-center gap-4 pt-1">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" x-model="signerModal.form.enabled"
+                            class="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" />
+                        <span class="text-sm text-gray-700 dark:text-gray-300">Enabled</span>
+                    </label>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Expires At <span
+                            class="text-gray-400 font-normal">(optional)</span></label>
+                    <input type="datetime-local" x-model="signerModal.form.expires_at"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white" />
+                </div>
+
+                <!-- Error -->
+                <div x-show="signerModal.error"
+                    class="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300"
+                    x-text="signerModal.error"></div>
+            </div>
+
+            <div class="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                <button @click="signerModal.open = false"
+                    class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    Cancel
+                </button>
+                <button @click="submitSignerForm()" :disabled="signerModal.saving"
+                    class="flex items-center gap-2 px-5 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                    <svg x-show="signerModal.saving" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4">
+                        </circle>
+                        <path class="opacity-75" fill="currentColor"
+                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                        </path>
+                    </svg>
+                    <span x-text="signerModal.mode === 'create' ? 'Add Signer' : 'Save Changes'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Delete Confirmation Modal ── -->
+    <div x-show="deleteModal.open"
+        class="fixed inset-0 bg-gray-600 bg-opacity-50 dark:bg-opacity-70 overflow-y-auto h-full w-full z-50"
+        @click.self="deleteModal.open = false">
+        <div
+            class="relative top-40 mx-auto p-6 border w-full max-w-sm shadow-xl rounded-lg bg-white dark:bg-gray-800 dark:border-gray-700">
+            <div class="flex items-start gap-3 mb-4">
+                <div
+                    class="flex-shrink-0 w-10 h-10 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center">
+                    <svg class="h-5 w-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor"
+                        viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.962-.833-2.732 0L3.07 16.5C2.3 17.333 3.262 19 4.8 19z" />
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100">Delete Signer</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                        Are you sure you want to delete <strong x-text="deleteModal.signerName"
+                            class="text-gray-700 dark:text-gray-300"></strong>?
+                        This cannot be undone.
+                    </p>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3">
+                <button @click="deleteModal.open = false"
+                    class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    Cancel
+                </button>
+                <button @click="deleteSigner()" :disabled="deleteModal.deleting"
+                    class="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                    <span x-text="deleteModal.deleting ? 'Deleting…' : 'Delete'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+</div>
+

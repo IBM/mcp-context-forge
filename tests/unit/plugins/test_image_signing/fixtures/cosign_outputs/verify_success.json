@@ -1,0 +1,29 @@
+[
+    {
+        "critical": {
+            "identity": {
+                "docker-reference": "ghcr.io/myorg/myimage"
+            },
+            "image": {
+                "docker-manifest-digest": "sha256:abc123"
+            },
+            "type": "cosign container image signature"
+        },
+        "optional": {
+            "Subject": "builder@example.com",
+            "Issuer": "https://accounts.google.com",
+            "Bundle": {
+                "SignedEntryTimestamp": "MEUCIQDx...",
+                "Payload": {
+                    "body": {
+                        "Subject": "builder@example.com",
+                        "Issuer": "https://accounts.google.com"
+                    },
+                    "integratedTime": 1700000000,
+                    "logIndex": 12345
+                }
+            },
+            "signedTimestamp": "2024-01-15T10:30:00Z"
+        }
+    }
+]

@@ -670,7 +670,12 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧩</span>
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
-            {% endif %}
+          <a href="#image-signing" id="tab-image-signing" data-testid="image-signing-tab"
+            class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+            :class="{ 'justify-center': sidebarCollapsed }" onclick="showTab('image-signing')">
+            <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔏</span>
+            <span x-show="!sidebarCollapsed">Image Signing</span>
+          </a>
           </div>
           {% endif %}
 
@@ -1665,6 +1670,20 @@
       {% if is_admin and 'plugins' not in hidden_sections %}
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
+      <!-- Image Signing Panel -->
+      <div id="image-signing-panel" class="tab-panel hidden" hx-get="{{ root_path }}/api/v1/image-signing/partial"
+        hx-trigger="revealed once" hx-swap="innerHTML">
+        <div class="flex justify-center items-center py-8">
+          <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none"
+            viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+            </path>
+          </svg>
+          <span class="ml-3 text-gray-600 dark:text-gray-400">Loading image signing...</span>
+        </div>
+      </div>
       {% endif %}
 
       <!-- Performance Panel -->

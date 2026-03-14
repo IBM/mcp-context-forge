@@ -7914,6 +7914,15 @@ ADMIN_API_ENABLED = settings.mcpgateway_admin_api_enabled
 logger.info(f"Admin UI enabled: {UI_ENABLED}")
 logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
 
+# Image Signing router
+try:
+    from mcpgateway.routers.image_signing_router import router as image_signing_router
+    app.include_router(image_signing_router)
+    logger.info("Image signing router included")
+except ImportError as e:
+    logger.exception(f"Failed to import image signing router: {e}")
+    raise
+
 # Conditional UI and admin API handling
 if ADMIN_API_ENABLED:
     logger.info("Including admin_router - Admin API enabled")

@@ -17652,31 +17652,42 @@ function initializeEventListeners() {
 }
 
 function setupTabNavigation() {
-    const availableTabs = getVisibleSidebarTabs().filter((tabName) => {
-        if (isTabHidden(tabName)) {
-            return false;
-        }
-        if (!isAdminUser() && isAdminOnlyTab(tabName)) {
-            return false;
-        }
-        return isTabAvailable(tabName);
-    });
+    const tabs = [
+        "catalog",
+        "tools",
+        "resources",
+        "prompts",
+        "gateways",
+        "a2a-agents",
+        "roots",
+        "metrics",
+        "plugins",
+        "image-signing",
+        "logs",
+        "export-import",
+        "version-info",
+    ];
 
-    availableTabs.forEach((tabName) => {
-        const tabElement = safeGetElement(`tab-${tabName}`, true);
-        if (!tabElement) {
-            return;
+    const visibleTabs = isAdminUser()
+        ? tabs
+        : tabs.filter((tabName) => !ADMIN_ONLY_TABS.has(tabName));
+
+    visibleTabs.forEach((tabName) => {
+        // Suppress warnings for optional tabs that might not be enabled
+        const optionalTabs = [
+            "roots",
+            "metrics",
+            "logs",
+            "export-import",
+            "version-info",
+            "plugins",
+        ];
+        const suppressWarning = optionalTabs.includes(tabName);
+
+        const tabElement = safeGetElement(`tab-${tabName}`, suppressWarning);
+        if (tabElement) {
+            tabElement.addEventListener("click", () => showTab(tabName));
         }
-        // The sidebar anchors already have inline onclick handlers in admin.html.
-        // Avoid adding a second click handler that would call showTab twice.
-        if (tabElement.hasAttribute("onclick")) {
-            return;
-        }
-        if (tabElement.dataset.tabBound === "true") {
-            return;
-        }
-        tabElement.dataset.tabBound = "true";
-        tabElement.addEventListener("click", () => showTab(tabName));
     });
 }
 
@@ -33713,100 +33724,272 @@ window.filterByRelationship = filterByRelationship;
 window.filterTeams = filterTeams;
 window.searchTeamSelector = searchTeamSelector;
 window.selectTeamFromSelector = selectTeamFromSelector;
-window.getTeamsCurrentPaginationState = getTeamsCurrentPaginationState;
 
-/**
- * Handle keydown event when Enter or Space key is pressed
- *
- * @param {KeyboardEvent} event - the keyboard event triggered
- * @param {function} callback - the function to call when Enter or Space is pressed
- */
-function handleKeydown(event, callback) {
-    if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        callback(event);
-    }
-}
-
-window.handleKeydown = handleKeydown;
-
-/**
- * Defense-in-depth: audit mutation buttons after every HTMX partial swap.
- *
- * Server-side Jinja2 `can_modify` is the authoritative control. This JS
- * handler is a redundant safety net that hides edit/delete/activate/deactivate
- * buttons when the client-side user context says the current user should not
- * be able to mutate a given row.
- */
-document.addEventListener("htmx:afterSettle", function (_evt) {
-    const currentUser = window.CURRENT_USER;
-    const isAdmin = Boolean(window.IS_ADMIN);
-    const userTeams = window.USER_TEAMS || [];
-
-    if (!currentUser) return;
-
-    // Build a quick lookup: team_id -> role (only "owner" matters for modify)
-    const teamRoleMap = {};
-    for (let i = 0; i < userTeams.length; i++) {
-        if (userTeams[i].id && userTeams[i].role) {
-            teamRoleMap[String(userTeams[i].id)] = userTeams[i].role;
-        }
-    }
-
-    // Known panel table body IDs that contain entity rows
-    const tableBodyIds = [
-        "tools-table-body",
-        "servers-table-body",
-        "resources-table-body",
-        "prompts-table-body",
-        "gateways-table-body",
-        "agents-table-body",
-        "toolBody",
-    ];
-
-    for (let t = 0; t < tableBodyIds.length; t++) {
-        const tbody = document.getElementById(tableBodyIds[t]);
-        if (!tbody) continue;
-
-        const rows = tbody.querySelectorAll("tr[data-owner-email]");
-        for (let r = 0; r < rows.length; r++) {
-            const row = rows[r];
-            const ownerEmail = row.getAttribute("data-owner-email") || "";
-            const teamId = row.getAttribute("data-team-id") || "";
-            const visibility = row.getAttribute("data-visibility") || "";
-
-            let canModify = isAdmin;
-            if (!canModify && ownerEmail === currentUser) {
-                canModify = true;
+console.log("IMAGE SIGNING JS LOADED");
+window.imageSigningApp = function () {
+    return {
+        activeTab: 'signers',
+        signers: [],
+        loadingSigners: false,
+        verifications: [],
+        loadingVerifications: false,
+        verificationFilter: { image_ref: '' },
+        verificationOffset: 0,
+        stats: {
+            total_verifications: 0,
+            verified_count: 0,
+            blocked_count: 0,
+            total_signers: 0
+        },
+        manualVerify: { image_ref: '', image_digest: '' },
+        manualVerifyLoading: false,
+        manualVerifyResult: null,
+        manualVerifyError: null,
+        signerModal: {
+            open: false,
+            mode: 'create',
+            editId: null,
+            saving: false,
+            error: null,
+            form: {
+                name: '',
+                type: 'keyless',
+                oidc_issuer: '',
+                subject: '',
+                subject_regex: '',
+                public_key: '',
+                kms_key_ref: '',
+                enabled: true,
+                expires_at: ''
             }
-            if (
-                !canModify &&
-                visibility === "team" &&
-                teamId &&
-                teamRoleMap[teamId] === "owner"
-            ) {
-                canModify = true;
-            }
+        },
+        deleteModal: {
+            open: false,
+            signerId: null,
+            signerName: '',
+            deleting: false
+        },
+        apiBase: '/api/v1/image-signing',
 
-            if (!canModify) {
-                // Remove mutation buttons: edit, delete, activate/deactivate, enrich, validate, generate.
-                // Match both data-action (tool-ops converted buttons) and inline onclick
-                // (other entity tables that still use server-rendered handlers).
-                const buttons = row.querySelectorAll(
-                    "[data-action='edit-tool'], [data-action='enrich-tool'], [data-action='validate-tool'], [data-action='generate-tool-tests'], " +
-                        "button[onclick*='edit'], button[onclick*='Edit'], button[onclick*='enrich'], button[onclick*='Enrich'], button[onclick*='validate'], button[onclick*='Validate'], button[onclick*='generateTool'], button[onclick*='Generate']",
-                );
-                for (let b = 0; b < buttons.length; b++) {
-                    buttons[b].remove();
+        async init() {
+            await Promise.all([this.loadSigners(), this.loadVerifications()]);
+        },
+
+        async loadSigners() {
+            this.loadingSigners = true;
+            try {
+                const res = await fetch(`${this.apiBase}/signers?enabled=true`, {
+                    credentials: 'same-origin',
+                    headers: this._authHeaders()
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.signers = await res.json();
+                this.stats.total_signers = this.signers.length;
+            } catch (e) {
+                console.error('Failed to load signers:', e);
+            } finally {
+                this.loadingSigners = false;
+            }
+        },
+
+        async loadVerifications() {
+            this.loadingVerifications = true;
+            try {
+                const params = new URLSearchParams({
+                    limit: 50,
+                    offset: this.verificationOffset
+                });
+                if (this.verificationFilter.image_ref) {
+                    params.set('image_ref', this.verificationFilter.image_ref);
                 }
-                // Remove delete and state-toggle forms
-                const forms = row.querySelectorAll(
-                    "form[action*='/delete'], form[action*='/state']",
-                );
-                for (let f = 0; f < forms.length; f++) {
-                    forms[f].remove();
-                }
+                const res = await fetch(`${this.apiBase}/verifications?${params}`, {
+                    credentials: 'same-origin',
+                    headers: this._authHeaders()
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.verifications = await res.json();
+                this.stats.total_verifications = this.verifications.length;
+                this.stats.verified_count = this.verifications.filter(v => v.signature_valid && !v.blocked).length;
+                this.stats.blocked_count = this.verifications.filter(v => v.blocked).length;
+            } catch (e) {
+                console.error('Failed to load verifications:', e);
+            } finally {
+                this.loadingVerifications = false;
             }
+        },
+
+        async runManualVerify() {
+            this.manualVerifyResult = null;
+            this.manualVerifyError = null;
+            this.manualVerifyLoading = true;
+            try {
+                const body = { image_ref: this.manualVerify.image_ref };
+                if (this.manualVerify.image_digest) {
+                    body.image_digest = this.manualVerify.image_digest;
+                }
+                const res = await fetch(`${this.apiBase}/verify`, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...this._authHeaders()
+                    },
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                this.manualVerifyResult = data;
+            } catch (e) {
+                this.manualVerifyError = e.message || 'Verification failed';
+            } finally {
+                this.manualVerifyLoading = false;
+            }
+        },
+
+        openCreateSignerModal() {
+            this.signerModal = {
+                open: true,
+                mode: 'create',
+                editId: null,
+                saving: false,
+                error: null,
+                form: {
+                    name: '',
+                    type: 'keyless',
+                    oidc_issuer: '',
+                    subject: '',
+                    subject_regex: '',
+                    public_key: '',
+                    kms_key_ref: '',
+                    enabled: true,
+                    expires_at: ''
+                }
+            };
+        },
+
+        openEditSignerModal(signer) {
+            this.signerModal = {
+                open: true,
+                mode: 'edit',
+                editId: signer.id,
+                saving: false,
+                error: null,
+                form: {
+                    name: signer.name,
+                    type: signer.type,
+                    oidc_issuer: signer.oidc_issuer || '',
+                    subject: signer.subject || '',
+                    subject_regex: signer.subject_regex || '',
+                    public_key: '',
+                    kms_key_ref: '',
+                    enabled: signer.enabled,
+                    expires_at: signer.expires_at ? signer.expires_at.substring(0, 16) : ''
+                }
+            };
+        },
+
+        async submitSignerForm() {
+            this.signerModal.error = null;
+            this.signerModal.saving = true;
+            try {
+                const f = this.signerModal.form;
+                const body = { name: f.name, type: f.type, enabled: f.enabled };
+                if (f.oidc_issuer) body.oidc_issuer = f.oidc_issuer;
+                if (f.subject) body.subject = f.subject;
+                if (f.subject_regex) body.subject_regex = f.subject_regex;
+                if (f.public_key) body.public_key = f.public_key;
+                if (f.kms_key_ref) body.kms_key_ref = f.kms_key_ref;
+                if (f.expires_at) body.expires_at = new Date(f.expires_at).toISOString();
+
+                let res;
+                if (this.signerModal.mode === 'create') {
+                    res = await fetch(`${this.apiBase}/signers`, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...this._authHeaders()
+                        },
+                        body: JSON.stringify(body)
+                    });
+                } else {
+                    const { type, ...patchBody } = body;
+                    res = await fetch(`${this.apiBase}/signers/${this.signerModal.editId}`, {
+                        method: 'PATCH',
+                        credentials: 'same-origin',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...this._authHeaders()
+                        },
+                        body: JSON.stringify(patchBody)
+                    });
+                }
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                this.signerModal.open = false;
+                await this.loadSigners();
+            } catch (e) {
+                this.signerModal.error = e.message || 'Failed to save signer';
+            } finally {
+                this.signerModal.saving = false;
+            }
+        },
+
+        confirmDeleteSigner(signer) {
+            this.deleteModal = {
+                open: true,
+                signerId: signer.id,
+                signerName: signer.name,
+                deleting: false
+            };
+        },
+
+        async deleteSigner() {
+            this.deleteModal.deleting = true;
+            try {
+                const res = await fetch(`${this.apiBase}/signers/${this.deleteModal.signerId}`, {
+                    method: 'DELETE',
+                    credentials: 'same-origin',
+                    headers: this._authHeaders()
+                });
+                if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
+                this.deleteModal.open = false;
+                await this.loadSigners();
+            } catch (e) {
+                console.error('Delete failed:', e);
+            } finally {
+                this.deleteModal.deleting = false;
+            }
+        },
+
+        signerTypeBadge(type) {
+            const map = {
+                keyless: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400',
+                public_key: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400',
+                kms: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400'
+            };
+            return map[type] || 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300';
+        },
+
+        formatDate(iso) {
+            if (!iso) return '';
+            try {
+                return new Date(iso).toLocaleDateString(undefined, {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric'
+                });
+            } catch {
+                return iso;
+            }
+        },
+
+        _authHeaders() {
+            const headers = {};
+            const cookie = document.cookie.split('; ').find(r => r.startsWith('jwt_token='));
+            if (cookie) headers.Authorization = 'Bearer ' + cookie.split('=')[1];
+            return headers;
         }
-    }
-});
+    };
+};
