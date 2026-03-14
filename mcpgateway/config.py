@@ -498,6 +498,14 @@ class Settings(BaseSettings):
 
     # Email-Based Authentication
     email_auth_enabled: bool = Field(default=True, description="Enable email-based authentication")
+
+    # JIT (Just-in-Time) Access Configuration
+    jit_enabled: bool = Field(default=True, description="Enable Just-in-Time (JIT) access and temporary privilege elevation")
+    jit_max_duration_hours: int = Field(default=8, ge=1, le=24, description="Maximum duration in hours for a JIT grant")
+    jit_default_duration_hours: int = Field(default=4, ge=1, le=24, description="Default duration in hours for a JIT grant")
+    jit_require_justification: bool = Field(default=True, description="Require justification text for JIT requests")
+    jit_require_approval: bool = Field(default=True, description="Require admin approval for JIT requests")
+    jit_approval_timeout_hours: int = Field(default=24, ge=1, description="Hours before a pending JIT request auto-expires")
     public_registration_enabled: bool = Field(
         default=False,
         description="Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",

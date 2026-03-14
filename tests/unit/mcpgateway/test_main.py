@@ -411,6 +411,10 @@ def test_client(app_with_temp_db):
 
     PermissionService.check_permission = mock_check_permission
 
+    # Mock token scoping middleware to always allow access in tests
+    import mcpgateway.middleware.token_scoping as token_scoping_mod
+    original_check = token_scoping_mod.TokenScopingMiddleware._check_resource_team_ownership
+    token_scoping_mod.TokenScopingMiddleware._check_resource_team_ownership = lambda self, *args, **kwargs: True
     client = TestClient(app_with_temp_db)
     yield client
 
@@ -423,6 +427,8 @@ def test_client(app_with_temp_db):
     sec_patcher.stop()  # Stop the security_logger patch
     if hasattr(PermissionService, "_original_check_permission"):
         PermissionService.check_permission = PermissionService._original_check_permission
+    # Restore token scoping middleware
+    token_scoping_mod.TokenScopingMiddleware._check_resource_team_ownership = original_check
 
 
 @pytest.fixture
@@ -1191,7 +1197,7 @@ class TestResourceEndpoints:
         response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
-        mock_subscribe.assert_called_once_with(user_email=None, token_teams=None)
+        mock_subscribe.assert_called_once_with(user_email='test_user@example.com', token_teams=[])
 
     @patch("mcpgateway.main.resource_service.subscribe_events")
     def test_subscribe_resource_events_sse_format(self, mock_subscribe, test_client, auth_headers):

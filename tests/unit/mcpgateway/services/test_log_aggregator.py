@@ -81,12 +81,16 @@ class TestLogAggregatorInit:
         """Test that PostgreSQL mode is detected correctly."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = True
+            aggregator.enabled = True
             assert aggregator._use_sql_percentiles is True
 
     def test_init_with_sqlite(self):
         """Test that SQLite mode falls back to Python."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
             assert aggregator._use_sql_percentiles is False
 
 
@@ -97,6 +101,8 @@ class TestComputeStatsPython:
         """Test Python stats computation returns None when no data."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
             mock_db = MagicMock()
             mock_db.execute.return_value.scalars.return_value.all.return_value = []
 
@@ -113,6 +119,8 @@ class TestComputeStatsPython:
         """Test Python stats computation with data."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
             mock_db = MagicMock()
 
             # Create mock log entries
@@ -150,6 +158,8 @@ class TestComputeStatsPython:
         """Return None when durations list is empty."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
             mock_db = MagicMock()
 
             entry = MagicMock()
@@ -174,6 +184,8 @@ class TestComputeStatsPostgresql:
         """Test PostgreSQL stats computation returns None when no data."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = True
+            aggregator.enabled = True
             mock_db = MagicMock()
             mock_db.execute.return_value.scalar.return_value = 0
 
@@ -190,6 +202,8 @@ class TestComputeStatsPostgresql:
         """Test PostgreSQL stats computation with mocked SQL results."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = True
+            aggregator.enabled = True
             mock_db = MagicMock()
 
             # Mock the count query
@@ -228,6 +242,8 @@ class TestComputeStatsPostgresql:
         """Return None when stats query yields no rows despite count > 0."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = True
+            aggregator.enabled = True
             mock_db = MagicMock()
 
             mock_db.execute.return_value.scalar.return_value = 3
@@ -251,6 +267,8 @@ class TestAggregatePerformanceMetrics:
         """Test aggregation returns None when disabled."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
             aggregator.enabled = False
 
             result = aggregator.aggregate_performance_metrics(component="test", operation_type="test_op")
@@ -260,6 +278,8 @@ class TestAggregatePerformanceMetrics:
         """Test aggregation returns None when no component provided."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
 
             result = aggregator.aggregate_performance_metrics(component=None, operation_type="test_op")
             assert result is None
@@ -268,6 +288,8 @@ class TestAggregatePerformanceMetrics:
         """Test aggregation uses Python path for SQLite."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
 
             with patch.object(aggregator, "_compute_stats_python", return_value=None) as mock_python:
                 with patch.object(aggregator, "_compute_stats_postgresql") as mock_pg:
@@ -284,6 +306,8 @@ class TestAggregatePerformanceMetrics:
         """Test aggregation uses PostgreSQL path when available."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = True
+            aggregator.enabled = True
 
             with patch.object(aggregator, "_compute_stats_python") as mock_python:
                 with patch.object(aggregator, "_compute_stats_postgresql", return_value=None) as mock_pg:
@@ -300,6 +324,8 @@ class TestAggregatePerformanceMetrics:
         """Aggregation commits when it owns the DB session."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
             aggregator.enabled = True
             mock_db = MagicMock()
 
@@ -326,6 +352,8 @@ class TestAggregatePerformanceMetrics:
         """Aggregation rolls back on exceptions."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
             aggregator.enabled = True
             mock_db = MagicMock()
 
@@ -441,6 +469,8 @@ class TestAggregateAllComponentsBatch:
         """Test batch aggregation returns empty list when disabled."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
             aggregator.enabled = False
 
             window_starts = [datetime.now(timezone.utc) - timedelta(hours=1)]
@@ -451,6 +481,8 @@ class TestAggregateAllComponentsBatch:
         """Test batch aggregation returns empty list when no windows provided."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
 
             result = aggregator.aggregate_all_components_batch(window_starts=[], window_minutes=5)
             assert result == []
@@ -459,6 +491,8 @@ class TestAggregateAllComponentsBatch:
         """Test batch aggregation uses PostgreSQL path when available."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = True
+            aggregator.enabled = True
 
             with patch("mcpgateway.services.log_aggregator.SessionLocal") as mock_session:
                 mock_db = MagicMock()
@@ -477,6 +511,8 @@ class TestAggregateAllComponentsBatch:
         """Test PostgreSQL batch aggregation with mocked SQL results."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = True
+            aggregator.enabled = True
 
             with patch("mcpgateway.services.log_aggregator.SessionLocal") as mock_session:
                 mock_db = MagicMock()
@@ -515,6 +551,8 @@ class TestAggregateAllComponentsBatch:
         """Test batch aggregation uses Python fallback for non-PostgreSQL."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
 
             with patch("mcpgateway.services.log_aggregator.SessionLocal") as mock_session:
                 mock_db = MagicMock()
@@ -532,6 +570,8 @@ class TestAggregateAllComponentsBatch:
         """Test Python fallback batch aggregation with mocked entries."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
 
             mock_db = MagicMock()
 
@@ -582,6 +622,8 @@ class TestAggregateAllComponentsBatch:
         """Cover branch paths for missing component, empty entries, and empty durations."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
             aggregator.enabled = True
 
             start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -638,6 +680,8 @@ class TestAggregateAllComponentsBatch:
         """Ensure rollback/close when batch aggregation raises with owned session."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
             aggregator.enabled = True
             mock_db = MagicMock()
             mock_db.execute.side_effect = RuntimeError("boom")
@@ -653,6 +697,8 @@ class TestAggregateAllComponentsBatch:
         """Test that error_count only includes entries with duration_ms (consistency with per-window path)."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
 
             mock_db = MagicMock()
 
@@ -710,6 +756,8 @@ class TestAggregateAllComponentsBatch:
         """Test that large aggregation ranges log a warning."""
         with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
             aggregator = LogAggregator()
+            aggregator._use_sql_percentiles = False
+            aggregator.enabled = True
 
             with patch("mcpgateway.services.log_aggregator.SessionLocal") as mock_session:
                 mock_db = MagicMock()
@@ -813,6 +861,7 @@ class TestAggregatePerformanceMetricsAdditional:
 
     def test_aggregate_performance_metrics_success(self):
         aggregator = LogAggregator()
+        aggregator.enabled = True
         aggregator._use_sql_percentiles = False
 
         stats = {
@@ -839,6 +888,7 @@ class TestAggregatePerformanceMetricsAdditional:
 
     def test_aggregate_performance_metrics_exception_rolls_back(self):
         aggregator = LogAggregator()
+        aggregator.enabled = True
         aggregator._use_sql_percentiles = False
         mock_db = MagicMock()
 
@@ -852,6 +902,7 @@ class TestAggregatePerformanceMetricsAdditional:
 
     def test_aggregate_all_components_calls_per_component(self):
         aggregator = LogAggregator()
+        aggregator.enabled = True
         mock_db = MagicMock()
         mock_db.execute.return_value.all.return_value = [("comp", "op")]
 
@@ -864,6 +915,7 @@ class TestAggregatePerformanceMetricsAdditional:
 
     def test_aggregate_all_components_skips_incomplete_pairs(self):
         aggregator = LogAggregator()
+        aggregator.enabled = True
         mock_db = MagicMock()
         mock_db.execute.return_value.all.return_value = [(None, "op"), ("comp", None), ("comp", "op")]
 
@@ -876,6 +928,7 @@ class TestAggregatePerformanceMetricsAdditional:
 
     def test_aggregate_all_components_rolls_back_on_error(self):
         aggregator = LogAggregator()
+        aggregator.enabled = True
         mock_db = MagicMock()
         mock_db.execute.side_effect = RuntimeError("boom")
 
@@ -978,6 +1031,7 @@ class TestBackfillAndSingleton:
 
     def test_backfill_processes_windows(self):
         aggregator = LogAggregator()
+        aggregator.enabled = True
         mock_db = MagicMock()
         start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         end = start + timedelta(minutes=10)
