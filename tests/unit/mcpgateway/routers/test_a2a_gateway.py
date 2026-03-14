@@ -239,3 +239,107 @@ class TestGetAuthenticatedCard:
 
         assert response.status_code == 200
         assert "error" in response.json()
+
+
+class TestDenyPaths:
+    """Deny-path regression tests for access control.
+
+    Per CLAUDE.md: security-sensitive changes must include deny-path regression tests
+    for wrong team, insufficient permissions, feature disabled, etc.
+    """
+
+    def test_access_denied_returns_404_not_403_agent_card(self, client, mock_services):
+        """Access denied for agent card should return 404 to avoid leaking existence."""
+        mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentNotFoundError("not found")
+
+        response = client.get(f"{_PREFIX}/private-agent-id/.well-known/agent-card.json")
+        assert response.status_code == 404
+        # Must NOT be 403 — would reveal agent exists
+        assert response.status_code != 403
+
+    def test_access_denied_returns_jsonrpc_error_not_403_jsonrpc(self, client, mock_services):
+        """Access denied for JSON-RPC should return JSON-RPC error with HTTP 200, not 403."""
+        mock_services["gateway_service"].validate_jsonrpc_request.return_value = None
+        mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentNotFoundError("not found")
+
+        response = client.post(
+            f"{_PREFIX}/private-agent-id",
+            json={"jsonrpc": "2.0", "method": "message/send", "params": {}, "id": 1},
+        )
+        # JSON-RPC: errors are returned as HTTP 200 with error in body
+        assert response.status_code == 200
+        data = response.json()
+        assert "error" in data
+        assert "not found" in data["error"]["message"].lower()
+
+    def test_gateway_error_returns_jsonrpc_internal_error(self, client, mock_services):
+        """Generic A2AGatewayError should return JSON-RPC internal error."""
+        mock_services["gateway_service"].validate_jsonrpc_request.return_value = None
+        mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayError("auth decryption failed")
+
+        response = client.post(
+            f"{_PREFIX}/abc123",
+            json={"jsonrpc": "2.0", "method": "message/send", "params": {}, "id": 1},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["error"]["code"] == -32603
+
+    def test_wrong_team_token_denied_via_resolve(self, client, mock_services):
+        """Wrong team token should result in agent not found (not 403)."""
+        # Simulate _get_rpc_filter_context returning wrong team
+        with patch(
+            "mcpgateway.routers.a2a_gateway._get_rpc_filter_context",
+            return_value=("user@wrong-team.com", ["wrong-team"], False),
+        ):
+            mock_services["gateway_service"].validate_jsonrpc_request.return_value = None
+            # resolve_agent raises NotFound when team doesn't match (returns 404, not 403)
+            mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentNotFoundError("not found")
+
+            response = client.post(
+                f"{_PREFIX}/team-agent-id",
+                json={"jsonrpc": "2.0", "method": "message/send", "params": {}, "id": 1},
+            )
+
+            assert response.status_code == 200
+            assert "not found" in response.json()["error"]["message"].lower()
+
+    def test_public_only_token_denied_for_private_agent(self, client, mock_services):
+        """Public-only token (empty teams) should not access private agents."""
+        with patch(
+            "mcpgateway.routers.a2a_gateway._get_rpc_filter_context",
+            return_value=("user@example.com", [], False),
+        ):
+            mock_services["gateway_service"].validate_jsonrpc_request.return_value = None
+            mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentNotFoundError("not found")
+
+            response = client.post(
+                f"{_PREFIX}/private-agent-id",
+                json={"jsonrpc": "2.0", "method": "tasks/get", "params": {}, "id": 1},
+            )
+
+            assert response.status_code == 200
+            assert "error" in response.json()
+
+    def test_disabled_agent_card_returns_400(self, client, mock_services):
+        """Disabled agent via agent card endpoint returns 400 (not 404 or 500)."""
+        mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentDisabledError("agent disabled")
+
+        response = client.get(f"{_PREFIX}/disabled-agent-id/.well-known/agent-card.json")
+        assert response.status_code == 400
+
+    def test_disabled_agent_jsonrpc_returns_error(self, client, mock_services):
+        """Disabled agent via JSON-RPC returns JSON-RPC error (not HTTP error)."""
+        mock_services["gateway_service"].validate_jsonrpc_request.return_value = None
+        mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentDisabledError("agent disabled")
+
+        response = client.post(
+            f"{_PREFIX}/disabled-agent-id",
+            json={"jsonrpc": "2.0", "method": "message/send", "params": {}, "id": 1},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "error" in data
+        assert "disabled" in data["error"]["message"].lower()

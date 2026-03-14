@@ -71,7 +71,8 @@ def get_db():
 def _get_rpc_filter_context(request: Request, user: Any) -> tuple:
     """Extract user_email, token_teams, and is_admin for filtering.
 
-    Replicates the pattern from mcpgateway.main._get_rpc_filter_context.
+    Mirrors the logic in mcpgateway.main._get_rpc_filter_context, including
+    the security-critical empty-teams-disables-admin check.
 
     Args:
         request: FastAPI request object.
@@ -80,6 +81,7 @@ def _get_rpc_filter_context(request: Request, user: Any) -> tuple:
     Returns:
         Tuple of (user_email, token_teams, is_admin).
     """
+    # Extract user email
     if hasattr(user, "email"):
         user_email = getattr(user, "email", None)
     elif isinstance(user, dict):
@@ -88,25 +90,35 @@ def _get_rpc_filter_context(request: Request, user: Any) -> tuple:
         user_email = str(user) if user else None
 
     # Get normalized teams from verified token
+    # First check request.state.token_teams (already normalized by auth.py)
     _not_set = object()
     token_teams = getattr(request.state, "token_teams", _not_set)
     if token_teams is _not_set or (token_teams is not None and not isinstance(token_teams, list)):
-        # Fallback: try to get from JWT payload
+        # Fallback: use cached verified payload and call normalize_token_teams
         from mcpgateway.auth import normalize_token_teams
 
         cached = getattr(request.state, "_jwt_verified_payload", None)
-        if cached:
+        if cached and isinstance(cached, tuple) and len(cached) == 2:
             _, payload = cached
-            token_teams = normalize_token_teams(payload.get("teams"))
+            if payload:
+                token_teams = normalize_token_teams(payload)
+            else:
+                token_teams = []
         else:
             token_teams = []  # No token info = public-only
 
-    # Check admin from token payload
+    # Check if user is admin - MUST come from token, not DB user
     is_admin = False
     cached = getattr(request.state, "_jwt_verified_payload", None)
-    if cached:
+    if cached and isinstance(cached, tuple) and len(cached) == 2:
         _, payload = cached
-        is_admin = bool(payload.get("is_admin", False))
+        if payload:
+            is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
+
+    # If token has empty teams array (public-only token), admin bypass is disabled
+    # This allows admins to create properly scoped tokens for restricted access
+    if token_teams is not None and len(token_teams) == 0:
+        is_admin = False
 
     return user_email, token_teams, is_admin
 
