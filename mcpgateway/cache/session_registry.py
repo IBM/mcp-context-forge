@@ -2300,6 +2300,12 @@ class SessionRegistry(SessionBackend):
                 headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
                 if settings.mcpgateway_session_affinity_enabled:
                     headers["x-mcp-session-id"] = transport.session_id
+                # Forward passthrough headers captured at SSE connection time (see #3640).
+                # This ensures X-Upstream-Authorization and other client passthrough headers
+                # reach the /rpc endpoint, which then forwards them to upstream MCP servers.
+                passthrough = user.get("_passthrough_headers", {})
+                if passthrough:
+                    headers.update(passthrough)
                 # Use loopback for internal RPC call (consistent with other self-call sites
                 # in mcp_session_pool.py and streamablehttp_transport.py). This avoids
                 # failures when the client-facing URL is not reachable from the server
