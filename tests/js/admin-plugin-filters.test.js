@@ -191,6 +191,21 @@ function buildPluginsDOM() {
     card2.appendChild(viewBtn2);
     grid.appendChild(card2);
 
+    const card3 = doc.createElement("div");
+    card3.className = "plugin-card";
+    card3.dataset.name = "http-header-filter";
+    card3.dataset.description = "filter sensitive http headers";
+    card3.dataset.author = "ibm";
+    card3.dataset.mode = "enforce_ignore_error";
+    card3.dataset.status = "enabled";
+    card3.dataset.hooks = "request_hook,response_hook";
+    card3.dataset.tags = "security,headers";
+    const viewBtn3 = doc.createElement("button");
+    viewBtn3.dataset.showPlugin = "http-header-filter";
+    viewBtn3.textContent = "View Details";
+    card3.appendChild(viewBtn3);
+    grid.appendChild(card3);
+
     partial.append(
         hookBadgeAll,
         hookBadgeRequest,
@@ -220,6 +235,7 @@ function buildPluginsDOM() {
         authorBadgeIbm,
         card1,
         card2,
+        card3,
         viewBtn1,
         viewBtn2,
         modal,
@@ -269,19 +285,20 @@ describe("A. initializePluginFunctions() sets up listeners", () => {
 
 describe("B. filterPlugins search filtering", () => {
     test("searching for 'header' hides card that does not match", () => {
-        const { searchInput, card1, card2 } = buildPluginsDOM();
+        const { searchInput, card1, card2, card3 } = buildPluginsDOM();
         win.initializePluginFunctions();
 
         searchInput.value = "header";
         searchInput.dispatchEvent(new win.Event("input", { bubbles: true }));
 
-        // card1 name/desc contains "header", card2 does not
+        // card1 and card3 name/desc contain "header", card2 does not
         expect(card1.style.display).not.toBe("none");
         expect(card2.style.display).toBe("none");
+        expect(card3.style.display).not.toBe("none");
     });
 
     test("clearing search shows all cards", () => {
-        const { searchInput, card1, card2 } = buildPluginsDOM();
+        const { searchInput, card1, card2, card3 } = buildPluginsDOM();
         win.initializePluginFunctions();
 
         // First filter
@@ -294,10 +311,11 @@ describe("B. filterPlugins search filtering", () => {
         searchInput.dispatchEvent(new win.Event("input", { bubbles: true }));
         expect(card1.style.display).toBe("block");
         expect(card2.style.display).toBe("block");
+        expect(card3.style.display).toBe("block");
     });
 
     test("mode filter hides cards with different mode", () => {
-        const { modeFilter, card1, card2 } = buildPluginsDOM();
+        const { modeFilter, card1, card2, card3 } = buildPluginsDOM();
         win.initializePluginFunctions();
 
         // Add the option so the select value can actually be set
@@ -309,9 +327,28 @@ describe("B. filterPlugins search filtering", () => {
         modeFilter.dispatchEvent(new win.Event("change", { bubbles: true }));
 
         // card1 mode=enforce, card2 mode=permissive
-        expect(card1.style.display).not.toBe("none");
+        expect(card1.style.display).toBe("block");
         expect(card2.style.display).toBe("none");
+        expect(card3.style.display).toBe("none");
     });
+    test("mode filter select enforce_ignore_error card", () => {
+        const { modeFilter, card1, card2, card3 } = buildPluginsDOM();
+        win.initializePluginFunctions();
+
+        // Add the option so the select value can actually be set
+        const enforceOpt = doc.createElement("option");
+        enforceOpt.value = "enforce_ignore_error";
+        modeFilter.appendChild(enforceOpt);
+
+        modeFilter.value = "enforce_ignore_error";
+        modeFilter.dispatchEvent(new win.Event("change", { bubbles: true }));
+
+        // card1 mode=enforce, card2 mode=permissive. card3 mode=enforce_ignore_error
+        expect(card1.style.display).toBe("none");
+        expect(card2.style.display).toBe("none");
+        expect(card3.style.display).toBe("block");
+    });
+
 });
 
 // ---------------------------------------------------------------------------
