@@ -789,13 +789,14 @@ class TestGatewayServiceExtended:
         mock_gateway.visibility = "team"
         mock_gateway.resources = []  # Empty resources list
 
-        # Mock resource from MCP server
+        # Mock resource from MCP server (no per-resource visibility override)
         mock_resource = MagicMock()
         mock_resource.uri = "file:///test.txt"
         mock_resource.name = "test.txt"
         mock_resource.description = "A test resource"
         mock_resource.mime_type = "text/plain"
         mock_resource.uri_template = None
+        mock_resource.visibility = None  # no override; gateway visibility ("team") should win
 
         resources = [mock_resource]
         context = "test"
@@ -840,13 +841,14 @@ class TestGatewayServiceExtended:
         mock_gateway.visibility = "public"
         mock_gateway.resources = [existing_resource]
 
-        # Mock updated resource from MCP server
+        # Mock updated resource from MCP server (no per-resource visibility override)
         mock_resource = MagicMock()
         mock_resource.uri = "file:///test.txt"
         mock_resource.name = "test.txt"
         mock_resource.description = "Updated description"
         mock_resource.mime_type = "application/json"
         mock_resource.uri_template = "template_content"
+        mock_resource.visibility = None  # no override — gateway visibility should win
 
         resources = [mock_resource]
         context = "update"
@@ -857,11 +859,78 @@ class TestGatewayServiceExtended:
         # Should return empty list (no new resources)
         assert len(result) == 0
 
-        # Existing resource should be updated
+        # Existing resource should be updated; gateway visibility wins when resource has no override
         assert existing_resource.description == "Updated description"
         assert existing_resource.mime_type == "application/json"
         assert existing_resource.uri_template == "template_content"
         assert existing_resource.visibility == "public"
+
+    @pytest.mark.asyncio
+    async def test_update_or_create_resources_preserves_resource_visibility_on_update(self):
+        """Resource-specific visibility must not be overwritten by gateway visibility on refresh."""
+        service = GatewayService()
+
+        mock_db = MagicMock()
+
+        existing_resource = MagicMock()
+        existing_resource.uri = "file:///test.txt"
+        existing_resource.name = "test.txt"
+        existing_resource.description = "Old description"
+        existing_resource.mime_type = "text/plain"
+        existing_resource.uri_template = None
+        existing_resource.visibility = "team"
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [existing_resource]
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "test-gateway-id"
+        mock_gateway.visibility = "public"
+        mock_gateway.resources = [existing_resource]
+
+        # Resource advertises its own visibility override
+        mock_resource = MagicMock()
+        mock_resource.uri = "file:///test.txt"
+        mock_resource.name = "test.txt"
+        mock_resource.description = "Updated description"
+        mock_resource.mime_type = "text/plain"
+        mock_resource.uri_template = None
+        mock_resource.visibility = "team"
+
+        result = service._update_or_create_resources(mock_db, [mock_resource], mock_gateway, "update", update_visibility=True)
+
+        assert len(result) == 0
+        # Resource-specific visibility must be preserved, not overwritten by gateway visibility
+        assert existing_resource.visibility == "team"
+
+    @pytest.mark.asyncio
+    async def test_update_or_create_resources_preserves_resource_visibility_on_create(self):
+        """New resources created via _update_or_create_resources must use per-resource visibility when set."""
+        service = GatewayService()
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []  # no existing resources
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "test-gateway-id"
+        mock_gateway.visibility = "public"
+        mock_gateway.resources = []
+
+        mock_resource = MagicMock()
+        mock_resource.uri = "file:///private.txt"
+        mock_resource.name = "private.txt"
+        mock_resource.description = "A team-scoped resource"
+        mock_resource.mime_type = "text/plain"
+        mock_resource.uri_template = None
+        mock_resource.visibility = "team"
+
+        result = service._update_or_create_resources(mock_db, [mock_resource], mock_gateway, "update")
+
+        assert len(result) == 1
+        assert result[0].visibility == "team"
 
     def test_build_prompt_argument_schema_empty(self):
         """Test _build_prompt_argument_schema returns base schema when no arguments."""
@@ -1286,6 +1355,7 @@ class TestGatewayServiceExtended:
         mock_resource.description = "Resource for testing metadata"
         mock_resource.mime_type = "application/json"
         mock_resource.uri_template = None
+        mock_resource.visibility = None  # no override; gateway visibility ("team") should win
 
         mock_prompt = MagicMock()
         mock_prompt.name = "metadata_prompt"
@@ -1739,6 +1809,7 @@ class TestGatewayServiceExtended:
         res_from_server.uri = "file:///test"
         res_from_server.name = "test"
         res_from_server.description = "Test Res"
+        res_from_server.visibility = None  # no per-resource override; gateway visibility should win
 
         # Mock prompts
         existing_prompt = MagicMock()
