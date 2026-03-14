@@ -20,6 +20,9 @@ tests/
 ├── client/           # MCP client testing
 ├── async/            # Async operation tests
 ├── migration/        # Database migration tests
+├── pact/             # Pact consumer-driven contract tests
+│   ├── consumer/     # Gateway → MCP server contracts
+│   └── provider/     # Client → Gateway API contracts
 ├── differential/     # Differential testing
 ├── manual/           # Manual test scenarios
 ├── helpers/           # Test utilities (query_counter.py, conftest.py)
@@ -38,6 +41,12 @@ make htmlcov                      # Coverage HTML → docs/docs/coverage/index.h
 make coverage                     # Full coverage (md + HTML + XML + badge + annotated)
 make smoketest                    # Container build + simple E2E flow
 make test-mcp-cli                 # MCP protocol via mcp-cli (needs live gateway)
+
+# Contract testing
+make pact-consumer                # Consumer contract tests (generates pact files)
+make pact-provider                # Provider verification against contracts
+make pact-all                     # Run both consumer and provider
+make pact-clean                   # Remove generated pact files
 
 # Selective runs
 pytest -k "fragment"              # By name substring
@@ -70,6 +79,7 @@ Use markers to categorize tests:
 - `api` - API endpoint tests
 - `smoke` - Smoke tests
 - `e2e` - End-to-end tests
+- `pact` - Pact consumer-driven contract tests
 
 Filter with `-m`: `pytest -m "not slow"`, `pytest -m "api and not e2e"`
 
