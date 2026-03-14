@@ -560,16 +560,19 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                 # check if user_context has team_id
                 team_id = user_context.get("team_id", None)
 
-            # For multi-team session tokens (team_id is None), derive team from context
+            # When team_id is still unknown, try to derive it from the resource
+            # or request payload.  This applies to both session and API tokens.
             check_any_team = False
-            if not team_id and user_context.get("token_use") == "session":
-                db_session = kwargs.get("db") or user_context.get("db")
-                if db_session:
-                    # Tier 1: Try to derive team from existing resource
-                    team_id = _derive_team_from_resource(kwargs, db_session)
-                    # Tier 3: Try to derive team from create payload / form
-                    if team_id is None:
-                        team_id = await _derive_team_from_payload(kwargs)
+            if not team_id:
+                _token_use = user_context.get("token_use")
+                if _token_use in ("session", "api"):
+                    db_session = kwargs.get("db") or user_context.get("db")
+                    if db_session:
+                        # Tier 1: Try to derive team from existing resource
+                        team_id = _derive_team_from_resource(kwargs, db_session)
+                        # Tier 3: Try to derive team from create payload / form
+                        if team_id is None:
+                            team_id = await _derive_team_from_payload(kwargs)
                 # If still no team_id, check permission across all of the user's teams.
                 # This separates authorization ("does this user have the permission?")
                 # from resource scoping ("which team owns this resource?"). Team
@@ -866,16 +869,19 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                 # check if user_context has team_id
                 team_id = user_context.get("team_id", None)
 
-            # For multi-team session tokens (team_id is None), derive team from context
+            # When team_id is still unknown, try to derive it from the resource
+            # or request payload.  This applies to both session and API tokens.
             check_any_team = False
-            if not team_id and user_context.get("token_use") == "session":
-                db_session = kwargs.get("db") or user_context.get("db")
-                if db_session:
-                    # Tier 1: Try to derive team from existing resource
-                    team_id = _derive_team_from_resource(kwargs, db_session)
-                    # Tier 3: Try to derive team from create payload / form
-                    if team_id is None:
-                        team_id = await _derive_team_from_payload(kwargs)
+            if not team_id:
+                _token_use = user_context.get("token_use")
+                if _token_use in ("session", "api"):
+                    db_session = kwargs.get("db") or user_context.get("db")
+                    if db_session:
+                        # Tier 1: Try to derive team from existing resource
+                        team_id = _derive_team_from_resource(kwargs, db_session)
+                        # Tier 3: Try to derive team from create payload / form
+                        if team_id is None:
+                            team_id = await _derive_team_from_payload(kwargs)
                 # If still no team_id, check permission across all of the user's teams.
                 # Authorization ("does this user have the permission?") is separate
                 # from resource scoping ("which team owns this resource?").
