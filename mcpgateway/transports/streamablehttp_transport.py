@@ -59,6 +59,7 @@ from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN, HTTP_404
 from starlette.types import Receive, Scope, Send
 
 # First-Party
+from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
@@ -73,6 +74,7 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.orjson_response import ORJSONResponse
+from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials
 
 # Initialize logging service first
@@ -774,12 +776,17 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         # Prepare headers with gateway auth
         headers = build_gateway_auth_headers(gateway)
 
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
+        if request_headers:
+            with SessionLocal() as db:
+                passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            headers = compute_passthrough_headers_cached(
+                request_headers,
+                headers,
+                passthrough_allowed,
+                gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
+                gateway_passthrough_headers=gateway.passthrough_headers if gateway.passthrough_headers else None,
+            )
 
         # Use MCP SDK to connect and list tools
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
@@ -817,12 +824,17 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
         # Prepare headers with gateway auth
         headers = build_gateway_auth_headers(gateway)
 
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
+        if request_headers:
+            with SessionLocal() as db:
+                passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            headers = compute_passthrough_headers_cached(
+                request_headers,
+                headers,
+                passthrough_allowed,
+                gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
+                gateway_passthrough_headers=gateway.passthrough_headers if gateway.passthrough_headers else None,
+            )
 
         logger.info("Proxying resources/list to gateway %s at %s", gateway.id, gateway.url)
         if meta:
@@ -874,12 +886,17 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         if gw_id:
             headers[GATEWAY_ID_HEADER] = gw_id
 
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
+        if request_headers:
+            with SessionLocal() as db:
+                passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            headers = compute_passthrough_headers_cached(
+                request_headers,
+                headers,
+                passthrough_allowed,
+                gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
+                gateway_passthrough_headers=gateway.passthrough_headers if gateway.passthrough_headers else None,
+            )
 
         logger.info("Proxying resources/read for %s to gateway %s at %s", resource_uri, gateway.id, gateway.url)
         if meta:
