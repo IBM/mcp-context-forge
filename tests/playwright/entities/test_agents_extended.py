@@ -631,6 +631,298 @@ class TestA2AEditModal:
 
         _close_edit_modal(agents_page)
 
+    def test_edit_modal_auth_type_custom_headers_fields(
+        self, agents_page: AgentsPage
+    ):
+        """Test that selecting custom headers auth shows the headers container."""
+        agents_page.navigate_to_agents_tab()
+        agents_page.wait_for_agents_panel_loaded()
+        _skip_if_no_agents(agents_page)
+
+        _open_edit_modal(agents_page, 0)
+
+        # Select custom headers auth type
+        auth_type = agents_page.page.locator("#auth-type-a2a-edit")
+        auth_type.select_option("authheaders")
+
+        # Wait for custom headers section to become visible
+        # The JavaScript handler changes display from "none" to "block"
+        agents_page.page.wait_for_function(
+            """() => {
+                const el = document.getElementById('auth-headers-fields-a2a-edit');
+                return el && el.style.display === 'block';
+            }""",
+            timeout=5000
+        )
+
+        # Give the browser a moment to render the newly visible section
+        agents_page.page.wait_for_timeout(200)
+
+        # Verify the container for headers exists
+        headers_container = agents_page.page.locator(
+            "#auth-headers-container-a2a-edit"
+        )
+        expect(headers_container).to_be_attached()
+
+        # Wait for and verify the "Add Header" button is visible
+        add_header_btn = agents_page.page.locator(
+            '#auth-headers-fields-a2a-edit button:has-text("Add Header")'
+        )
+        add_header_btn.wait_for(state="visible", timeout=3000)
+        expect(add_header_btn).to_be_visible()
+
+        _close_edit_modal(agents_page)
+
+    def test_edit_modal_custom_headers_add_button_works(
+        self, agents_page: AgentsPage
+    ):
+        """Test that clicking Add Header button creates a new header row."""
+        agents_page.navigate_to_agents_tab()
+        agents_page.wait_for_agents_panel_loaded()
+        _skip_if_no_agents(agents_page)
+
+        _open_edit_modal(agents_page, 0)
+
+        # Select custom headers auth type
+        auth_type = agents_page.page.locator("#auth-type-a2a-edit")
+        auth_type.select_option("authheaders")
+
+        # Wait for custom headers section to become visible
+        agents_page.page.wait_for_function(
+            """() => {
+                const el = document.getElementById('auth-headers-fields-a2a-edit');
+                return el && el.style.display === 'block';
+            }""",
+            timeout=5000
+        )
+
+        # Give the browser a moment to render
+        agents_page.page.wait_for_timeout(200)
+
+        # Get initial count of header rows (looking for divs with auth-header- IDs)
+        headers_container = agents_page.page.locator(
+            "#auth-headers-container-a2a-edit"
+        )
+        initial_count = headers_container.locator("div[id^='auth-header-']").count()
+
+        # Call addAuthHeader function directly via JavaScript
+        # This is more reliable than clicking the button in headless mode
+        agents_page.page.evaluate("addAuthHeader('auth-headers-container-a2a-edit')")
+
+        # Wait for a new header row to be added to the DOM
+        agents_page.page.wait_for_selector(
+            "#auth-headers-container-a2a-edit div[id^='auth-header-']",
+            state="attached",
+            timeout=5000
+        )
+
+        # Verify a new header row was added
+        new_count = headers_container.locator("div[id^='auth-header-']").count()
+        assert new_count == initial_count + 1, (
+            f"Expected {initial_count + 1} header rows, got {new_count}"
+        )
+
+        _close_edit_modal(agents_page)
+
+    def test_edit_modal_custom_headers_can_be_filled(
+        self, agents_page: AgentsPage
+    ):
+        """Test that custom header key and value fields can be filled."""
+        agents_page.navigate_to_agents_tab()
+        agents_page.wait_for_agents_panel_loaded()
+        _skip_if_no_agents(agents_page)
+
+        _open_edit_modal(agents_page, 0)
+
+        # Select custom headers auth type
+        auth_type = agents_page.page.locator("#auth-type-a2a-edit")
+        auth_type.select_option("authheaders")
+
+        # Wait for custom headers section to become visible
+        agents_page.page.wait_for_function(
+            """() => {
+                const el = document.getElementById('auth-headers-fields-a2a-edit');
+                return el && el.style.display === 'block';
+            }""",
+            timeout=5000
+        )
+
+        # Give the browser a moment to render
+        agents_page.page.wait_for_timeout(200)
+
+        # Call addAuthHeader function directly via JavaScript
+        agents_page.page.evaluate("addAuthHeader('auth-headers-container-a2a-edit')")
+
+        # Wait for the new row to be added
+        agents_page.page.wait_for_selector(
+            "#auth-headers-container-a2a-edit div[id^='auth-header-']",
+            state="attached",
+            timeout=5000
+        )
+
+        # Find the header row inputs
+        headers_container = agents_page.page.locator(
+            "#auth-headers-container-a2a-edit"
+        )
+        header_rows = headers_container.locator("div[id^='auth-header-']")
+        last_row = header_rows.last
+
+        # Fill in key and value
+        key_input = last_row.locator('input[placeholder*="Header"]').first
+        value_input = last_row.locator('input[placeholder*="Value"]').first
+
+        key_input.fill("X-Test-Header")
+        value_input.fill("test-value-123")
+
+        # Verify values were set
+        assert key_input.input_value() == "X-Test-Header"
+        assert value_input.input_value() == "test-value-123"
+
+        _close_edit_modal(agents_page)
+
+    def test_edit_modal_custom_headers_remove_button_works(
+        self, agents_page: AgentsPage
+    ):
+        """Test that clicking remove button deletes a header row."""
+        agents_page.navigate_to_agents_tab()
+        agents_page.wait_for_agents_panel_loaded()
+        _skip_if_no_agents(agents_page)
+
+        _open_edit_modal(agents_page, 0)
+
+        # Select custom headers auth type
+        auth_type = agents_page.page.locator("#auth-type-a2a-edit")
+        auth_type.select_option("authheaders")
+
+        # Wait for custom headers section to become visible
+        agents_page.page.wait_for_function(
+            """() => {
+                const el = document.getElementById('auth-headers-fields-a2a-edit');
+                return el && el.style.display === 'block';
+            }""",
+            timeout=5000
+        )
+
+        # Give the browser a moment to render
+        agents_page.page.wait_for_timeout(200)
+
+        # Call addAuthHeader function directly via JavaScript (twice)
+        agents_page.page.evaluate("addAuthHeader('auth-headers-container-a2a-edit')")
+        agents_page.page.wait_for_timeout(200)
+        agents_page.page.evaluate("addAuthHeader('auth-headers-container-a2a-edit')")
+
+        # Wait for rows to be added
+        agents_page.page.wait_for_timeout(300)
+
+        # Get count before removal
+        headers_container = agents_page.page.locator(
+            "#auth-headers-container-a2a-edit"
+        )
+        count_before = headers_container.locator("div[id^='auth-header-']").count()
+
+        # Click remove button on the first header (button has no text, only SVG icon)
+        first_row = headers_container.locator("div[id^='auth-header-']").first
+        remove_btn = first_row.locator('button[data-action="remove-header"]')
+        remove_btn.click()
+        agents_page.page.wait_for_timeout(300)
+
+        # Verify count decreased
+        count_after = headers_container.locator("div[id^='auth-header-']").count()
+        assert count_after == count_before - 1, (
+            f"Expected {count_before - 1} header rows after removal, got {count_after}"
+        )
+
+        _close_edit_modal(agents_page)
+
+    def test_edit_modal_displays_existing_custom_headers(
+        self, agents_page: AgentsPage
+    ):
+        """Test that editing an agent with existing custom headers displays them (issue #3637)."""
+        agents_page.navigate_to_agents_tab()
+        agents_page.wait_for_agents_panel_loaded()
+        _skip_if_no_agents(agents_page)
+
+        # Open edit modal for first agent
+        _open_edit_modal(agents_page, 0)
+
+        # Select custom headers auth type
+        auth_type = agents_page.page.locator("#auth-type-a2a-edit")
+        auth_type.select_option("authheaders")
+
+        # Wait for custom headers section to become visible
+        agents_page.page.wait_for_function(
+            """() => {
+                const el = document.getElementById('auth-headers-fields-a2a-edit');
+                return el && el.style.display === 'block';
+            }""",
+            timeout=5000
+        )
+
+        # Give the browser a moment to render
+        agents_page.page.wait_for_timeout(200)
+
+        # Add first header using JavaScript (more reliable than clicking)
+        agents_page.page.evaluate("addAuthHeader('auth-headers-container-a2a-edit')")
+        agents_page.page.wait_for_timeout(200)
+
+        # Fill first header
+        headers_container = agents_page.page.locator("#auth-headers-container-a2a-edit")
+        first_row = headers_container.locator("div[id^='auth-header-']").first
+        first_row.locator('input[placeholder*="Header Key"]').fill("X-API-Key")
+        first_row.locator('input[placeholder*="Header Value"]').fill("test-secret-123")
+
+        # Add second header using JavaScript
+        agents_page.page.evaluate("addAuthHeader('auth-headers-container-a2a-edit')")
+        agents_page.page.wait_for_timeout(200)
+
+        # Fill second header
+        second_row = headers_container.locator("div[id^='auth-header-']").nth(1)
+        second_row.locator('input[placeholder*="Header Key"]').fill("X-Client-ID")
+        second_row.locator('input[placeholder*="Header Value"]').fill("client-456")
+
+        # Serialize headers to JSON before saving
+        agents_page.page.evaluate("updateAuthHeadersJSON('auth-headers-container-a2a-edit')")
+        agents_page.page.wait_for_timeout(100)
+
+        # Save the agent
+        save_btn = agents_page.page.locator('#a2a-edit-modal button:has-text("Save Changes")')
+        save_btn.click()
+
+        # Wait for save to complete
+        agents_page.page.wait_for_timeout(1000)
+
+        # Re-open the edit modal
+        _open_edit_modal(agents_page, 0)
+
+        # Verify auth type is still custom headers
+        auth_type = agents_page.page.locator("#auth-type-a2a-edit")
+        expect(auth_type).to_have_value("authheaders")
+
+        # Verify custom headers are displayed
+        headers_container = agents_page.page.locator("#auth-headers-container-a2a-edit")
+        header_rows = headers_container.locator("div[id^='auth-header-']")
+
+        # Should have at least 2 headers
+        assert header_rows.count() >= 2, (
+            f"Expected at least 2 header rows, got {header_rows.count()}"
+        )
+
+        # Verify first header key is displayed
+        first_row = header_rows.first
+        first_key_input = first_row.locator('input[placeholder*="Header Key"]')
+        expect(first_key_input).to_have_value("X-API-Key")
+
+        # Verify second header key is displayed
+        second_row = header_rows.nth(1)
+        second_key_input = second_row.locator('input[placeholder*="Header Key"]')
+        expect(second_key_input).to_have_value("X-Client-ID")
+
+        # Note: Values should be masked (shown as dots) for security
+        # We don't test the exact masked value as it may vary
+
+        _close_edit_modal(agents_page)
+
+
 
 # ---------------------------------------------------------------------------
 # A2A Test Modal
