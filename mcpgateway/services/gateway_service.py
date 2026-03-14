@@ -4224,7 +4224,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_resource.mime_type = resource.mime_type
                         existing_resource.uri_template = resource.uri_template
                         if update_visibility:
-                            existing_resource.visibility = gateway.visibility
+                            existing_resource.visibility = getattr(resource, "visibility", None) or gateway.visibility
                         logger.debug(f"Updated existing resource: {resource.uri}")
                 else:
                     # Create new resource if it doesn't exist
@@ -4237,7 +4237,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway_id=gateway.id,
                         created_by="system",
                         created_via=created_via,
-                        visibility=gateway.visibility,
+                        visibility=getattr(resource, "visibility", None) or gateway.visibility,
                     )
                     resources_to_add.append(db_resource)
                     logger.debug(f"Created new resource: {resource.uri}")
