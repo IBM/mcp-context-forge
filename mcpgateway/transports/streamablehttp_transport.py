@@ -994,13 +994,13 @@ async def call_tool(name: str, arguments: dict) -> Union[
         if not _check_scoped_permission(user_context, "tools.execute"):
             raise PermissionError(_ACCESS_DENIED_MSG)
         # Layer 2: RBAC check
-        # Session tokens have no explicit team_id; check across all team-scoped roles.
-        # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
-        _is_session_token = user_context.get("token_use") == "session"
+        # The MCP transport has no route-level team_id, so we must check across
+        # all team-scoped roles for both session and API tokens.  Layer 1 (token
+        # scope cap above) already restricts visibility by team.
         has_execute_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="tools.execute",
-            check_any_team=_is_session_token,
+            check_any_team=True,
         )
         if not has_execute_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
@@ -2062,9 +2062,11 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
         if not _check_scoped_permission(user_context, "servers.use"):
             raise PermissionError(_ACCESS_DENIED_MSG)
         # Layer 2: RBAC check
+        # No route-level team_id in MCP transport; check all team-scoped roles.
         has_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="servers.use",
+            check_any_team=True,
         )
         if not has_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
@@ -2361,11 +2363,11 @@ class SessionManagerWrapper:
         # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
         user_context = user_context_var.get()
         if match and _should_enforce_streamable_rbac(user_context):
-            _is_session = user_context.get("token_use") == "session" if user_context else False
+            # No route-level team_id in MCP transport; check all team-scoped roles.
             has_server_access = await _check_streamable_permission(
                 user_context=user_context,
                 permission="servers.use",
-                check_any_team=_is_session,
+                check_any_team=True,
             )
             if not has_server_access:
                 response = ORJSONResponse(
