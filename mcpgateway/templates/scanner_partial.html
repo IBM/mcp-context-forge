@@ -1,0 +1,413 @@
+<!-- htmlhint doctype-first:false -->
+<!-- Security Scanner Dashboard — ContextForge Admin UI -->
+<!-- Location: mcpgateway/templates/scanner_partial.html -->
+<div
+  x-data="scannerDashboard()"
+  x-init="init()"
+  class="space-y-6"
+>
+  <!-- ─── Header Row ─── -->
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100">Security Scanner</h2>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+        View Bandit and Semgrep scan results from the latest pipeline scan.
+      </p>
+    </div>
+  </div>
+
+  <!-- ─── Error Toast ─── -->
+  <div
+    x-show="errorMsg"
+    x-transition
+    class="rounded-lg border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-4 py-3 text-sm"
+    x-text="errorMsg"
+  ></div>
+
+  <!-- ─── Dashboard (shown when scan data exists) ─── -->
+  <template x-if="scanData">
+    <div class="space-y-6">
+
+      <!-- Scan info bar -->
+      <div class="flex flex-wrap items-center gap-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-5 py-3 text-sm text-gray-600 dark:text-gray-400">
+        <span><strong class="text-gray-900 dark:text-gray-100">Source:</strong> <span x-text="scanData.source || '—'"></span></span>
+        <span><strong class="text-gray-900 dark:text-gray-100">Generated:</strong> <span x-text="formatDate(scanData.generated_at)"></span></span>
+        <template x-if="scanData.languages && scanData.languages.length">
+          <span><strong class="text-gray-900 dark:text-gray-100">Languages:</strong> <span x-text="scanData.languages.join(', ')"></span></span>
+        </template>
+        <template x-if="scanData.blocked">
+          <span class="inline-flex items-center gap-1 text-red-600 dark:text-red-400 font-semibold">
+            🚫 Policy Blocked
+          </span>
+        </template>
+        <button @click="resetDashboard()" class="ml-auto rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium px-3 py-1.5 transition-colors">
+          ✕ Clear
+        </button>
+      </div>
+
+      <!-- ─── Stats Cards ─── -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <!-- Total -->
+        <div class="scanner-stat-card rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 relative overflow-hidden">
+          <div class="absolute top-0 left-0 right-0 h-1 bg-indigo-500"></div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Total Issues</div>
+          <div class="text-3xl font-bold text-indigo-600 dark:text-indigo-400 font-mono" x-text="scanData.summary.total_issues"></div>
+        </div>
+        <!-- ERROR -->
+        <div class="scanner-stat-card rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 relative overflow-hidden">
+          <div class="absolute top-0 left-0 right-0 h-1 bg-red-500"></div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Error</div>
+          <div class="text-3xl font-bold text-red-500 font-mono" x-text="scanData.summary.ERROR"></div>
+        </div>
+        <!-- WARNING -->
+        <div class="scanner-stat-card rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 relative overflow-hidden">
+          <div class="absolute top-0 left-0 right-0 h-1 bg-yellow-500"></div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Warning</div>
+          <div class="text-3xl font-bold text-yellow-600 dark:text-yellow-400 font-mono" x-text="scanData.summary.WARNING"></div>
+        </div>
+        <!-- INFO -->
+        <div class="scanner-stat-card rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 relative overflow-hidden">
+          <div class="absolute top-0 left-0 right-0 h-1 bg-blue-500"></div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Info</div>
+          <div class="text-3xl font-bold text-blue-500 font-mono" x-text="scanData.summary.INFO"></div>
+        </div>
+      </div>
+
+      <!-- ─── Toolbar: search + severity filter + export ─── -->
+      <div class="flex flex-wrap items-center gap-3">
+        <!-- Search box -->
+        <div class="relative flex-1 min-w-[220px]">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input
+            x-model="searchQuery"
+            @input="renderFindings()"
+            type="text"
+            placeholder="Search by file, rule ID, or message…"
+            class="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm pl-9 pr-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          />
+        </div>
+        <!-- Severity filter pills -->
+        <div class="flex gap-1">
+          <template x-for="f in ['ALL','ERROR','WARNING','INFO']" :key="f">
+            <button
+              @click="currentFilter = f; renderFindings()"
+              :class="{
+                'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-500 text-indigo-600 dark:text-indigo-400': f === 'ALL' && currentFilter === 'ALL',
+                'bg-red-100 dark:bg-red-900/30 border-red-500 text-red-600 dark:text-red-400': f === 'ERROR' && currentFilter === 'ERROR',
+                'bg-yellow-100 dark:bg-yellow-900/30 border-yellow-500 text-yellow-600 dark:text-yellow-400': f === 'WARNING' && currentFilter === 'WARNING',
+                'bg-blue-100 dark:bg-blue-900/30 border-blue-500 text-blue-600 dark:text-blue-400': f === 'INFO' && currentFilter === 'INFO',
+                'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-gray-400 hover:text-gray-700 dark:hover:text-gray-200': currentFilter !== f
+              }"
+              class="rounded-full border text-xs font-mono font-medium px-3 py-1.5 transition-colors"
+              x-text="f === 'ALL' ? 'All' : f === 'WARNING' ? 'Warn' : f.charAt(0) + f.slice(1).toLowerCase()"
+            ></button>
+          </template>
+        </div>
+        <!-- Export dropdown -->
+        <div class="relative" @click.away="exportOpen = false">
+          <button
+            @click="exportOpen = !exportOpen"
+            class="inline-flex items-center gap-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-sm font-medium px-3 py-2 transition-colors"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export
+          </button>
+          <div
+            x-show="exportOpen"
+            x-transition
+            class="absolute right-0 mt-1 w-40 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 shadow-lg z-50 overflow-hidden"
+          >
+            <button @click="exportCSV(); exportOpen = false" class="block w-full text-left text-sm text-gray-700 dark:text-gray-200 px-4 py-2.5 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">Export as CSV</button>
+            <button @click="exportJSON(); exportOpen = false" class="block w-full text-left text-sm text-gray-700 dark:text-gray-200 px-4 py-2.5 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">Export as JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── Findings list ─── -->
+      <div class="space-y-2">
+        <div class="flex justify-between items-baseline">
+          <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100">Findings</h3>
+          <span class="text-xs font-mono text-gray-500 dark:text-gray-400" x-text="filteredResults.length + ' of ' + scanData.findings.length + ' issues'"></span>
+        </div>
+
+        <!-- Empty state -->
+        <template x-if="filteredResults.length === 0">
+          <div class="text-center py-12 text-gray-500 dark:text-gray-400">
+            <template x-if="scanData.findings.length === 0">
+              <div>
+                <div class="text-green-500 font-semibold text-lg mb-1">✓ No Issues Found</div>
+                <p class="text-sm">The scan completed with zero findings.</p>
+              </div>
+            </template>
+            <template x-if="scanData.findings.length > 0">
+              <div>
+                <div class="font-semibold text-lg mb-1">No Matching Results</div>
+                <p class="text-sm">Try adjusting your search or filters.</p>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <!-- Finding cards -->
+        <template x-for="(finding, idx) in filteredResults" :key="idx">
+          <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden transition-colors hover:border-gray-300 dark:hover:border-gray-600">
+            <!-- Summary row -->
+            <div
+              @click="finding._expanded = !finding._expanded"
+              class="flex items-start gap-4 px-5 py-3.5 cursor-pointer select-none"
+            >
+              <!-- Severity badge -->
+              <span
+                :class="{
+                  'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 border-red-300 dark:border-red-700': finding.severity === 'ERROR',
+                  'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 border-yellow-300 dark:border-yellow-700': finding.severity === 'WARNING',
+                  'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-700': finding.severity === 'INFO'
+                }"
+                class="flex-shrink-0 rounded border text-xs font-mono font-semibold uppercase px-2 py-1 tracking-wide"
+                x-text="finding.severity"
+              ></span>
+              <!-- Info -->
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="finding.message"></div>
+                <div class="flex flex-wrap gap-3 mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  <template x-if="finding.file_path">
+                    <span class="inline-flex items-center gap-1">
+                      📄 <code class="bg-gray-100 dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded text-xs font-mono" x-text="shortenPath(finding.file_path) + (finding.line ? ':' + finding.line : '')"></code>
+                    </span>
+                  </template>
+                  <span class="inline-flex items-center gap-1">
+                    🔎 <code class="bg-gray-100 dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded text-xs font-mono" x-text="finding.rule_id"></code>
+                  </span>
+                  <span class="inline-flex items-center gap-1">
+                    🔧 <span x-text="finding.scanner"></span>
+                  </span>
+                </div>
+              </div>
+              <!-- Chevron -->
+              <svg
+                :class="finding._expanded ? 'rotate-90' : ''"
+                class="w-4 h-4 text-gray-400 mt-1 transition-transform flex-shrink-0"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              ><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
+
+            <!-- Detail panel -->
+            <div x-show="finding._expanded" x-transition class="border-t border-gray-200 dark:border-gray-700 px-5 pb-4">
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+                <div>
+                  <div class="text-xs uppercase tracking-wide font-semibold text-gray-400 dark:text-gray-500 mb-0.5">Rule ID</div>
+                  <span class="text-gray-700 dark:text-gray-300 font-mono text-xs" x-text="finding.rule_id"></span>
+                </div>
+                <div>
+                  <div class="text-xs uppercase tracking-wide font-semibold text-gray-400 dark:text-gray-500 mb-0.5">Scanner</div>
+                  <span class="text-gray-700 dark:text-gray-300" x-text="finding.scanner"></span>
+                </div>
+                <div>
+                  <div class="text-xs uppercase tracking-wide font-semibold text-gray-400 dark:text-gray-500 mb-0.5">Full Path</div>
+                  <span class="text-gray-700 dark:text-gray-300 break-all text-xs" x-text="finding.file_path || '—'"></span>
+                </div>
+                <div>
+                  <div class="text-xs uppercase tracking-wide font-semibold text-gray-400 dark:text-gray-500 mb-0.5">More Info</div>
+                  <template x-if="finding.help_url">
+                    <a :href="finding.help_url" target="_blank" rel="noopener" class="text-indigo-600 dark:text-indigo-400 hover:underline text-xs">Docs ↗</a>
+                  </template>
+                  <template x-if="!finding.help_url"><span class="text-gray-500">—</span></template>
+                </div>
+              </div>
+              <!-- Code snippet -->
+              <template x-if="finding.code_snippet">
+                <div class="mt-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 overflow-x-auto">
+                  <pre class="font-mono text-xs leading-relaxed text-gray-600 dark:text-gray-400 p-4" x-html="formatCode(finding.code_snippet, finding.line)"></pre>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+
+    </div>
+  </template>
+
+  <!-- ─── Empty state (no scan loaded) ─── -->
+  <template x-if="!scanData && !loading">
+    <div class="rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 p-12 text-center">
+      <svg class="mx-auto mb-4 w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      <h3 class="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-1">No Scan Results</h3>
+      <p class="text-sm text-gray-500 dark:text-gray-400">Upload a scanner JSON report or refresh to load the latest results.</p>
+    </div>
+  </template>
+</div>
+
+<!-- ─── Alpine.js Component ─── -->
+<script>
+function scannerDashboard() {
+  return {
+    // ── State ──
+    scanData: null,
+    currentFilter: 'ALL',
+    searchQuery: '',
+    filteredResults: [],
+    loading: false,
+    errorMsg: '',
+    exportOpen: false,
+    rootPath: '{{ root_path }}',
+
+    // ── Lifecycle ──
+    init() {
+      const preloaded = {{ scan_data_json | safe }};
+      if (preloaded && preloaded.findings) {
+        this.loadScanData(preloaded);
+      }
+    },
+
+    // ── Data loading ──
+    loadScanData(data) {
+      if (!data.findings || !Array.isArray(data.findings)) {
+        this.showError('Invalid report — missing "findings" array.');
+        return;
+      }
+      data.findings.forEach(f => { f._expanded = false; });
+      this.scanData = data;
+      this.currentFilter = 'ALL';
+      this.searchQuery = '';
+      this.renderFindings();
+    },
+
+    resetDashboard() {
+      this.scanData = null;
+      this.filteredResults = [];
+      this.currentFilter = 'ALL';
+      this.searchQuery = '';
+    },
+
+    // ── Filtering ──
+    renderFindings() {
+      if (!this.scanData) { this.filteredResults = []; return; }
+      let results = [...this.scanData.findings];
+      if (this.currentFilter !== 'ALL') {
+        results = results.filter(r => r.severity === this.currentFilter);
+      }
+      if (this.searchQuery) {
+        const q = this.searchQuery.toLowerCase();
+        results = results.filter(r =>
+          (r.file_path || '').toLowerCase().includes(q) ||
+          (r.rule_id || '').toLowerCase().includes(q) ||
+          (r.message || '').toLowerCase().includes(q) ||
+          (r.scanner || '').toLowerCase().includes(q)
+        );
+      }
+      const order = { ERROR: 0, WARNING: 1, INFO: 2 };
+      results.sort((a, b) => (order[a.severity] ?? 3) - (order[b.severity] ?? 3));
+      this.filteredResults = results;
+    },
+
+    // ── API calls ──
+    async fetchLatest() {
+      this.loading = true;
+      this.errorMsg = '';
+      try {
+        const resp = await fetch(`${this.rootPath}/admin/scanner/results`, {
+          credentials: 'same-origin',
+          headers: this._authHeaders(),
+        });
+        if (resp.status === 404) {
+          this.showError('No scan results available yet.');
+          return;
+        }
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.detail || `Failed to load (${resp.status})`);
+        }
+        const data = await resp.json();
+        this.loadScanData(data);
+      } catch (e) {
+        this.showError(e.message || 'Failed to load results');
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    // ── Export ──
+    exportCSV() {
+      if (!this.scanData) return;
+      const headers = ['severity','scanner','rule_id','message','file_path','line','column','help_url'];
+      const rows = this.scanData.findings.map(f => [
+        f.severity, f.scanner, f.rule_id,
+        '"' + (f.message || '').replace(/"/g, '""') + '"',
+        f.file_path || '', f.line || '', f.column || '',
+        f.help_url || ''
+      ]);
+      const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+      this._download(csv, 'scanner-findings.csv', 'text/csv');
+    },
+
+    exportJSON() {
+      if (!this.scanData) return;
+      this._download(JSON.stringify(this.scanData, null, 2), 'scanner-report.json', 'application/json');
+    },
+
+    // ── Helpers ──
+    _authHeaders() {
+      const headers = {};
+      const jwt = this._getCookie('jwt_token');
+      if (jwt) headers['Authorization'] = 'Bearer ' + jwt;
+      const csrf = this._getCookie('mcpgateway_csrf_token');
+      if (csrf) headers['X-CSRF-Token'] = csrf;
+      return headers;
+    },
+
+    _getCookie(name) {
+      const v = '; ' + document.cookie;
+      const parts = v.split('; ' + name + '=');
+      if (parts.length === 2) return parts.pop().split(';').shift();
+      return '';
+    },
+
+    _download(content, filename, type) {
+      const blob = new Blob([content], { type });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    },
+
+    showError(msg) {
+      this.errorMsg = msg;
+      setTimeout(() => { this.errorMsg = ''; }, 5000);
+    },
+
+    formatDate(iso) {
+      if (!iso) return '—';
+      try { return new Date(iso).toLocaleString(); } catch { return iso; }
+    },
+
+    shortenPath(path) {
+      if (!path) return '—';
+      const parts = path.split('/');
+      return parts.length > 3 ? '…/' + parts.slice(-3).join('/') : path;
+    },
+
+    formatCode(code, lineNum) {
+      if (!code) return '';
+      const lines = code.split('\n');
+      const startLine = lineNum || 1;
+      return lines.map((line, i) => {
+        const num = startLine + i;
+        const isTarget = num === lineNum;
+        const numStr = String(num).padStart(4, ' ');
+        const escaped = this._escapeHtml(line);
+        return isTarget
+          ? '<span class="scanner-highlight-line">' + numStr + ' │ ' + escaped + '</span>'
+          : numStr + ' │ ' + escaped;
+      }).join('\n');
+    },
+
+    _escapeHtml(str) {
+      const d = document.createElement('div');
+      d.textContent = str || '';
+      return d.innerHTML;
+    },
+  };
+}
+</script>

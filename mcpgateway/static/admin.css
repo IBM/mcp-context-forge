@@ -1197,3 +1197,37 @@ body.htmx-request .htmx-indicator {
 body.htmx-request .htmx-indicator.htmx-request {
     visibility: visible;
 }
+
+/* ========================================
+   SECURITY SCANNER DASHBOARD
+   ======================================== */
+
+/* Stat card hover lift */
+.scanner-stat-card {
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.scanner-stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgb(0 0 0 / 8%);
+}
+
+.dark .scanner-stat-card:hover {
+    box-shadow: 0 4px 12px rgb(0 0 0 / 30%);
+}
+
+/* Code block highlight line (flagged vulnerability line) */
+.scanner-highlight-line {
+    display: inline-block;
+    width: 100%;
+    padding: 0 0.5rem;
+    margin: 0 -0.5rem;
+    background: rgb(239 68 68 / 10%);
+    border-left: 2px solid rgb(239 68 68);
+    color: rgb(31 41 55);
+}
+
+.dark .scanner-highlight-line {
+    background: rgb(239 68 68 / 12%);
+    color: rgb(243 244 246);
+}
