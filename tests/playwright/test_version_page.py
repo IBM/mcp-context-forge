@@ -78,6 +78,22 @@ class TestVersionPage:
         os_info = version_page.get_operating_system()
         assert len(os_info) > 0, "Operating system info should not be empty"
 
+    def test_mcp_runtime_card_displays(self, version_page: VersionPage):
+        """Test that MCP runtime card exposes the active MCP core and mode."""
+        version_page.navigate_to_version_tab()
+        version_page.wait_for_version_panel_loaded()
+
+        expect(version_page.mcp_runtime_card).to_be_visible()
+        expect(version_page.mcp_core_badge).to_be_visible()
+        expect(version_page.mcp_runtime_mode_badge).to_be_visible()
+
+        core_badge = version_page.get_mcp_core_badge()
+        assert "MCP Core" in core_badge, "MCP core badge should describe the active MCP core"
+        assert "Rust" in core_badge or "Python" in core_badge, "MCP core badge should identify Rust or Python"
+
+        runtime_mode = version_page.get_mcp_runtime_mode_badge()
+        assert len(runtime_mode) > 0, "MCP runtime mode badge should not be empty"
+
     def test_services_status_card_displays(self, version_page: VersionPage):
         """Test that services status card displays database and cache status."""
         version_page.navigate_to_version_tab()
