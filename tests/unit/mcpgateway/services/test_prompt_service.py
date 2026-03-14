@@ -2728,3 +2728,109 @@ class TestRegisterPromptsBulkChunkException:
 
         assert result["failed"] >= 1
         assert any("Chunk processing failed" in err for err in result["errors"])
+
+
+# --------------------------------------------------------------------------- #
+#                   Gateway ID Filtering Tests (#3638)                        #
+# --------------------------------------------------------------------------- #
+
+
+class TestListPromptsGatewayIdFilter:
+    """Tests for gateway_id filtering in list_prompts."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_filter(self, prompt_service):
+        """gateway_id filter should pass through to WHERE clause."""
+        db = MagicMock()
+        db.commit = Mock()
+        prompt_service.convert_prompt_to_read = Mock(return_value=MagicMock())
+
+        with patch("mcpgateway.services.prompt_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+            result, next_cursor = await prompt_service.list_prompts(db, gateway_id="some-gateway-id")
+
+        assert result == []
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_null_filter(self, prompt_service):
+        """gateway_id='null' should be accepted and return results (filters for NULL gateway_id)."""
+        db = MagicMock()
+        db.commit = Mock()
+        prompt_service.convert_prompt_to_read = Mock(return_value=MagicMock())
+
+        with patch("mcpgateway.services.prompt_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+            result, next_cursor = await prompt_service.list_prompts(db, gateway_id="null")
+
+        assert result == []
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_null_case_insensitive(self, prompt_service):
+        """gateway_id='NULL' (uppercase) should also filter for NULL gateway_id."""
+        db = MagicMock()
+        db.commit = Mock()
+        prompt_service.convert_prompt_to_read = Mock(return_value=MagicMock())
+
+        with patch("mcpgateway.services.prompt_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+            result, next_cursor = await prompt_service.list_prompts(db, gateway_id="NULL")
+
+        assert result == []
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_nonexistent_returns_empty(self, prompt_service):
+        """Nonexistent gateway_id should return empty list, not an error."""
+        db = MagicMock()
+        db.commit = Mock()
+        prompt_service.convert_prompt_to_read = Mock(return_value=MagicMock())
+
+        with patch("mcpgateway.services.prompt_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+            result, next_cursor = await prompt_service.list_prompts(db, gateway_id="nonexistent-id")
+
+        assert result == []
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_included_in_cache_hash(self, prompt_service):
+        """gateway_id should be part of the cache hash to prevent cache poisoning."""
+        db = MagicMock()
+        db.commit = Mock()
+
+        with patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.hash_filters = MagicMock(return_value="hash123")
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+
+            with patch("mcpgateway.services.prompt_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+                await prompt_service.list_prompts(db, gateway_id="gw-123")
+
+            # Verify gateway_id was passed to hash_filters
+            mock_cache.hash_filters.assert_called_once()
+            call_kwargs = mock_cache.hash_filters.call_args[1]
+            assert call_kwargs.get("gateway_id") == "gw-123"
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_without_gateway_id_no_filter(self, prompt_service):
+        """When gateway_id is None, no gateway filtering should be applied."""
+        db = MagicMock()
+        db.commit = Mock()
+        mock_prompt = _build_db_prompt()
+        mock_prompt.team_id = None
+
+        with (
+            patch.object(prompt_service, "convert_prompt_to_read", return_value="converted"),
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache_fn.return_value = AsyncMock(hash_filters=MagicMock(return_value="h"), get=AsyncMock(return_value=None), set=AsyncMock())
+            mock_paginate.return_value = ([mock_prompt], None)
+
+            result, _ = await prompt_service.list_prompts(db, gateway_id=None)
+
+        assert result == ["converted"]

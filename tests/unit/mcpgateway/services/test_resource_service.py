@@ -6265,3 +6265,106 @@ class TestReadResourceDirectProxy:
         mock_invoke.assert_awaited_once()
         # The content should come from the DB resource (cache mode), not direct proxy
         assert content.text == "cached-content"
+
+
+# --------------------------------------------------------------------------- #
+#                   Gateway ID Filtering Tests (#3638)                        #
+# --------------------------------------------------------------------------- #
+
+
+class TestListResourcesGatewayIdFilter:
+    """Tests for gateway_id filtering in list_resources."""
+
+    @pytest.fixture
+    def resource_service(self, monkeypatch):
+        monkeypatch.setenv("PLUGINS_ENABLED", "false")
+        return ResourceService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock()
+
+    @pytest.mark.asyncio
+    async def test_list_resources_gateway_id_filter(self, resource_service, mock_db):
+        """gateway_id filter should pass through to WHERE clause."""
+        mock_db.commit = MagicMock()
+
+        with patch("mcpgateway.services.resource_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+            result, next_cursor = await resource_service.list_resources(mock_db, gateway_id="some-gateway-id")
+
+        assert result == []
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_resources_gateway_id_null_filter(self, resource_service, mock_db):
+        """gateway_id='null' should be accepted and return results (filters for NULL gateway_id)."""
+        mock_db.commit = MagicMock()
+
+        with patch("mcpgateway.services.resource_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+            result, next_cursor = await resource_service.list_resources(mock_db, gateway_id="null")
+
+        assert result == []
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_resources_gateway_id_null_case_insensitive(self, resource_service, mock_db):
+        """gateway_id='NULL' (uppercase) should also filter for NULL gateway_id."""
+        mock_db.commit = MagicMock()
+
+        with patch("mcpgateway.services.resource_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+            result, next_cursor = await resource_service.list_resources(mock_db, gateway_id="NULL")
+
+        assert result == []
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_resources_gateway_id_nonexistent_returns_empty(self, resource_service, mock_db):
+        """Nonexistent gateway_id should return empty list, not an error."""
+        mock_db.commit = MagicMock()
+
+        with patch("mcpgateway.services.resource_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+            result, next_cursor = await resource_service.list_resources(mock_db, gateway_id="nonexistent-id")
+
+        assert result == []
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_resources_gateway_id_included_in_cache_hash(self, resource_service, mock_db):
+        """gateway_id should be part of the cache hash to prevent cache poisoning."""
+        mock_db.commit = MagicMock()
+
+        with patch("mcpgateway.services.resource_service._get_registry_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.hash_filters = MagicMock(return_value="hash123")
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+
+            with patch("mcpgateway.services.resource_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+                await resource_service.list_resources(mock_db, gateway_id="gw-123")
+
+            # Verify gateway_id was passed to hash_filters
+            mock_cache.hash_filters.assert_called_once()
+            call_kwargs = mock_cache.hash_filters.call_args[1]
+            assert call_kwargs.get("gateway_id") == "gw-123"
+
+    @pytest.mark.asyncio
+    async def test_list_resources_without_gateway_id_no_filter(self, resource_service, mock_db):
+        """When gateway_id is None, no gateway filtering should be applied."""
+        mock_resource = MagicMock()
+        mock_resource.team_id = None
+        mock_resource.tags = []
+        mock_resource.team = None
+        mock_db.commit = MagicMock()
+
+        with (
+            patch.object(resource_service, "convert_resource_to_read", return_value="converted"),
+            patch("mcpgateway.services.resource_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.resource_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache_fn.return_value = AsyncMock(hash_filters=MagicMock(return_value="h"), get=AsyncMock(return_value=None), set=AsyncMock())
+            mock_paginate.return_value = ([mock_resource], None)
+
+            result, _ = await resource_service.list_resources(mock_db, gateway_id=None)
+
+        assert result == ["converted"]
