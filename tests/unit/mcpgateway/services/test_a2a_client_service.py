@@ -64,7 +64,7 @@ class TestSendJsonrpc:
                 endpoint_url="https://agent.example.com/a2a",
                 auth_headers={"Authorization": "Bearer token"},
                 body=sample_body,
-                agent_slug="echo",
+                agent_id="echo",
             )
 
         assert result["jsonrpc"] == "2.0"
@@ -84,7 +84,7 @@ class TestSendJsonrpc:
                 endpoint_url="https://agent.example.com/a2a",
                 auth_headers={},
                 body=sample_body,
-                agent_slug="echo",
+                agent_id="echo",
             )
 
         assert "error" in result
@@ -100,7 +100,7 @@ class TestSendJsonrpc:
                 endpoint_url="https://agent.example.com/a2a",
                 auth_headers={},
                 body=sample_body,
-                agent_slug="echo",
+                agent_id="echo",
             )
 
         assert "error" in result
@@ -116,7 +116,7 @@ class TestSendJsonrpc:
                 endpoint_url="https://agent.example.com/a2a",
                 auth_headers={},
                 body=sample_body,
-                agent_slug="echo",
+                agent_id="echo",
             )
 
         assert "error" in result
@@ -176,7 +176,7 @@ class TestStreamJsonrpc:
                 endpoint_url="https://agent.example.com/a2a",
                 auth_headers={},
                 body=sample_body,
-                agent_slug="echo",
+                agent_id="echo",
             ):
                 events.append(event)
 
@@ -198,7 +198,7 @@ class TestStreamJsonrpc:
                 endpoint_url="https://agent.example.com/a2a",
                 auth_headers={},
                 body=sample_body,
-                agent_slug="echo",
+                agent_id="echo",
             ):
                 events.append(event)
 

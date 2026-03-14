@@ -70,6 +70,11 @@ from tests.utils.rbac_mocks import create_mock_email_user, create_mock_user_cont
 
 TEST_USER = create_mock_email_user(email="admin@example.com", full_name="Test Admin", is_admin=True, is_active=True)
 
+# Route prefix from settings
+from mcpgateway.config import settings  # noqa: E402
+
+_PREFIX = f"/{settings.a2a_gateway_route_prefix.strip('/')}"
+
 
 # -------------------------
 # Fixtures
@@ -262,21 +267,21 @@ def seed_agent(app_with_temp_db):
 # Agent Card Discovery
 # -------------------------
 class TestAgentCardDiscovery:
-    """E2E tests for GET /a2a/v1/{agent_slug}/.well-known/agent-card.json."""
+    """E2E tests for GET /{prefix}/{agent_id}/.well-known/agent-card.json."""
 
     @pytest.mark.asyncio
     async def test_agent_card_returns_valid_card(self, client, seed_agent):
         agent = seed_agent(name="Card Test Agent")
 
         response = await client.get(
-            f"/a2a/v1/{agent.slug}/.well-known/agent-card.json",
+            f"{_PREFIX}/{agent.id}/.well-known/agent-card.json",
             headers=TEST_AUTH_HEADER,
         )
 
         assert response.status_code == 200
         card = response.json()
         assert card["name"] == "Card Test Agent"
-        assert f"/a2a/v1/{agent.slug}" in card["url"]
+        assert f"{_PREFIX}/{agent.id}" in card["url"]
         assert card["protocolVersion"] == "1.0"
         assert "capabilities" in card
         assert card["capabilities"]["streaming"] is True
@@ -284,7 +289,7 @@ class TestAgentCardDiscovery:
     @pytest.mark.asyncio
     async def test_agent_card_not_found(self, client):
         response = await client.get(
-            "/a2a/v1/nonexistent-agent/.well-known/agent-card.json",
+            f"{_PREFIX}/nonexistent-id/.well-known/agent-card.json",
             headers=TEST_AUTH_HEADER,
         )
         assert response.status_code == 404
@@ -294,7 +299,7 @@ class TestAgentCardDiscovery:
         agent = seed_agent(name="Disabled Card Agent", enabled=False)
 
         response = await client.get(
-            f"/a2a/v1/{agent.slug}/.well-known/agent-card.json",
+            f"{_PREFIX}/{agent.id}/.well-known/agent-card.json",
             headers=TEST_AUTH_HEADER,
         )
         assert response.status_code == 400
@@ -304,7 +309,7 @@ class TestAgentCardDiscovery:
         agent = seed_agent(name="Tagged Skills Agent", tags=["math", "coding"])
 
         response = await client.get(
-            f"/a2a/v1/{agent.slug}/.well-known/agent-card.json",
+            f"{_PREFIX}/{agent.id}/.well-known/agent-card.json",
             headers=TEST_AUTH_HEADER,
         )
 
@@ -320,7 +325,7 @@ class TestAgentCardDiscovery:
 # Non-Streaming JSON-RPC
 # -------------------------
 class TestMessageSend:
-    """E2E tests for message/send via POST /a2a/v1/{agent_slug}."""
+    """E2E tests for message/send via POST /{prefix}/{agent_id}."""
 
     @pytest.mark.asyncio
     async def test_message_send_success(self, client, seed_agent):
@@ -345,7 +350,7 @@ class TestMessageSend:
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_http_client):
             response = await client.post(
-                f"/a2a/v1/{agent.slug}",
+                f"{_PREFIX}/{agent.id}",
                 json={
                     "jsonrpc": "2.0",
                     "method": "message/send",
@@ -380,7 +385,7 @@ class TestMessageSend:
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_http_client):
             response = await client.post(
-                f"/a2a/v1/{agent.slug}",
+                f"{_PREFIX}/{agent.id}",
                 json={
                     "jsonrpc": "2.0",
                     "method": "message/send",
@@ -421,7 +426,7 @@ class TestTaskOperations:
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_http_client):
             response = await client.post(
-                f"/a2a/v1/{agent.slug}",
+                f"{_PREFIX}/{agent.id}",
                 json={
                     "jsonrpc": "2.0",
                     "method": "tasks/get",
@@ -458,7 +463,7 @@ class TestTaskOperations:
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_http_client):
             response = await client.post(
-                f"/a2a/v1/{agent.slug}",
+                f"{_PREFIX}/{agent.id}",
                 json={
                     "jsonrpc": "2.0",
                     "method": "tasks/cancel",
@@ -491,7 +496,7 @@ class TestPushNotificationConfig:
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_http_client):
             response = await client.post(
-                f"/a2a/v1/{agent.slug}",
+                f"{_PREFIX}/{agent.id}",
                 json={
                     "jsonrpc": "2.0",
                     "method": "tasks/pushNotificationConfig/set",
@@ -516,7 +521,7 @@ class TestGetAuthenticatedExtendedCard:
         agent = seed_agent(name="Auth Card Agent")
 
         response = await client.post(
-            f"/a2a/v1/{agent.slug}",
+            f"{_PREFIX}/{agent.id}",
             json={
                 "jsonrpc": "2.0",
                 "method": "agent/getAuthenticatedExtendedCard",
@@ -529,12 +534,12 @@ class TestGetAuthenticatedExtendedCard:
         assert response.status_code == 200
         data = response.json()
         assert data["result"]["name"] == "Auth Card Agent"
-        assert f"/a2a/v1/{agent.slug}" in data["result"]["url"]
+        assert f"{_PREFIX}/{agent.id}" in data["result"]["url"]
 
     @pytest.mark.asyncio
     async def test_authenticated_card_not_found(self, client):
         response = await client.post(
-            "/a2a/v1/nonexistent-agent",
+            f"{_PREFIX}/nonexistent-id",
             json={
                 "jsonrpc": "2.0",
                 "method": "agent/getAuthenticatedExtendedCard",
@@ -561,7 +566,7 @@ class TestJsonRpcValidation:
         agent = seed_agent(name="Json Error Agent")
 
         response = await client.post(
-            f"/a2a/v1/{agent.slug}",
+            f"{_PREFIX}/{agent.id}",
             content=b"this is not json",
             headers={**TEST_AUTH_HEADER, "Content-Type": "application/json"},
         )
@@ -575,7 +580,7 @@ class TestJsonRpcValidation:
         agent = seed_agent(name="Version Check Agent")
 
         response = await client.post(
-            f"/a2a/v1/{agent.slug}",
+            f"{_PREFIX}/{agent.id}",
             json={"method": "message/send", "params": {}, "id": 1},
             headers=TEST_AUTH_HEADER,
         )
@@ -589,7 +594,7 @@ class TestJsonRpcValidation:
         agent = seed_agent(name="Method Check Agent")
 
         response = await client.post(
-            f"/a2a/v1/{agent.slug}",
+            f"{_PREFIX}/{agent.id}",
             json={"jsonrpc": "2.0", "method": "unknown/method", "params": {}, "id": 1},
             headers=TEST_AUTH_HEADER,
         )
@@ -603,7 +608,7 @@ class TestJsonRpcValidation:
         agent = seed_agent(name="No Method Agent")
 
         response = await client.post(
-            f"/a2a/v1/{agent.slug}",
+            f"{_PREFIX}/{agent.id}",
             json={"jsonrpc": "2.0", "params": {}, "id": 1},
             headers=TEST_AUTH_HEADER,
         )
@@ -622,7 +627,7 @@ class TestAgentErrorPaths:
     @pytest.mark.asyncio
     async def test_agent_not_found_returns_jsonrpc_error(self, client):
         response = await client.post(
-            "/a2a/v1/does-not-exist",
+            f"{_PREFIX}/does-not-exist",
             json={"jsonrpc": "2.0", "method": "message/send", "params": {}, "id": 10},
             headers=TEST_AUTH_HEADER,
         )
@@ -637,7 +642,7 @@ class TestAgentErrorPaths:
         agent = seed_agent(name="Disabled RPC Agent", enabled=False)
 
         response = await client.post(
-            f"/a2a/v1/{agent.slug}",
+            f"{_PREFIX}/{agent.id}",
             json={"jsonrpc": "2.0", "method": "message/send", "params": {}, "id": 11},
             headers=TEST_AUTH_HEADER,
         )
@@ -668,7 +673,7 @@ class TestStreaming:
             mock_client.stream_jsonrpc = mock_stream_jsonrpc
 
             response = await client.post(
-                f"/a2a/v1/{agent.slug}",
+                f"{_PREFIX}/{agent.id}",
                 json={
                     "jsonrpc": "2.0",
                     "method": "message/stream",
@@ -695,7 +700,7 @@ class TestStreaming:
 # Full Lifecycle
 # -------------------------
 class TestFullLifecycle:
-    """E2E test for a full agent interaction lifecycle: register → discover → send → get task."""
+    """E2E test for a full agent interaction lifecycle: register -> discover -> send -> get task."""
 
     @pytest.mark.asyncio
     async def test_full_flow(self, client, seed_agent):
@@ -704,7 +709,7 @@ class TestFullLifecycle:
 
         # 2. Discover agent card
         card_response = await client.get(
-            f"/a2a/v1/{agent.slug}/.well-known/agent-card.json",
+            f"{_PREFIX}/{agent.id}/.well-known/agent-card.json",
             headers=TEST_AUTH_HEADER,
         )
         assert card_response.status_code == 200
@@ -731,7 +736,7 @@ class TestFullLifecycle:
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_http_client):
             send_response = await client.post(
-                f"/a2a/v1/{agent.slug}",
+                f"{_PREFIX}/{agent.id}",
                 json={
                     "jsonrpc": "2.0",
                     "method": "message/send",
@@ -764,7 +769,7 @@ class TestFullLifecycle:
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_http_client):
             task_response = await client.post(
-                f"/a2a/v1/{agent.slug}",
+                f"{_PREFIX}/{agent.id}",
                 json={
                     "jsonrpc": "2.0",
                     "method": "tasks/get",
@@ -779,7 +784,7 @@ class TestFullLifecycle:
 
         # 5. Get authenticated extended card
         ext_card_response = await client.post(
-            f"/a2a/v1/{agent.slug}",
+            f"{_PREFIX}/{agent.id}",
             json={
                 "jsonrpc": "2.0",
                 "method": "agent/getAuthenticatedExtendedCard",

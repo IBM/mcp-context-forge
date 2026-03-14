@@ -180,9 +180,9 @@ _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/admin/a2a/[^/]+/(?:edit|state)(?:$|/)"), Permissions.A2A_UPDATE),
     ("POST", re.compile(r"^/admin/a2a/[^/]+/test(?:$|/)"), Permissions.A2A_INVOKE),
     ("GET", re.compile(r"^/admin/a2a(?:$|/)"), Permissions.A2A_READ),
-    # A2A Gateway (native A2A protocol)
-    ("POST", re.compile(r"^/a2a/v1/[^/]+$"), Permissions.A2A_GATEWAY_EXECUTE),
-    ("GET", re.compile(r"^/a2a/v1/[^/]+/\.well-known/agent-card\.json$"), Permissions.A2A_GATEWAY_READ),
+    # A2A Gateway (native A2A protocol) — prefix from settings
+    ("POST", re.compile(rf"^/{re.escape(settings.a2a_gateway_route_prefix.strip('/'))}/[^/]+$"), Permissions.A2A_GATEWAY_EXECUTE),
+    ("GET", re.compile(rf"^/{re.escape(settings.a2a_gateway_route_prefix.strip('/'))}/[^/]+/\.well-known/agent-card\.json$"), Permissions.A2A_GATEWAY_READ),
     # Section partials
     ("GET", re.compile(r"^/admin/sections/resources(?:$|/)"), Permissions.RESOURCES_READ),
     ("GET", re.compile(r"^/admin/sections/prompts(?:$|/)"), Permissions.PROMPTS_READ),

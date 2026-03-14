@@ -15,7 +15,6 @@ and transparent proxying of requests to downstream A2A agents.
 from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -163,14 +162,14 @@ class A2AGatewayService:
     def resolve_agent(
         self,
         db: Session,
-        slug: str,
+        agent_id: str,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
     ) -> Tuple[DbA2AAgent, Dict[str, str]]:
-        """Resolve an A2A agent by slug with visibility checking and auth preparation.
+        """Resolve an A2A agent by ID with visibility checking and auth preparation.
 
         Follows the same lock-read-release pattern as a2a_service.invoke_agent:
-        1. Lookup agent by slug
+        1. Lookup agent by ID
         2. Lock the row for read consistency
         3. Check visibility/team access
         4. Verify agent is enabled
@@ -179,7 +178,7 @@ class A2AGatewayService:
 
         Args:
             db: SQLAlchemy database session.
-            slug: The agent slug to resolve.
+            agent_id: The agent's database ID.
             user_email: Email of the requesting user.
             token_teams: Teams from the JWT token.
 
@@ -190,20 +189,16 @@ class A2AGatewayService:
             A2AGatewayAgentNotFoundError: If agent not found or user lacks access.
             A2AGatewayAgentDisabledError: If agent is disabled.
         """
-        agent_id = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.slug == slug)).scalar_one_or_none()
-        if not agent_id:
-            raise A2AGatewayAgentNotFoundError(f"A2A agent not found: {slug}")
-
         agent = get_for_update(db, DbA2AAgent, agent_id)
         if not agent:
-            raise A2AGatewayAgentNotFoundError(f"A2A agent not found: {slug}")
+            raise A2AGatewayAgentNotFoundError(f"A2A agent not found: {agent_id}")
 
         # Return 404 (not 403) to avoid leaking existence of private agents
         if not self._check_agent_access(agent, user_email, token_teams):
-            raise A2AGatewayAgentNotFoundError(f"A2A agent not found: {slug}")
+            raise A2AGatewayAgentNotFoundError(f"A2A agent not found: {agent_id}")
 
         if not agent.enabled:
-            raise A2AGatewayAgentDisabledError(f"A2A agent '{slug}' is disabled")
+            raise A2AGatewayAgentDisabledError(f"A2A agent '{agent_id}' is disabled")
 
         # Decrypt auth credentials
         auth_headers = self._prepare_auth_headers(agent)
@@ -269,7 +264,10 @@ class A2AGatewayService:
         Returns:
             Agent card as a dict (JSON-serializable).
         """
-        gateway_url = f"{base_url}/a2a/v1/{agent.slug}"
+        from mcpgateway.config import settings
+
+        route_prefix = settings.a2a_gateway_route_prefix.strip("/")
+        gateway_url = f"{base_url}/{route_prefix}/{agent.id}"
 
         capabilities = agent.capabilities or {}
 

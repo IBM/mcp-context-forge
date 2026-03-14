@@ -618,7 +618,8 @@ class Settings(BaseSettings):
     mcpgateway_a2a_metrics_enabled: bool = True
 
     # A2A Native Protocol Gateway
-    mcpgateway_a2a_gateway_enabled: bool = Field(default=True, description="Enable native A2A protocol gateway endpoints (/a2a/v1/)")
+    mcpgateway_a2a_gateway_enabled: bool = Field(default=True, description="Enable native A2A protocol gateway endpoints")
+    a2a_gateway_route_prefix: str = Field(default="a2a/agent", description="Route prefix for A2A gateway endpoints (without leading/trailing slashes)")
     a2a_gateway_rate_limit: int = Field(default=100, description="Max requests per minute per agent per user for A2A gateway")
     a2a_gateway_client_timeout: int = Field(default=30, description="Downstream A2A agent HTTP timeout in seconds")
     a2a_gateway_stream_timeout: int = Field(default=300, description="SSE stream timeout in seconds for A2A gateway")

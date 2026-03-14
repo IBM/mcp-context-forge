@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.routers.a2a_gateway import get_db, router
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.services.a2a_gateway_service import (
@@ -24,6 +25,9 @@ from mcpgateway.services.a2a_gateway_service import (
 )
 
 MOCK_USER = {"sub": "testuser@example.com", "email": "testuser@example.com", "is_admin": True}
+
+# Route prefix from settings (default: "a2a/agent")
+_PREFIX = f"/{settings.a2a_gateway_route_prefix.strip('/')}"
 
 
 class MockPermissionService:
@@ -83,18 +87,18 @@ def mock_services():
 
 
 class TestAgentCard:
-    """Tests for GET /{agent_slug}/.well-known/agent-card.json."""
+    """Tests for GET /{agent_id}/.well-known/agent-card.json."""
 
     def test_agent_card_success(self, client, mock_services):
         agent = MagicMock()
         mock_services["gateway_service"].resolve_agent.return_value = (agent, {})
         mock_services["gateway_service"].generate_agent_card.return_value = {
             "name": "Echo",
-            "url": "https://gw.com/a2a/v1/echo",
+            "url": f"https://gw.com{_PREFIX}/abc123",
             "version": "1.0",
         }
 
-        response = client.get("/a2a/v1/echo/.well-known/agent-card.json")
+        response = client.get(f"{_PREFIX}/abc123/.well-known/agent-card.json")
         assert response.status_code == 200
         data = response.json()
         assert data["name"] == "Echo"
@@ -102,22 +106,22 @@ class TestAgentCard:
     def test_agent_card_not_found(self, client, mock_services):
         mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentNotFoundError("not found")
 
-        response = client.get("/a2a/v1/nonexistent/.well-known/agent-card.json")
+        response = client.get(f"{_PREFIX}/nonexistent/.well-known/agent-card.json")
         assert response.status_code == 404
 
     def test_agent_card_disabled(self, client, mock_services):
         mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentDisabledError("disabled")
 
-        response = client.get("/a2a/v1/disabled-agent/.well-known/agent-card.json")
+        response = client.get(f"{_PREFIX}/disabled-agent/.well-known/agent-card.json")
         assert response.status_code == 400
 
 
 class TestJsonrpcEndpoint:
-    """Tests for POST /{agent_slug} (JSON-RPC dispatcher)."""
+    """Tests for POST /{agent_id} (JSON-RPC dispatcher)."""
 
     def test_invalid_json(self, client):
         response = client.post(
-            "/a2a/v1/echo",
+            f"{_PREFIX}/abc123",
             content=b"not json",
             headers={"Content-Type": "application/json"},
         )
@@ -132,7 +136,7 @@ class TestJsonrpcEndpoint:
             "id": None,
         }
 
-        response = client.post("/a2a/v1/echo", json={"missing": "method"})
+        response = client.post(f"{_PREFIX}/abc123", json={"missing": "method"})
         assert response.status_code == 200
         assert response.json()["error"]["code"] == -32600
 
@@ -149,7 +153,7 @@ class TestJsonrpcEndpoint:
         )
 
         response = client.post(
-            "/a2a/v1/echo",
+            f"{_PREFIX}/abc123",
             json={"jsonrpc": "2.0", "method": "message/send", "params": {}, "id": 1},
         )
 
@@ -162,7 +166,7 @@ class TestJsonrpcEndpoint:
         mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentNotFoundError("not found")
 
         response = client.post(
-            "/a2a/v1/nonexistent",
+            f"{_PREFIX}/nonexistent",
             json={"jsonrpc": "2.0", "method": "message/send", "params": {}, "id": 1},
         )
 
@@ -176,7 +180,7 @@ class TestJsonrpcEndpoint:
         mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentDisabledError("disabled")
 
         response = client.post(
-            "/a2a/v1/disabled",
+            f"{_PREFIX}/disabled-id",
             json={"jsonrpc": "2.0", "method": "tasks/get", "params": {}, "id": 2},
         )
 
@@ -197,7 +201,7 @@ class TestJsonrpcEndpoint:
         )
 
         response = client.post(
-            "/a2a/v1/echo",
+            f"{_PREFIX}/abc123",
             json={"jsonrpc": "2.0", "method": "message/send", "params": {}, "id": 1},
         )
 
@@ -213,10 +217,10 @@ class TestGetAuthenticatedCard:
 
         agent = MagicMock()
         mock_services["gateway_service"].resolve_agent.return_value = (agent, {})
-        mock_services["gateway_service"].generate_agent_card.return_value = {"name": "Echo", "url": "https://gw.com/a2a/v1/echo"}
+        mock_services["gateway_service"].generate_agent_card.return_value = {"name": "Echo", "url": f"https://gw.com{_PREFIX}/abc123"}
 
         response = client.post(
-            "/a2a/v1/echo",
+            f"{_PREFIX}/abc123",
             json={"jsonrpc": "2.0", "method": "agent/getAuthenticatedExtendedCard", "params": {}, "id": 1},
         )
 
@@ -229,7 +233,7 @@ class TestGetAuthenticatedCard:
         mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentNotFoundError("not found")
 
         response = client.post(
-            "/a2a/v1/nonexistent",
+            f"{_PREFIX}/nonexistent",
             json={"jsonrpc": "2.0", "method": "agent/getAuthenticatedExtendedCard", "params": {}, "id": 1},
         )
 

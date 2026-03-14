@@ -102,19 +102,19 @@ password_reset_completions_counter = Counter(
 a2a_gateway_requests_counter = Counter(
     "a2a_gateway_requests_total",
     "Total A2A gateway JSON-RPC requests",
-    ["agent_slug", "method", "status"],
+    ["agent_id", "method", "status"],
 )
 
 a2a_gateway_errors_counter = Counter(
     "a2a_gateway_errors_total",
     "Total A2A gateway errors",
-    ["agent_slug", "error_type"],
+    ["agent_id", "error_type"],
 )
 
 a2a_gateway_streams_active = Gauge(
     "a2a_gateway_streams_active",
     "Currently active A2A gateway SSE streams",
-    ["agent_slug"],
+    ["agent_id"],
 )
 
 

@@ -164,38 +164,37 @@ class TestA2AGatewayService:
 
     # --- resolve_agent ---
 
-    def test_resolve_agent_not_found(self, service, mock_db):
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+    @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
+    def test_resolve_agent_not_found(self, mock_get_for_update, service, mock_db):
+        mock_get_for_update.return_value = None
         with pytest.raises(A2AGatewayAgentNotFoundError):
-            service.resolve_agent(mock_db, "nonexistent", "user@test.com", [])
+            service.resolve_agent(mock_db, "nonexistent-id", "user@test.com", [])
 
     @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
     def test_resolve_agent_disabled(self, mock_get_for_update, service, mock_db):
-        mock_db.execute.return_value.scalar_one_or_none.return_value = 1
-        agent = MagicMock(visibility="public", enabled=False, slug="test-agent")
+        agent = MagicMock(visibility="public", enabled=False, slug="test-agent", id="agent-123")
         mock_get_for_update.return_value = agent
 
         with pytest.raises(A2AGatewayAgentDisabledError):
-            service.resolve_agent(mock_db, "test-agent", "user@test.com", [])
+            service.resolve_agent(mock_db, "agent-123", "user@test.com", [])
 
     @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
     def test_resolve_agent_access_denied_returns_not_found(self, mock_get_for_update, service, mock_db):
         """Access denied should raise NotFound (not 403) to avoid leaking existence."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = 1
-        agent = MagicMock(visibility="private", owner_email="other@test.com", enabled=True)
+        agent = MagicMock(visibility="private", owner_email="other@test.com", enabled=True, id="agent-456")
         mock_get_for_update.return_value = agent
 
         with pytest.raises(A2AGatewayAgentNotFoundError):
-            service.resolve_agent(mock_db, "private-agent", "attacker@test.com", ["some-team"])
+            service.resolve_agent(mock_db, "agent-456", "attacker@test.com", ["some-team"])
 
     @patch("mcpgateway.services.a2a_gateway_service.decode_auth")
     @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
     def test_resolve_agent_success(self, mock_get_for_update, mock_decode_auth, service, mock_db):
-        mock_db.execute.return_value.scalar_one_or_none.return_value = 1
         agent = MagicMock(
             visibility="public",
             enabled=True,
             slug="echo",
+            id="agent-789",
             endpoint_url="https://echo.example.com/a2a",
             auth_type="bearer",
             auth_value="encrypted-token",
@@ -204,7 +203,7 @@ class TestA2AGatewayService:
         mock_get_for_update.return_value = agent
         mock_decode_auth.return_value = {"Authorization": "Bearer test-token"}
 
-        resolved_agent, auth_headers = service.resolve_agent(mock_db, "echo", "user@test.com", [])
+        resolved_agent, auth_headers = service.resolve_agent(mock_db, "agent-789", "user@test.com", [])
 
         assert resolved_agent == agent
         assert auth_headers == {"Authorization": "Bearer test-token"}
@@ -217,6 +216,7 @@ class TestA2AGatewayService:
         agent = SimpleNamespace(
             name="Echo Agent",
             description="Echoes input",
+            id="agent-abc",
             slug="echo",
             protocol_version="1.0",
             capabilities={"streaming": True, "pushNotifications": False},
@@ -227,7 +227,7 @@ class TestA2AGatewayService:
         card = service.generate_agent_card(agent, "https://gateway.example.com")
 
         assert card["name"] == "Echo Agent"
-        assert card["url"] == "https://gateway.example.com/a2a/v1/echo"
+        assert "agent-abc" in card["url"]
         assert card["capabilities"]["streaming"] is True
         assert card["capabilities"]["pushNotifications"] is False
         assert card["protocolVersion"] == "1.0"
@@ -236,6 +236,7 @@ class TestA2AGatewayService:
         agent = SimpleNamespace(
             name="Test",
             description="",
+            id="agent-def",
             slug="test",
             protocol_version="1.0",
             capabilities={},
@@ -251,6 +252,7 @@ class TestA2AGatewayService:
         agent = SimpleNamespace(
             name="Test",
             description="",
+            id="agent-ghi",
             slug="test",
             protocol_version="1.0",
             capabilities={},
@@ -260,6 +262,25 @@ class TestA2AGatewayService:
 
         card = service.generate_agent_card(agent, "https://gw.com")
         assert card["provider"] == {"organization": "TestOrg"}
+
+    def test_generate_agent_card_uses_configurable_prefix(self, service):
+        """Agent card URL should use the configurable route prefix."""
+        agent = SimpleNamespace(
+            name="Prefix Test",
+            description="",
+            id="agent-prefix-1",
+            slug="prefix-test",
+            protocol_version="1.0",
+            capabilities={},
+            config={},
+            tags=None,
+        )
+
+        from mcpgateway.config import settings
+
+        prefix = settings.a2a_gateway_route_prefix.strip("/")
+        card = service.generate_agent_card(agent, "https://gw.com")
+        assert card["url"] == f"https://gw.com/{prefix}/agent-prefix-1"
 
 
 class TestConstants:

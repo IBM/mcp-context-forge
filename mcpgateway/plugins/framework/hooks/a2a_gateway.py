@@ -41,7 +41,7 @@ class A2AGatewayPreInvokePayload(PluginPayload):
     """Payload for A2A gateway pre-invoke hook.
 
     Attributes:
-        agent_slug: The target agent's slug.
+        agent_id: The target agent's ID.
         method: JSON-RPC method name (e.g., "message/send").
         params: JSON-RPC params from the request body.
         headers: Optional HTTP headers being sent to downstream agent.
@@ -49,12 +49,12 @@ class A2AGatewayPreInvokePayload(PluginPayload):
         user_id: ID of the requesting user.
 
     Examples:
-        >>> payload = A2AGatewayPreInvokePayload(agent_slug="echo", method="message/send", params={})
-        >>> payload.agent_slug
+        >>> payload = A2AGatewayPreInvokePayload(agent_id="echo", method="message/send", params={})
+        >>> payload.agent_id
         'echo'
     """
 
-    agent_slug: str
+    agent_id: str
     method: str
     params: Dict[str, Any] = Field(default_factory=dict)
     headers: Optional[HttpHeaderPayload] = None
@@ -66,19 +66,19 @@ class A2AGatewayPostInvokePayload(PluginPayload):
     """Payload for A2A gateway post-invoke hook.
 
     Attributes:
-        agent_slug: The target agent's slug.
+        agent_id: The target agent's ID.
         method: JSON-RPC method name.
         result: The JSON-RPC response from downstream agent.
         duration_ms: Request duration in milliseconds.
         is_error: Whether the response contains a JSON-RPC error.
 
     Examples:
-        >>> payload = A2AGatewayPostInvokePayload(agent_slug="echo", method="message/send", result={})
+        >>> payload = A2AGatewayPostInvokePayload(agent_id="echo", method="message/send", result={})
         >>> payload.is_error
         False
     """
 
-    agent_slug: str
+    agent_id: str
     method: str
     result: Dict[str, Any] = Field(default_factory=dict)
     duration_ms: Optional[float] = None

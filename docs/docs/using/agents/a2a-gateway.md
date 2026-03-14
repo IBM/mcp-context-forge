@@ -36,8 +36,11 @@ A2A Client ──► ContextForge Gateway ──► Downstream A2A Agent
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/a2a/v1/{agent_slug}` | POST | JSON-RPC 2.0 dispatcher — all methods routed from the request body |
-| `/a2a/v1/{agent_slug}/.well-known/agent-card.json` | GET | Agent Card discovery (A2A-spec compliant) |
+| `/{prefix}/{agent_id}` | POST | JSON-RPC 2.0 dispatcher — all methods routed from the request body |
+| `/{prefix}/{agent_id}/.well-known/agent-card.json` | GET | Agent Card discovery (A2A-spec compliant) |
+
+!!! note "Route Prefix"
+    The `{prefix}` defaults to `a2a/agent` and is configurable via the `A2A_GATEWAY_ROUTE_PREFIX` environment variable. The `{agent_id}` is the agent's database UUID (returned when registering the agent via the admin API).
 
 ## Quick Start
 
@@ -53,11 +56,14 @@ The A2A gateway is enabled by default when A2A is enabled. Verify these settings
 # In your .env file
 MCPGATEWAY_A2A_ENABLED=true
 MCPGATEWAY_A2A_GATEWAY_ENABLED=true  # default: true
+
+# Optional: customize the route prefix (default: a2a/agent)
+# A2A_GATEWAY_ROUTE_PREFIX=a2a/agent
 ```
 
 ### 2. Register an A2A Agent
 
-Register a downstream A2A agent via the admin API:
+Register a downstream A2A agent via the admin API. The response includes the agent's `id` — use this in all gateway URLs.
 
 ```bash
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
@@ -74,12 +80,14 @@ curl -X POST "http://localhost:4444/a2a" \
     "capabilities": {"streaming": true, "pushNotifications": false},
     "tags": ["echo", "test"]
   }'
+# Note the "id" field in the response (e.g., "abc123def456...")
+export AGENT_ID=<agent-id-from-response>
 ```
 
 ### 3. Discover the Agent Card
 
 ```bash
-curl "http://localhost:4444/a2a/v1/echo-agent/.well-known/agent-card.json" \
+curl "http://localhost:4444/a2a/agent/$AGENT_ID/.well-known/agent-card.json" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -88,7 +96,7 @@ Response:
 {
   "name": "Echo Agent",
   "description": "Echoes back messages for testing",
-  "url": "http://localhost:4444/a2a/v1/echo-agent",
+  "url": "http://localhost:4444/a2a/agent/abc123def456",
   "version": "1.0",
   "protocolVersion": "1.0",
   "capabilities": {
@@ -108,7 +116,7 @@ Response:
 ### 4. Send a Message
 
 ```bash
-curl -X POST "http://localhost:4444/a2a/v1/echo-agent" \
+curl -X POST "http://localhost:4444/a2a/agent/$AGENT_ID" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -162,12 +170,14 @@ curl -X POST "http://localhost:4444/a2a" \
     "capabilities": {"streaming": true},
     "tags": ["code-review", "python", "security"]
   }'
+# Export the agent ID from the response
+export CODE_REVIEW_ID=<agent-id-from-response>
 ```
 
 Send code for review:
 
 ```bash
-curl -X POST "http://localhost:4444/a2a/v1/code-review-agent" \
+curl -X POST "http://localhost:4444/a2a/agent/$CODE_REVIEW_ID" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -192,7 +202,7 @@ curl -X POST "http://localhost:4444/a2a/v1/code-review-agent" \
 Follow up on the same task using the returned task ID:
 
 ```bash
-curl -X POST "http://localhost:4444/a2a/v1/code-review-agent" \
+curl -X POST "http://localhost:4444/a2a/agent/$CODE_REVIEW_ID" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -208,7 +218,7 @@ curl -X POST "http://localhost:4444/a2a/v1/code-review-agent" \
 Use `message/stream` for long-running tasks where you want incremental updates:
 
 ```bash
-curl -N -X POST "http://localhost:4444/a2a/v1/research-agent" \
+curl -N -X POST "http://localhost:4444/a2a/agent/$RESEARCH_AGENT_ID" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -242,7 +252,7 @@ import httpx
 
 GATEWAY_URL = "http://localhost:4444"
 TOKEN = "your-jwt-token"
-AGENT_SLUG = "echo-agent"
+AGENT_ID = "abc123def456"  # Agent ID from registration response
 
 headers = {
     "Authorization": f"Bearer {TOKEN}",
@@ -251,14 +261,14 @@ headers = {
 
 # 1. Discover the agent
 card = httpx.get(
-    f"{GATEWAY_URL}/a2a/v1/{AGENT_SLUG}/.well-known/agent-card.json",
+    f"{GATEWAY_URL}/a2a/agent/{AGENT_ID}/.well-known/agent-card.json",
     headers=headers,
 ).json()
 print(f"Agent: {card['name']} at {card['url']}")
 
 # 2. Send a message
 response = httpx.post(
-    f"{GATEWAY_URL}/a2a/v1/{AGENT_SLUG}",
+    f"{GATEWAY_URL}/a2a/agent/{AGENT_ID}",
     headers=headers,
     json={
         "jsonrpc": "2.0",
@@ -280,7 +290,7 @@ print(f"Task {task_id}: {result['result']['status']['state']}")
 # 3. Check task status (if still working)
 if result["result"]["status"]["state"] != "completed":
     status = httpx.post(
-        f"{GATEWAY_URL}/a2a/v1/{AGENT_SLUG}",
+        f"{GATEWAY_URL}/a2a/agent/{AGENT_ID}",
         headers=headers,
         json={
             "jsonrpc": "2.0",
@@ -293,7 +303,7 @@ if result["result"]["status"]["state"] != "completed":
 
 # 4. Cancel a task
 cancel = httpx.post(
-    f"{GATEWAY_URL}/a2a/v1/{AGENT_SLUG}",
+    f"{GATEWAY_URL}/a2a/agent/{AGENT_ID}",
     headers=headers,
     json={
         "jsonrpc": "2.0",
@@ -335,7 +345,7 @@ body = {
 with httpx.Client(timeout=300) as client:
     with httpx_sse.connect_sse(
         client, "POST",
-        f"{GATEWAY_URL}/a2a/v1/report-agent",
+        f"{GATEWAY_URL}/a2a/agent/{AGENT_ID}",
         json=body, headers=headers,
     ) as event_source:
         for event in event_source.iter_sse():
@@ -356,6 +366,7 @@ with httpx.Client(timeout=300) as client:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MCPGATEWAY_A2A_GATEWAY_ENABLED` | Enable/disable the native A2A gateway | `true` |
+| `A2A_GATEWAY_ROUTE_PREFIX` | Route prefix for gateway endpoints (without leading/trailing slashes) | `a2a/agent` |
 | `A2A_GATEWAY_CLIENT_TIMEOUT` | HTTP timeout for downstream agent calls (seconds) | `30` |
 | `A2A_GATEWAY_STREAM_TIMEOUT` | SSE stream timeout (seconds) | `300` |
 | `A2A_GATEWAY_MAX_CONCURRENT_STREAMS` | Max concurrent SSE streams | `100` |
@@ -370,7 +381,7 @@ The A2A gateway uses the same authentication and RBAC model as the rest of Conte
 | Permission | Required For |
 |-----------|-------------|
 | `a2a_gateway.read` | Agent card discovery (`GET /.well-known/agent-card.json`) |
-| `a2a_gateway.execute` | JSON-RPC requests (`POST /{agent_slug}`) |
+| `a2a_gateway.execute` | JSON-RPC requests (`POST /{agent_id}`) |
 | `a2a_gateway.manage` | Administrative operations |
 
 ### Role Permissions
@@ -398,9 +409,9 @@ The gateway exposes Prometheus metrics for monitoring:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `a2a_gateway_requests_total` | Counter | `agent_slug`, `method`, `status` | Total JSON-RPC requests |
-| `a2a_gateway_errors_total` | Counter | `agent_slug`, `error_type` | Total gateway errors |
-| `a2a_gateway_streams_active` | Gauge | `agent_slug` | Currently active SSE streams |
+| `a2a_gateway_requests_total` | Counter | `agent_id`, `method`, `status` | Total JSON-RPC requests |
+| `a2a_gateway_errors_total` | Counter | `agent_id`, `error_type` | Total gateway errors |
+| `a2a_gateway_streams_active` | Gauge | `agent_id` | Currently active SSE streams |
 
 ## Plugin Hooks
 
@@ -436,7 +447,7 @@ Example error response:
 
 ContextForge offers two ways to interact with A2A agents:
 
-| Feature | A2A Gateway (`/a2a/v1/`) | MCP Tool Wrapping (`/rpc`) |
+| Feature | A2A Gateway (`/a2a/agent/`) | MCP Tool Wrapping (`/rpc`) |
 |---------|--------------------------|----------------------------|
 | Protocol | Native A2A JSON-RPC 2.0 | MCP `tools/call` |
 | Streaming | SSE (`message/stream`) | Not supported |
@@ -452,7 +463,7 @@ Use the **A2A gateway** when you need streaming, task management, or A2A protoco
 ### Gateway Returns 404 for Agent Card
 
 1. Verify the agent is registered: `GET /a2a` (admin API)
-2. Check the agent slug matches (slug is auto-generated from the agent name)
+2. Check the agent ID in the URL matches the `id` field from the registration response
 3. Ensure the agent is enabled
 4. Verify your JWT token has the correct team scope
 

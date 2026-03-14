@@ -48,7 +48,7 @@ class A2AClientService:
         *,
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
-        agent_slug: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send a non-streaming JSON-RPC request to a downstream A2A agent.
 
@@ -60,7 +60,7 @@ class A2AClientService:
             body: The JSON-RPC request body to forward.
             user_id: User ID for logging.
             user_email: User email for logging.
-            agent_slug: Agent slug for logging.
+            agent_id: Agent ID for logging.
 
         Returns:
             The JSON-RPC response from the downstream agent.
@@ -81,14 +81,14 @@ class A2AClientService:
 
         structured_logger.log(
             level="INFO",
-            message=f"A2A client request: {method} to {agent_slug}",
+            message=f"A2A client request: {method} to {agent_id}",
             component="a2a_client_service",
             user_id=user_id,
             user_email=user_email,
             correlation_id=correlation_id,
             metadata={
                 "event": "a2a_client_request_start",
-                "agent_slug": agent_slug,
+                "agent_id": agent_id,
                 "method": method,
                 "endpoint_url": sanitized_url,
             },
@@ -109,7 +109,7 @@ class A2AClientService:
                 result = response.json()
                 structured_logger.log(
                     level="INFO",
-                    message=f"A2A client request completed: {method} to {agent_slug}",
+                    message=f"A2A client request completed: {method} to {agent_id}",
                     component="a2a_client_service",
                     user_id=user_id,
                     user_email=user_email,
@@ -117,7 +117,7 @@ class A2AClientService:
                     duration_ms=duration_ms,
                     metadata={
                         "event": "a2a_client_request_completed",
-                        "agent_slug": agent_slug,
+                        "agent_id": agent_id,
                         "method": method,
                         "status_code": response.status_code,
                     },
@@ -129,7 +129,7 @@ class A2AClientService:
 
                 structured_logger.log(
                     level="ERROR",
-                    message=f"A2A client request failed: {method} to {agent_slug}",
+                    message=f"A2A client request failed: {method} to {agent_id}",
                     component="a2a_client_service",
                     user_id=user_id,
                     user_email=user_email,
@@ -138,7 +138,7 @@ class A2AClientService:
                     error_details={"error_type": "A2AClientHTTPError", "error_message": error_message},
                     metadata={
                         "event": "a2a_client_request_failed",
-                        "agent_slug": agent_slug,
+                        "agent_id": agent_id,
                         "method": method,
                         "status_code": response.status_code,
                     },
@@ -154,14 +154,14 @@ class A2AClientService:
             duration_ms = (datetime.now(timezone.utc) - call_start).total_seconds() * 1000
             structured_logger.log(
                 level="ERROR",
-                message=f"A2A client request timeout: {method} to {agent_slug}",
+                message=f"A2A client request timeout: {method} to {agent_id}",
                 component="a2a_client_service",
                 user_id=user_id,
                 user_email=user_email,
                 correlation_id=correlation_id,
                 duration_ms=duration_ms,
                 error_details={"error_type": "TimeoutError", "error_message": f"Timeout after {settings.a2a_gateway_client_timeout}s"},
-                metadata={"event": "a2a_client_request_timeout", "agent_slug": agent_slug, "method": method},
+                metadata={"event": "a2a_client_request_timeout", "agent_id": agent_id, "method": method},
             )
             return make_jsonrpc_error(
                 JSONRPC_INTERNAL_ERROR,
@@ -175,14 +175,14 @@ class A2AClientService:
 
             structured_logger.log(
                 level="ERROR",
-                message=f"A2A client request exception: {method} to {agent_slug}",
+                message=f"A2A client request exception: {method} to {agent_id}",
                 component="a2a_client_service",
                 user_id=user_id,
                 user_email=user_email,
                 correlation_id=correlation_id,
                 duration_ms=duration_ms,
                 error_details={"error_type": type(e).__name__, "error_message": error_str},
-                metadata={"event": "a2a_client_request_exception", "agent_slug": agent_slug, "method": method},
+                metadata={"event": "a2a_client_request_exception", "agent_id": agent_id, "method": method},
             )
 
             return make_jsonrpc_error(
@@ -199,7 +199,7 @@ class A2AClientService:
         *,
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
-        agent_slug: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Send a streaming JSON-RPC request and yield SSE events.
 
@@ -214,7 +214,7 @@ class A2AClientService:
             body: The JSON-RPC request body to forward.
             user_id: User ID for logging.
             user_email: User email for logging.
-            agent_slug: Agent slug for logging.
+            agent_id: Agent ID for logging.
 
         Yields:
             SSE event strings in the format "data: {...}\n\n".
@@ -233,14 +233,14 @@ class A2AClientService:
 
         structured_logger.log(
             level="INFO",
-            message=f"A2A client stream started: {method} to {agent_slug}",
+            message=f"A2A client stream started: {method} to {agent_id}",
             component="a2a_client_service",
             user_id=user_id,
             user_email=user_email,
             correlation_id=correlation_id,
             metadata={
                 "event": "a2a_client_stream_start",
-                "agent_slug": agent_slug,
+                "agent_id": agent_id,
                 "method": method,
                 "endpoint_url": sanitized_url,
             },
@@ -272,14 +272,14 @@ class A2AClientService:
             duration_ms = (datetime.now(timezone.utc) - call_start).total_seconds() * 1000
             structured_logger.log(
                 level="ERROR",
-                message=f"A2A client stream timeout: {method} to {agent_slug}",
+                message=f"A2A client stream timeout: {method} to {agent_id}",
                 component="a2a_client_service",
                 user_id=user_id,
                 user_email=user_email,
                 correlation_id=correlation_id,
                 duration_ms=duration_ms,
                 error_details={"error_type": "StreamTimeoutError"},
-                metadata={"event": "a2a_client_stream_timeout", "agent_slug": agent_slug, "method": method, "event_count": event_count},
+                metadata={"event": "a2a_client_stream_timeout", "agent_id": agent_id, "method": method, "event_count": event_count},
             )
             # Yield an error event to the client
             import json
@@ -295,14 +295,14 @@ class A2AClientService:
 
             structured_logger.log(
                 level="ERROR",
-                message=f"A2A client stream error: {method} to {agent_slug}",
+                message=f"A2A client stream error: {method} to {agent_id}",
                 component="a2a_client_service",
                 user_id=user_id,
                 user_email=user_email,
                 correlation_id=correlation_id,
                 duration_ms=duration_ms,
                 error_details={"error_type": type(e).__name__, "error_message": error_str},
-                metadata={"event": "a2a_client_stream_error", "agent_slug": agent_slug, "method": method, "event_count": event_count},
+                metadata={"event": "a2a_client_stream_error", "agent_id": agent_id, "method": method, "event_count": event_count},
             )
             import json
 
@@ -313,7 +313,7 @@ class A2AClientService:
             duration_ms = (datetime.now(timezone.utc) - call_start).total_seconds() * 1000
             structured_logger.log(
                 level="INFO",
-                message=f"A2A client stream ended: {method} to {agent_slug}",
+                message=f"A2A client stream ended: {method} to {agent_id}",
                 component="a2a_client_service",
                 user_id=user_id,
                 user_email=user_email,
@@ -321,7 +321,7 @@ class A2AClientService:
                 duration_ms=duration_ms,
                 metadata={
                     "event": "a2a_client_stream_end",
-                    "agent_slug": agent_slug,
+                    "agent_id": agent_id,
                     "method": method,
                     "event_count": event_count,
                 },

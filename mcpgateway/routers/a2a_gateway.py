@@ -10,8 +10,10 @@ Implements native A2A protocol endpoints for ContextForge. Provides a JSON-RPC 2
 endpoint per registered A2A agent and agent card discovery.
 
 Endpoints:
-    POST /a2a/v1/{agent_slug}                               - JSON-RPC dispatcher
-    GET  /a2a/v1/{agent_slug}/.well-known/agent-card.json   - Agent Card
+    POST /{prefix}/{agent_id}                               - JSON-RPC dispatcher
+    GET  /{prefix}/{agent_id}/.well-known/agent-card.json   - Agent Card
+
+The route prefix is configurable via A2A_GATEWAY_ROUTE_PREFIX (default: "a2a/agent").
 """
 
 # Standard
@@ -44,7 +46,8 @@ from mcpgateway.services.metrics import a2a_gateway_errors_counter, a2a_gateway_
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-router = APIRouter(prefix="/a2a/v1", tags=["A2A Gateway"])
+_route_prefix = settings.a2a_gateway_route_prefix.strip("/")
+router = APIRouter(prefix=f"/{_route_prefix}", tags=["A2A Gateway"])
 
 # Service singletons
 _gateway_service = A2AGatewayService()
@@ -129,10 +132,10 @@ def _get_base_url(request: Request) -> str:
     return f"{proto}://{host}"
 
 
-@router.get("/{agent_slug}/.well-known/agent-card.json", response_model=Dict[str, Any])
+@router.get("/{agent_id}/.well-known/agent-card.json", response_model=Dict[str, Any])
 @require_permission(Permissions.A2A_GATEWAY_READ)
 async def get_agent_card(
-    agent_slug: str,
+    agent_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user: Any = Depends(get_current_user_with_permissions),
@@ -143,7 +146,7 @@ async def get_agent_card(
     JSON-RPC endpoint. Clients use this for agent discovery.
 
     Args:
-        agent_slug: The agent's URL slug.
+        agent_id: The agent's database ID.
         request: FastAPI request object.
         db: Database session.
         user: Authenticated user.
@@ -163,25 +166,25 @@ async def get_agent_card(
         elif token_teams is None:
             token_teams = []  # Non-admin without teams = public-only
 
-        agent, _ = _gateway_service.resolve_agent(db, agent_slug, user_email, token_teams)
+        agent, _ = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
         base_url = _get_base_url(request)
         card = _gateway_service.generate_agent_card(agent, base_url)
 
         return JSONResponse(content=card, media_type="application/json")
 
     except A2AGatewayAgentNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_slug}")
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
     except A2AGatewayAgentDisabledError:
-        raise HTTPException(status_code=400, detail=f"Agent is disabled: {agent_slug}")
+        raise HTTPException(status_code=400, detail=f"Agent is disabled: {agent_id}")
     except Exception as e:
-        logger.error(f"Error generating agent card for {agent_slug}: {e}")
+        logger.error(f"Error generating agent card for {agent_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/{agent_slug}", response_model=Dict[str, Any])
+@router.post("/{agent_id}", response_model=Dict[str, Any])
 @require_permission(Permissions.A2A_GATEWAY_EXECUTE)
 async def jsonrpc_endpoint(
-    agent_slug: str,
+    agent_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user: Any = Depends(get_current_user_with_permissions),
@@ -202,7 +205,7 @@ async def jsonrpc_endpoint(
         - agent/getAuthenticatedExtendedCard: Get extended agent card
 
     Args:
-        agent_slug: The agent's URL slug.
+        agent_id: The agent's database ID.
         request: FastAPI request object.
         db: Database session.
         user: Authenticated user.
@@ -230,7 +233,7 @@ async def jsonrpc_endpoint(
 
     # Handle agent/getAuthenticatedExtendedCard locally (no downstream call)
     if method == "agent/getAuthenticatedExtendedCard":
-        return await _handle_get_authenticated_card(agent_slug, request, db, user, request_id)
+        return await _handle_get_authenticated_card(agent_id, request, db, user, request_id)
 
     # Resolve agent with visibility/team scoping
     try:
@@ -241,16 +244,16 @@ async def jsonrpc_endpoint(
         elif token_teams is None:
             token_teams = []
 
-        agent, auth_headers = _gateway_service.resolve_agent(db, agent_slug, user_email, token_teams)
+        agent, auth_headers = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
 
     except A2AGatewayAgentNotFoundError:
         return JSONResponse(
-            content=make_jsonrpc_error(JSONRPC_INTERNAL_ERROR, f"Agent not found: {agent_slug}", request_id),
+            content=make_jsonrpc_error(JSONRPC_INTERNAL_ERROR, f"Agent not found: {agent_id}", request_id),
             status_code=200,
         )
     except A2AGatewayAgentDisabledError:
         return JSONResponse(
-            content=make_jsonrpc_error(JSONRPC_INTERNAL_ERROR, f"Agent is disabled: {agent_slug}", request_id),
+            content=make_jsonrpc_error(JSONRPC_INTERNAL_ERROR, f"Agent is disabled: {agent_id}", request_id),
             status_code=200,
         )
     except A2AGatewayError as e:
@@ -270,11 +273,11 @@ async def jsonrpc_endpoint(
     endpoint_url = getattr(agent, "_gateway_endpoint_url", agent.endpoint_url)
 
     # Run pre-invoke plugin hook
-    await _run_pre_invoke_hook(agent_slug, method, body.get("params", {}), user_email, user_id)
+    await _run_pre_invoke_hook(agent_id, method, body.get("params", {}), user_email, user_id)
 
     # Streaming methods return SSE event streams
     if _gateway_service.is_streaming_method(method):
-        a2a_gateway_streams_active.labels(agent_slug=agent_slug).inc()
+        a2a_gateway_streams_active.labels(agent_id=agent_id).inc()
 
         async def _stream_with_metrics():
             try:
@@ -284,16 +287,16 @@ async def jsonrpc_endpoint(
                     body=body,
                     user_id=user_id,
                     user_email=user_email,
-                    agent_slug=agent_slug,
+                    agent_id=agent_id,
                 ):
                     yield event
-                a2a_gateway_requests_counter.labels(agent_slug=agent_slug, method=method, status="success").inc()
+                a2a_gateway_requests_counter.labels(agent_id=agent_id, method=method, status="success").inc()
             except Exception:
-                a2a_gateway_requests_counter.labels(agent_slug=agent_slug, method=method, status="error").inc()
-                a2a_gateway_errors_counter.labels(agent_slug=agent_slug, error_type="stream_error").inc()
+                a2a_gateway_requests_counter.labels(agent_id=agent_id, method=method, status="error").inc()
+                a2a_gateway_errors_counter.labels(agent_id=agent_id, error_type="stream_error").inc()
                 raise
             finally:
-                a2a_gateway_streams_active.labels(agent_slug=agent_slug).dec()
+                a2a_gateway_streams_active.labels(agent_id=agent_id).dec()
 
         return StreamingResponse(
             _stream_with_metrics(),
@@ -313,25 +316,25 @@ async def jsonrpc_endpoint(
         body=body,
         user_id=user_id,
         user_email=user_email,
-        agent_slug=agent_slug,
+        agent_id=agent_id,
     )
     duration_ms = (datetime.now(timezone.utc) - call_start).total_seconds() * 1000
 
     # Track metrics
     is_error = "error" in result
     status = "error" if is_error else "success"
-    a2a_gateway_requests_counter.labels(agent_slug=agent_slug, method=method, status=status).inc()
+    a2a_gateway_requests_counter.labels(agent_id=agent_id, method=method, status=status).inc()
     if is_error:
-        a2a_gateway_errors_counter.labels(agent_slug=agent_slug, error_type="downstream_error").inc()
+        a2a_gateway_errors_counter.labels(agent_id=agent_id, error_type="downstream_error").inc()
 
     # Run post-invoke plugin hook
-    await _run_post_invoke_hook(agent_slug, method, result, duration_ms, is_error)
+    await _run_post_invoke_hook(agent_id, method, result, duration_ms, is_error)
 
     return JSONResponse(content=result, status_code=200)
 
 
 async def _handle_get_authenticated_card(
-    agent_slug: str,
+    agent_id: str,
     request: Request,
     db: Session,
     user: Any,
@@ -342,7 +345,7 @@ async def _handle_get_authenticated_card(
     Returns the gateway-generated agent card with extended info.
 
     Args:
-        agent_slug: The agent's URL slug.
+        agent_id: The agent's database ID.
         request: FastAPI request object.
         db: Database session.
         user: Authenticated user.
@@ -359,7 +362,7 @@ async def _handle_get_authenticated_card(
         elif token_teams is None:
             token_teams = []
 
-        agent, _ = _gateway_service.resolve_agent(db, agent_slug, user_email, token_teams)
+        agent, _ = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
         base_url = _get_base_url(request)
         card = _gateway_service.generate_agent_card(agent, base_url)
 
@@ -369,11 +372,11 @@ async def _handle_get_authenticated_card(
 
     except A2AGatewayAgentNotFoundError:
         return JSONResponse(
-            content=make_jsonrpc_error(JSONRPC_INTERNAL_ERROR, f"Agent not found: {agent_slug}", request_id),
+            content=make_jsonrpc_error(JSONRPC_INTERNAL_ERROR, f"Agent not found: {agent_id}", request_id),
             status_code=200,
         )
     except Exception as e:
-        logger.error(f"Error handling getAuthenticatedExtendedCard for {agent_slug}: {e}")
+        logger.error(f"Error handling getAuthenticatedExtendedCard for {agent_id}: {e}")
         return JSONResponse(
             content=make_jsonrpc_error(JSONRPC_INTERNAL_ERROR, "Internal error", request_id),
             status_code=200,
@@ -381,7 +384,7 @@ async def _handle_get_authenticated_card(
 
 
 async def _run_pre_invoke_hook(
-    agent_slug: str,
+    agent_id: str,
     method: str,
     params: Dict[str, Any],
     user_email: Optional[str],
@@ -400,7 +403,7 @@ async def _run_pre_invoke_hook(
             await pm.invoke_hook(
                 A2AGatewayHookType.A2A_GATEWAY_PRE_INVOKE,
                 payload=A2AGatewayPreInvokePayload(
-                    agent_slug=agent_slug,
+                    agent_id=agent_id,
                     method=method,
                     params=params,
                     user_email=user_email,
@@ -413,7 +416,7 @@ async def _run_pre_invoke_hook(
 
 
 async def _run_post_invoke_hook(
-    agent_slug: str,
+    agent_id: str,
     method: str,
     result: Dict[str, Any],
     duration_ms: float,
@@ -432,7 +435,7 @@ async def _run_post_invoke_hook(
             await pm.invoke_hook(
                 A2AGatewayHookType.A2A_GATEWAY_POST_INVOKE,
                 payload=A2AGatewayPostInvokePayload(
-                    agent_slug=agent_slug,
+                    agent_id=agent_id,
                     method=method,
                     result=result,
                     duration_ms=duration_ms,
