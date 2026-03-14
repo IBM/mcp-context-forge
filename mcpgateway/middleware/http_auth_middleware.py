@@ -15,6 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpHookType, HttpPostRequestPayload, HttpPreRequestPayload, PluginManager
 from mcpgateway.utils.correlation_id import generate_correlation_id, get_correlation_id
 
@@ -73,7 +74,7 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         if not request_id:
             # Fallback if correlation ID middleware is disabled
             request_id = generate_correlation_id()
-            logger.debug(f"Correlation ID not found, generated fallback: {request_id}")
+            logger.debug("Correlation ID not found, generated fallback: %s", request_id)
 
         request.state.request_id = request_id
 
@@ -129,25 +130,32 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
                     # headers that were already present on the inbound request.
                     # Plugins MAY create new auth headers (e.g. x-api-key → authorization
                     # transform) but MUST NOT replace values the client already sent.
+                    #
+                    # This guard can be disabled with PLUGINS_CAN_OVERRIDE_AUTH_HEADERS=true
+                    # for deployments that require plugin-driven token exchange (e.g. WXO auth).
                     original_headers = dict(request.headers)
-                    _auth_protected_headers = {"authorization", "cookie", "x-api-key", "proxy-authorization"}
-                    overridden = {k for k in modified_headers_dict if k.lower() in _auth_protected_headers and k.lower() in original_headers}
-                    if overridden:
-                        logger.warning("Pre-request hook attempted to override existing auth headers (stripped): %s", overridden)
-                        modified_headers_dict = {k: v for k, v in modified_headers_dict.items() if k.lower() not in overridden}
+                    if not settings.plugins_can_override_auth_headers:
+                        _auth_protected_headers = {"authorization", "cookie", "x-api-key", "proxy-authorization"}
+                        overridden = {k.lower() for k in modified_headers_dict if k.lower() in _auth_protected_headers and k.lower() in original_headers}
+                        if overridden:
+                            logger.warning("Pre-request hook attempted to override existing auth headers (stripped): %s", overridden)
+                            modified_headers_dict = {k: v for k, v in modified_headers_dict.items() if k.lower() not in overridden}
 
-                    # Merge modified headers with original headers (modified headers take precedence)
-                    merged_headers = {**original_headers, **modified_headers_dict}
+                    # Merge modified headers with original headers (modified headers take precedence).
+                    # Normalize plugin header keys to lowercase so mixed-case keys
+                    # (e.g. "Authorization" vs "authorization") don't create duplicates.
+                    modified_lower = {k.lower(): v for k, v in modified_headers_dict.items()}
+                    merged_headers = {**original_headers, **modified_lower}
 
                     # Update request.scope["headers"] which is the raw header list Starlette uses
                     # Convert dict to list of (name, value) tuples with lowercase byte keys
                     request.scope["headers"] = [(name.lower().encode(), value.encode()) for name, value in merged_headers.items()]
 
-                    logger.debug(f"Pre-request hook modified headers: {list(modified_headers_dict.keys())}")
+                    logger.debug("Pre-request hook modified headers: %s", list(modified_headers_dict.keys()))
 
             except Exception as e:
                 # Log but don't fail the request if pre-hook has issues
-                logger.warning(f"HTTP_PRE_REQUEST hook failed: {e}", exc_info=True)
+                logger.warning("HTTP_PRE_REQUEST hook failed: %s", e, exc_info=True)
 
         # Process the request through the rest of the application
         response = await call_next(request)
@@ -181,10 +189,10 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
                     # Update response headers (response.headers is mutable)
                     for header_name, header_value in modified_response_headers.items():
                         response.headers[header_name] = header_value
-                    logger.debug(f"Post-request hook modified response headers: {list(modified_response_headers.keys())}")
+                    logger.debug("Post-request hook modified response headers: %s", list(modified_response_headers.keys()))
 
             except Exception as e:
                 # Log but don't fail the response if post-hook has issues
-                logger.warning(f"HTTP_POST_REQUEST hook failed: {e}", exc_info=True)
+                logger.warning("HTTP_POST_REQUEST hook failed: %s", e, exc_info=True)
 
         return response
