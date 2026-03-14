@@ -71,8 +71,10 @@ from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
+from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.orjson_response import ORJSONResponse
+from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials
 
 # Initialize logging service first
@@ -758,7 +760,7 @@ async def _validate_streamable_session_access(
     return False, HTTP_403_FORBIDDEN, "Session owner metadata unavailable"
 
 
-async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
+async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None, db: Optional[Session] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
     Args:
@@ -766,6 +768,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         request_headers: Request headers from client
         user_context: User context (not used - _meta comes from MCP SDK)
         meta: Request metadata (_meta) from the original request
+        db: SQLAlchemy database session for passthrough header config lookup
 
     Returns:
         List of Tool objects from remote server
@@ -774,12 +777,16 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         # Prepare headers with gateway auth
         headers = build_gateway_auth_headers(gateway)
 
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        # Forward passthrough headers using shared utility (handles X-Upstream-Authorization rename)
+        if request_headers and db is not None:
+            passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            headers = compute_passthrough_headers_cached(
+                request_headers,
+                headers,
+                passthrough_allowed,
+                gateway_auth_type=getattr(gateway, "auth_type", None),
+                gateway_passthrough_headers=gateway.passthrough_headers,
+            )
 
         # Use MCP SDK to connect and list tools
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
@@ -801,7 +808,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         return []
 
 
-async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Resource]:  # pylint: disable=unused-argument
+async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None, db: Optional[Session] = None) -> List[types.Resource]:  # pylint: disable=unused-argument
     """Proxy resources/list request directly to remote MCP gateway using MCP SDK.
 
     Args:
@@ -809,6 +816,7 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
         request_headers: Request headers from client
         user_context: User context (not used - _meta comes from MCP SDK)
         meta: Request metadata (_meta) from the original request
+        db: SQLAlchemy database session for passthrough header config lookup
 
     Returns:
         List of Resource objects from remote server
@@ -817,12 +825,16 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
         # Prepare headers with gateway auth
         headers = build_gateway_auth_headers(gateway)
 
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        # Forward passthrough headers using shared utility (handles X-Upstream-Authorization rename)
+        if request_headers and db is not None:
+            passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            headers = compute_passthrough_headers_cached(
+                request_headers,
+                headers,
+                passthrough_allowed,
+                gateway_auth_type=getattr(gateway, "auth_type", None),
+                gateway_passthrough_headers=gateway.passthrough_headers,
+            )
 
         logger.info("Proxying resources/list to gateway %s at %s", gateway.id, gateway.url)
         if meta:
@@ -850,7 +862,7 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
         return []
 
 
-async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_context: dict, meta: Optional[Any] = None) -> List[Any]:  # pylint: disable=unused-argument
+async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_context: dict, meta: Optional[Any] = None, db: Optional[Session] = None) -> List[Any]:  # pylint: disable=unused-argument
     """Proxy resources/read request directly to remote MCP gateway using MCP SDK.
 
     Args:
@@ -858,6 +870,7 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         resource_uri: URI of the resource to read
         user_context: User context (not used - auth comes from gateway config)
         meta: Request metadata (_meta) from the original request
+        db: SQLAlchemy database session for passthrough header config lookup
 
     Returns:
         List of content objects (TextResourceContents or BlobResourceContents) from remote server
@@ -874,12 +887,16 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         if gw_id:
             headers[GATEWAY_ID_HEADER] = gw_id
 
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        # Forward passthrough headers using shared utility (handles X-Upstream-Authorization rename)
+        if request_headers and db is not None:
+            passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            headers = compute_passthrough_headers_cached(
+                request_headers,
+                headers,
+                passthrough_allowed,
+                gateway_auth_type=getattr(gateway, "auth_type", None),
+                gateway_passthrough_headers=gateway.passthrough_headers,
+            )
 
         logger.info("Proxying resources/read for %s to gateway %s at %s", resource_uri, gateway.id, gateway.url)
         if meta:
@@ -1514,7 +1531,7 @@ async def list_tools() -> List[types.Tool]:
                         except (LookupError, AttributeError) as e:
                             logger.debug("No request context available for _meta extraction: %s", e)
 
-                        return await _proxy_list_tools_to_gateway(gateway, request_headers, user_context, meta)
+                        return await _proxy_list_tools_to_gateway(gateway, request_headers, user_context, meta, db=db)
                     if gateway:
                         logger.debug("Gateway %s found but not in direct_proxy mode (mode: %s), using cache mode", gateway_id, getattr(gateway, "gateway_mode", "cache"))
                     else:
@@ -1792,7 +1809,7 @@ async def list_resources() -> List[types.Resource]:
                         except (LookupError, AttributeError) as e:
                             logger.debug("No request context available for _meta extraction: %s", e)
 
-                        return await _proxy_list_resources_to_gateway(gateway, request_headers, user_context, meta)
+                        return await _proxy_list_resources_to_gateway(gateway, request_headers, user_context, meta, db=db)
                     if gateway:
                         logger.debug("Gateway %s found but not in direct_proxy mode (mode: %s), using cache mode", gateway_id, gateway.gateway_mode)
                     else:
@@ -1914,7 +1931,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     except (LookupError, AttributeError) as e:
                         logger.debug("No request context available for _meta extraction: %s", e)
 
-                    contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta)
+                    contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta, db=db)
                     if contents:
                         # Return first content (text or blob)
                         first_content = contents[0]
