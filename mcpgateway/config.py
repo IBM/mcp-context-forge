@@ -215,7 +215,7 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="sqlite:///./mcp.db",
         description=(
-            "Database connection URL. Supports SQLite, PostgreSQL, MySQL/MariaDB. "
+            "Database connection URL. Supports SQLite (dev) and PostgreSQL (production). "
             "For PostgreSQL with custom schema, use the 'options' query parameter: "
             "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "
             "(See Issue #1535 for details)"
@@ -985,7 +985,7 @@ class Settings(BaseSettings):
 
             # Warn about SQLite in production
             if v.startswith("sqlite"):
-                logger.info("Using SQLite database. Consider PostgreSQL or MySQL for production.")
+                logger.info("Using SQLite database. Consider PostgreSQL for production.")
 
         return v
 
@@ -1045,7 +1045,7 @@ class Settings(BaseSettings):
 
         # Database warnings
         if self.database_url.startswith("sqlite") and not self.dev_mode:
-            warnings.append("💾 SQLite database in use - consider PostgreSQL/MySQL for production")
+            warnings.append("💾 SQLite database in use - consider PostgreSQL for production")
 
         # Rate limiting warnings
         if self.tool_rate_limit > 1000:
@@ -1667,7 +1667,7 @@ class Settings(BaseSettings):
     default_roots: List[str] = []
 
     # Database
-    db_driver: str = "mariadb+mariadbconnector"
+    db_driver: str = "postgresql+psycopg"
     db_pool_size: int = 200
     db_max_overflow: int = 10
     db_pool_timeout: int = 30

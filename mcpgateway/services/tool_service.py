@@ -2488,7 +2488,6 @@ class ToolService(BaseService):
                     delete_metrics_in_batches(db, ToolMetricsHourly, ToolMetricsHourly.tool_id, tool_id)
 
             # Use DELETE with rowcount check for database-agnostic atomic delete
-            # (RETURNING is not supported on MySQL/MariaDB)
             stmt = delete(DbTool).where(DbTool.id == tool_id)
             result = db.execute(stmt)
             if result.rowcount == 0:

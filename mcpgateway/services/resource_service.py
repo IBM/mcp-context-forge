@@ -969,7 +969,7 @@ class ResourceService(BaseService):
             >>> db2 = MagicMock()
             >>> bind = MagicMock()
             >>> bind.dialect = MagicMock()
-            >>> bind.dialect.name = "sqlite"           # or "postgresql" / "mysql"
+            >>> bind.dialect.name = "sqlite"           # or "postgresql"
             >>> db2.get_bind.return_value = bind
             >>> db2.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> result2, _ = asyncio.run(service.list_resources(db2, tags=['api']))

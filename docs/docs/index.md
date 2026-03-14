@@ -278,14 +278,14 @@ Use the official OCI image from GHCR with **Docker** or **Podman**.
 
 ### Docker Compose (Recommended)
 
-Get a full stack running with MariaDB and Redis:
+Get a full stack running with PostgreSQL and Redis:
 
 ```bash
 # Clone and start the stack
 git clone https://github.com/IBM/mcp-context-forge.git
 cd mcp-context-forge
 
-# Start with MariaDB (recommended for production)
+# Start with PostgreSQL (recommended for production)
 docker compose up -d
 
 # Check status
@@ -302,7 +302,7 @@ docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
 
 **What you get:**
 
-- **MariaDB 10.6** - Production-ready database with 36+ tables
+- **PostgreSQL** - Production-ready relational database
 - **ContextForge** - Full-featured gateway with Admin UI
 - **Redis** - High-performance caching and session storage
 - **Admin Tools** - pgAdmin, Redis Insight for database management
@@ -317,13 +317,11 @@ Deploy to Kubernetes with enterprise-grade features:
 git clone https://github.com/IBM/mcp-context-forge.git
 cd mcp-context-forge/charts/mcp-stack
 
-# Install with MariaDB
+# Install with PostgreSQL (default)
 helm install mcp-gateway . \
   --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
   --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
-  --set mcpContextForge.secret.JWT_SECRET_KEY=your-secret-key \
-  --set postgres.enabled=false \
-  --set mariadb.enabled=true
+  --set mcpContextForge.secret.JWT_SECRET_KEY=your-secret-key
 
 # Check deployment status
 kubectl get pods -l app.kubernetes.io/name=mcp-context-forge

@@ -2889,7 +2889,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db.expire(gateway)
 
             # Use DELETE with rowcount check for database-agnostic atomic delete
-            # (RETURNING is not supported on MySQL/MariaDB)
             stmt = delete(DbGateway).where(DbGateway.id == gateway_id)
             result = db.execute(stmt)
             if result.rowcount == 0:

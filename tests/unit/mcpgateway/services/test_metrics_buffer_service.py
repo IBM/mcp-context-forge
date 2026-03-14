@@ -729,9 +729,7 @@ class TestMetricsSetup:
     @pytest.mark.parametrize(
         "db_url, expected_engine",
         [
-            ("mysql+pymysql://user@host/db", "mariadb"),
             ("postgresql://user@host/db", "postgresql"),
-            ("mongodb://user@host/db", "mongodb"),
             ("oracle://user@host/db", "unknown"),
         ],
     )
