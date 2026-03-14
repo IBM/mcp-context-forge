@@ -96,6 +96,7 @@ recursive-include plugins *.json
 recursive-include plugins *.sh
 recursive-include plugins *.yaml
 recursive-include plugins *.md
+recursive-include plugins *.html
 
 # Rust plugins (optional - exclude build artifacts)
 recursive-include plugins_rust *.rs
