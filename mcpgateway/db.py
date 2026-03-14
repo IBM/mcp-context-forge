@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-ContextForge Database Models.
+MCP Gateway Database Models.
 This module defines SQLAlchemy models for storing MCP entities including:
 - Tools with input schema validation
 - Resources with subscription tracking
@@ -41,9 +41,9 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import NullPool, QueuePool
-from sqlalchemy.types import TypeDecorator
 
 # First-Party
+from mcpgateway.utils.pgvector import HAS_PGVECTOR, Vector
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.create_slug import slugify
@@ -271,123 +271,6 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class TokenEncryptionWriteError(ValueError):
-    """Raised when OAuth token encryption fails during DB write binding."""
-
-
-class EncryptedText(TypeDecorator):  # pylint: disable=too-many-ancestors
-    """Text type that applies best-effort encryption/decryption at ORM boundary.
-
-    This preserves compatibility with service-layer encryption:
-    - Pre-encrypted values pass through unchanged.
-    - Plaintext values are encrypted when possible before persistence.
-    - On read, encrypted values are decrypted for runtime usage.
-    """
-
-    impl = Text
-    cache_ok = True
-
-    @property
-    def python_type(self):
-        """Return the Python type represented by this SQLAlchemy type.
-
-        Returns:
-            type: Python ``str`` type.
-        """
-        return str
-
-    @staticmethod
-    def _get_encryption():
-        """Resolve encryption service for column-level token protection.
-
-        Returns:
-            Optional[EncryptionService]: Encryption service instance when configured,
-                otherwise ``None``.
-        """
-        secret = getattr(settings, "auth_encryption_secret", None)
-        if not secret:
-            return None
-        try:
-            # First-Party
-            from mcpgateway.services.encryption_service import get_encryption_service  # pylint: disable=import-outside-toplevel
-
-            return get_encryption_service(secret)
-        except Exception as exc:
-            logger.debug("Unable to initialize encryption service for EncryptedText: %s", exc)
-            return None
-
-    def process_literal_param(self, value, _dialect):  # pylint: disable=unused-argument
-        """Render literal SQL parameter value via encrypted bind processing.
-
-        Args:
-            value (Any): Raw value from SQLAlchemy.
-            _dialect: SQLAlchemy dialect (unused).
-
-        Returns:
-            Any: Bound parameter value after encryption handling.
-        """
-        processed = self.process_bind_param(value, _dialect)
-        return processed
-
-    def process_bind_param(self, value, _dialect):  # pylint: disable=unused-argument
-        """Encrypt plaintext values before persistence when encryption is available.
-
-        Args:
-            value (Any): Raw value from SQLAlchemy.
-            _dialect: SQLAlchemy dialect (unused).
-
-        Returns:
-            Any: Encrypted value for persistence or unchanged value when no
-                encryption is applied.
-
-        Raises:
-            TokenEncryptionWriteError: If encryption is configured and token
-                encryption fails.
-        """
-        if value in (None, "") or not isinstance(value, str):
-            return value
-
-        encryption = self._get_encryption()
-        if not encryption:
-            return value
-
-        try:
-            if encryption.is_encrypted(value):
-                return value
-            return encryption.encrypt_secret(value)
-        except Exception as exc:
-            logger.warning("EncryptedText bind encryption failed; rejecting token write")
-            logger.debug("EncryptedText bind encryption exception: %s", exc)
-            raise TokenEncryptionWriteError("OAuth token encryption failed during write") from exc
-
-    def process_result_value(self, value, _dialect):  # pylint: disable=unused-argument
-        """Decrypt stored encrypted values when reading rows.
-
-        Args:
-            value (Any): Raw value loaded from database.
-            _dialect: SQLAlchemy dialect (unused).
-
-        Returns:
-            Any: Decrypted value when encrypted, otherwise unchanged.
-        """
-        if value in (None, "") or not isinstance(value, str):
-            return value
-
-        encryption = self._get_encryption()
-        if not encryption:
-            return value
-
-        try:
-            if not encryption.is_encrypted(value):
-                return value
-            decrypted = encryption.decrypt_secret_or_plaintext(value)
-            return decrypted if decrypted is not None else value
-        except Exception as exc:
-            logger.warning("EncryptedText result decryption failed, returning stored value")
-            logger.debug("EncryptedText result decryption exception: %s", exc)
-            return value
-
-
 # Configure SQLite for better concurrency if using SQLite
 if backend == "sqlite":
 
@@ -590,13 +473,15 @@ def before_commit_handler(session):
     """Handler before commit to ensure transaction is in good state.
 
     This is called before COMMIT, ensuring any pending work is flushed.
-    If the flush fails, the exception is propagated so the commit also fails
-    and the caller's error handling (e.g. get_db rollback) can clean up properly.
 
     Args:
         session: The SQLAlchemy session about to commit.
     """
-    session.flush()
+    try:
+        session.flush()
+    except Exception:  # nosec B110
+        # If flush fails, the commit will also fail and trigger rollback
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -1102,19 +987,6 @@ class Permissions:
     ADMIN_EVENTS = "admin.events"
     ADMIN_GRPC = "admin.grpc"
     ADMIN_PLUGINS = "admin.plugins"
-    ADMIN_METRICS = "admin.metrics"
-    ADMIN_EXPORT = "admin.export"
-    ADMIN_IMPORT = "admin.import"
-    ADMIN_SSO_PROVIDERS_CREATE = "admin.sso_providers:create"
-    ADMIN_SSO_PROVIDERS_READ = "admin.sso_providers:read"
-    ADMIN_SSO_PROVIDERS_UPDATE = "admin.sso_providers:update"
-    ADMIN_SSO_PROVIDERS_DELETE = "admin.sso_providers:delete"
-
-    # Observability and audit read permissions
-    LOGS_READ = "logs:read"
-    METRICS_READ = "metrics:read"
-    AUDIT_READ = "audit:read"
-    SECURITY_READ = "security:read"
 
     # A2A Agent permissions
     A2A_CREATE = "a2a.create"
@@ -1143,7 +1015,7 @@ class Permissions:
         for attr_name in dir(cls):
             if not attr_name.startswith("_") and attr_name.isupper() and attr_name != "ALL_PERMISSIONS":
                 attr_value = getattr(cls, attr_name)
-                if isinstance(attr_value, str):
+                if isinstance(attr_value, str) and "." in attr_value:
                     permissions.append(attr_value)
         return sorted(permissions)
 
@@ -1156,12 +1028,7 @@ class Permissions:
         """
         resource_permissions = {}
         for permission in cls.get_all_permissions():
-            if "." in permission:
-                resource_type = permission.split(".", 1)[0]
-            elif ":" in permission:
-                resource_type = permission.split(":", 1)[0]
-            else:
-                resource_type = permission
+            resource_type = permission.split(".")[0]
             if resource_type not in resource_permissions:
                 resource_permissions[resource_type] = []
             resource_permissions[resource_type].append(permission)
@@ -3041,6 +2908,9 @@ class Tool(Base):
     # Relationship with ToolMetric records
     metrics: Mapped[List["ToolMetric"]] = relationship("ToolMetric", back_populates="tool", cascade="all, delete-orphan")
 
+    # Embeddings relationship
+    embeddings: Mapped[List["ToolEmbedding"]] = relationship("ToolEmbedding", back_populates="tool", cascade="all, delete-orphan")
+
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -3381,6 +3251,125 @@ class Tool(Base):
             "avg_response_time": float(result[4]) if result[4] is not None else None,
             "last_execution_time": result[5],
         }
+
+
+class ToolEmbedding(Base):
+    __tablename__ = "tool_embeddings"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+        nullable=False,
+    )
+    tool_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("tools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    if HAS_PGVECTOR:
+        embedding: Mapped[list[float]] = mapped_column(
+            Vector(settings.embedding_dim),
+            nullable=False,
+        )
+    else:
+        embedding: Mapped[list[float]] = mapped_column(
+            JSON,
+            nullable=False,
+        )
+
+    model_name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        default="text-embedding-3-small",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    tool: Mapped["Tool"] = relationship(
+        "Tool",
+        back_populates="embeddings",
+        passive_deletes=True,
+    )
+
+    if HAS_PGVECTOR:
+        __table_args__ = (
+            # Vector similarity index (PostgreSQL/pgvector)
+            Index(
+                "idx_tool_embeddings_hnsw",
+                "embedding",
+                postgresql_using="hnsw",
+                postgresql_with={"m": settings.hnsw_m, "ef_construction": settings.hnsw_ef_construction},
+                postgresql_ops={"embedding": "vector_cosine_ops"},
+            ),
+            # Composite indexes for efficient queries
+            Index("idx_tool_embeddings_toolid_model", "tool_id", "model_name"),
+            Index("idx_tool_embeddings_toolid_created", "tool_id", "created_at"),
+        )
+    else:
+        __table_args__ = (
+            # Composite indexes for efficient queries (SQLite/other)
+            Index("idx_tool_embeddings_toolid_model", "tool_id", "model_name"),
+            Index("idx_tool_embeddings_toolid_created", "tool_id", "created_at"),
+        )
+
+    def __repr__(self) -> str:
+        return f"<ToolEmbedding(id={self.id}, " f"tool_id={self.tool_id}, " f"model_name={self.model_name})>"
+
+    def similar_to(
+        self,
+        db: "Session",
+        limit: int = 10,
+        threshold: Optional[float] = None,
+    ) -> "List[tuple[ToolEmbedding, float]]":
+        """Find other ToolEmbeddings similar to this one.
+
+        Uses pgvector cosine distance on PostgreSQL, numpy fallback on SQLite.
+
+        Args:
+            db: Active database session.
+            limit: Maximum number of results.
+            threshold: Optional minimum similarity (0-1).
+
+        Returns:
+            List of (ToolEmbedding, similarity_score) tuples, ordered by
+            descending similarity. Does not include self.
+        """
+        dialect_name = db.get_bind().dialect.name
+
+        if dialect_name == "postgresql":
+            distance_expr = ToolEmbedding.embedding.cosine_distance(self.embedding)
+            query = select(ToolEmbedding, (1 - distance_expr).label("similarity")).filter(ToolEmbedding.id != self.id)
+            if threshold is not None:
+                query = query.filter(distance_expr <= (1 - threshold))
+            query = query.order_by(distance_expr.asc()).limit(limit)
+            rows = db.execute(query).all()
+            return [(te, max(0.0, min(1.0, float(sim)))) for te, sim in rows]
+        else:
+            # SQLite: compute cosine similarity in Python
+            # First-Party
+            from mcpgateway.services.vector_search_service import _cosine_similarity_numpy
+
+            all_embeddings = db.query(ToolEmbedding).filter(ToolEmbedding.id != self.id).all()
+            scored = []
+            for te in all_embeddings:
+                sim = _cosine_similarity_numpy(self.embedding, te.embedding)
+                if threshold is not None and sim < threshold:
+                    continue
+                scored.append((te, sim))
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return scored[:limit]
 
 
 class Resource(Base):
@@ -4479,6 +4468,16 @@ class Server(Base):
     oauth_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
+    # Meta-server fields
+    # server_type: 'standard' (default) or 'meta' (exposes meta-tools instead of real tools)
+    server_type: Mapped[str] = mapped_column(String(20), nullable=False, default="standard")
+    # When True, underlying tools are hidden from tool listing endpoints
+    hide_underlying_tools: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # JSON configuration for meta-server behavior (MetaConfig schema)
+    meta_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    # JSON scope rules for filtering which tools are visible (MetaToolScope schema)
+    meta_scope: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
     # Relationship for loading team names (only active teams)
     # Uses default lazy loading - team name is only loaded when accessed
     # For list/admin views, use explicit joinedload(DbServer.email_team) for single-query loading
@@ -4565,7 +4564,7 @@ class Gateway(Base):
     # federated_prompts: Mapped[List["Prompt"]] = relationship(secondary=prompt_gateway_table, back_populates="federated_with")
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
@@ -4983,9 +4982,9 @@ class OAuthToken(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # OAuth provider's user ID
-    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # ContextForge user
-    access_token: Mapped[str] = mapped_column(EncryptedText(), nullable=False)
-    refresh_token: Mapped[Optional[str]] = mapped_column(EncryptedText(), nullable=True)
+    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # MCP Gateway user
+    access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     token_type: Mapped[str] = mapped_column(String(50), default="Bearer")
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     scopes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
@@ -5009,7 +5008,6 @@ class OAuthState(Base):
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     state: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)  # The state parameter
     code_verifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # PKCE code verifier (RFC 7636)
-    app_user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Requesting user context for token association
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -5127,13 +5125,9 @@ class EmailApiToken(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
 
-    # Unique constraint for user+name+team_id combination (per-team scope).
-    # The composite UniqueConstraint handles non-NULL team_id rows.  SQL NULL != NULL
-    # semantics mean it cannot protect global-scope tokens (team_id IS NULL), so we add
-    # a partial unique index for that case — matching the pattern used by resources/prompts.
+    # Unique constraint for user+name combination
     __table_args__ = (
-        UniqueConstraint("user_email", "name", "team_id", name="uq_email_api_tokens_user_name_team"),
-        Index("uq_email_api_tokens_user_name_global", "user_email", "name", unique=True, postgresql_where=text("team_id IS NULL"), sqlite_where=text("team_id IS NULL")),
+        UniqueConstraint("user_email", "name", name="uq_email_api_tokens_user_name"),
         Index("idx_email_api_tokens_user_email", "user_email"),
         Index("idx_email_api_tokens_jti", "jti"),
         Index("idx_email_api_tokens_expires_at", "expires_at"),
@@ -5330,7 +5324,6 @@ class SSOProvider(Base):
         token_url (str): OAuth token endpoint
         userinfo_url (str): User info endpoint
         issuer (str): OIDC issuer (optional)
-        jwks_uri (str): OIDC JWKS endpoint for token signature verification (optional)
         trusted_domains (List[str]): Auto-approved email domains
         scope (str): OAuth scope string
         auto_create_users (bool): Auto-create users on first login
@@ -5368,7 +5361,6 @@ class SSOProvider(Base):
     token_url: Mapped[str] = mapped_column(String(500), nullable=False)
     userinfo_url: Mapped[str] = mapped_column(String(500), nullable=False)
     issuer: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # For OIDC
-    jwks_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # OIDC JWKS endpoint for token signature verification
 
     # Provider Settings
     trusted_domains: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
@@ -5774,6 +5766,15 @@ def init_db():
         Exception: If database initialization fails.
     """
     try:
+        # Enable pgvector extension for PostgreSQL
+        if backend == "postgresql":
+            with engine.connect() as conn:
+                try:
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                    conn.commit()
+                except Exception as e:
+                    logger.warning(f"Could not create pgvector extension: {e}")
+
         # Apply MariaDB compatibility fix
         patch_string_columns_for_mariadb(Base, engine)
 
@@ -6331,6 +6332,132 @@ class AuditTrail(Base):
         Index("idx_audit_review", "requires_review", "timestamp"),
     )
 
+# ---------------------------------------------------------------------------
+# Dynamic Server models
+# ---------------------------------------------------------------------------
+
+
+class DynamicRule(Base):
+    """A single filtering rule attached to a DynamicServer.
+
+    Rules define how tools, resources, and prompts are selected when a
+    dynamic server's catalog is evaluated at query time.  Three matching
+    strategies are supported:
+
+    * ``"tag"``   — match entities whose tags contain *value*.
+    * ``"regex"`` — match entities whose name or description matches *value*
+      as a regular-expression pattern.
+    * ``"llm"``   — use *value* as an LLM prompt for semantic selection.
+
+    Attributes:
+        id: UUID primary key.
+        dynamic_server_id: FK → DynamicServer; cascades on delete.
+        rule_type: One of ``"tag"``, ``"regex"``, ``"llm"``.
+        entity_type: One of ``"tool"``, ``"resource"``, ``"prompt"``.
+        value: The tag label, regex pattern, or LLM prompt string.
+        created_at: UTC timestamp of creation.
+
+    Examples:
+        >>> rule = DynamicRule(
+        ...     dynamic_server_id="server-uuid",
+        ...     rule_type="tag",
+        ...     entity_type="tool",
+        ...     value="finance",
+        ... )
+        >>> rule.rule_type
+        'tag'
+    """
+
+    __tablename__ = "dynamic_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    dynamic_server_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("dynamic_servers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    rule_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    # Back-reference to parent server
+    server: Mapped["DynamicServer"] = relationship("DynamicServer", back_populates="rules")
+
+
+class DynamicServer(Base):
+    """A virtual MCP server whose catalog is computed from rules at query time.
+
+    A dynamic server does not directly own tools, resources, or prompts.
+    Instead its :attr:`rules` list is evaluated against the live entity
+    catalog whenever the server is queried, producing a filtered view.
+
+    Attributes:
+        id: UUID primary key.
+        name: Human-readable server name; unique per (team_id, owner_email).
+        description: Optional free-text description.
+        enabled: Whether the server is active (soft-disable flag).
+        refresh_interval: Optional catalog refresh interval in seconds.
+        visibility: Access visibility level — ``"public"`` or ``"private"``.
+        team_id: FK → email_teams; ``SET NULL`` on team deletion.
+        owner_email: Email address of the owning user.
+        created_at: UTC creation timestamp.
+        updated_at: UTC last-modified timestamp.
+        created_by: Username/email of the creator.
+        modified_by: Username/email of the last modifier.
+        version: Optimistic-lock version counter.
+        rules: One-to-many relationship to :class:`DynamicRule`; cascade
+            delete removes all rules when the server is deleted.
+
+    Examples:
+        >>> server = DynamicServer(name="finance-tools", owner_email="a@example.com")
+        >>> server.name
+        'finance-tools'
+        >>> server.owner_email
+        'a@example.com'
+    """
+
+    __tablename__ = "dynamic_servers"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Core fields
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    refresh_interval: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Access control
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+    team_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("email_teams.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Audit fields
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # Relationships
+    rules: Mapped[List["DynamicRule"]] = relationship(
+        "DynamicRule",
+        back_populates="server",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("team_id", "owner_email", "name", name="uq_dynamic_servers_team_owner_name"),
+        Index("idx_dynamic_servers_created_at_id", "created_at", "id"),
+    )
 
 if __name__ == "__main__":
     # Wait for database to be ready before initializing

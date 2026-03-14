@@ -5,7 +5,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-ContextForge AI Gateway - Main FastAPI Application.
+MCP Gateway - Main FastAPI Application.
 
 This module defines the core FastAPI application for the Model Context Protocol (MCP) Gateway.
 It serves as the entry point for handling all HTTP and WebSocket traffic.
@@ -28,13 +28,16 @@ Structure:
 
 # Standard
 import asyncio
+from collections import defaultdict
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
 import html
+import os as _os  # local alias to avoid collisions
 import re
 import sys
+import time
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
@@ -47,7 +50,6 @@ from fastapi.exception_handlers import request_validation_exception_handler as f
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
-from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
@@ -64,9 +66,9 @@ from starlette.responses import Response as starletteResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
-from mcpgateway import __version__
+from mcpgateway import __version__, schemas
 from mcpgateway.admin import admin_router, set_logging_service
-from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, _resolve_teams_from_db, get_current_user, get_user_team_roles, normalize_token_teams
+from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -81,13 +83,14 @@ from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, PermissionChecker, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
+from mcpgateway.routers.meta_router import router as meta_router
 from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
@@ -129,6 +132,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.email_auth_service import EmailAuthService
+from mcpgateway.services.embedding_service import index_tool_fire_and_forget
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
@@ -144,7 +148,7 @@ from mcpgateway.services.server_service import ServerError, ServerLockConflictEr
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
-from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, set_shared_session_registry, streamable_http_auth
+from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, streamable_http_auth
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -153,8 +157,7 @@ from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.token_scoping import validate_server_access
-from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_admin_auth, require_docs_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import require_admin_auth, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
@@ -181,16 +184,15 @@ except RuntimeError:
 else:
     loop.create_task(bootstrap_db())
 
-# Initialize plugin manager as a singleton.
-_PLUGINS_ENABLED = settings.plugins.enabled
-if _PLUGINS_ENABLED:
-    _plugin_settings = settings.plugins
-    # First-Party
-    from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # noqa: E402
-
-    plugin_manager: PluginManager | None = PluginManager(_plugin_settings.config_file, timeout=_plugin_settings.plugin_timeout, hook_policies=HOOK_PAYLOAD_POLICIES)
+# Initialize plugin manager as a singleton (honor env overrides for tests)
+_env_flag = _os.getenv("PLUGINS_ENABLED")
+if _env_flag is not None:
+    _env_enabled = _env_flag.strip().lower() in {"1", "true", "yes", "on"}
+    _PLUGINS_ENABLED = _env_enabled
 else:
-    plugin_manager = None  # pylint: disable=invalid-name
+    _PLUGINS_ENABLED = settings.plugins_enabled
+_config_file = _os.getenv("PLUGIN_CONFIG_FILE", settings.plugin_config_file)
+plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_ENABLED else None
 
 
 # First-Party
@@ -226,7 +228,9 @@ session_registry = SessionRegistry(
     session_ttl=settings.session_ttl,
     message_ttl=settings.message_ttl,
 )
-set_shared_session_registry(session_registry)
+
+# Rate limiting storage for semantic search (expensive operation)
+semantic_search_rate_limit_storage = defaultdict(list)
 
 
 # Helper function for authentication compatibility
@@ -842,7 +846,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
-    logger.info("Starting ContextForge services")
+    logger.info("Starting MCP Gateway services")
 
     # Initialize Redis client early (shared pool for all services)
     await get_redis_client()
@@ -906,6 +910,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if plugin_manager:
             await plugin_manager.initialize()
             logger.info(f"Plugin manager initialized with {plugin_manager.plugin_count} plugins")
+            
+            # Log CRT router mode if enabled
+            if settings.mcpgateway_crt_router_enabled:
+                logger.info(
+                    f"🎯 CRT Router: ENABLED | Mode: {settings.mcpgateway_router_mode.upper()} | "
+                    f"Calibration: {settings.mcpgateway_crt_calibration_path}"
+                )
+            else:
+                logger.info(f"🎯 CRT Router: DISABLED | Mode: {settings.mcpgateway_router_mode.upper()}")
 
         if settings.enable_header_passthrough:
             await setup_passthrough_headers()
@@ -1095,7 +1108,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         except Exception as e:
             logger.debug(f"Error stopping cache invalidation subscriber: {e}")
 
-        logger.info("Shutting down ContextForge services")
+        logger.info("Shutting down MCP Gateway services")
         # await stop_streamablehttp()
         # Build service list conditionally
         services_to_shutdown: List[Any] = [
@@ -1203,11 +1216,55 @@ async def setup_passthrough_headers():
         db.close()
 
 
+def semantic_search_rate_limit(requests_per_minute: Optional[int] = None):
+    """Apply rate limiting to semantic search endpoint (expensive operation).
+
+    Args:
+        requests_per_minute: Maximum requests per minute (uses config default if None)
+
+    Returns:
+        Decorator function that enforces rate limiting on semantic search
+    """
+
+    def decorator(func_to_wrap):
+        """Decorator that wraps the function with rate limiting logic."""
+
+        @wraps(func_to_wrap)
+        async def wrapper(*args, request: Optional[Request] = None, **kwargs):
+            """Execute the wrapped function with rate limiting enforcement."""
+            # Use configured limit if none provided
+            limit = requests_per_minute or settings.semantic_search_rate_limit
+
+            # Extract client IP for rate limiting key
+            client_ip = request.client.host if request and request.client else "unknown"
+            current_time = time.time()
+            minute_ago = current_time - 60
+
+            # Prune old timestamps
+            semantic_search_rate_limit_storage[client_ip] = [ts for ts in semantic_search_rate_limit_storage[client_ip] if ts > minute_ago]
+
+            # Enforce rate limit
+            if len(semantic_search_rate_limit_storage[client_ip]) >= limit:
+                logger.warning(f"Semantic search rate limit exceeded for IP {client_ip}")
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Rate limit exceeded for semantic search. Maximum {limit} requests per minute.",
+                )
+            semantic_search_rate_limit_storage[client_ip].append(current_time)
+
+            # Forward request to the real endpoint
+            return await func_to_wrap(*args, request=request, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 # Initialize FastAPI app with orjson for 2-3x faster JSON serialization
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
-    description="ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins.",
+    description="A FastAPI-based MCP Gateway with federation support",
     root_path=settings.app_root_path,
     lifespan=lifespan,
     default_response_class=ORJSONResponse,  # Use orjson for high-performance JSON serialization
@@ -1752,8 +1809,6 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     Exempts login-related paths and static assets:
     - /admin/login - login page
     - /admin/logout - logout action
-    - /admin/forgot-password - self-service password reset request page
-    - /admin/reset-password/* - self-service password reset completion page
     - /admin/static/* - static assets
 
     All other /admin/* routes require the user to be authenticated AND be an admin.
@@ -1764,14 +1819,8 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     and relies on endpoint-level authentication which can be mocked in tests.
     """
 
-    # Public paths under /admin that do not require prior authentication.
-    EXEMPT_PATHS = [
-        "/admin/login",
-        "/admin/logout",
-        "/admin/forgot-password",
-        "/admin/reset-password",
-        "/admin/static",
-    ]
+    # Paths under /admin that don't require admin privileges
+    EXEMPT_PATHS = ["/admin/login", "/admin/logout", "/admin/static"]
 
     @staticmethod
     def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
@@ -1847,7 +1896,6 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                 jwt_token = token.split(" ", 1)[1]
 
             username = None
-            token_teams = None
 
             if jwt_token:
                 # Try JWT authentication first
@@ -1869,16 +1917,6 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                         except Exception as revoke_error:
                             logger.warning(f"Token revocation check failed: {revoke_error}")
                             # Continue - don't fail auth if revocation check fails
-
-                    # SECURITY: Apply token scope semantics for admin paths.
-                    # Use the same token_use-aware resolution as auth.py.
-                    token_use = payload.get("token_use")
-                    if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
-                        is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
-                        token_teams = await _resolve_teams_from_db(username, {"is_admin": is_admin})
-                    else:
-                        # API token or legacy path: embedded teams claim semantics
-                        token_teams = normalize_token_teams(payload)
                 except Exception:
                     # JWT validation failed, try API token
                     token_hash = hashlib.sha256(jwt_token.encode()).hexdigest()
@@ -1898,7 +1936,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             # Supporting Basic auth would require passing auth context to routes,
             # which increases complexity and attack surface. Use JWT or API tokens instead.
 
-            if not username and is_proxy_auth_trust_active(settings):
+            if not username and settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
                 # Proxy authentication path (when MCP client auth is disabled and proxy auth is trusted)
                 proxy_user = request.headers.get(settings.proxy_user_header)
                 if proxy_user:
@@ -1928,7 +1966,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                         logger.info(f"Platform admin bootstrap authentication for {SecurityValidator.sanitize_log_message(str(username))}")
                         # Allow platform admin through - they have implicit admin privileges
                     else:
-                        return self._error_response(request, root_path, 401, "User not found")
+                        return ORJSONResponse(status_code=401, content={"detail": "User not found"})
                 else:
                     # User exists in DB - check active status
                     if not user.is_active:
@@ -1936,21 +1974,9 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                         return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
 
                     # Check if user has admin permissions (either is_admin flag OR admin.* RBAC permissions)
-                    # This allows granular admin access for users with specific admin permissions.
-                    # When the request is team-scoped (?team_id=...), include team-scoped roles
-                    # so that developer/viewer roles with admin.dashboard can access the UI.
+                    # This allows granular admin access for users with specific admin permissions
                     permission_service = PermissionService(db)
-                    request_team_id = request.query_params.get("team_id")
-                    # Normalize to hex so hyphenated UUIDs match DB-stored hex IDs.
-                    # Fall back to raw value for non-UUID team IDs (e.g. from legacy tokens).
-                    if request_team_id:
-                        try:
-                            request_team_id = uuid.UUID(request_team_id).hex
-                        except (ValueError, AttributeError):
-                            pass  # keep raw value for non-UUID token_teams
-                    # Only trust team_id if it is in the user's DB-resolved teams
-                    validated_team_id = request_team_id if (token_teams and request_team_id and request_team_id in token_teams) else None
-                    has_admin_access = await permission_service.has_admin_permission(username, team_id=validated_team_id)
+                    has_admin_access = await permission_service.has_admin_permission(username)
                     if not has_admin_access:
                         logger.warning(f"Admin access denied for user without admin permissions: {SecurityValidator.sanitize_log_message(str(username))}")
                         return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
@@ -2220,33 +2246,15 @@ if settings.security_logging_enabled:
 else:
     logger.info("🔐 Security event logging disabled")
 
-# Add token usage logging middleware
-# This tracks API token usage for analytics and security monitoring
-# Note: Runs after AuthContextMiddleware so request.state.auth_method is available
-if settings.token_usage_logging_enabled:
-    # First-Party
-    from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware  # noqa: E402
-
-    app.add_middleware(TokenUsageMiddleware)
-    logger.info("📊 Token usage logging middleware enabled - tracking API token usage")
-else:
-    logger.info("📊 Token usage logging middleware disabled")
-
 # Add observability middleware if enabled
 # Note: Middleware runs in REVERSE order (last added runs first)
 # If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
 # Execution order will be: AuthContext -> Observability -> Request Handler
-# Wire observability adapter into the plugin manager when observability is enabled
 if settings.observability_enabled:
     # First-Party
     from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
-    from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter
-    from mcpgateway.services.observability_service import ObservabilityService
 
-    _service = ObservabilityService()
-    app.add_middleware(ObservabilityMiddleware, enabled=True, service=_service)
-    if plugin_manager:
-        plugin_manager.observability = ObservabilityServiceAdapter(service=_service)
+    app.add_middleware(ObservabilityMiddleware, enabled=True)
     logger.info("🔍 Observability middleware enabled - tracing include-listed requests")
 else:
     logger.info("🔍 Observability middleware disabled")
@@ -2750,7 +2758,6 @@ async def handle_notification(request: Request, user=Depends(get_current_user)) 
         logger.info(f"Request cancelled: {request_id}, reason: {reason}")
         # Attempt local cancellation per MCP spec
         if request_id is not None:
-            await _authorize_run_cancellation(request, user, request_id, as_jsonrpc_error=False)
             await cancellation_service.cancel_run(request_id, reason=reason)
         await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
     elif body.get("method") == "notifications/message":
@@ -2857,9 +2864,8 @@ async def list_servers(
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
-    # For listing, only narrow by team_id when explicitly requested via query param.
-    # Do NOT auto-narrow to token's single team; token_teams handles visibility scoping
-    # (public + team resources). Auto-narrowing would exclude public servers.
+    # Determine final team ID
+    team_id = team_id or token_team_id
 
     # SECURITY: token_teams is normalized in auth.py:
     # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
@@ -2892,13 +2898,12 @@ async def list_servers(
 
 @server_router.get("/{server_id}", response_model=ServerRead)
 @require_permission("servers.read")
-async def get_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> ServerRead:
+async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> ServerRead:
     """
     Retrieves a server by its ID.
 
     Args:
         server_id (str): The ID of the server to retrieve.
-        request (Request): The incoming request used for scoped access validation.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -3171,14 +3176,13 @@ async def delete_server(
 
 @server_router.get("/{server_id}/sse")
 @require_permission("servers.use")
-async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+async def sse_endpoint(request: Request, server_id: str, user=Depends(get_current_user_with_permissions)):
     """
     Establishes a Server-Sent Events (SSE) connection for real-time updates about a server.
 
     Args:
         request (Request): The incoming request.
         server_id (str): The ID of the server for which updates are received.
-        db (Session): The database session used for server existence and scope checks.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -3200,7 +3204,6 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
         transport = SSETransport(base_url=server_sse_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
-        await session_registry.set_session_owner(transport.session_id, get_user_email(user))
 
         # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
         # MUST be computed BEFORE create_sse_response to avoid race condition (Finding 1)
@@ -3271,10 +3274,6 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
         response.background = tasks
         logger.info(f"SSE connection established: {transport.session_id}")
         return response
-    except ServerNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"SSE connection error: {e}")
         raise HTTPException(status_code=500, detail="SSE connection failed")
@@ -3303,8 +3302,6 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
         if not session_id:
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
-
-        await _assert_session_owner_or_admin(request, user, session_id)
 
         message = await _read_request_json(request)
 
@@ -3355,21 +3352,34 @@ async def server_get_tools(
     server_id: str,
     include_inactive: bool = False,
     include_metrics: bool = False,
+    router: Optional[str] = Query(None, description="Router type for tool filtering. Use 'crt' for CRT-based semantic routing."),
+    prompt: Optional[str] = Query(None, description="Natural language prompt for CRT tool routing (required when router=crt)."),
+    k: Optional[int] = Query(None, ge=1, le=200, description="Maximum number of tools to return (CRT router)."),
+    threshold: Optional[float] = Query(None, ge=0.0, le=1.0, description="Minimum relevance score threshold (CRT router)."),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
     """
-    List tools for the server  with an option to include inactive tools.
+    List tools for the server with an option to include inactive tools.
 
     This endpoint retrieves a list of tools from the database, optionally including
     those that are inactive. The inactive filter helps administrators manage tools
     that have been deactivated but not deleted from the system.
 
+    When router=crt is specified along with a prompt, the tool list is filtered and
+    ranked by semantic relevance using the CRT router plugin. The k and threshold
+    parameters control the number of results and minimum relevance score respectively.
+    Existing callers that do not pass router are unaffected.
+
     Args:
         request (Request): FastAPI request object.
-        server_id (str): ID of the server
+        server_id (str): ID of the server.
         include_inactive (bool): Whether to include inactive tools in the results.
         include_metrics (bool): Whether to include metrics in the tools results.
+        router (str, optional): Router type. Use 'crt' for CRT-based semantic routing.
+        prompt (str, optional): Natural language prompt for CRT tool routing.
+        k (int, optional): Maximum number of tools to return when router=crt.
+        threshold (float, optional): Minimum relevance score when router=crt.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
@@ -3398,6 +3408,37 @@ async def server_get_tools(
         requesting_user_is_admin=_req_is_admin,
         requesting_user_team_roles=_req_team_roles,
     )
+
+    # CRT Router: filter and rank tools when router=crt and a prompt is provided.
+    # Callers that do not pass router=crt are unaffected.
+    if router == "crt":
+        if prompt and prompt.strip():
+            try:
+                crt_plugin = plugin_manager.get_plugin("CRTRouterPlugin") if plugin_manager else None
+                if crt_plugin is not None:
+                    effective_k = k if k is not None else settings.router_crt_k
+                    effective_threshold = threshold if threshold is not None else settings.router_crt_threshold
+                    ranked = await crt_plugin.rank_tools(
+                        tools=tools,
+                        prompt=prompt.strip(),
+                        k=effective_k,
+                        threshold=effective_threshold,
+                        db=db,
+                    )
+                    filtered: List[Any] = []
+                    for tool, scores in ranked:
+                        if scores.get("relevance", 1.0) >= effective_threshold:
+                            tool.crt_scores = scores
+                            filtered.append(tool)
+                    tools = filtered[:effective_k]
+                    logger.debug("CRT router returned %d tools for server %s (k=%d, threshold=%.2f)", len(tools), server_id, effective_k, effective_threshold)
+                else:
+                    logger.warning("router=crt requested but CRTRouterPlugin is not loaded; returning unfiltered tool list")
+            except Exception as e:
+                logger.warning("CRT router error (%s); returning unfiltered tool list", e)
+        else:
+            logger.debug("router=crt requested with no prompt; returning unfiltered tool list")
+
     return [tool.model_dump(by_alias=True) for tool in tools]
 
 
@@ -3538,17 +3579,21 @@ async def list_a2a_agents(
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
     # Check team_id from request.state (set during auth)
+    # Only use for non-empty-team tokens; empty-team tokens should rely on visibility filtering
     token_team_id = getattr(request.state, "team_id", None)
+    is_empty_team_token = token_teams is not None and len(token_teams) == 0
 
     # Check for team ID mismatch (only applies when both are specified and token has teams)
-    if team_id is not None and token_team_id is not None and team_id != token_team_id:
+    if team_id is not None and token_team_id is not None and team_id != token_team_id and not is_empty_team_token:
         return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
-    # For listing, only narrow by team_id when explicitly requested via query param.
-    # Do NOT auto-narrow to token's single team; token_teams handles visibility scoping.
+    # Determine final team ID - don't use token_team_id for empty-team tokens
+    # Empty-team tokens should filter by public + owned, not by personal team
+    if not is_empty_team_token:
+        team_id = team_id or token_team_id
 
     logger.debug(f"User: {SecurityValidator.sanitize_log_message(user_email)} requested A2A agent list with team_id={team_id}, visibility={visibility}, tags={tags_list}, cursor={cursor}")
 
@@ -3945,6 +3990,9 @@ async def list_tools(
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
+    include_schema: bool = Query(False),
     db: Session = Depends(get_db),
     apijsonpath: JsonPathModifier = Body(None),
     user=Depends(get_current_user_with_permissions),
@@ -3989,17 +4037,21 @@ async def list_tools(
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
     # Check team_id from request.state (set during auth)
+    # Only use for non-empty-team tokens; empty-team tokens should rely on visibility filtering
     token_team_id = getattr(request.state, "team_id", None)
+    is_empty_team_token = token_teams is not None and len(token_teams) == 0
 
     # Check for team ID mismatch (only applies when both are specified and token has teams)
-    if team_id is not None and token_team_id is not None and team_id != token_team_id:
+    if team_id is not None and token_team_id is not None and team_id != token_team_id and not is_empty_team_token:
         return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
-    # For listing, only narrow by team_id when explicitly requested via query param.
-    # Do NOT auto-narrow to token's single team; token_teams handles visibility scoping.
+    # Determine final team ID - don't use token_team_id for empty-team tokens
+    # Empty-team tokens should filter by public + owned, not by personal team
+    if not is_empty_team_token:
+        team_id = team_id or token_team_id
 
     # Use unified list_tools() with token-based team filtering
     # Always apply visibility filtering based on token scope
@@ -4015,6 +4067,9 @@ async def list_tools(
         team_id=team_id,
         visibility=visibility,
         token_teams=token_teams,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        include_schema=include_schema,
         requesting_user_email=_req_email,
         requesting_user_is_admin=_req_is_admin,
         requesting_user_team_roles=_req_team_roles,
@@ -4031,6 +4086,99 @@ async def list_tools(
     tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
 
     return jsonpath_modifier(tools_dict_list, apijsonpath.jsonpath, apijsonpath.mapping)
+
+
+@tool_router.get("/categories")
+@require_permission("tools.read")
+async def get_tool_categories(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Returns tool category counts, tag frequencies,
+    and optional server aggregation.
+    """
+
+    _, token_teams, is_admin = _get_rpc_filter_context(request, user)
+
+    if is_admin and token_teams is None:
+        actor_scope = "internal_admin"
+    elif token_teams:
+        actor_scope = "team_user"
+    else:
+        actor_scope = "public_user"
+
+    categories, tags = tool_service.get_tool_categories(
+        db=db,
+        actor_scope=actor_scope,
+    )
+
+    return {"categories": categories, "tags": tags}
+
+
+@tool_router.get("/semantic", response_model=schemas.SemanticSearchResponse)
+@require_permission("tools.read")
+@semantic_search_rate_limit()
+async def semantic_tool_search(
+    request: Request,
+    query: str = Query(..., min_length=1, description="Natural language search query"),
+    limit: int = Query(10, ge=1, le=50, description="Maximum number of results to return"),
+    threshold: Optional[float] = Query(None, ge=0.0, le=1.0, description="Optional similarity threshold (0-1)"),
+    user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> schemas.SemanticSearchResponse:
+    """Semantic search for tools using natural language queries.
+
+    This endpoint enables semantic tool discovery by converting the query to an embedding
+    and searching for similar tools using vector similarity.
+
+    Args:
+        query: Natural language search query (required, non-empty)
+        limit: Maximum number of results (1-50, default: 10)
+        threshold: Optional similarity threshold (0-1). Only return results >= threshold
+        user: Authenticated user context
+
+    Returns:
+        SemanticSearchResponse containing ranked tool results with similarity scores
+
+    Raises:
+        HTTPException 400: If query is empty or parameters are invalid
+        HTTPException 422: If validation fails
+        HTTPException 500: If search operation fails
+
+    Example:
+        GET /tools/semantic?query=fetch%20weather%20data&limit=5&threshold=0.7
+    """
+    # First-Party
+    from mcpgateway.services.semantic_search_service import get_semantic_search_service
+
+    try:
+        # Get semantic search service
+        search_service = get_semantic_search_service()
+
+        # Perform semantic search with proper DB session management
+        results = await search_service.search_tools(
+            query=query,
+            db=db,
+            limit=limit,
+            threshold=threshold,
+        )
+
+        # Build response
+        return schemas.SemanticSearchResponse(
+            results=results,
+            query=query,
+            total_results=len(results),
+        )
+
+    except ValueError as e:
+        # Invalid parameters (e.g., empty query, out-of-range values)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        # Unexpected errors during search
+        logger.error(f"Semantic search failed: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Semantic search failed: {str(e)}")
 
 
 @tool_router.post("", response_model=ToolRead)
@@ -4106,6 +4254,10 @@ async def create_tool(
         )
         db.commit()
         db.close()
+
+        if settings.embedding_auto_index_enabled:
+            asyncio.create_task(index_tool_fire_and_forget(result.id))
+
         return result
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
@@ -4159,15 +4311,12 @@ async def get_tool(
         _req_email, _, _req_is_admin = _get_rpc_filter_context(request, user)
         _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
         data = await tool_service.get_tool(db, tool_id, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin, requesting_user_team_roles=_req_team_roles)
-        _enforce_scoped_resource_access(request, db, user, f"/tools/{tool_id}")
         if apijsonpath is None:
             return data
 
         data_dict = data.to_dict(use_alias=True)
 
         return jsonpath_modifier(data_dict, apijsonpath.jsonpath, apijsonpath.mapping)
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -4219,6 +4368,10 @@ async def update_tool(
         )
         db.commit()
         db.close()
+
+        if settings.embedding_auto_index_enabled:
+            asyncio.create_task(index_tool_fire_and_forget(result.id))
+
         return result
     except Exception as ex:
         if isinstance(ex, PermissionError):
@@ -4517,17 +4670,21 @@ async def list_resources(
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
     # Check team_id from request.state (set during auth)
+    # Only use for non-empty-team tokens; empty-team tokens should rely on visibility filtering
     token_team_id = getattr(request.state, "team_id", None)
+    is_empty_team_token = token_teams is not None and len(token_teams) == 0
 
     # Check for team ID mismatch (only applies when both are specified and token has teams)
-    if team_id is not None and token_team_id is not None and team_id != token_team_id:
+    if team_id is not None and token_team_id is not None and team_id != token_team_id and not is_empty_team_token:
         return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
-    # For listing, only narrow by team_id when explicitly requested via query param.
-    # Do NOT auto-narrow to token's single team; token_teams handles visibility scoping.
+    # Determine final team ID - don't use token_team_id for empty-team tokens
+    # Empty-team tokens should filter by public + owned, not by personal team
+    if not is_empty_team_token:
+        team_id = team_id or token_team_id
 
     # Use unified list_resources() with token-based team filtering
     # Always apply visibility filtering based on token scope
@@ -4695,7 +4852,6 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
-        _enforce_scoped_resource_access(request, db, user, f"/resources/{resource_id}")
         # Release transaction before response serialization
         db.commit()
         db.close()
@@ -4735,7 +4891,6 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
 @require_permission("resources.read")
 async def get_resource_info(
     resource_id: str,
-    request: Request,
     include_inactive: bool = Query(False, description="Include inactive resources"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -4748,7 +4903,6 @@ async def get_resource_info(
 
     Args:
         resource_id (str): ID of the resource.
-        request (Request): Incoming request context used for scope enforcement.
         include_inactive (bool): Whether to include inactive resources.
         db (Session): Database session.
         user (str): Authenticated user.
@@ -4868,12 +5022,11 @@ async def delete_resource(
 
 @resource_router.post("/subscribe")
 @require_permission("resources.read")
-async def subscribe_resource(request: Request, user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
+async def subscribe_resource(user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
     """
     Subscribe to server-sent events (SSE) for a specific resource.
 
     Args:
-        request (Request): Incoming HTTP request.
         user (str): Authenticated user.
 
     Returns:
@@ -5015,17 +5168,21 @@ async def list_prompts(
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
     # Check team_id from request.state (set during auth)
+    # Only use for non-empty-team tokens; empty-team tokens should rely on visibility filtering
     token_team_id = getattr(request.state, "team_id", None)
+    is_empty_team_token = token_teams is not None and len(token_teams) == 0
 
     # Check for team ID mismatch (only applies when both are specified and token has teams)
-    if team_id is not None and token_team_id is not None and team_id != token_team_id:
+    if team_id is not None and token_team_id is not None and team_id != token_team_id and not is_empty_team_token:
         return ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
-    # For listing, only narrow by team_id when explicitly requested via query param.
-    # Do NOT auto-narrow to token's single team; token_teams handles visibility scoping.
+    # Determine final team ID - don't use token_team_id for empty-team tokens
+    # Empty-team tokens should filter by public + owned, not by personal team
+    if not is_empty_team_token:
+        team_id = team_id or token_team_id
 
     # Use consolidated prompt listing with token-based team filtering
     # Always apply visibility filtering based on token scope
@@ -5508,8 +5665,8 @@ async def list_gateways(
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
-    # For listing, only narrow by team_id when explicitly requested via query param.
-    # Do NOT auto-narrow to token's single team; token_teams handles visibility scoping.
+    # Determine final team ID
+    team_id = team_id or token_team_id
 
     # SECURITY: token_teams is normalized in auth.py:
     # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
@@ -5628,13 +5785,12 @@ async def register_gateway(
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
 @require_permission("gateways.read")
-async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
+async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
     """
     Retrieve a gateway by ID.
 
     Args:
         gateway_id: ID of the gateway.
-        request: Incoming request used for scoped access validation.
         db: Database session.
         user: Authenticated user.
 
@@ -5646,9 +5802,7 @@ async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(g
     """
     logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested gateway {gateway_id}")
     try:
-        gateway = await gateway_service.get_gateway(db, gateway_id)
-        _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
-        return gateway
+        return await gateway_service.get_gateway(db, gateway_id)
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -5765,7 +5919,6 @@ async def refresh_gateway_tools(
     request: Request,
     include_resources: bool = Query(False, description="Include resources in refresh"),
     include_prompts: bool = Query(False, description="Include prompts in refresh"),
-    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> GatewayRefreshResponse:
     """
@@ -5780,7 +5933,6 @@ async def refresh_gateway_tools(
         request: The FastAPI request object.
         include_resources: Whether to include resources in the refresh.
         include_prompts: Whether to include prompts in the refresh.
-        db: Database session used to validate gateway access.
         user: Authenticated user.
 
     Returns:
@@ -5791,9 +5943,6 @@ async def refresh_gateway_tools(
     """
     logger.info(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested manual refresh for gateway {gateway_id}")
     try:
-        await gateway_service.get_gateway(db, gateway_id)
-        _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
-
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         result = await gateway_service.refresh_gateway_manually(
             gateway_id=gateway_id,
@@ -5815,7 +5964,6 @@ async def refresh_gateway_tools(
 ##############
 @root_router.get("", response_model=List[Root])
 @root_router.get("/", response_model=List[Root])
-@require_permission("admin.system_config")
 async def list_roots(
     user=Depends(get_current_user_with_permissions),
 ) -> List[Root]:
@@ -5833,7 +5981,6 @@ async def list_roots(
 
 
 @root_router.get("/export", response_model=Dict[str, Any])
-@require_permission("admin.system_config")
 async def export_root(
     uri: str,
     user=Depends(get_current_user_with_permissions),
@@ -5889,7 +6036,6 @@ async def export_root(
 
 
 @root_router.get("/changes")
-@require_permission("admin.system_config")
 async def subscribe_roots_changes(
     user=Depends(get_current_user_with_permissions),
 ) -> StreamingResponse:
@@ -5917,7 +6063,6 @@ async def subscribe_roots_changes(
 
 
 @root_router.get("/{root_uri:path}", response_model=Root)
-@require_permission("admin.system_config")
 async def get_root_by_uri(
     root_uri: str,
     user=Depends(get_current_user_with_permissions),
@@ -5949,7 +6094,6 @@ async def get_root_by_uri(
 
 @root_router.post("", response_model=Root)
 @root_router.post("/", response_model=Root)
-@require_permission("admin.system_config")
 async def add_root(
     root: Root,  # Accept JSON body using the Root model from models.py
     user=Depends(get_current_user_with_permissions),
@@ -5969,7 +6113,6 @@ async def add_root(
 
 
 @root_router.put("/{root_uri:path}", response_model=Root)
-@require_permission("admin.system_config")
 async def update_root(
     root_uri: str,
     root: Root,
@@ -6002,7 +6145,6 @@ async def update_root(
 
 
 @root_router.delete("/{uri:path}")
-@require_permission("admin.system_config")
 async def remove_root(
     uri: str,
     user=Depends(get_current_user_with_permissions),
@@ -6072,30 +6214,6 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
 
-        # RBAC: Enforce server_id scoping for server-scoped tokens.
-        # Extract token scopes once, then:
-        #   1. If request supplies server_id, validate it matches the token scope.
-        #   2. If request omits server_id but token is server-scoped, auto-inject the
-        #      token's server_id so list operations stay properly scoped (parity with
-        #      the REST middleware which denies /tools for server-scoped tokens).
-        _cached = getattr(request.state, "_jwt_verified_payload", None)
-        _jwt_payload = _cached[1] if (isinstance(_cached, tuple) and len(_cached) == 2 and isinstance(_cached[1], dict)) else None
-        _token_scopes = _jwt_payload.get("scopes", {}) if _jwt_payload else {}
-        _token_server_id = _token_scopes.get("server_id") if _token_scopes else None
-
-        if server_id:
-            if not validate_server_access(_token_scopes, server_id):
-                return ORJSONResponse(
-                    status_code=403,
-                    content={
-                        "jsonrpc": "2.0",
-                        "error": {"code": -32003, "message": f"Token not authorized for server: {server_id}"},
-                        "id": req_id,
-                    },
-                )
-        elif _token_server_id is not None:
-            server_id = _token_server_id
-
         RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
         # Multi-worker session affinity: check if we should forward to another worker
@@ -6107,10 +6225,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         # 1. MCP-Session-Id (mcp-session-id) - MCP protocol header from Streamable HTTP clients
         # 2. x-mcp-session-id - our internal header from SSE session_registry calls
         mcp_session_id = headers.get("mcp-session-id") or headers.get("x-mcp-session-id")
-        # Only trust x-forwarded-internally from loopback to prevent external spoofing
-        _rpc_client_host = request.client.host if request.client else None
-        _rpc_from_loopback = _rpc_client_host in ("127.0.0.1", "::1") if _rpc_client_host else False
-        is_internally_forwarded = _rpc_from_loopback and headers.get("x-forwarded-internally") == "true"
+        is_internally_forwarded = headers.get("x-forwarded-internally") == "true"
 
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
             # First-Party
@@ -6356,7 +6471,6 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             uri = params.get("uri")
             if not uri:
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
-            access_user_email, access_token_teams = _get_scoped_resource_access_context(request, user)
             # Get user email for subscriber ID
             user_email = get_user_email(user)
             subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
@@ -6451,8 +6565,6 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
             # Get authorization context (same as tools/list)
             auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
-            run_owner_email = auth_user_email
-            run_owner_team_ids = [] if auth_token_teams is None else list(auth_token_teams)
             if auth_is_admin and auth_token_teams is None:
                 auth_user_email = None
                 # auth_token_teams stays None (unrestricted)
@@ -6481,13 +6593,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     tool_task.cancel()
 
             if settings.mcpgateway_tool_cancellation_enabled and run_id:
-                await cancellation_service.register_run(
-                    run_id,
-                    name=f"tool:{name}",
-                    cancel_callback=cancel_tool_task,
-                    owner_email=run_owner_email,
-                    owner_team_ids=run_owner_team_ids,
-                )
+                await cancellation_service.register_run(run_id, name=f"tool:{name}", cancel_callback=cancel_tool_task)
 
             try:
                 # Check if cancelled before execution (only if feature enabled)
@@ -6593,7 +6699,6 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             logger.info(f"Request cancelled: {request_id}, reason: {reason}")
             # Attempt local cancellation per MCP spec
             if request_id is not None:
-                await _authorize_run_cancellation(request, user, request_id, as_jsonrpc_error=True)
                 await cancellation_service.cancel_run(request_id, reason=reason)
             await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
             result = {}
@@ -6701,12 +6806,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "completion/complete":
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
             # MCP spec-compliant completion endpoint
-            user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-            if is_admin and token_teams is None:
-                user_email = None
-            elif token_teams is None:
-                token_teams = []
-            result = await completion_service.handle_completion(db, params, user_email=user_email, token_teams=token_teams)
+            result = await completion_service.handle_completion(db, params)
         elif method.startswith("completion/"):
             # Catch-all for other completion/* methods (currently unsupported)
             result = {}
@@ -6885,16 +6985,40 @@ async def websocket_endpoint(websocket: WebSocket):
     Args:
         websocket: The WebSocket connection instance.
     """
-    try:
-        if not settings.mcpgateway_ws_relay_enabled:
-            await websocket.close(code=1008, reason="WebSocket relay is disabled")
-            return
+    # Track auth credentials to forward to /rpc
+    auth_token: Optional[str] = None
+    proxy_user: Optional[str] = None
 
-        try:
-            auth_token, proxy_user = await _authenticate_websocket_user(websocket)
-        except HTTPException as e:
-            await websocket.close(code=1008, reason=str(e.detail))
-            return
+    try:
+        # Authenticate WebSocket connection
+        if settings.mcp_client_auth_enabled or settings.auth_required:
+            # Extract auth from query params or headers
+            # Try to get token from query parameter
+            if "token" in websocket.query_params:
+                auth_token = websocket.query_params["token"]
+            # Try to get token from Authorization header
+            elif "authorization" in websocket.headers:
+                auth_header = websocket.headers["authorization"]
+                if auth_header.startswith("Bearer "):
+                    auth_token = auth_header[7:]
+
+            # Check for proxy auth if MCP client auth is disabled
+            if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
+                proxy_user = websocket.headers.get(settings.proxy_user_header)
+                if not proxy_user and not auth_token:
+                    await websocket.close(code=1008, reason="Authentication required")
+                    return
+            elif settings.auth_required and not auth_token:
+                await websocket.close(code=1008, reason="Authentication required")
+                return
+
+            # Verify JWT token if provided and MCP client auth is enabled
+            if auth_token and settings.mcp_client_auth_enabled:
+                try:
+                    await verify_jwt_token(auth_token)
+                except Exception:
+                    await websocket.close(code=1008, reason="Invalid authentication")
+                    return
 
         await websocket.accept()
         while True:
@@ -6943,7 +7067,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @utility_router.get("/sse")
-@require_permission("servers.use")
+@require_permission("tools.invoke")
 async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_with_permissions)):
     """
     Establish a Server-Sent Events (SSE) connection for real-time updates.
@@ -6968,7 +7092,6 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         transport = SSETransport(base_url=base_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
-        await session_registry.set_session_owner(transport.session_id, get_user_email(user))
 
         # Defensive cleanup callback - runs immediately on client disconnect
         async def on_disconnect_cleanup() -> None:
@@ -7043,7 +7166,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
 
 @utility_router.post("/message")
-@require_permission("tools.execute")
+@require_permission("tools.invoke")
 async def utility_message_endpoint(request: Request, user=Depends(get_current_user_with_permissions)):
     """
     Handle a JSON-RPC message directed to a specific SSE session.
@@ -7066,8 +7189,6 @@ async def utility_message_endpoint(request: Request, user=Depends(get_current_us
         if not session_id:
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
-
-        await _assert_session_owner_or_admin(request, user, session_id)
 
         message = await _read_request_json(request)
 
@@ -7097,11 +7218,15 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
     Args:
         request: HTTP request with log level JSON body.
         user: Authenticated user.
+
+    Returns:
+        None
     """
     logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested to set log level")
     body = await _read_request_json(request)
     level = LogLevel(body["level"])
     await logging_service.set_level(level)
+    return None
 
 
 ####################
@@ -7281,8 +7406,20 @@ async def security_health(request: Request, _user=Depends(require_admin_auth)): 
 
     Returns:
         dict: A dictionary containing the overall security health status, score,
-            individual checks, warning count, and timestamp.
+            individual checks, warning count, and timestamp. Warnings are included
+            only if authentication passes or when running in development mode.
+
+    Raises:
+        HTTPException: If authentication is required and the request does not
+            include a valid bearer token in the Authorization header.
     """
+    # Check authentication
+    if settings.auth_required:
+        # Verify the request is authenticated
+        auth_header = request.headers.get("authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(401, "Authentication required for security health")
+
     security_status = settings.get_security_status()
 
     # Determine overall health
@@ -7312,6 +7449,38 @@ async def security_health(request: Request, _user=Depends(require_admin_auth)): 
     return response
 
 
+@app.get("/router/health", tags=["health"])
+async def router_health() -> Any:
+    """
+    Get health and calibration status of the CRT semantic tool router.
+
+    Returns the current status of the CRT router plugin including calibration
+    version, checksum, calibration state, and version information.
+
+    This endpoint does not require authentication (consistent with /health).
+
+    Returns:
+        dict: Status, version, calibration_checksum, and calibration_state.
+              HTTP 503 when the router plugin is unavailable or unhealthy.
+    """
+    try:
+        crt_plugin = plugin_manager.get_plugin("CRTRouterPlugin") if plugin_manager else None
+        if crt_plugin is None:
+            return ORJSONResponse(
+                content={"status": "unavailable", "detail": "CRTRouterPlugin is not loaded"},
+                status_code=503,
+            )
+        health = await crt_plugin.get_health()
+        status_code = 200 if health.get("status") == "healthy" else 503
+        return ORJSONResponse(content=health, status_code=status_code)
+    except Exception as e:
+        logger.error("Router health check failed: %s", e)
+        return ORJSONResponse(
+            content={"status": "unhealthy", "error": str(e)},
+            status_code=503,
+        )
+
+
 ####################
 # Tag Endpoints    #
 ####################
@@ -7321,7 +7490,6 @@ async def security_health(request: Request, _user=Depends(require_admin_auth)): 
 @tag_router.get("/", response_model=List[TagInfo])
 @require_permission("tags.read")
 async def list_tags(
-    request: Request,
     entity_types: Optional[str] = None,
     include_entities: bool = False,
     db: Session = Depends(get_db),
@@ -7331,7 +7499,6 @@ async def list_tags(
     Retrieve all unique tags across specified entity types.
 
     Args:
-        request: FastAPI request object used to derive token/team visibility scope
         entity_types: Comma-separated list of entity types to filter by
                      (e.g., "tools,resources,prompts,servers,gateways").
                      If not provided, returns tags from all entity types.
@@ -7353,19 +7520,7 @@ async def list_tags(
     logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
 
     try:
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-        if is_admin and token_teams is None:
-            user_email = None
-        elif token_teams is None:
-            token_teams = []
-
-        tags = await tag_service.get_all_tags(
-            db,
-            entity_types=entity_types_list,
-            include_entities=include_entities,
-            user_email=user_email,
-            token_teams=token_teams,
-        )
+        tags = await tag_service.get_all_tags(db, entity_types=entity_types_list, include_entities=include_entities)
         return tags
     except Exception as e:
         logger.error(f"Failed to retrieve tags: {str(e)}")
@@ -7375,7 +7530,6 @@ async def list_tags(
 @tag_router.get("/{tag_name}/entities", response_model=List[TaggedEntity])
 @require_permission("tags.read")
 async def get_entities_by_tag(
-    request: Request,
     tag_name: str,
     entity_types: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -7385,7 +7539,6 @@ async def get_entities_by_tag(
     Get all entities that have a specific tag.
 
     Args:
-        request: FastAPI request object used to derive token/team visibility scope
         tag_name: The tag to search for
         entity_types: Comma-separated list of entity types to filter by
                      (e.g., "tools,resources,prompts,servers,gateways").
@@ -7407,19 +7560,7 @@ async def get_entities_by_tag(
     logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is retrieving entities for tag '{tag_name}' with entity types: {entity_types_list}")
 
     try:
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-        if is_admin and token_teams is None:
-            user_email = None
-        elif token_teams is None:
-            token_teams = []
-
-        entities = await tag_service.get_entities_by_tag(
-            db,
-            tag_name=tag_name,
-            entity_types=entity_types_list,
-            user_email=user_email,
-            token_teams=token_teams,
-        )
+        entities = await tag_service.get_entities_by_tag(db, tag_name=tag_name, entity_types=entity_types_list)
         return entities
     except Exception as e:
         logger.error(f"Failed to retrieve entities for tag '{tag_name}': {str(e)}")
@@ -7491,9 +7632,6 @@ async def export_configuration(
         # Get root path for URL construction - prefer configured APP_ROOT_PATH
         root_path = settings.app_root_path
 
-        # Derive team-scoped visibility from the requesting user's token
-        scoped_user_email, scoped_token_teams = _get_scoped_resource_access_context(request, user)
-
         # Perform export
         export_data = await export_service.export_configuration(
             db=db,
@@ -7504,8 +7642,6 @@ async def export_configuration(
             include_dependencies=include_dependencies,
             exported_by=username or "unknown",
             root_path=root_path,
-            user_email=scoped_user_email,
-            token_teams=scoped_token_teams,
         )
 
         return export_data
@@ -7521,13 +7657,12 @@ async def export_configuration(
 @export_import_router.post("/export/selective", response_model=Dict[str, Any])
 @require_permission("admin.export")
 async def export_selective_configuration(
-    request: Request, entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)
+    entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)
 ) -> Dict[str, Any]:
     """
     Export specific entities by their IDs/names.
 
     Args:
-        request: FastAPI request object for token scope context
         entity_selections: Dict mapping entity types to lists of IDs/names to export
         include_dependencies: Whether to include dependent entities
         db: Database session
@@ -7559,17 +7694,8 @@ async def export_selective_configuration(
         # Get root path for URL construction - prefer configured APP_ROOT_PATH
         root_path = settings.app_root_path
 
-        # Derive team-scoped visibility from the requesting user's token
-        scoped_user_email, scoped_token_teams = _get_scoped_resource_access_context(request, user)
-
         export_data = await export_service.export_selective(
-            db=db,
-            entity_selections=entity_selections,
-            include_dependencies=include_dependencies,
-            exported_by=username or "unknown",
-            root_path=root_path,
-            user_email=scoped_user_email,
-            token_teams=scoped_token_teams,
+            db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username or "unknown", root_path=root_path
         )
 
         return export_data
@@ -7728,6 +7854,7 @@ app.include_router(server_well_known_router, prefix="/servers")
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
+app.include_router(meta_router)
 
 # Include log search router if structured logging is enabled
 if getattr(settings, "structured_logging_enabled", True):
@@ -7847,17 +7974,14 @@ except ImportError:
     logger.debug("OAuth router not available")
 
 # Include reverse proxy router if enabled
-if settings.mcpgateway_reverse_proxy_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.reverse_proxy import router as reverse_proxy_router
+try:
+    # First-Party
+    from mcpgateway.routers.reverse_proxy import router as reverse_proxy_router
 
-        app.include_router(reverse_proxy_router)
-        logger.info("Reverse proxy router included")
-    except ImportError:
-        logger.debug("Reverse proxy router not available")
-else:
-    logger.info("Reverse proxy router not included - feature disabled")
+    app.include_router(reverse_proxy_router)
+    logger.info("Reverse proxy router included")
+except ImportError:
+    logger.debug("Reverse proxy router not available")
 
 # Include LLMChat router
 if settings.llmchat_enabled:
