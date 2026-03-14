@@ -91,6 +91,7 @@ from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViola
 from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
+from mcpgateway.routes.sandbox import router as sandbox_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
@@ -7917,6 +7918,11 @@ logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
 # Conditional UI and admin API handling
 if ADMIN_API_ENABLED:
     logger.info("Including admin_router - Admin API enabled")
+    if settings.mcpgateway_sandbox_enabled:
+        app.include_router(sandbox_router, prefix="/api/sandbox", tags=["Sandbox"])
+        logger.info("Sandbox router mounted at /api/sandbox")
+    else:
+        logger.info("Sandbox feature disabled via MCPGATEWAY_SANDBOX_ENABLED=false")
     app.include_router(admin_router)  # Admin routes imported from admin.py
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")

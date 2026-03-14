@@ -1,12 +1,12 @@
 # API Usage Guide
 
-This guide provides comprehensive examples for using ContextForge REST API via `curl` to perform common operations like managing gateways (MCP servers), tools, resources, prompts, and more.
+This guide provides comprehensive examples for using the MCP Gateway REST API via `curl` to perform common operations like managing gateways (MCP servers), tools, resources, prompts, and more.
 
 ## Prerequisites
 
 Before using the API, you need to:
 
-1. **Start ContextForge server**:
+1. **Start the MCP Gateway server**:
 
     ```bash
     # Development server (port 8000, auto-reload)
@@ -73,7 +73,7 @@ Before using the API, you need to:
 
 ## Authentication
 
-Most API requests require JWT Bearer token authentication (public endpoints include `/health` and `/ready`). Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) also require auth by default. The `/metrics` endpoint requires `admin.metrics` permission. The `/metrics/prometheus` Prometheus scrape endpoint requires JWT authentication and is disabled by default (`ENABLE_METRICS=false`); see the Prometheus Metrics section in `.env.example` for setup instructions.
+Most API requests require JWT Bearer token authentication (public endpoints include `/health` and `/ready`). Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) also require auth by default. The `/metrics` endpoint requires `admin.metrics` permission.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
@@ -1308,7 +1308,7 @@ export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
   --exp 10080 \
   --secret my-test-key 2>/dev/null | head -1)
 
-echo "=== ContextForge E2E Test ==="
+echo "=== MCP Gateway E2E Test ==="
 echo
 
 # 1. Check health
@@ -1398,6 +1398,291 @@ echo
 
 echo "=== E2E Test Complete ==="
 ```
+
+## Policy Testing Sandbox
+
+The sandbox API lets you test policy drafts before deploying them to production. You can simulate individual access decisions, run batch test suites, and perform regression testing against historical decisions.
+
+!!! info "Admin API Required"
+    Sandbox endpoints are available when `MCPGATEWAY_ADMIN_API_ENABLED=true`. All endpoints (except health/info) require authentication.
+
+### Health Check
+
+Verify the sandbox service is operational (liveness probe — no auth required):
+
+```bash
+# Sandbox health check
+curl -s $BASE_URL/api/sandbox/sandbox/health | jq .
+```
+
+```json
+{
+  "status": "healthy",
+  "service": "sandbox",
+  "version": "1.0.0",
+  "check_type": "liveness"
+}
+```
+
+### Service Info
+
+Get sandbox capabilities and feature flags:
+
+```bash
+# Sandbox service information
+curl -s $BASE_URL/api/sandbox/sandbox/info | jq .
+```
+
+```json
+{
+  "name": "Policy Testing Sandbox",
+  "version": "1.0.0",
+  "capabilities": [
+    "single_simulation",
+    "batch_simulation",
+    "regression_testing",
+    "test_suite_management"
+  ],
+  "features": {
+    "parallel_execution": true,
+    "decision_explanation": true,
+    "regression_severity": true,
+    "historical_replay": true
+  }
+}
+```
+
+### Batch Simulation
+
+Run multiple test cases against a policy draft. Use this to validate a full suite of access patterns before deploying a policy change.
+
+```bash
+# Run batch test cases against a policy draft
+curl -s -X POST "$BASE_URL/api/sandbox/sandbox/batch" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "policy_draft_id": "draft-123",
+    "test_cases": [
+      {
+        "subject": {"email": "dev@example.com", "roles": ["developer"]},
+        "action": "tools.invoke",
+        "resource": {"type": "tool", "id": "db-query"},
+        "expected_decision": "allow",
+        "description": "Developer can invoke db-query tool"
+      },
+      {
+        "subject": {"email": "viewer@example.com", "roles": ["viewer"]},
+        "action": "tools.invoke",
+        "resource": {"type": "tool", "id": "db-query"},
+        "expected_decision": "deny",
+        "description": "Viewer cannot invoke db-query tool"
+      }
+    ],
+    "parallel_execution": true
+  }' | jq .
+```
+
+```json
+{
+  "batch_id": "b-abc123",
+  "policy_draft_id": "draft-123",
+  "total_tests": 2,
+  "passed": 2,
+  "failed": 0,
+  "pass_rate": 100.0,
+  "total_duration_ms": 85.4,
+  "avg_duration_ms": 42.7,
+  "results": [
+    {
+      "test_case_id": "tc-1",
+      "actual_decision": "allow",
+      "expected_decision": "allow",
+      "passed": true,
+      "execution_time_ms": 42.5,
+      "policy_draft_id": "draft-123"
+    },
+    {
+      "test_case_id": "tc-2",
+      "actual_decision": "deny",
+      "expected_decision": "deny",
+      "passed": true,
+      "execution_time_ms": 42.9,
+      "policy_draft_id": "draft-123"
+    }
+  ]
+}
+```
+
+#### Sequential Execution
+
+For deterministic ordering, disable parallel execution:
+
+```bash
+curl -s -X POST "$BASE_URL/api/sandbox/sandbox/batch" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "policy_draft_id": "draft-123",
+    "test_cases": [...],
+    "parallel_execution": false
+  }' | jq '.pass_rate'
+```
+
+### Regression Testing
+
+Replay historical production decisions against a policy draft to find regressions — unintended changes in access behavior.
+
+```bash
+# Run regression test: replay last 7 days of decisions
+curl -s -X POST "$BASE_URL/api/sandbox/sandbox/regression" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "policy_draft_id": "draft-123",
+    "baseline_policy_version": "prod-v2.1",
+    "replay_last_days": 7,
+    "sample_size": 1000
+  }' | jq .
+```
+
+```json
+{
+  "report_id": "rpt-xyz789",
+  "policy_draft_id": "draft-123",
+  "baseline_policy_version": "prod-v2.1",
+  "total_decisions": 50,
+  "matching_decisions": 48,
+  "different_decisions": 2,
+  "regression_rate": 4.0,
+  "critical_regressions": 0,
+  "high_regressions": 1,
+  "medium_regressions": 1,
+  "low_regressions": 0,
+  "duration_ms": 350.0
+}
+```
+
+#### Filtering Regression Tests
+
+Narrow regression tests to specific subjects or actions:
+
+```bash
+# Filter by subject email
+curl -s -X POST "$BASE_URL/api/sandbox/sandbox/regression" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "policy_draft_id": "draft-123",
+    "filter_by_subject": "contractor@example.com",
+    "filter_by_action": "tools.invoke",
+    "sample_size": 500
+  }' | jq '.regressions_only'
+```
+
+#### Checking for Critical Regressions
+
+Use `jq` to quickly check if a policy draft introduces critical regressions:
+
+```bash
+# Fail CI if critical regressions found
+CRITICAL=$(curl -s -X POST "$BASE_URL/api/sandbox/sandbox/regression" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"policy_draft_id": "draft-123"}' | jq '.critical_regressions')
+
+if [ "$CRITICAL" -gt 0 ]; then
+  echo "BLOCKED: $CRITICAL critical regression(s) found"
+  exit 1
+fi
+echo "No critical regressions"
+```
+
+### Test Suite Management
+
+Organize test cases into reusable suites. Test suite persistence is planned for a future release — suites are currently returned as-is without database storage.
+
+#### Create Test Suite
+
+```bash
+# Create a test suite
+curl -s -X POST "$BASE_URL/api/sandbox/sandbox/suites" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "developer-rbac-tests",
+    "description": "RBAC tests for developer role access patterns",
+    "test_cases": [
+      {
+        "subject": {"email": "dev@example.com", "roles": ["developer"]},
+        "action": "tools.invoke",
+        "resource": {"type": "tool", "id": "db-query"},
+        "expected_decision": "allow",
+        "description": "Developer can invoke tools"
+      },
+      {
+        "subject": {"email": "dev@example.com", "roles": ["developer"]},
+        "action": "resources.read",
+        "resource": {"type": "resource", "id": "config-file"},
+        "expected_decision": "allow",
+        "description": "Developer can read resources"
+      }
+    ],
+    "tags": ["rbac", "developer"]
+  }' | jq .
+```
+
+#### List Test Suites
+
+```bash
+# List all test suites
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/api/sandbox/sandbox/suites" | jq .
+
+# Filter by tags
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/api/sandbox/sandbox/suites?tags=rbac,security" | jq .
+```
+
+#### Get Test Suite by ID
+
+```bash
+# Get a specific test suite
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/api/sandbox/sandbox/suites/suite-abc123" | jq .
+```
+
+### Sandbox Error Responses
+
+#### 404 Policy Draft Not Found
+
+```json
+{
+  "detail": "Policy draft not found: draft-missing"
+}
+```
+
+**Solution**: Verify the `policy_draft_id` is correct. Available draft IDs include `draft-permissive`, `draft-restrictive`, and custom IDs.
+
+#### 422 Validation Error
+
+```json
+{
+  "detail": "Field 'policy_draft_id' must not be empty"
+}
+```
+
+**Solution**: All required fields must be non-empty and contain only safe characters (alphanumeric, hyphens, underscores, dots, `@`, spaces).
+
+#### 500 Simulation Failed
+
+```json
+{
+  "detail": "Batch simulation failed: <error details>"
+}
+```
+
+**Solution**: Check server logs for the underlying PDP evaluation error.
 
 ## Error Handling
 

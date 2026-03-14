@@ -1025,6 +1025,92 @@ class PermissionAuditLog(Base):
     user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
+# ---------------------------------------------------------------------------
+# Sandbox / Policy Testing Models
+# ---------------------------------------------------------------------------
+
+
+class PolicyDraft(Base):
+    """Draft policy configuration for sandbox testing.
+
+    Stores policy configurations that can be tested in a sandbox
+    environment before being deployed to production. Each draft
+    contains the full PDP configuration as JSON.
+
+    Attributes:
+        id: Unique draft identifier
+        name: Human-readable draft name
+        description: Purpose and scope of this draft
+        config: Full PDP configuration as JSON
+        status: Workflow status (draft, testing, approved, rejected, archived)
+        created_by: Email of the user who created the draft
+        created_at: When the draft was created
+        updated_at: When the draft was last modified
+    """
+
+    __tablename__ = "policy_drafts"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Draft metadata
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Policy configuration stored as JSON (full PDPConfig)
+    config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+    # Workflow status
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="draft", index=True)
+
+    # Ownership
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class SandboxTestSuite(Base):
+    """Persisted test suite for sandbox policy testing.
+
+    Stores collections of related test cases for reusable policy testing.
+    Test cases are serialized as JSON for flexible schema evolution.
+
+    Attributes:
+        id: Unique suite identifier
+        name: Human-readable suite name
+        description: Purpose and scope of this suite
+        test_cases: List of test case definitions as JSON
+        tags: Categorization tags as JSON list
+        created_by: Email of the user who created the suite
+        created_at: When the suite was created
+        updated_at: When the suite was last modified
+    """
+
+    __tablename__ = "sandbox_test_suites"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Suite metadata
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Test cases stored as JSON array (list of TestCase dicts)
+    test_cases: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+
+    # Tags for filtering/categorization
+    tags: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
+
+    # Ownership
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
 # Permission constants for the system
 class Permissions:
     """System permission constants."""
