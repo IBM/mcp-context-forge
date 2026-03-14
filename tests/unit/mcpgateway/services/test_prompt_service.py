@@ -397,17 +397,53 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_get_prompt_by_name(self, prompt_service, test_db):
-        """Prompt lookup falls back to name when ID lookup misses."""
+        """Prompt lookup prioritizes name first (MCP spec), then falls back to ID."""
         db_prompt = _build_db_prompt(template="Hello!")
         test_db.execute = Mock(
             side_effect=[
-                _make_execute_result(scalar=None),  # active by id
-                _make_execute_result(scalar=db_prompt),  # active by name
+                _make_execute_result(scalar=db_prompt),  # active by name (tried first)
+                _make_execute_result(scalar=None),  # active by id (fallback, not reached)
             ]
         )
 
         result = await prompt_service.get_prompt(test_db, "gateway__greeting", {})
         assert result.messages[0].content.text == "Hello!"
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_name_lookup_priority(self, prompt_service, test_db):
+        """Issue #1704: Verify name-based lookup is prioritized over ID lookup per MCP spec.
+
+        This test ensures that when a prompt is looked up, the service tries to find it
+        by name first (MCP specification requirement), and only falls back to ID lookup
+        if the name lookup fails (for backward compatibility).
+        """
+        db_prompt = _build_db_prompt(name="compare_timezones", template="Hello!")
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=db_prompt),  # active by name (tried first, succeeds)
+            ]
+        )
+
+        result = await prompt_service.get_prompt(test_db, "compare_timezones", {})
+        assert result.messages[0].content.text == "Hello!"
+        # Verify only one query was made (name lookup succeeded, no ID fallback needed)
+        assert test_db.execute.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_id_fallback_backward_compat(self, prompt_service, test_db):
+        """Verify ID-based lookup still works as fallback for backward compatibility."""
+        db_prompt = _build_db_prompt(pid=123, name="some_prompt", template="Hello!")
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),  # active by name (tried first, fails)
+                _make_execute_result(scalar=db_prompt),  # active by id (fallback, succeeds)
+            ]
+        )
+
+        result = await prompt_service.get_prompt(test_db, "123", {})
+        assert result.messages[0].content.text == "Hello!"
+        # Verify two queries were made (name lookup failed, ID fallback succeeded)
+        assert test_db.execute.call_count == 2
 
     @pytest.mark.asyncio
     async def test_get_prompt_not_found(self, prompt_service, test_db):
