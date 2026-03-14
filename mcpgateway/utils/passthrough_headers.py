@@ -539,3 +539,68 @@ async def set_global_passthrough_headers(db: Session) -> None:
         except Exception as e:
             db.rollback()
             raise PassthroughHeadersError(f"Failed to update passthrough headers: {str(e)}")
+
+
+def extract_headers_for_loopback(request_headers: Dict[str, str]) -> Dict[str, str]:
+    """Extract passthrough-relevant headers to forward in internal loopback /rpc calls.
+
+    SSE and WebSocket transports make internal loopback HTTP calls to /rpc. Client
+    passthrough headers (like X-Upstream-Authorization) must be included in those
+    loopback requests so that /rpc can forward them to upstream MCP servers via
+    get_passthrough_headers().
+
+    Always extracts:
+    - x-upstream-authorization (always enabled per design, renamed to Authorization upstream)
+
+    When ENABLE_HEADER_PASSTHROUGH is True, also extracts headers matching the
+    configured default allowlist (DEFAULT_PASSTHROUGH_HEADERS).
+
+    Args:
+        request_headers: Headers from the incoming client HTTP request or WebSocket
+            handshake. Keys are header names, values are header values.
+
+    Returns:
+        Dictionary of headers to merge into the loopback /rpc request.
+        Does not include authorization or content-type (those are handled separately
+        by the caller).
+
+    Examples:
+        X-Upstream-Authorization is always extracted:
+        >>> from unittest.mock import patch
+        >>> with patch("mcpgateway.utils.passthrough_headers.settings") as s:
+        ...     s.enable_header_passthrough = False
+        ...     s.default_passthrough_headers = []
+        ...     extract_headers_for_loopback({"X-Upstream-Authorization": "Bearer tok"})
+        {'x-upstream-authorization': 'Bearer tok'}
+
+        Empty when no relevant headers present:
+        >>> from unittest.mock import patch
+        >>> with patch("mcpgateway.utils.passthrough_headers.settings") as s:
+        ...     s.enable_header_passthrough = False
+        ...     s.default_passthrough_headers = []
+        ...     extract_headers_for_loopback({"Accept": "text/html"})
+        {}
+    """
+    forwarded: Dict[str, str] = {}
+    if not request_headers:
+        return forwarded
+
+    headers_lower = {k.lower(): v for k, v in request_headers.items()}
+
+    # Always forward x-upstream-authorization (always-enabled passthrough header)
+    upstream_auth = headers_lower.get("x-upstream-authorization")
+    if upstream_auth:
+        forwarded["x-upstream-authorization"] = upstream_auth
+
+    # When passthrough feature is enabled, also forward configured allowlist headers
+    if settings.enable_header_passthrough:
+        allowed = settings.default_passthrough_headers or []
+        for header_name in allowed:
+            header_lower = header_name.lower()
+            # Skip headers handled separately by the caller
+            if header_lower in ("authorization", "content-type"):
+                continue
+            if header_lower in headers_lower:
+                forwarded[header_lower] = headers_lower[header_lower]
+
+    return forwarded
