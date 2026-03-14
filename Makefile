@@ -2849,6 +2849,8 @@ images:
 # help: wily                 - Maintainability report
 # help: pyre                 - Static analysis with Facebook Pyre
 # help: pyrefly              - Static analysis with Facebook Pyrefly
+# help: requirements          - Generate requirements.txt from pyproject.toml (MODE=uv for full tree)
+# help: check-requirements    - Verify requirements.txt is in sync with pyproject.toml
 # help: depend               - List dependencies in ≈requirements format
 # help: snakeviz             - Profile & visualise with snakeviz
 # help: pstats               - Generate PNG call-graph from cProfile stats
@@ -3533,6 +3535,15 @@ pyre:                               ## 🧠  Facebook Pyre analysis
 
 pyrefly:                            ## 🧠  Facebook Pyrefly analysis (faster, rust)
 	@echo "🧠 pyrefly $(TARGET)..." && $(VENV_DIR)/bin/pyrefly check $(TARGET)
+
+MODE ?= direct
+.PHONY: requirements
+requirements:                       ## 📦  Generate requirements.txt from pyproject.toml (MODE=uv for full tree)
+	@python3 scripts/generate_requirements.py --mode $(MODE)
+
+.PHONY: check-requirements
+check-requirements:                 ## ✅  Verify requirements.txt is in sync with pyproject.toml
+	@python3 scripts/generate_requirements.py --check --mode $(MODE)
 
 .PHONY: depend
 depend:                             ## 📦  List dependencies

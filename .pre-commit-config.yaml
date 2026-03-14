@@ -526,6 +526,20 @@ repos:
   #       types: [python]
 
   # -----------------------------------------------------------------------------
+  # 📦 Auto-generate requirements.txt from pyproject.toml
+  # -----------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: generate-requirements
+        name: 📦 Generate requirements.txt
+        description: Regenerates requirements.txt from pyproject.toml [project].dependencies.
+        entry: python3 scripts/generate_requirements.py
+        language: system
+        files: ^pyproject\.toml$
+        pass_filenames: false
+        stages: [pre-commit, pre-push, manual]
+
+  # -----------------------------------------------------------------------------
   #  Interrogate
   # -----------------------------------------------------------------------------
   - repo: https://github.com/econchick/interrogate
