@@ -370,6 +370,7 @@ class TestAddMemberEdge:
         mock_query = MagicMock()
         mock_filter = MagicMock()
         mock_filter.first = MagicMock(side_effect=[user, None])  # user exists, no existing membership
+        mock_filter.count = MagicMock(return_value=0)
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
@@ -771,6 +772,9 @@ class TestApproveJoinRequestEdge:
         join_req.user_email = "new@t.com"
         join_req.is_expired = MagicMock(return_value=False)
         join_req.status = "pending"
+
+        mock_team = MagicMock()
+        mock_team.max_members = None
 
         mock_query = MagicMock()
         mock_filter = MagicMock()

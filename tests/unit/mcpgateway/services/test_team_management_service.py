@@ -20,7 +20,31 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
-from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.team_management_service import TeamManagementService, get_effective_max_members
+
+
+class TestGetEffectiveMaxMembers:
+    """Tests for get_effective_max_members — global default vs per-team override."""
+
+    def test_explicit_value_used(self):
+        """When team has explicit max_members, use it regardless of settings."""
+        team = MagicMock(spec=EmailTeam)
+        team.max_members = 25
+        assert get_effective_max_members(team) == 25
+
+    def test_none_falls_back_to_settings(self):
+        """When team.max_members is None, fall back to settings.max_members_per_team."""
+        team = MagicMock(spec=EmailTeam)
+        team.max_members = None
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.max_members_per_team = 200
+            assert get_effective_max_members(team) == 200
+
+    def test_zero_returns_zero(self):
+        """Explicit zero means no limit enforced (falsy)."""
+        team = MagicMock(spec=EmailTeam)
+        team.max_members = 0
+        assert get_effective_max_members(team) == 0
 
 
 class TestTeamManagementService:
@@ -209,7 +233,11 @@ class TestTeamManagementService:
 
     @pytest.mark.asyncio
     async def test_create_team_with_settings_defaults(self, service, mock_db):
-        """Test team creation uses settings defaults."""
+        """Test team creation stores None for max_members when not explicitly provided.
+
+        The effective limit is resolved at check time via get_effective_max_members(),
+        so changing the env var affects existing teams without requiring per-team updates.
+        """
         mock_team = MagicMock(spec=EmailTeam)
 
         # Mock the query for existing inactive teams to return None
@@ -230,7 +258,8 @@ class TestTeamManagementService:
 
             MockTeam.assert_called_once()
             call_kwargs = MockTeam.call_args[1]
-            assert call_kwargs["max_members"] == 50
+            # max_members should be None (not baked from settings) so the global default applies at check time
+            assert call_kwargs["max_members"] is None
 
     @pytest.mark.asyncio
     async def test_create_team_reactivates_existing_inactive_team(self, service, mock_db):
@@ -1346,6 +1375,7 @@ class TestTeamManagementService:
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
             mock_settings.default_team_member_role = "viewer"
             mock_settings.max_teams_per_user = 50
+            mock_settings.max_members_per_team = 100
 
             with (
                 patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
@@ -1398,6 +1428,7 @@ class TestTeamManagementService:
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
             mock_settings.default_team_member_role = "viewer"
             mock_settings.max_teams_per_user = 50
+            mock_settings.max_members_per_team = 100
 
             with (
                 patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
