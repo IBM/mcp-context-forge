@@ -2870,6 +2870,7 @@ dev = [
     { name = "isort" },
     { name = "locust" },
     { name = "mypy" },
+    { name = "pact-python" },
     { name = "pexpect" },
     { name = "pip-audit" },
     { name = "pip-licenses" },
@@ -3026,6 +3027,7 @@ dev = [
     { name = "isort", specifier = ">=6.1.0" },
     { name = "locust", specifier = ">=2.35.0" },
     { name = "mypy", specifier = ">=1.18.2" },
+    { name = "pact-python", specifier = ">=2.3.0" },
     { name = "pexpect", specifier = ">=4.9.0" },
     { name = "pip-audit", specifier = ">=2.9.0" },
     { name = "pip-licenses", specifier = ">=5.0.0" },
@@ -3653,6 +3655,39 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/65/ee/299d360cdc32edc7d2cf530f3accf79c4fca01e96ffc950d8a52213bd8e4/packaging-26.0.tar.gz", hash = "sha256:00243ae351a257117b6a241061796684b084ed1c516a08c48a3f7e147a9d80b4", size = 143416, upload-time = "2026-01-21T20:50:39.064Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/b9/c538f279a4e237a006a2c98387d081e9eb060d203d8ed34467cc0f0b9b53/packaging-26.0-py3-none-any.whl", hash = "sha256:b36f1fef9334a5588b4166f8bcd26a14e521f2b55e6b9de3aaa80d3ff7a37529", size = 74366, upload-time = "2026-01-21T20:50:37.788Z" },
+]
+
+[[package]]
+name = "pact-python"
+version = "3.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pact-python-ffi" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "yarl" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d3/d2/c8c769f0f323b6a8743da62d4603b94a1abac72783a36dab966be59d93b4/pact_python-3.2.1.tar.gz", hash = "sha256:bf6d9709999650feae49a085080fca95d2c1d6f94913fff8f2a6d6b9446b978d", size = 79455, upload-time = "2025-12-10T08:13:09.11Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/81/96/056bcc7e664e91868eb6d75669973df4c1d00a4f9848e2f640f153387e93/pact_python-3.2.1-py3-none-any.whl", hash = "sha256:2902fe74da09093269cf69d007227ae15db854abb22be7520ed643efa182b42e", size = 93918, upload-time = "2025-12-10T08:13:07.462Z" },
+]
+
+[[package]]
+name = "pact-python-ffi"
+version = "0.4.28.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cffi" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/92/f7/171d4e478254fb3458873af5cf59524bf546cf09f8e57c04b1ca0c1b7cb0/pact_python_ffi-0.4.28.2.tar.gz", hash = "sha256:fd961d58f95add48db3235bd49c631bcdc36e71fd01a5eea458f58e1a6b8029c", size = 46617, upload-time = "2025-10-06T06:27:54.635Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/39/d6/42500a35261bf8a87952a76f647a65fb11c40c03050a29e52fb1a77b3467/pact_python_ffi-0.4.28.2-cp310-abi3-macosx_12_0_arm64.whl", hash = "sha256:32b7a2fcc107007c7c49509f028dceef3677b700bc92f65482685ff45fab6e98", size = 6064041, upload-time = "2025-10-06T06:27:38.189Z" },
+    { url = "https://files.pythonhosted.org/packages/32/68/06f51c484e9023404afda63ac0d7bc2aed985048e07d0177ae2560a5de63/pact_python_ffi-0.4.28.2-cp310-abi3-macosx_12_0_x86_64.whl", hash = "sha256:607c331a0decafe93d06286ed6ca37de0a01be460830b39b32fa0138eb804e44", size = 6279097, upload-time = "2025-10-06T06:27:40.224Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/86/d36eb4efe291c4556e216f5f12e30153e756457bde85c238168d9c4b805d/pact_python_ffi-0.4.28.2-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:08d75a86fc0afb6198e7f9841c174e6e882102209fcc7a47f45724e975709349", size = 6976191, upload-time = "2025-10-06T06:27:42.053Z" },
+    { url = "https://files.pythonhosted.org/packages/91/a4/de7610041d88a20db37199db9fe2c6c444cf4aead878adbc77d899ce4810/pact_python_ffi-0.4.28.2-cp310-abi3-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fb4c1417aa575331717204a4ef46c5df9bb7d30a457951834404fb59bcb75c69", size = 7265583, upload-time = "2025-10-06T06:27:43.574Z" },
+    { url = "https://files.pythonhosted.org/packages/36/b6/cd4cb183305c81513a9c4c583802ba1651af19b422a265a8d747e1157aac/pact_python_ffi-0.4.28.2-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:e50b258660f1e5d708462725cc66ea53804add0102d3b8d017f38061dc47cf88", size = 16424358, upload-time = "2025-10-06T06:27:45.231Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/54/0ab87f204e07efe437f4c610219fbbe14c2e6436f09f57505491381746d3/pact_python_ffi-0.4.28.2-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:28d81cabb1a3d40b0de69feee140e062b2b4b06aaa74cdd053dd0f6bfcdfeb6b", size = 15637341, upload-time = "2025-10-06T06:27:47.636Z" },
+    { url = "https://files.pythonhosted.org/packages/df/0a/411748c68d66d16c0d8ecf99008ab364a974b21b9d9f3d60e4118fb94124/pact_python_ffi-0.4.28.2-cp310-abi3-win_amd64.whl", hash = "sha256:3e5e24772270da78efbd430af369fb487371a712375f8db98eb9445045ea42bc", size = 12657113, upload-time = "2025-10-06T06:27:50.044Z" },
+    { url = "https://files.pythonhosted.org/packages/51/fb/8df51b290b918d37ad75310d3b4458131ba9a4a76425d186b780ce36de5a/pact_python_ffi-0.4.28.2-cp310-abi3-win_arm64.whl", hash = "sha256:b515cae612da0ed8bf538290502ab20686211815d48064a0a0cd05fa6a343583", size = 11875025, upload-time = "2025-10-06T06:27:52.629Z" },
 ]
 
 [[package]]

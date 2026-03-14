@@ -167,6 +167,7 @@ dev = [
     "pipdeptree>=2.31.0",
     "setuptools>=82.0.0",
     "debugpy>=1.8.20",
+    "pact-python>=2.3.0",
 ]
 
 # ----------------------------------------------------------------
@@ -612,7 +613,7 @@ plugins = ["pydantic.mypy"]              # Enable mypy plugin for Pydantic model
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q --ignore=tests/playwright --ignore=tests/migration --ignore=tests/performance --ignore=tests/compliance --ignore=tests/e2e/test_mcp_cli_protocol.py"
+addopts = "-ra -q --ignore=tests/playwright --ignore=tests/migration --ignore=tests/performance --ignore=tests/compliance --ignore=tests/pact --ignore=tests/e2e/test_mcp_cli_protocol.py"
 testpaths = [ "tests",]
 asyncio_mode = "auto"
 filterwarnings = [
@@ -662,6 +663,7 @@ markers = [
     "iframe: marks tests that run inside an iframe host page",
     "owasp_a01: marks OWASP A01:2021 Broken Access Control security tests",
     "owasp_a01_zap: marks OWASP A01 ZAP DAST scan tests (requires ZAP daemon; set ZAP_BASE_URL)",
+    "pact: marks Pact consumer-driven contract tests",
 ]
 
 # Playwright-specific test discovery patterns

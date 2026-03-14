@@ -649,7 +649,7 @@ clean:
 .PHONY: smoketest test-mcp-cli test-mcp-rbac test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
 # Dirs/files always excluded from standard pytest runs
-PYTEST_IGNORE := tests/fuzz tests/manual test.py \
+PYTEST_IGNORE := tests/fuzz tests/manual tests/pact test.py \
     tests/e2e/test_entra_id_integration.py \
     tests/e2e/test_mcp_cli_protocol.py \
     tests/e2e/test_mcp_rbac_transport.py
@@ -967,6 +967,65 @@ query-log-clear:                 ## Clear database query log files
 	@echo "🗑️  Clearing database query logs..."
 	@rm -f logs/db-queries.log logs/db-queries.jsonl
 	@echo "✅ Query logs cleared"
+
+
+# =============================================================================
+# 📜 PACT CONTRACT TESTING
+# =============================================================================
+# help: 📜 PACT CONTRACT TESTING
+# help: pact-install           - Install pact-python and verify Pact availability
+# help: pact-consumer          - Run consumer contract tests (Gateway → MCP servers), generate pact files
+# help: pact-provider          - Verify Gateway APIs against consumer contracts
+# help: pact-all               - Run consumer tests then verify provider contracts
+# help: pact-publish           - Publish pact files to Pact Broker (set PACT_BROKER_BASE_URL, PACT_BROKER_TOKEN)
+# help: pact-clean             - Remove generated pact files
+
+PACT_DIR ?= pacts
+PACT_BROKER_BASE_URL ?=
+PACT_BROKER_TOKEN ?=
+
+.PHONY: pact-install pact-consumer pact-provider pact-all pact-publish pact-clean
+
+pact-install:
+	@echo "📥 Installing Pact tooling..."
+	$(call ensure_pip_package,pact-python)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -c 'import pact; print(\"pact-python\", pact.__version__, \"OK\")'"
+
+pact-consumer: pact-install
+	@echo "🔄 Running consumer contract tests..."
+	@mkdir -p $(PACT_DIR)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		uv run --active pytest tests/pact/consumer/ -v -m pact --tb=short"
+	@echo "✅ Consumer pact files written to $(PACT_DIR)/"
+
+pact-provider: pact-install
+	@echo "✅ Verifying provider contracts..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		uv run --active pytest tests/pact/provider/ -v -m pact --tb=short"
+
+pact-all: pact-consumer pact-provider
+
+pact-publish: pact-install
+	@echo "📤 Publishing pacts to broker..."
+	@test -n "$(PACT_BROKER_BASE_URL)" || { echo "❌ PACT_BROKER_BASE_URL not set"; exit 1; }
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -c \"\
+		from pact import Verifier; \
+		import subprocess, sys; \
+		print('Publishing pact files from $(PACT_DIR)/...'); \
+		# Pact Broker publishing is handled via the pact-broker CLI or CI integration \
+		print('Use your Pact Broker CI integration or pact-broker CLI to publish.'); \
+		\""
+	@echo "ℹ️  To publish, use: pact-broker publish $(PACT_DIR)/ --consumer-app-version $$(git rev-parse HEAD) --broker-base-url $(PACT_BROKER_BASE_URL) --broker-token $(PACT_BROKER_TOKEN)"
+
+pact-clean:
+	@echo "🗑️  Cleaning pact files..."
+	@rm -f $(PACT_DIR)/*.json
+	@echo "✅ Pact files cleaned"
 
 
 # =============================================================================
