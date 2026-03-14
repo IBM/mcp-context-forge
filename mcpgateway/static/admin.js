@@ -6282,8 +6282,12 @@ async function editGateway(gatewayId) {
             "oauth-redirect-uri-gw-edit",
         );
         const oauthScopesField = safeGetElement("oauth-scopes-gw-edit");
+        const oauthResourceField = safeGetElement("oauth-resource-gw-edit");
         const oauthAuthCodeFields = safeGetElement(
             "oauth-auth-code-fields-gw-edit",
+        );
+        const oauthClientCredentialsFields = safeGetElement(
+            "oauth-client-credentials-fields-gw-edit",
         );
 
         // Hide all auth sections first
@@ -6380,10 +6384,16 @@ async function editGateway(gatewayId) {
                     const config = gateway.oauthConfig;
                     if (oauthGrantTypeField && config.grant_type) {
                         oauthGrantTypeField.value = config.grant_type;
-                        // Show/hide authorization code fields based on grant type
+                        // Show/hide grant-type-specific fields
                         if (oauthAuthCodeFields) {
                             oauthAuthCodeFields.style.display =
                                 config.grant_type === "authorization_code"
+                                    ? "block"
+                                    : "none";
+                        }
+                        if (oauthClientCredentialsFields) {
+                            oauthClientCredentialsFields.style.display =
+                                config.grant_type === "client_credentials"
                                     ? "block"
                                     : "none";
                         }
@@ -6409,6 +6419,9 @@ async function editGateway(gatewayId) {
                         Array.isArray(config.scopes)
                     ) {
                         oauthScopesField.value = config.scopes.join(" ");
+                    }
+                    if (oauthResourceField && config.resource) {
+                        oauthResourceField.value = config.resource;
                     }
                 }
                 break;
@@ -19224,6 +19237,9 @@ function handleOAuthGrantTypeChange() {
 
     // Select the correct fields dynamically based on prefix
     const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
+    const clientCredentialsFields = safeGetElement(
+        `oauth-client-credentials-fields-${prefix}`,
+    );
     const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
     const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
 
@@ -19248,6 +19264,12 @@ function handleOAuthGrantTypeChange() {
                 authCodeFields.querySelectorAll('input[type="url"]');
             requiredFields.forEach((field) => (field.required = false));
         }
+    }
+
+    // Handle Client Credentials flow
+    if (clientCredentialsFields) {
+        clientCredentialsFields.style.display =
+            grantType === "client_credentials" ? "block" : "none";
     }
 
     // Handle Password Grant flow
@@ -19291,6 +19313,9 @@ function handleEditOAuthGrantTypeChange() {
     const prefix = id.includes("a2a") ? "a2a-edit" : "gw-edit";
 
     const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
+    const clientCredentialsFields = safeGetElement(
+        `oauth-client-credentials-fields-${prefix}`,
+    );
     const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
     const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
 
@@ -19307,6 +19332,12 @@ function handleEditOAuthGrantTypeChange() {
             authCodeFields.style.display = "none";
             urlInputs.forEach((field) => (field.required = false));
         }
+    }
+
+    // === Handle Client Credentials grant ===
+    if (clientCredentialsFields) {
+        clientCredentialsFields.style.display =
+            grantType === "client_credentials" ? "block" : "none";
     }
 
     // === Handle Password grant ===
@@ -20629,10 +20660,40 @@ window.updateAuthHeadersJSON = updateAuthHeadersJSON;
 window.loadAuthHeaders = loadAuthHeaders;
 
 /**
- * Fetch tools from MCP server after OAuth completion for Authorization Code flow
- * @param {string} gatewayId - ID of the gateway to fetch tools for
- * @param {string} gatewayName - Name of the gateway for display purposes
+ * Test M2M token acquisition for a client_credentials gateway.
+ * @param {string} gatewayId - ID of the gateway to test
+ * @param {HTMLElement} button - The button element that triggered the test
  */
+window.testM2MGateway = async function testM2MGateway(gatewayId, button) {
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = "⏳ Testing...";
+
+    try {
+        const base = window.adminBasePath || "";
+        const response = await fetch(
+            `${base}/admin/gateways/${gatewayId}/test-m2m`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "same-origin",
+            },
+        );
+        const data = await response.json();
+
+        if (data.success) {
+            showToast("M2M token acquired successfully", "success");
+        } else {
+            showToast(`Token acquisition failed: ${data.message}`, "error");
+        }
+    } catch (err) {
+        showToast(`Request failed: ${err.message}`, "error");
+    } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+    }
+};
+
 async function fetchToolsForGateway(gatewayId, gatewayName) {
     const button = document.getElementById(`fetch-tools-${gatewayId}`);
     if (!button) {

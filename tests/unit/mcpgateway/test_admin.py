@@ -169,6 +169,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_teams_partial_html,
     admin_test_a2a_agent,
     admin_test_gateway,
+    admin_test_m2m_gateway,
     admin_test_resource,
     admin_tokens_partial_html,
     admin_tool_ops_partial,
@@ -5323,18 +5324,21 @@ class TestOAuthFunctionality:
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_empty_client_secret(self, mock_update_gateway, mock_request, mock_db):
-        """Test editing gateway with empty OAuth client secret."""
-        oauth_config = {
-            "grant_type": "client_credentials",
-            "client_id": "edit-client-id",
-            "client_secret": "",  # Empty secret
-            "token_url": "https://auth.example.com/oauth/token",
-        }
-
-        form_data = FakeForm({"name": "Edited_Gateway", "url": "https://edited.example.com", "oauth_config": json.dumps(oauth_config)})
+        """Empty oauth_client_secret in form fields (Option 2) does not trigger encryption."""
+        # Uses authorization_code so the M2M required-fields validator does not run.
+        # The intent is to verify the `if oauth_client_secret:` branch skips encryption when empty.
+        form_data = FakeForm(
+            {
+                "name": "Edited_Gateway",
+                "url": "https://edited.example.com",
+                "oauth_grant_type": "authorization_code",
+                "oauth_client_id": "edit-client-id",
+                "oauth_client_secret": "",  # Empty — encryption must not be called
+                "oauth_token_url": "https://auth.example.com/oauth/token",
+            }
+        )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        # Mock OAuth encryption - should not be called for empty secret
         with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
             mock_encryption = MagicMock()
             mock_encryption.encrypt_secret_async = AsyncMock()
@@ -5343,8 +5347,6 @@ class TestOAuthFunctionality:
             result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
             assert isinstance(result, JSONResponse)
-
-            # Verify OAuth encryption was not called for empty secret
             mock_encryption.encrypt_secret_async.assert_not_called()
             mock_update_gateway.assert_called_once()
 
@@ -5473,13 +5475,13 @@ class TestOAuthFunctionality:
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_oauth_scopes_parse_empty_and_missing_client_id(self, mock_register_gateway, mock_request, mock_db):
-        """Cover 'missing client_id' and 'empty scopes list' branches."""
+        """Cover 'missing client_id' and 'empty scopes list' branches (uses authorization_code to avoid M2M validator)."""
         form_data = FakeForm(
             {
                 "name": "OAuth_Scopes_Empty_Gateway",
                 "url": "https://example.com",
                 "auth_headers": "",
-                "oauth_grant_type": "client_credentials",
+                "oauth_grant_type": "authorization_code",
                 "oauth_client_id": "",  # Ensure the client_id branch is false
                 "oauth_scopes": ",",  # Truthy string but parses to empty list
             }
@@ -5507,11 +5509,11 @@ class TestOAuthFunctionality:
 
             gateway_create = mock_register_gateway.call_args.args[1]
             assert gateway_create.auth_type == "oauth"
-            assert gateway_create.oauth_config == {"grant_type": "client_credentials"}
+            assert gateway_create.oauth_config == {"grant_type": "authorization_code"}
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_oauth_config_without_client_secret(self, mock_register_gateway, mock_request, mock_db):
-        """Cover Option 1 parsing when oauth_config has no client_secret."""
+        """client_credentials config missing client_secret is rejected with 422."""
         oauth_config = {"grant_type": "client_credentials", "client_id": "cid"}
         form_data = FakeForm({"name": "OAuth_NoSecret_Gateway", "url": "https://example.com", "auth_headers": "", "oauth_config": json.dumps(oauth_config)})
         mock_request.form = AsyncMock(return_value=form_data)
@@ -5532,12 +5534,8 @@ class TestOAuthFunctionality:
             }
 
             result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-            assert isinstance(result, JSONResponse)
-            assert result.status_code == 200
-
-            gateway_create = mock_register_gateway.call_args.args[1]
-            assert gateway_create.auth_type == "oauth"
-            assert gateway_create.oauth_config == oauth_config
+            assert result.status_code == 422
+            mock_register_gateway.assert_not_called()
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_assembled_from_form_fields(self, mock_update_gateway, mock_request, mock_db):
@@ -5582,14 +5580,14 @@ class TestOAuthFunctionality:
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_assembled_minimal_fields_covers_false_branches(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
-        """Cover false branches in admin_edit_gateway's OAuth field assembly."""
+        """Cover false branches in admin_edit_gateway's OAuth field assembly (uses authorization_code to avoid M2M validator)."""
         form_data = FakeForm(
             {
                 "name": "Edited_Gateway",
                 "url": "https://edited.example.com",
                 "auth_headers": "",
                 "passthrough_headers": "X-Req-Id, X-Trace",
-                "oauth_grant_type": "client_credentials",
+                "oauth_grant_type": "authorization_code",
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
@@ -5608,19 +5606,19 @@ class TestOAuthFunctionality:
 
         gateway_update = mock_update_gateway.call_args.args[2]
         assert gateway_update.auth_type == "oauth"
-        assert gateway_update.oauth_config == {"grant_type": "client_credentials"}
+        assert gateway_update.oauth_config == {"grant_type": "authorization_code"}
         assert gateway_update.passthrough_headers == ["X-Req-Id", "X-Trace"]
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_scopes_parse_empty(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
-        """Cover the empty-scopes (inner if) branch in admin_edit_gateway."""
+        """Cover the empty-scopes (inner if) branch in admin_edit_gateway (uses authorization_code to avoid M2M validator)."""
         form_data = FakeForm(
             {
                 "name": "Edited_Gateway",
                 "url": "https://edited.example.com",
                 "auth_headers": "",
                 "passthrough_headers": "",
-                "oauth_grant_type": "client_credentials",
+                "oauth_grant_type": "authorization_code",
                 "oauth_scopes": ",",
             }
         )
@@ -5639,7 +5637,7 @@ class TestOAuthFunctionality:
         assert result.status_code == 200
 
         gateway_update = mock_update_gateway.call_args.args[2]
-        assert gateway_update.oauth_config == {"grant_type": "client_credentials"}
+        assert gateway_update.oauth_config == {"grant_type": "authorization_code"}
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_ca_certificate_signed(self, mock_register_gateway, mock_request, mock_db, monkeypatch):
@@ -14911,6 +14909,174 @@ async def test_admin_edit_a2a_agent_error_handlers(monkeypatch, mock_db):
         assert response.status_code == expected_status
 
 
+# ---------------------------------------------------------------------------
+# Tests for oauth_resource field coverage in add/edit gateway and A2A agent
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_add_gateway_oauth_resource_stored(monkeypatch, mock_request, mock_db):
+    """oauth_resource form field is stored in oauth_config['resource'] for add gateway."""
+    from mcpgateway.services.gateway_service import GatewayService
+
+    form_data = FakeForm(
+        {
+            "name": "M2M-GW",
+            "url": "https://api.example.com",
+            "auth_type": "oauth",
+            "oauth_grant_type": "client_credentials",
+            "oauth_token_url": "https://idp.example.com/token",
+            "oauth_client_id": "cid",
+            "oauth_client_secret": "secret",
+            "oauth_resource": "https://api.example.com/mcp",
+        }
+    )
+    mock_request.form = AsyncMock(return_value=form_data)
+
+    mock_svc = MagicMock()
+    mock_svc.register_gateway = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", mock_svc)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    encryptor = MagicMock()
+    encryptor.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+    monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _s: encryptor)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+        lambda *_a, **_kw: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+    )
+
+    response = await admin_add_gateway(mock_request, mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 200
+    gw = mock_svc.register_gateway.call_args.args[1]
+    assert gw.oauth_config["resource"] == "https://api.example.com/mcp"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_gateway_oauth_resource_stored(monkeypatch, mock_request, mock_db):
+    """oauth_resource form field is stored in oauth_config['resource'] for edit gateway."""
+    form_data = FakeForm(
+        {
+            "name": "M2M-GW",
+            "url": "https://api.example.com",
+            "auth_type": "oauth",
+            "oauth_grant_type": "authorization_code",
+            "oauth_token_url": "https://idp.example.com/token",
+            "oauth_client_id": "cid",
+            "oauth_client_secret": "secret",
+            "oauth_resource": "https://api.example.com/mcp",
+        }
+    )
+    mock_request.form = AsyncMock(return_value=form_data)
+
+    mock_svc = MagicMock()
+    mock_svc.update_gateway = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", mock_svc)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    encryptor = MagicMock()
+    encryptor.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+    monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _s: encryptor)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+        lambda *_a, **_kw: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None},
+    )
+
+    response = await admin_edit_gateway("gw-1", mock_request, mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 200
+    gw = mock_svc.update_gateway.call_args.args[2]
+    assert gw.oauth_config["resource"] == "https://api.example.com/mcp"
+
+
+@pytest.mark.asyncio
+async def test_admin_add_a2a_agent_oauth_resource_stored(monkeypatch, mock_db):
+    """oauth_resource form field is stored in oauth_config['resource'] for add A2A agent."""
+    form_data = FakeForm(
+        {
+            "name": "M2M-Agent",
+            "endpoint_url": "http://agent.example.com",
+            "auth_type": "oauth",
+            "oauth_grant_type": "client_credentials",
+            "oauth_token_url": "https://idp.example.com/token",
+            "oauth_client_id": "cid",
+            "oauth_client_secret": "secret",
+            "oauth_resource": "http://agent.example.com/a2a",
+        }
+    )
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.register_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    encryptor = MagicMock()
+    encryptor.encrypt_secret_async = AsyncMock(return_value="enc")
+    monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _s: encryptor)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+        lambda *_a, **_kw: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+    )
+
+    response = await admin_add_a2a_agent(request, mock_db, user={"email": "u@example.com"})
+    assert response.status_code == 200
+    agent = service.register_agent.call_args.args[1]
+    assert agent.oauth_config["resource"] == "http://agent.example.com/a2a"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_a2a_agent_oauth_resource_stored(monkeypatch, mock_db):
+    """oauth_resource form field is stored in oauth_config['resource'] for edit A2A agent."""
+    form_data = FakeForm(
+        {
+            "name": "M2M-Agent",
+            "endpoint_url": "http://agent.example.com",
+            "auth_type": "oauth",
+            "oauth_grant_type": "authorization_code",
+            "oauth_token_url": "https://idp.example.com/token",
+            "oauth_client_id": "cid",
+            "oauth_client_secret": "secret",
+            "oauth_resource": "http://agent.example.com/a2a",
+        }
+    )
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.update_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    encryptor = MagicMock()
+    encryptor.encrypt_secret_async = AsyncMock(return_value="enc")
+    monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _s: encryptor)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+        lambda *_a, **_kw: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None},
+    )
+
+    response = await admin_edit_a2a_agent("agent-1", request, mock_db, user={"email": "u@example.com"})
+    assert response.status_code == 200
+    agent = service.update_agent.call_args.kwargs["agent_data"]
+    assert agent.oauth_config["resource"] == "http://agent.example.com/a2a"
+
+
 # ============================================================================ #
 #                 GROUP 1: Utility Functions                                    #
 # ============================================================================ #
@@ -21586,3 +21752,76 @@ class TestAdminPersonalTeamFiltering:
             call_kwargs = mock_team_service.list_teams.call_args[1]
             assert call_kwargs["search_query"] == "nomatch"
             assert call_kwargs["personal_owner_email"] == "admin@example.com"
+
+
+# ---------------------------------------------------------------------------
+# Tests for admin_test_m2m_gateway
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_test_m2m_gateway_success(monkeypatch, mock_db):
+    """Token acquired successfully returns success=True JSON response."""
+    gateway = SimpleNamespace(id="gw-1", oauth_config={"grant_type": "client_credentials", "token_url": "https://idp.example.com/token", "client_id": "cid", "client_secret": "secret"})
+    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_gateway", AsyncMock(return_value=gateway))
+
+    oauth_manager = MagicMock()
+    oauth_manager.get_access_token = AsyncMock(return_value="tok123")
+    monkeypatch.setattr("mcpgateway.admin.OAuthManager", lambda **_kwargs: oauth_manager)
+
+    response = await admin_test_m2m_gateway(gateway_id="gw-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert response.status_code == 200
+    body = json.loads(response.body)
+    assert body["success"] is True
+    assert "successfully" in body["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_test_m2m_gateway_not_found(monkeypatch, mock_db):
+    """Returns 404 when the gateway does not exist."""
+    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_gateway", AsyncMock(side_effect=GatewayNotFoundError("not found")))
+
+    with pytest.raises(Exception) as exc_info:
+        await admin_test_m2m_gateway(gateway_id="missing", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_admin_test_m2m_gateway_no_oauth_config(monkeypatch, mock_db):
+    """Returns 400 when the gateway has no OAuth config."""
+    gateway = SimpleNamespace(id="gw-2", oauth_config=None)
+    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_gateway", AsyncMock(return_value=gateway))
+
+    with pytest.raises(Exception) as exc_info:
+        await admin_test_m2m_gateway(gateway_id="gw-2", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert exc_info.value.status_code == 400
+    assert "not configured with oauth" in exc_info.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_test_m2m_gateway_wrong_grant_type(monkeypatch, mock_db):
+    """Returns 400 when grant_type is not client_credentials."""
+    gateway = SimpleNamespace(id="gw-3", oauth_config={"grant_type": "authorization_code"})
+    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_gateway", AsyncMock(return_value=gateway))
+
+    with pytest.raises(Exception) as exc_info:
+        await admin_test_m2m_gateway(gateway_id="gw-3", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert exc_info.value.status_code == 400
+    assert "client_credentials" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_admin_test_m2m_gateway_idp_failure(monkeypatch, mock_db):
+    """IDP failure returns success=False with error message."""
+    gateway = SimpleNamespace(id="gw-4", oauth_config={"grant_type": "client_credentials", "token_url": "https://idp.example.com/token", "client_id": "cid", "client_secret": "secret"})
+    monkeypatch.setattr("mcpgateway.admin.gateway_service.get_gateway", AsyncMock(return_value=gateway))
+
+    oauth_manager = MagicMock()
+    oauth_manager.get_access_token = AsyncMock(side_effect=RuntimeError("IDP unreachable"))
+    monkeypatch.setattr("mcpgateway.admin.OAuthManager", lambda **_kwargs: oauth_manager)
+
+    response = await admin_test_m2m_gateway(gateway_id="gw-4", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    assert response.status_code == 200
+    body = json.loads(response.body)
+    assert body["success"] is False
+    assert "IDP unreachable" in body["message"]

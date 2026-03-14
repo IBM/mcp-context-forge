@@ -1254,3 +1254,129 @@ class TestSchemaValidators:
             ResourceSubscription(uri="resource://one", subscriber_id=long_subscriber)
 
         assert "Subscriber ID exceeds maximum length" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# GatewayCreate / GatewayUpdate — client_credentials oauth_config validation
+# ---------------------------------------------------------------------------
+
+
+class TestGatewayClientCredentialsValidation:
+    """Tests for the validate_client_credentials_config model validator."""
+
+    def test_create_rejects_missing_all_required_fields(self):
+        """GatewayCreate should reject client_credentials config with no required fields."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(
+                name="gw",
+                url="http://example.com",
+                oauth_config={"grant_type": "client_credentials"},
+            )
+        error_str = str(exc_info.value)
+        assert "token_url" in error_str
+        assert "client_id" in error_str
+        assert "client_secret" in error_str
+
+    def test_create_rejects_missing_token_url(self):
+        """GatewayCreate should reject client_credentials config missing token_url."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(
+                name="gw",
+                url="http://example.com",
+                oauth_config={"grant_type": "client_credentials", "client_id": "x", "client_secret": "s"},
+            )
+        assert "token_url" in str(exc_info.value)
+
+    def test_create_rejects_missing_client_id(self):
+        """GatewayCreate should reject client_credentials config missing client_id."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(
+                name="gw",
+                url="http://example.com",
+                oauth_config={"grant_type": "client_credentials", "token_url": "http://idp/token", "client_secret": "s"},
+            )
+        assert "client_id" in str(exc_info.value)
+
+    def test_create_rejects_missing_client_secret(self):
+        """GatewayCreate should reject client_credentials config missing client_secret."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(
+                name="gw",
+                url="http://example.com",
+                oauth_config={"grant_type": "client_credentials", "token_url": "http://idp/token", "client_id": "x"},
+            )
+        assert "client_secret" in str(exc_info.value)
+
+    def test_create_accepts_complete_client_credentials_config(self):
+        """GatewayCreate should accept client_credentials config with all required fields."""
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(
+            name="gw",
+            url="http://example.com",
+            oauth_config={
+                "grant_type": "client_credentials",
+                "token_url": "http://idp/token",
+                "client_id": "my-client",
+                "client_secret": "my-secret",
+            },
+        )
+        assert gw.oauth_config["grant_type"] == "client_credentials"
+
+    def test_create_unaffected_for_authorization_code_grant(self):
+        """GatewayCreate should not validate required M2M fields for authorization_code grant."""
+        from mcpgateway.schemas import GatewayCreate
+
+        # authorization_code without token_url/client_id/client_secret should not raise
+        gw = GatewayCreate(
+            name="gw",
+            url="http://example.com",
+            oauth_config={"grant_type": "authorization_code"},
+        )
+        assert gw.oauth_config["grant_type"] == "authorization_code"
+
+    def test_create_unaffected_when_no_oauth_config(self):
+        """GatewayCreate without oauth_config should not trigger the validator."""
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(name="gw", url="http://example.com")
+        assert gw.oauth_config is None
+
+    def test_update_rejects_incomplete_client_credentials_config(self):
+        """GatewayUpdate should reject client_credentials config missing required fields."""
+        from mcpgateway.schemas import GatewayUpdate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayUpdate(oauth_config={"grant_type": "client_credentials", "client_id": "x"})
+        error_str = str(exc_info.value)
+        assert "token_url" in error_str
+        assert "client_secret" in error_str
+
+    def test_update_accepts_complete_client_credentials_config(self):
+        """GatewayUpdate should accept a complete client_credentials config."""
+        from mcpgateway.schemas import GatewayUpdate
+
+        upd = GatewayUpdate(
+            oauth_config={
+                "grant_type": "client_credentials",
+                "token_url": "http://idp/token",
+                "client_id": "x",
+                "client_secret": "s",
+            }
+        )
+        assert upd.oauth_config["grant_type"] == "client_credentials"
+
+    def test_update_unaffected_when_oauth_config_omitted(self):
+        """GatewayUpdate with no oauth_config should pass validation cleanly."""
+        from mcpgateway.schemas import GatewayUpdate
+
+        upd = GatewayUpdate(name="renamed")
+        assert upd.oauth_config is None

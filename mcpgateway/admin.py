@@ -11330,6 +11330,56 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         raise e
 
 
+@admin_router.post("/gateways/{gateway_id}/test-m2m")
+@require_permission("gateways.read", allow_admin_bypass=False)
+async def admin_test_m2m_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+    """Test M2M token acquisition for a client_credentials gateway.
+
+    Attempts to acquire an OAuth 2.0 access token from the configured IDP
+    using the gateway's stored client credentials. Returns success or failure
+    without caching the token.
+
+    Args:
+        gateway_id: Gateway ID.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        JSONResponse with success status and message.
+
+    Raises:
+        HTTPException: If the gateway is not found or not configured for client_credentials.
+
+    Examples:
+        >>> callable(admin_test_m2m_gateway)
+        True
+        >>> admin_test_m2m_gateway.__name__
+        'admin_test_m2m_gateway'
+    """
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} testing M2M token acquisition for gateway {gateway_id}")
+
+    try:
+        gateway = await gateway_service.get_gateway(db, gateway_id)
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    if not gateway.oauth_config:
+        raise HTTPException(status_code=400, detail="Gateway is not configured with OAuth")
+
+    grant_type = gateway.oauth_config.get("grant_type") if isinstance(gateway.oauth_config, dict) else None
+    if grant_type != "client_credentials":
+        raise HTTPException(status_code=400, detail=f"Gateway grant_type is '{grant_type}', not 'client_credentials'")
+
+    try:
+        oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=1)
+        await oauth_manager.get_access_token(gateway.oauth_config)
+        return JSONResponse(content={"success": True, "message": "Token acquired successfully"})
+    except Exception as e:
+        LOGGER.warning(f"M2M token test failed for gateway {gateway_id}: {e}")
+        return JSONResponse(content={"success": False, "message": str(e)})
+
+
 @admin_router.post("/gateways")
 @require_permission("gateways.create", allow_admin_bypass=False)
 async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
@@ -11407,9 +11457,10 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_resource = str(form.get("oauth_resource", ""))
 
             # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
                 oauth_config = {}
 
                 if oauth_grant_type:
@@ -11428,6 +11479,8 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                     # Encrypt the client secret
                     encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
+                if oauth_resource:
+                    oauth_config["resource"] = oauth_resource
 
                 # Add username and password for password grant type
                 if oauth_username:
@@ -11679,9 +11732,10 @@ async def admin_edit_gateway(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_resource = str(form.get("oauth_resource", ""))
 
             # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
                 oauth_config = {}
 
                 if oauth_grant_type:
@@ -11700,6 +11754,8 @@ async def admin_edit_gateway(
                     # Encrypt the client secret
                     encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
+                if oauth_resource:
+                    oauth_config["resource"] = oauth_resource
 
                 # Add username and password for password grant type
                 if oauth_username:
@@ -14610,9 +14666,10 @@ async def admin_add_a2a_agent(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_resource = str(form.get("oauth_resource", ""))
 
             # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
                 oauth_config = {}
 
                 if oauth_grant_type:
@@ -14631,6 +14688,8 @@ async def admin_add_a2a_agent(
                     # Encrypt the client secret
                     encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
+                if oauth_resource:
+                    oauth_config["resource"] = oauth_resource
 
                 # Add username and password for password grant type
                 if oauth_username:
@@ -14862,9 +14921,10 @@ async def admin_edit_a2a_agent(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_resource = str(form.get("oauth_resource", ""))
 
             # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
                 oauth_config = {}
 
                 if oauth_grant_type:
@@ -14883,6 +14943,8 @@ async def admin_edit_a2a_agent(
                     # Encrypt the client secret
                     encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
+                if oauth_resource:
+                    oauth_config["resource"] = oauth_resource
 
                 # Add username and password for password grant type
                 if oauth_username:
