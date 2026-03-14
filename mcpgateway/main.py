@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
 import html
+import json
 import re
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
@@ -701,6 +702,34 @@ def _parse_jsonpath(jsonpath: str) -> JSONPath:
     return parse(jsonpath)
 
 
+def _parse_apijsonpath(raw: Optional[Union[str, JsonPathModifier]]) -> Optional[JsonPathModifier]:
+    """
+    Parse apijsonpath parameter from either a JSON string or a JsonPathModifier model.
+
+    Args:
+        raw: Either a JSON-encoded string or a JsonPathModifier instance
+
+    Returns:
+        Parsed JsonPathModifier or None if raw is None
+
+    Raises:
+        HTTPException: If the JSON string is invalid or unexpected type provided (400 Bad Request)
+    """
+    if raw is None:
+        return None
+
+    if isinstance(raw, str):
+        try:
+            return JsonPathModifier.model_validate(json.loads(raw))
+        except Exception as ex:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid apijsonpath JSON: {ex}")
+    elif isinstance(raw, JsonPathModifier):
+        return raw
+
+    # Unexpected type - fail fast with clear error message
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid apijsonpath type: expected string or JsonPathModifier, got {type(raw).__name__}")
+
+
 def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict[str, str]] = None) -> Union[List, Dict]:
     """
     Applies the given JSONPath expression and mappings to the data.
@@ -730,6 +759,10 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
     """
     if not jsonpath:
         jsonpath = "$[*]"
+
+    # Log jsonpath_modifier invocation with structured data
+    data_length = len(data) if isinstance(data, list) else None
+    logger.debug(f"jsonpath_modifier: path='{jsonpath}', has_mappings={mappings is not None}, " f"data_type={type(data).__name__}, data_length={data_length}")
 
     try:
         main_expr: JSONPath = _parse_jsonpath(jsonpath)
@@ -3946,9 +3979,9 @@ async def list_tools(
     visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
     db: Session = Depends(get_db),
-    apijsonpath: JsonPathModifier = Body(None),
+    apijsonpath: Optional[str] = Query(None, description="Optional JSONPath modifier as JSON string"),
     user=Depends(get_current_user_with_permissions),
-) -> Union[List[ToolRead], List[Dict], Dict]:
+) -> Union[List[ToolRead], List[Dict], Dict, ORJSONResponse]:
     """List all registered tools with team-based filtering and pagination support.
 
     Args:
@@ -3968,6 +4001,9 @@ async def list_tools(
 
     Returns:
         List of tools or modified result based on jsonpath
+
+    Raises:
+        HTTPException: If JSONPath modifier fails to process the tools list
     """
 
     # Parse tags parameter if provided
@@ -4023,14 +4059,26 @@ async def list_tools(
     db.commit()
     db.close()
 
-    if apijsonpath is None:
+    # Allow apijsonpath to be supplied either as a model (direct call/tests) or
+    # as a JSON-encoded string via query (HTTP GET). Body() is not allowed on GET.
+    parsed_apijsonpath = _parse_apijsonpath(apijsonpath)
+
+    if parsed_apijsonpath is None:
         if include_pagination:
             return CursorPaginatedToolsResponse.model_construct(tools=data, next_cursor=next_cursor)
         return data
 
     tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
-
-    return jsonpath_modifier(tools_dict_list, apijsonpath.jsonpath, apijsonpath.mapping)
+    try:
+        result = jsonpath_modifier(tools_dict_list, parsed_apijsonpath.jsonpath, parsed_apijsonpath.mapping)
+        # Return ORJSONResponse to bypass FastAPI's response_model validation
+        return ORJSONResponse(content=result)
+    except HTTPException:
+        # Re-raise HTTPException as-is (preserves 400 from apijsonpath parsing)
+        raise
+    except Exception:
+        logger.exception("JSONPath modifier failed while processing tools list")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="JSONPath modifier error")
 
 
 @tool_router.post("", response_model=ToolRead)
@@ -4135,8 +4183,8 @@ async def get_tool(
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-    apijsonpath: JsonPathModifier = Body(None),
-) -> Union[ToolRead, Dict]:
+    apijsonpath: Optional[str] = Query(None, description="Optional JSONPath modifier as JSON string"),
+) -> Union[ToolRead, Dict, ORJSONResponse]:
     """
     Retrieve a tool by ID, optionally applying a JSONPath post-filter.
 
@@ -4145,11 +4193,12 @@ async def get_tool(
         request: The incoming HTTP request.
         db:     Active SQLAlchemy session (dependency).
         user:   Authenticated username (dependency).
-        apijsonpath: Optional JSON-Path modifier supplied in the body.
+        apijsonpath: Optional JSON-Path modifier supplied as query parameter
 
     Returns:
         The raw ``ToolRead`` model **or** a JSON-transformed ``dict`` if
-        a JSONPath filter/mapping was supplied.
+        a JSONPath filter/mapping was supplied, **or** an ``ORJSONResponse``
+        when JSONPath modifiers are applied.
 
     Raises:
         HTTPException: If the tool does not exist or the transformation fails.
@@ -4160,12 +4209,23 @@ async def get_tool(
         _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
         data = await tool_service.get_tool(db, tool_id, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin, requesting_user_team_roles=_req_team_roles)
         _enforce_scoped_resource_access(request, db, user, f"/tools/{tool_id}")
-        if apijsonpath is None:
+
+        # Parse apijsonpath parameter (handles both string and JsonPathModifier inputs)
+        parsed_apijsonpath = _parse_apijsonpath(apijsonpath)
+        if parsed_apijsonpath is None:
             return data
 
         data_dict = data.to_dict(use_alias=True)
-
-        return jsonpath_modifier(data_dict, apijsonpath.jsonpath, apijsonpath.mapping)
+        try:
+            result = jsonpath_modifier(data_dict, parsed_apijsonpath.jsonpath, parsed_apijsonpath.mapping)
+            # Return ORJSONResponse to bypass FastAPI's response_model validation
+            return ORJSONResponse(content=result)
+        except HTTPException:
+            # Re-raise HTTPException as-is (preserves 400 from apijsonpath parsing)
+            raise
+        except Exception:
+            logger.exception("JSONPath modifier failed while processing single tool")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="JSONPath modifier error")
     except HTTPException:
         raise
     except Exception as e:
