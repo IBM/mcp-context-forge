@@ -21,9 +21,6 @@ volumes:                # Named volumes survive podman-compose down/up
   pgdata:
   pgreplicadata:        # PostgreSQL read replica data
   # pgdata18:  # Enable for postgres 18+
-  mariadbdata:
-  mysqldata:
-  mongodata:
   pgadmindata:
   redisinsight_data:
   nginx_cache:
@@ -128,9 +125,6 @@ services:
       # SQLAlchemy query logging (useful for N+1 detection; noisy under load)
       # NOTE: SQLALCHEMY_ECHO logs at INFO; set LOG_LEVEL=INFO/DEBUG to see output.
       - SQLALCHEMY_ECHO=false
-      # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
-      # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
-      # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
       - REDIS_URL=redis://redis:6379/0
       # Redis parser: hiredis (C extension ~83x faster for large responses)
@@ -748,62 +742,6 @@ services:
           cpus: '1'
           memory: 256M
 
-  # mariadb:
-  #   image: mariadb:10.6
-  #   environment:
-  #     MARIADB_ROOT_PASSWORD: mysecretpassword
-  #     MARIADB_DATABASE: mcp
-  #     MARIADB_USER: mariadb
-  #     MARIADB_PASSWORD: mysecretpassword
-  #   volumes:
-  #     - mariadbdata:/var/lib/mysql
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "3306:3306"
-  #   healthcheck:
-  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-  #     interval: 30s
-  #     timeout: 5s
-  #     retries: 5
-  #     start_period: 20s
-
-  # mariadb:
-  #   image: mariadb:11
-  #   environment:
-  #     - MARIADB_ROOT_PASSWORD=mysecretpassword
-  #     - MARIADB_DATABASE=mcp
-  #     - MARIADB_USER=admin
-  #     - MARIADB_PASSWORD=changeme
-  #   volumes: [mariadbdata:/var/lib/mysql]
-  #   networks: [mcpnet]
-
-  # mariadb:
-  #   image: registry.redhat.io/rhel9/mariadb-106:12.0.2-ubi10
-  #   environment:
-  #     - MYSQL_ROOT_PASSWORD=mysecretpassword
-  #     - MYSQL_DATABASE=mcp
-  #     - MYSQL_USER=mysql
-  #     - MYSQL_PASSWORD=changeme
-  #   volumes: ["mariadbdata:/var/lib/mysql"]
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "3306:3306"
-  #   healthcheck:
-  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pmysecretpassword"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 5
-  #     start_period: 30s
-
-  # mongodb:
-  #   image: mongo:7
-  #   environment:
-  #     - MONGO_INITDB_ROOT_USERNAME=admin
-  #     - MONGO_INITDB_ROOT_PASSWORD=changeme
-  #     - MONGO_INITDB_DATABASE=mcp
-  #   volumes: [mongodata:/data/db]
-  #   networks: [mcpnet]
-
   # migration:
   #   #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
   #   image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
@@ -1184,33 +1122,6 @@ services:
   #     - RI_APP_HOST=0.0.0.0          # <- listen on all interfaces
   #     - RI_APP_PORT=5540             # <- UI port (container-side)
 
-
-  # mongo_express:         # 🔧 MongoDB GUI (works if mongodb service is enabled)
-  #   image: mongo-express:1
-  #   environment:
-  #     - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
-  #     - ME_CONFIG_MONGODB_ADMINPASSWORD=changeme
-  #     - ME_CONFIG_MONGODB_SERVER=mongodb
-  #   ports:
-  #     - "8082:8081"    # http://localhost:8082
-  #   networks: [mcpnet]
-  #   depends_on:
-  #     mongodb:
-  #       condition: service_started
-
-  # phpmyadmin:            # 🔧 MySQL / MariaDB GUI
-  #   image: phpmyadmin:latest
-  #   environment:
-  #     - PMA_HOST=mysql   # or mariadb
-  #     - PMA_USER=mysql
-  #     - PMA_PASSWORD=changeme
-  #     - PMA_ARBITRARY=1  # allow login to any host if you switch DBs
-  #   ports:
-  #     - "8083:80"      # http://localhost:8083
-  #   networks: [mcpnet]
-  #   depends_on:
-  #     mysql:
-  #       condition: service_started
 
 
 ###############################################################################

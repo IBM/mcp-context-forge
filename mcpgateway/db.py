@@ -109,7 +109,7 @@ elif backend == "sqlite":
     # Allow pooled connections to hop across threads.
     connect_args["check_same_thread"] = False
 
-# 4. Other backends (MySQL, MSSQL, etc.) leave `connect_args` empty.
+# 4. Other backends leave `connect_args` empty.
 
 # ---------------------------------------------------------------------------
 # 5. Build the Engine with a single, clean connect_args mapping.
@@ -160,22 +160,8 @@ def build_engine() -> Engine:
             echo=_sqlalchemy_echo,
         )
 
-    if backend in ("mysql", "mariadb"):
-        # MariaDB/MySQL specific configuration
-        logger.info("Configuring MariaDB/MySQL with pool_size=%s, max_overflow=%s", settings.db_pool_size, settings.db_max_overflow)
-
-        return create_engine(
-            settings.database_url,
-            pool_pre_ping=True,
-            pool_size=settings.db_pool_size,
-            max_overflow=settings.db_max_overflow,
-            pool_timeout=settings.db_pool_timeout,
-            pool_recycle=settings.db_pool_recycle,
-            connect_args=connect_args,
-            isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
-            # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
-            echo=_sqlalchemy_echo,
-        )
+    if backend != "postgresql":
+        raise ValueError(f"Unsupported database backend: '{backend}'. Only 'postgresql' and 'sqlite' are supported.")
 
     # Determine if PgBouncer is in use (detected via URL or explicit config)
     is_pgbouncer = "pgbouncer" in settings.database_url.lower()
@@ -900,7 +886,7 @@ def refresh_slugs_on_startup(batch_size: Optional[int] = None) -> None:
 class Base(DeclarativeBase):
     """Base class for all models."""
 
-    # MariaDB-compatible naming convention for foreign keys
+    # Naming convention for foreign keys
     metadata = MetaData(
         naming_convention={
             "fk": "fk_%(table_name)s_%(column_0_name)s",
@@ -5711,25 +5697,6 @@ def get_for_update(
 fresh_db_session = contextmanager(get_db)  # type: ignore
 
 
-def patch_string_columns_for_mariadb(base, engine_) -> None:
-    """
-    MariaDB requires VARCHAR to have an explicit length.
-    Auto-assign VARCHAR(255) to any String() columns without a length.
-
-    Args:
-        base (DeclarativeBase): SQLAlchemy Declarative Base containing metadata.
-        engine_ (Engine): SQLAlchemy engine, used to detect MariaDB dialect.
-    """
-    if engine_.dialect.name != "mariadb":
-        return
-
-    for table in base.metadata.tables.values():
-        for column in table.columns:
-            if isinstance(column.type, String) and column.type.length is None:
-                # Replace with VARCHAR(255)
-                column.type = VARCHAR(255)
-
-
 def extract_json_field(column, json_path: str, dialect_name: Optional[str] = None):
     """Extract a JSON field in a database-agnostic way.
 
@@ -5774,9 +5741,6 @@ def init_db():
         Exception: If database initialization fails.
     """
     try:
-        # Apply MariaDB compatibility fix
-        patch_string_columns_for_mariadb(Base, engine)
-
         # Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
     except SQLAlchemyError as e:

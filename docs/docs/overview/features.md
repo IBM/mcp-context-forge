@@ -157,8 +157,8 @@
 
 ??? info "Storage options"
 
-    * **SQLite** (default dev)
-    * **PostgreSQL**, **MySQL/MariaDB**, **MongoDB** - via `DATABASE_URL`
+    * **SQLite** (default, development)
+    * **PostgreSQL** (recommended for production) - via `DATABASE_URL`
 
 ??? example "Redis cache"
 

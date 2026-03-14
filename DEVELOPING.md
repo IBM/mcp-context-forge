@@ -43,7 +43,7 @@ make doctest test htmlcov flake8 pylint verify
 - **Make** for automation
 - **Docker/Podman** (optional, for container development)
 - **Node.js 18+** (for UI development and MCP Inspector)
-- **PostgreSQL/MySQL** (optional, for production database testing)
+- **PostgreSQL** (optional, for production database testing)
 
 ### Environment Setup
 
@@ -141,7 +141,7 @@ mcp-context-forge/
 - **Admin UI**: HTMX + Alpine.js
 - **Testing**: Pytest + Playwright
 - **Package Management**: uv (or pip)
-- **Database**: SQLite (dev), PostgreSQL/MySQL (production)
+- **Database**: SQLite (dev), PostgreSQL (production)
 - **Caching**: Redis (optional)
 - **Observability**: OpenTelemetry
 
@@ -317,7 +317,6 @@ alembic downgrade base && alembic upgrade head
 # Different database backends
 DATABASE_URL=sqlite:///./dev.db make dev           # SQLite
 DATABASE_URL=postgresql://localhost/mcp make dev   # PostgreSQL
-DATABASE_URL=mysql+pymysql://localhost/mcp make dev # MySQL
 
 # Database utilities
 python3 -m mcpgateway.cli db upgrade    # Apply migrations

@@ -132,8 +132,7 @@ class AsyncPatternVisitor(ast.NodeVisitor):
             "aiohttp",
             "asyncio",
             "asyncpg",
-            "websockets",
-            "motor",  # Common async libraries
+            "websockets",  # Common async libraries
         ]
 
         call_name = self._get_call_name(node)
