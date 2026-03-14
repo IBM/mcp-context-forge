@@ -314,11 +314,22 @@ Enforcement summary:
 
 ### How Token Scoping Works
 
-Token scoping is the mechanism that determines which resources a user can **see** based on the `teams` claim in their JWT token. The `normalize_token_teams()` function in `mcpgateway/auth.py` is the **single source of truth** for interpreting JWT team claims.
+Token scoping is the mechanism that determines which resources a user can **see** based on the `teams` claim in their JWT token.
+
+**Key functions** in `mcpgateway/auth.py`:
+
+- `normalize_token_teams()` — The **single source of truth** for interpreting JWT team claims into a canonical form. Used directly by API tokens and legacy tokens.
+- `resolve_session_teams()` — The **single policy point** for session-token team resolution. Teams are always resolved from the database first so that revoked memberships take effect immediately. If the JWT carries a non-empty `teams` claim, the result is narrowed to the intersection of DB teams and JWT teams — letting callers scope a session to a subset of their memberships without risking stale grants. If the intersection is empty (e.g. all JWT-claimed teams have been revoked), an empty list is returned, which demotes the session to public-only scope — the user can still access public resources and their own private resources, but loses access to all team-scoped resources. An explicit `teams: []` (empty list) in the JWT is treated as "no restriction requested" and returns the full DB membership — this intentionally differs from `normalize_token_teams` where `[] → public-only`. If `email` is `None` or empty, returns `[]` (public-only) — an identity-less session token never receives admin bypass.
+- `_narrow_by_jwt_teams()` — Shared intersection logic used by `resolve_session_teams`.
+- API tokens and legacy tokens always use `normalize_token_teams()` directly.
 
 ### Secure-First Defaults
 
 The token scoping system follows a **secure-first design principle**: when in doubt, access is restricted.
+
+#### API Tokens and Legacy Tokens
+
+These use `normalize_token_teams()` directly — the JWT `teams` claim is the sole authority:
 
 | JWT `teams` State | `is_admin` | Result | Access Level |
 |-------------------|------------|--------|--------------|
@@ -328,8 +339,24 @@ The token scoping system follows a **secure-first design principle**: when in do
 | Key `[]` (empty) | any | `[]` | PUBLIC-ONLY |
 | Key `["t1", "t2"]` | any | `["t1", "t2"]` | TEAM-SCOPED |
 
+#### Session Tokens
+
+Session tokens use `resolve_session_teams()` — the **database** is the authority, and the JWT `teams` claim only narrows (never broadens) the result:
+
+| JWT `teams` State | DB Teams | Result | Access Level |
+|-------------------|----------|--------|--------------|
+| Key MISSING | `["t1", "t2"]` | `["t1", "t2"]` | Full DB membership |
+| Key `null` | `["t1", "t2"]` | `["t1", "t2"]` | Full DB membership |
+| Key `[]` (empty) | `["t1", "t2"]` | `["t1", "t2"]` | Full DB membership (no restriction requested) |
+| Key `["t1"]` | `["t1", "t2"]` | `["t1"]` | Narrowed to intersection |
+| Key `["revoked"]` | `["t1", "t2"]` | `[]` | Empty intersection — public-only (fail-closed) |
+| any | `None` (admin) | `None` | ADMIN BYPASS (DB authority) |
+
 !!! warning "Critical Security Behavior"
-    A **missing** `teams` key always results in public-only access, even for admin users. Admin bypass requires **explicit** `teams: null` combined with `is_admin: true`.
+    A **missing** `teams` key always results in public-only access for API/legacy tokens, even for admin users. Admin bypass requires **explicit** `teams: null` combined with `is_admin: true`.
+
+!!! note "Session Token Membership Staleness"
+    Session tokens skip the `_check_team_membership` re-validation in the token scoping middleware because `resolve_session_teams()` already resolved membership from the database. Membership staleness is bounded by the `auth_cache` TTL. The cache stores the full DB membership (not the per-session narrowed intersection) so that multiple sessions for the same user narrow independently.
 
 ### Multi-Team Token Behavior
 
@@ -343,7 +370,7 @@ This means the first team in the token's teams array has special significance fo
 
 ### Return Value Semantics
 
-The `normalize_token_teams()` function returns:
+The `normalize_token_teams()` and `resolve_session_teams()` functions return:
 
 | Return Value | Meaning | Query Behavior |
 |--------------|---------|----------------|
@@ -1215,7 +1242,7 @@ flowchart TD
 
 These behaviors are enforced consistently across all access paths:
 
-1. `normalize_token_teams()` is the ONLY function that interprets JWT team claims
+1. `normalize_token_teams()` is the canonical interpreter of JWT team claims; `resolve_session_teams()` is the single policy point for session tokens (always DB-resolved)
 2. Missing `teams` key always returns `[]` (public-only, secure default)
 3. Admin bypass requires BOTH `teams: null` AND `is_admin: true`, and both `token_teams=None` AND `user_email=None` in the service layer
 4. Empty teams list (`[]`) results in public-only access, even for admins

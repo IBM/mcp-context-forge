@@ -288,7 +288,220 @@ class TestGetCurrentUser:
 
                     assert user.email == mock_user.email
                     assert user.auth_provider == "api_token"
-                    assert user.password_change_required is False
+
+    @pytest.mark.asyncio
+    async def test_session_token_with_single_team_narrows_via_resolve_session_teams(self, monkeypatch):
+        """Session tokens with a JWT teams claim narrow DB teams via resolve_session_teams."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_token")
+
+        # JWT carries one team; DB has two — intersection narrows to one
+        jwt_payload = {
+            "sub": "test@example.com",
+            "token_use": "session",
+            "teams": ["team-123"],
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "session_jti_123",
+        }
+
+        cached_ctx = SimpleNamespace(
+            is_token_revoked=False,
+            user={"email": "test@example.com", "full_name": "Test User", "is_admin": False, "is_active": True},
+            personal_team_id="team_123",
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+        monkeypatch.setattr(settings, "auth_cache_enabled", True)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+                with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["team-123", "team-456"]) as mock_resolve_db:
+                    user = await get_current_user(credentials=credentials, request=request)
+
+                    assert user.email == "test@example.com"
+                    mock_resolve_db.assert_called_once()
+                    # JWT teams=["team-123"] intersected with DB=["team-123","team-456"]
+                    assert request.state.token_teams == ["team-123"]
+
+    @pytest.mark.asyncio
+    async def test_session_token_with_multiple_teams_resolves_from_db(self, monkeypatch):
+        """Test that session tokens with multiple teams resolve from DB (else branch of line 1056)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_token")
+
+        # Session token with multiple teams
+        jwt_payload = {
+            "sub": "test@example.com",
+            "token_use": "session",
+            "teams": ["team-1", "team-2"],
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "session_jti_456",
+        }
+
+        # Mock cached context
+        cached_ctx = SimpleNamespace(
+            is_token_revoked=False,
+            user={"email": "test@example.com", "full_name": "Test User", "is_admin": False, "is_active": True},
+            personal_team_id="team_123",
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Enable auth cache
+        monkeypatch.setattr(settings, "auth_cache_enabled", True)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+                with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["db-team-1", "db-team-2"]) as mock_resolve_db:
+                    user = await get_current_user(credentials=credentials, request=request)
+
+                    assert user.email == "test@example.com"
+                    # Verify _resolve_teams_from_db WAS called
+                    mock_resolve_db.assert_called_once()
+                    # JWT teams ["team-1","team-2"] don't overlap with DB teams
+                    # ["db-team-1","db-team-2"], so intersection is empty →
+                    # returns [] (public-only, denied from team-scoped resources)
+                    assert request.state.token_teams == []
+
+    @pytest.mark.asyncio
+    async def test_session_token_with_teams_claim_still_resolves_from_db(self):
+        """Session tokens always resolve teams from DB even when a teams claim is present."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_with_teams")
+
+        # Session token with explicit single team claim — should still go to DB
+        jwt_payload = {
+            "sub": "test@example.com",
+            "token_use": "session",
+            "teams": ["team-123"],
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="test@example.com",
+            password_hash="hash",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["team-123"]) as mock_resolve_teams:
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        user = await get_current_user(credentials=credentials)
+
+                        assert user.email == mock_user.email
+                        # Session tokens always resolve from DB for current membership
+                        mock_resolve_teams.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_session_token_without_teams_claim_resolves_from_db(self):
+        """Test that session tokens without 'teams' claim resolve teams from DB."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_no_teams")
+
+        # Session token WITHOUT teams claim
+        jwt_payload = {
+            "sub": "test@example.com",
+            "token_use": "session",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="test@example.com",
+            password_hash="hash",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["db-team-1"]) as mock_resolve_teams:
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        user = await get_current_user(credentials=credentials)
+
+                        # Verify user was authenticated
+                        assert user.email == mock_user.email
+
+                        # Verify _resolve_teams_from_db WAS called
+                        mock_resolve_teams.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_session_token_with_null_teams_claim_uses_db_resolve(self):
+        """Test that session tokens with teams=null use _resolve_teams_from_db (which returns None for admin)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_null_teams")
+
+        # Session token with explicit null teams (admin bypass)
+        jwt_payload = {
+            "sub": "admin@example.com",
+            "token_use": "session",
+            "teams": None,
+            "is_admin": True,
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="admin@example.com",
+            password_hash="hash",
+            full_name="Admin User",
+            is_admin=True,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._resolve_teams_from_db", return_value=None) as mock_resolve_teams:
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        user = await get_current_user(credentials=credentials)
+
+                        # Verify user was authenticated
+                        assert user.email == mock_user.email
+
+                        # Verify _resolve_teams_from_db WAS called (teams=null is not a list with len==1)
+                        mock_resolve_teams.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_api_token_always_uses_embedded_teams(self):
+        """Test that API tokens always use embedded teams regardless of teams claim."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_jwt_token")
+
+        # API token (not session)
+        jwt_payload = {
+            "sub": "api@example.com",
+            "token_use": "api",
+            "teams": ["api-team-1"],
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="api@example.com",
+            password_hash="hash",
+            full_name="API User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._resolve_teams_from_db") as mock_resolve_teams:
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        user = await get_current_user(credentials=credentials)
+
+                        # Verify user was authenticated
+                        assert user.email == mock_user.email
+
+                        # Verify _resolve_teams_from_db was NOT called (API tokens use embedded teams)
+                        mock_resolve_teams.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_expired_api_token_raises_401(self):
@@ -2905,41 +3118,6 @@ class TestGetUserTeamRoles:
 class TestResolveTeamsFromDbHelpers:
     """Targeted tests for small cache/DB helper branches in auth.py."""
 
-    def test_resolve_teams_from_db_sync_cache_read_exception(self, monkeypatch):
-        """Cache read errors are non-fatal and fall back to DB (lines 224-225)."""
-        # First-Party
-        from mcpgateway.auth import _resolve_teams_from_db_sync
-        from mcpgateway.cache.auth_cache import auth_cache
-
-        class BadGetDict(dict):
-            def get(self, *args, **kwargs):  # noqa: ANN002, ANN003 - test helper
-                raise RuntimeError("cache read fail")
-
-        monkeypatch.setattr(auth_cache, "_teams_list_cache", BadGetDict())
-
-        with patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["t1"]):
-            assert _resolve_teams_from_db_sync("user@example.com", is_admin=False) == ["t1"]
-
-    def test_resolve_teams_from_db_sync_cache_write_exception(self, monkeypatch):
-        """Cache write errors are non-fatal and still return DB result (lines 243-244)."""
-        # First-Party
-        from mcpgateway.auth import _resolve_teams_from_db_sync
-        from mcpgateway.cache.auth_cache import auth_cache
-
-        class ExplodingLock:
-            def __enter__(self):  # noqa: ANN001 - test helper
-                raise RuntimeError("lock fail")
-
-            def __exit__(self, exc_type, exc, tb):  # noqa: ANN001 - test helper
-                return False
-
-        monkeypatch.setattr(auth_cache, "_lock", ExplodingLock())
-        # Ensure L1 cache is empty so we reach the write path
-        monkeypatch.setattr(auth_cache, "_teams_list_cache", {})
-
-        with patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["t1"]):
-            assert _resolve_teams_from_db_sync("user@example.com", is_admin=False) == ["t1"]
-
     @pytest.mark.asyncio
     async def test_resolve_teams_from_db_cache_get_exception(self):
         """Async cache read errors are non-fatal and fall back to DB (lines 274-275)."""
@@ -2971,6 +3149,193 @@ class TestResolveTeamsFromDbHelpers:
             teams = await _resolve_teams_from_db("user@example.com", {"is_admin": False})
 
         assert teams == ["t1"]
+
+
+class TestResolveSessionTeams:
+    """Direct tests for resolve_session_teams."""
+
+    @pytest.mark.asyncio
+    async def test_no_jwt_teams_returns_full_db_teams(self):
+        """Without a JWT teams claim, returns full DB membership."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com"}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["t1", "t2"]) as mock_db:
+            result = await resolve_session_teams(payload, "u@example.com", {"is_admin": False})
+
+        assert result == ["t1", "t2"]
+        mock_db.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_jwt_teams_narrows_to_intersection(self):
+        """JWT teams claim narrows result to intersection with DB teams."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com", "teams": ["t1"]}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["t1", "t2"]):
+            result = await resolve_session_teams(payload, "u@example.com", {"is_admin": False})
+
+        assert result == ["t1"]
+
+    @pytest.mark.asyncio
+    async def test_jwt_teams_all_revoked_returns_empty(self):
+        """If all JWT teams were revoked, returns empty list (public-only / denied)."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com", "teams": ["revoked-team"]}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["t1", "t2"]):
+            result = await resolve_session_teams(payload, "u@example.com", {"is_admin": False})
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_ignores_jwt_teams(self):
+        """Admin bypass (None from DB) is returned regardless of JWT teams."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "admin@example.com", "teams": ["t1"]}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=None):
+            result = await resolve_session_teams(payload, "admin@example.com", {"is_admin": True})
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_empty_db_teams_returns_empty(self):
+        """User with no DB teams returns empty list (public-only)."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com", "teams": ["t1"]}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=[]):
+            result = await resolve_session_teams(payload, "u@example.com", {"is_admin": False})
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_preresolved_db_teams_skips_db_call(self):
+        """When preresolved_db_teams is provided, skips the DB call."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com", "teams": ["t1"]}
+        with patch("mcpgateway.auth._resolve_teams_from_db") as mock_db:
+            result = await resolve_session_teams(
+                payload,
+                "u@example.com",
+                {"is_admin": False},
+                preresolved_db_teams=["t1", "t2"],
+            )
+
+        assert result == ["t1"]
+        mock_db.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_preresolved_none_returns_admin_bypass(self):
+        """Preresolved None (admin) returns None without DB call."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "admin@example.com"}
+        with patch("mcpgateway.auth._resolve_teams_from_db") as mock_db:
+            result = await resolve_session_teams(
+                payload,
+                "admin@example.com",
+                {"is_admin": True},
+                preresolved_db_teams=None,
+            )
+
+        assert result is None
+        mock_db.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_jwt_teams_null_returns_full_db_teams(self):
+        """Explicit teams: null in JWT is not a list, so no narrowing."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com", "teams": None}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["t1"]):
+            result = await resolve_session_teams(payload, "u@example.com", {"is_admin": False})
+
+        assert result == ["t1"]
+
+    @pytest.mark.asyncio
+    async def test_jwt_teams_empty_list_returns_full_db_teams(self):
+        """Explicit teams: [] in JWT is empty, so no narrowing."""
+        from mcpgateway.auth import resolve_session_teams
+
+        payload = {"sub": "u@example.com", "teams": []}
+        with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["t1"]):
+            result = await resolve_session_teams(payload, "u@example.com", {"is_admin": False})
+
+        assert result == ["t1"]
+
+    @pytest.mark.asyncio
+    async def test_no_email_returns_public_only(self):
+        """Identity-less session token gets public-only scope, never admin bypass."""
+        from mcpgateway.auth import resolve_session_teams
+
+        # Even with is_admin=True, no email means no DB lookup and no admin bypass
+        assert await resolve_session_teams({"is_admin": True}, None, {"is_admin": True}) == []
+        assert await resolve_session_teams({"is_admin": True}, "", {"is_admin": True}) == []
+        assert await resolve_session_teams({}, None, {"is_admin": False}) == []
+
+
+class TestNarrowByJwtTeams:
+    """Direct unit tests for the _narrow_by_jwt_teams helper."""
+
+    def test_admin_bypass_passthrough(self):
+        """Admin bypass (db_teams=None) is returned unchanged regardless of JWT teams."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        assert _narrow_by_jwt_teams({"teams": ["t1"]}, None) is None
+        assert _narrow_by_jwt_teams({}, None) is None
+
+    def test_normal_intersection(self):
+        """Intersection of DB teams and JWT teams returns only the overlap."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        result = _narrow_by_jwt_teams({"teams": ["t1", "t3"]}, ["t1", "t2"])
+        assert result == ["t1"]
+
+    def test_empty_intersection(self):
+        """No overlap between JWT and DB teams returns empty list."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        result = _narrow_by_jwt_teams({"teams": ["gone"]}, ["t1", "t2"])
+        assert result == []
+
+    def test_empty_jwt_teams_no_narrowing(self):
+        """Explicit teams: [] means 'no restriction' — returns full DB teams."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        result = _narrow_by_jwt_teams({"teams": []}, ["t1", "t2"])
+        assert result == ["t1", "t2"]
+
+    def test_missing_jwt_teams_no_narrowing(self):
+        """Missing teams key means 'no restriction' — returns full DB teams."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        result = _narrow_by_jwt_teams({}, ["t1", "t2"])
+        assert result == ["t1", "t2"]
+
+    def test_null_jwt_teams_no_narrowing(self):
+        """Explicit teams: null is not a list — returns full DB teams."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        result = _narrow_by_jwt_teams({"teams": None}, ["t1"])
+        assert result == ["t1"]
+
+    def test_malformed_entries_filtered_by_normalize(self):
+        """Non-string entries in JWT teams are handled by normalize_token_teams."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        # normalize_token_teams stringifies numeric entries
+        result = _narrow_by_jwt_teams({"teams": [123, None, "t1"]}, ["t1", "123"])
+        assert "t1" in result
+
+    def test_empty_db_teams_returns_empty(self):
+        """If user has no DB teams, intersection with any JWT teams is empty."""
+        from mcpgateway.auth import _narrow_by_jwt_teams
+
+        result = _narrow_by_jwt_teams({"teams": ["t1"]}, [])
+        assert result == []
 
 
 class TestSessionTokenBranches:
@@ -3249,12 +3614,18 @@ class TestSessionTokenBranches:
 
     @pytest.mark.asyncio
     async def test_batched_session_token_caches_team_list(self, monkeypatch):
-        """Batched session token populates teams-list cache (line 996)."""
+        """Batched session token caches raw DB teams, not the narrowed intersection.
+
+        The JWT claims teams=["t1"] so the narrowed result is ["t1"], but the
+        cache must receive the full batch_teams=["t1","t2"] so that other
+        sessions for the same user can narrow independently.
+        """
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {
             "sub": "user@example.com",
             "jti": "jti-1",
             "token_use": "session",
+            "teams": ["t1"],  # narrows intersection to ["t1"]
             "user": {"auth_provider": "local"},
         }
         auth_ctx = {
@@ -3281,7 +3652,9 @@ class TestSessionTokenBranches:
             user = await get_current_user(credentials=credentials)
 
         assert user.email == "user@example.com"
-        mock_cache.set_user_teams.assert_called_once()
+        # Must cache raw DB teams (batch_teams=["t1","t2"]), not the narrowed
+        # intersection (["t1"]), to prevent cross-session cache poisoning.
+        mock_cache.set_user_teams.assert_called_once_with("user@example.com:True", ["t1", "t2"])
 
 
 def test_resolve_plugin_authenticated_user_sync_returns_none_for_missing_email():

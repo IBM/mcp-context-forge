@@ -1350,7 +1350,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
             elif isinstance(raw_payload, dict):
                 # Normalize raw JWT payload to canonical user context shape
                 # (matches streamable_http_auth normalization at lines 2155-2259)
-                user_ctx = _normalize_jwt_payload(raw_payload)
+                user_ctx = await _normalize_jwt_payload(raw_payload)
             else:
                 user_ctx = {}
         except Exception as e:
@@ -1367,7 +1367,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         return s_id, request_headers_var.get(), user_context_var.get()
 
 
-def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
+async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize a raw JWT payload to the canonical user context shape.
 
     Converts raw JWT fields (sub, token_use, nested user.is_admin) into the
@@ -1390,16 +1390,11 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     token_use = payload.get("token_use")
     if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
-        # Session token: resolve teams from DB/cache
-        if is_admin:
-            final_teams = None  # Admin bypass
-        elif email:
-            # First-Party
-            from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
+        # Session token: resolve teams from DB/cache via single policy point
+        # First-Party
+        from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
 
-            final_teams = _resolve_teams_from_db_sync(email, is_admin=False)
-        else:
-            final_teams = []  # No email — public-only
+        final_teams = await resolve_session_teams(payload, email, {"is_admin": is_admin})
     else:
         # API token or legacy: use embedded teams from JWT
         # First-Party
@@ -2952,38 +2947,22 @@ class _StreamableHttpAuthHandler:
                     if user_record is None and settings.require_user_in_db and user_email != getattr(settings, "platform_admin_email", "admin@example.com"):
                         return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
 
-            # Resolve teams based on token_use claim
-            token_use = user_payload.get("token_use")
-            if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
-                # Session token: resolve teams from DB/cache
-                user_email_for_teams = user_payload.get("sub") or user_payload.get("email")
-                is_admin_flag = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
-                if is_admin_flag:
-                    final_teams = None  # Admin bypass
-                elif user_email_for_teams:
-                    # Resolve teams synchronously with L1 cache (StreamableHTTP uses sync context)
-                    # First-Party
-                    from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
-
-                    final_teams = _resolve_teams_from_db_sync(user_email_for_teams, is_admin=False)
-                else:
-                    final_teams = []  # No email — public-only
-            else:
-                # API token or legacy: use embedded teams from JWT
-                # First-Party
-                from mcpgateway.auth import normalize_token_teams  # pylint: disable=import-outside-toplevel
-
-                final_teams = normalize_token_teams(user_payload)
+            # Resolve teams + build canonical user context via shared helper
+            auth_user_ctx = await _normalize_jwt_payload(user_payload)
+            final_teams = auth_user_ctx["teams"]
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Validate team membership for team-scoped tokens
             # Users removed from a team should lose MCP access immediately, not at token expiry
             # ═══════════════════════════════════════════════════════════════════════════
-            is_admin = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
 
-            # Only validate membership for team-scoped tokens (non-empty teams list)
-            # Skip for: public-only tokens ([]), admin unrestricted tokens (None)
-            if final_teams and len(final_teams) > 0 and user_email:
+            # Validate membership for API/legacy tokens whose teams come from
+            # the JWT and have never been checked against the DB.  Session tokens
+            # are skipped: resolve_session_teams() already resolved teams from
+            # DB/cache, so a second membership query against the same table
+            # within the same request would be redundant.
+            token_use = user_payload.get("token_use")
+            if token_use != "session" and final_teams and len(final_teams) > 0 and user_email:  # nosec B105
                 # Import lazily to avoid circular imports
                 # Third-Party
                 from sqlalchemy import select  # pylint: disable=import-outside-toplevel
@@ -3026,18 +3005,6 @@ class _StreamableHttpAuthHandler:
                         # Cache positive result
                         auth_cache.set_team_membership_valid_sync(user_email, final_teams, True)
 
-            auth_user_ctx: dict[str, Any] = {
-                "email": user_email,
-                "teams": final_teams,
-                "is_authenticated": True,
-                "is_admin": is_admin,
-                "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
-            }
-            # Extract scoped permissions from JWT for per-method enforcement
-            jwt_scopes = user_payload.get("scopes") or {}
-            jwt_scoped_perms = jwt_scopes.get("permissions") or [] if isinstance(jwt_scopes, dict) else []
-            if jwt_scoped_perms:
-                auth_user_ctx["scoped_permissions"] = jwt_scoped_perms
             user_context_var.set(auth_user_ctx)
         except HTTPException:
             # JWT verification failed (expired, malformed, bad signature, etc.)
