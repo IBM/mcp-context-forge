@@ -284,6 +284,7 @@ retry the Helm upgrade.
 | mcpContextForge.config.OBSERVABILITY_SAMPLE_RATE | string | `"1.0"` |  |
 | mcpContextForge.config.OBSERVABILITY_TRACE_HTTP_REQUESTS | string | `"true"` |  |
 | mcpContextForge.config.OBSERVABILITY_TRACE_RETENTION_DAYS | string | `"7"` |  |
+| mcpContextForge.config.OBSERVABILITY_STORE_TOKEN_CLAIMS | string | `"false"` | Store safe JWT claims in trace/span attributes |
 | mcpContextForge.config.OTEL_BSP_MAX_EXPORT_BATCH_SIZE | string | `"512"` |  |
 | mcpContextForge.config.OTEL_BSP_MAX_QUEUE_SIZE | string | `"2048"` |  |
 | mcpContextForge.config.OTEL_BSP_SCHEDULE_DELAY | string | `"5000"` |  |
@@ -546,6 +547,7 @@ retry the Helm upgrade.
 | mcpContextForge.config.OBSERVABILITY_EXCLUDE_PATHS | string | `"[\"/health\", \"/healthz\", \"/ready\", \"/metrics\", \"/static/.*\"]"` |  |
 | mcpContextForge.config.OBSERVABILITY_METRICS_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.OBSERVABILITY_EVENTS_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.OBSERVABILITY_STORE_TOKEN_CLAIMS | string | `"false"` | Store safe JWT claims in trace/span attributes |
 | mcpContextForge.config.ENABLE_METRICS | string | `"true"` |  |
 | mcpContextForge.config.METRICS_EXCLUDED_HANDLERS | string | `""` |  |
 | mcpContextForge.config.METRICS_NAMESPACE | string | `"default"` |  |
