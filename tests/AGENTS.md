@@ -10,6 +10,7 @@ tests/
 │   └── mcpgateway/     # Mirrors source structure
 ├── integration/        # Cross-module and service integration tests
 ├── e2e/               # End-to-end flows (slower; may require services)
+├── e2e_rust/          # Rust-mode-specific end-to-end flows (requires Rust MCP path)
 ├── performance/        # Database performance & N+1 detection tests
 ├── playwright/        # UI automation (requires extra setup)
 ├── security/          # Security validation tests
@@ -38,6 +39,8 @@ make htmlcov                      # Coverage HTML → docs/docs/coverage/index.h
 make coverage                     # Full coverage (md + HTML + XML + badge + annotated)
 make smoketest                    # Container build + simple E2E flow
 make test-mcp-cli                 # MCP protocol via mcp-cli (needs live gateway)
+make test-mcp-rbac                # MCP RBAC transport E2E (needs live gateway)
+make test-mcp-session-isolation   # Rust-only MCP session isolation E2E
 
 # Selective runs
 pytest -k "fragment"              # By name substring

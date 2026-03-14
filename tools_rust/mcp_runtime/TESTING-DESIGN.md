@@ -15,7 +15,7 @@ contamination is a release blocker for the fast Rust public path.
 
 The first end-to-end implementation is already in place:
 
-- [tests/e2e/test_mcp_session_isolation.py](/home/cmihai/agents2/pr/mcp-context-forge/tests/e2e/test_mcp_session_isolation.py)
+- [tests/e2e_rust/test_mcp_session_isolation.py](/home/cmihai/agents2/pr/mcp-context-forge/tests/e2e_rust/test_mcp_session_isolation.py)
 - `make test-mcp-session-isolation`
 
 Current compose-backed validation on this branch:

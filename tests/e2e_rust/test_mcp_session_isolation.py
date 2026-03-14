@@ -34,9 +34,9 @@ import pytest
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 # Local
-from .mcp_test_helpers import BASE_URL, JWT_SECRET, TEST_PASSWORD, skip_no_gateway
+from tests.e2e.mcp_test_helpers import BASE_URL, JWT_SECRET, TEST_PASSWORD, skip_no_gateway, skip_no_rust_mcp_gateway
 
-pytestmark = [pytest.mark.e2e, skip_no_gateway]
+pytestmark = [pytest.mark.e2e, skip_no_gateway, skip_no_rust_mcp_gateway]
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 ISOLATION_PREFIX = "mcp-iso"

@@ -656,7 +656,8 @@ clean:
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/e2e/test_entra_id_integration.py \
     tests/e2e/test_mcp_cli_protocol.py \
-    tests/e2e/test_mcp_rbac_transport.py
+    tests/e2e/test_mcp_rbac_transport.py \
+    tests/e2e_rust
 
 # Expand to --ignore=<path> flags for pytest CLI
 PYTEST_IGNORE_FLAGS := $(foreach p,$(PYTEST_IGNORE),--ignore=$(p))
@@ -691,7 +692,7 @@ test-mcp-session-isolation:  ## MCP session/auth isolation tests for the Rust pu
 	@echo "🧪 Running MCP session/auth isolation tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		uv run --active pytest tests/e2e/test_mcp_session_isolation.py -v -s --tb=short \
+		uv run --active pytest tests/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
 			|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }; \
 		echo "✅ MCP session/auth isolation tests passed!"'
 
