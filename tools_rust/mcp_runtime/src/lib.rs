@@ -375,8 +375,8 @@ impl From<StoredRuntimeSessionRecord> for RuntimeSessionRecord {
             encoded_auth_context: value.encoded_auth_context,
             auth_binding_fingerprint: value.auth_binding_fingerprint,
             auth_context_expires_at_epoch_ms: value.auth_context_expires_at_epoch_ms,
-            created_at: Instant::now(),
-            last_used: Instant::now(),
+            created_at: std::time::Instant::now(),
+            last_used: std::time::Instant::now(),
         }
     }
 }
@@ -814,39 +814,70 @@ pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
 
     let primary_target = config.listen_target().map_err(RuntimeError::Config)?;
     let public_http_addr = config.public_listen_addr().map_err(RuntimeError::Config)?;
+    let shutdown_after = config.exit_after_startup_ms.map(Duration::from_millis);
 
     match (primary_target, public_http_addr) {
         (ListenTarget::Http(addr), None) => {
-            serve_http(app, addr).await?;
+            serve_http(app, addr, shutdown_after).await?;
         }
         (ListenTarget::Http(addr), Some(public_addr)) => {
-            tokio::try_join!(serve_http(app.clone(), addr), serve_http(app, public_addr))?;
+            tokio::try_join!(
+                serve_http(app.clone(), addr, shutdown_after),
+                serve_http(app, public_addr, shutdown_after)
+            )?;
         }
         (ListenTarget::Uds(path), None) => {
-            serve_uds(app, path).await?;
+            serve_uds(app, path, shutdown_after).await?;
         }
         (ListenTarget::Uds(path), Some(public_addr)) => {
-            tokio::try_join!(serve_uds(app.clone(), path), serve_http(app, public_addr))?;
+            tokio::try_join!(
+                serve_uds(app.clone(), path, shutdown_after),
+                serve_http(app, public_addr, shutdown_after)
+            )?;
         }
     }
 
     Ok(())
 }
 
-async fn serve_http(app: Router, addr: std::net::SocketAddr) -> Result<(), RuntimeError> {
+async fn serve_http(
+    app: Router,
+    addr: std::net::SocketAddr,
+    shutdown_after: Option<Duration>,
+) -> Result<(), RuntimeError> {
     info!("starting Rust MCP runtime on http://{addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    if let Some(delay) = shutdown_after {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                tokio::time::sleep(delay).await;
+            })
+            .await?;
+    } else {
+        axum::serve(listener, app).await?;
+    }
     Ok(())
 }
 
-async fn serve_uds(app: Router, path: std::path::PathBuf) -> Result<(), RuntimeError> {
+async fn serve_uds(
+    app: Router,
+    path: std::path::PathBuf,
+    shutdown_after: Option<Duration>,
+) -> Result<(), RuntimeError> {
     if Path::new(&path).exists() {
         std::fs::remove_file(&path)?;
     }
     info!("starting Rust MCP runtime on unix://{}", path.display());
     let listener = tokio::net::UnixListener::bind(&path)?;
-    axum::serve(listener, app).await?;
+    if let Some(delay) = shutdown_after {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                tokio::time::sleep(delay).await;
+            })
+            .await?;
+    } else {
+        axum::serve(listener, app).await?;
+    }
     Ok(())
 }
 
@@ -2506,8 +2537,8 @@ async fn handle_initialize_with_session_core(
             encoded_auth_context: None,
             auth_binding_fingerprint: None,
             auth_context_expires_at_epoch_ms: None,
-            created_at: Instant::now(),
-            last_used: Instant::now(),
+            created_at: std::time::Instant::now(),
+            last_used: std::time::Instant::now(),
         };
         maybe_bind_session_auth_context(
             state,
@@ -7126,4 +7157,1039 @@ fn empty_response(status: StatusCode) -> Response {
         HeaderValue::from_static(RUNTIME_NAME),
     );
     response
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::{
+        AppState, Bytes, EventStoreReplayRequest, EventStoreStoreRequest, RuntimeConfig,
+        RuntimeError, RuntimeSessionRecord, auth_binding_fingerprint,
+        authenticate_public_request_if_needed, batch_rejected_response, can_reuse_session_auth,
+        can_use_direct_prompts_get, can_use_direct_resources_read, decode_request,
+        derive_backend_authenticate_url, derive_backend_completion_complete_url,
+        derive_backend_initialize_url, derive_backend_logging_set_level_url,
+        derive_backend_notifications_cancelled_url, derive_backend_notifications_initialized_url,
+        derive_backend_notifications_message_url, derive_backend_prompts_get_authz_url,
+        derive_backend_prompts_get_url, derive_backend_prompts_list_authz_url,
+        derive_backend_prompts_list_url, derive_backend_resource_templates_list_authz_url,
+        derive_backend_resource_templates_list_url, derive_backend_resources_list_authz_url,
+        derive_backend_resources_list_url, derive_backend_resources_read_authz_url,
+        derive_backend_resources_read_url, derive_backend_resources_subscribe_url,
+        derive_backend_resources_unsubscribe_url, derive_backend_roots_list_url,
+        derive_backend_sampling_create_message_url, derive_backend_session_delete_url,
+        derive_backend_tools_call_resolve_url, derive_backend_tools_call_url,
+        derive_backend_tools_list_authz_url, derive_backend_tools_list_url,
+        derive_backend_transport_url, has_server_scope, invalid_request_response,
+        parse_error_response, public_client_ip, replay_events_endpoint, run, serve_http, serve_uds,
+        store_event_endpoint, transport_delete_server_scoped, transport_get_server_scoped,
+        validate_initialize_params, validate_protocol_version,
+    };
+    use axum::{
+        Json, Router,
+        extract::{Path as AxumPath, State},
+        http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
+        routing::{get, post},
+    };
+    use serde_json::{Value, json};
+    use std::{
+        net::{SocketAddr, TcpListener},
+        path::PathBuf,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+    use tokio::time::{Instant, sleep};
+    use uuid::Uuid;
+
+    fn free_tcp_addr() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = listener.local_addr().expect("local addr");
+        drop(listener);
+        addr.to_string()
+    }
+
+    async fn spawn_router(router: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve test router");
+        });
+        format!("http://{addr}")
+    }
+
+    fn test_config() -> RuntimeConfig {
+        RuntimeConfig {
+            backend_rpc_url: "http://127.0.0.1:4444/rpc".to_string(),
+            listen_http: free_tcp_addr(),
+            listen_uds: None,
+            public_listen_http: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: Vec::new(),
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions:
+                "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration."
+                    .to_string(),
+            request_timeout_ms: 30_000,
+            client_connect_timeout_ms: 5_000,
+            client_pool_idle_timeout_seconds: 90,
+            client_pool_max_idle_per_host: 1024,
+            client_tcp_keepalive_seconds: 30,
+            tools_call_plan_ttl_seconds: 30,
+            upstream_session_ttl_seconds: 300,
+            use_rmcp_upstream_client: false,
+            session_core_enabled: true,
+            event_store_enabled: true,
+            resume_core_enabled: true,
+            live_stream_core_enabled: true,
+            affinity_core_enabled: true,
+            session_auth_reuse_enabled: true,
+            session_auth_reuse_ttl_seconds: 45,
+            session_ttl_seconds: 3_600,
+            event_store_max_events_per_stream: 123,
+            event_store_ttl_seconds: 4_200,
+            event_store_poll_interval_ms: 333,
+            cache_prefix: "mcpgw:test:".to_string(),
+            database_url: None,
+            redis_url: None,
+            db_pool_max_size: 7,
+            log_filter: "error".to_string(),
+            exit_after_startup_ms: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn app_state_new_exposes_derived_urls_and_runtime_flags() {
+        let config = test_config();
+        let state = AppState::new(&config).expect("state");
+
+        assert_eq!(state.backend_rpc_url(), "http://127.0.0.1:4444/rpc");
+        assert_eq!(
+            state.backend_authenticate_url(),
+            "http://127.0.0.1:4444/_internal/mcp/authenticate"
+        );
+        assert_eq!(
+            state.backend_initialize_url(),
+            "http://127.0.0.1:4444/_internal/mcp/initialize"
+        );
+        assert_eq!(
+            state.backend_notifications_initialized_url(),
+            "http://127.0.0.1:4444/_internal/mcp/notifications/initialized"
+        );
+        assert_eq!(
+            state.backend_notifications_message_url(),
+            "http://127.0.0.1:4444/_internal/mcp/notifications/message"
+        );
+        assert_eq!(
+            state.backend_notifications_cancelled_url(),
+            "http://127.0.0.1:4444/_internal/mcp/notifications/cancelled"
+        );
+        assert_eq!(
+            state.backend_transport_url(),
+            "http://127.0.0.1:4444/_internal/mcp/transport"
+        );
+        assert_eq!(
+            state.backend_tools_list_url(),
+            "http://127.0.0.1:4444/_internal/mcp/tools/list"
+        );
+        assert_eq!(
+            state.backend_resources_list_url(),
+            "http://127.0.0.1:4444/_internal/mcp/resources/list"
+        );
+        assert_eq!(
+            state.backend_resources_read_url(),
+            "http://127.0.0.1:4444/_internal/mcp/resources/read"
+        );
+        assert_eq!(
+            state.backend_resources_subscribe_url(),
+            "http://127.0.0.1:4444/_internal/mcp/resources/subscribe"
+        );
+        assert_eq!(
+            state.backend_resources_unsubscribe_url(),
+            "http://127.0.0.1:4444/_internal/mcp/resources/unsubscribe"
+        );
+        assert_eq!(
+            state.backend_resource_templates_list_url(),
+            "http://127.0.0.1:4444/_internal/mcp/resources/templates/list"
+        );
+        assert_eq!(
+            state.backend_prompts_list_url(),
+            "http://127.0.0.1:4444/_internal/mcp/prompts/list"
+        );
+        assert_eq!(
+            state.backend_prompts_get_url(),
+            "http://127.0.0.1:4444/_internal/mcp/prompts/get"
+        );
+        assert_eq!(
+            state.backend_roots_list_url(),
+            "http://127.0.0.1:4444/_internal/mcp/roots/list"
+        );
+        assert_eq!(
+            state.backend_completion_complete_url(),
+            "http://127.0.0.1:4444/_internal/mcp/completion/complete"
+        );
+        assert_eq!(
+            state.backend_sampling_create_message_url(),
+            "http://127.0.0.1:4444/_internal/mcp/sampling/createMessage"
+        );
+        assert_eq!(
+            state.backend_logging_set_level_url(),
+            "http://127.0.0.1:4444/_internal/mcp/logging/setLevel"
+        );
+        assert_eq!(
+            state.backend_tools_list_authz_url(),
+            "http://127.0.0.1:4444/_internal/mcp/tools/list/authz"
+        );
+        assert_eq!(
+            state.backend_resources_list_authz_url(),
+            "http://127.0.0.1:4444/_internal/mcp/resources/list/authz"
+        );
+        assert_eq!(
+            state.backend_resources_read_authz_url(),
+            "http://127.0.0.1:4444/_internal/mcp/resources/read/authz"
+        );
+        assert_eq!(
+            state.backend_resource_templates_list_authz_url(),
+            "http://127.0.0.1:4444/_internal/mcp/resources/templates/list/authz"
+        );
+        assert_eq!(
+            state.backend_prompts_list_authz_url(),
+            "http://127.0.0.1:4444/_internal/mcp/prompts/list/authz"
+        );
+        assert_eq!(
+            state.backend_prompts_get_authz_url(),
+            "http://127.0.0.1:4444/_internal/mcp/prompts/get/authz"
+        );
+        assert_eq!(
+            state.backend_tools_call_url(),
+            "http://127.0.0.1:4444/_internal/mcp/tools/call"
+        );
+        assert_eq!(
+            state.backend_tools_call_resolve_url(),
+            "http://127.0.0.1:4444/_internal/mcp/tools/call/resolve"
+        );
+        assert_eq!(state.protocol_version(), "2025-11-25");
+        assert_eq!(state.server_name(), "ContextForge");
+        assert_eq!(state.server_version(), "0.1.0");
+        assert_eq!(
+            state.instructions(),
+            "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration."
+        );
+        assert!(
+            state
+                .supported_protocol_versions()
+                .iter()
+                .any(|v| v == "2025-03-26")
+        );
+        assert!(state.session_core_enabled());
+        assert!(state.event_store_enabled());
+        assert!(state.resume_core_enabled());
+        assert!(state.live_stream_core_enabled());
+        assert!(state.affinity_core_enabled());
+        assert!(state.session_auth_reuse_enabled());
+        assert!(state.db_pool().is_none());
+        assert_eq!(state.cache_prefix(), "mcpgw:test:");
+        assert_eq!(state.event_store_max_events_per_stream(), 123);
+        assert_eq!(state.event_store_ttl(), Duration::from_secs(4_200));
+        assert_eq!(
+            state.event_store_poll_interval(),
+            Duration::from_millis(333)
+        );
+        assert_eq!(state.tools_call_plan_ttl(), Duration::from_secs(30));
+        assert_eq!(state.upstream_session_ttl(), Duration::from_secs(300));
+        assert_eq!(state.session_ttl(), Duration::from_secs(3_600));
+        assert_eq!(state.session_auth_reuse_ttl(), Duration::from_secs(45));
+        assert!(!state.public_ingress_enabled());
+        assert!(state.runtime_sessions().lock().await.is_empty());
+        assert!(state.upstream_tool_sessions().lock().await.is_empty());
+        assert!(state.resolved_tool_call_plans().lock().await.is_empty());
+        #[cfg(feature = "rmcp-upstream-client")]
+        {
+            assert!(!state.use_rmcp_upstream_client());
+            assert!(state.rmcp_upstream_clients().lock().await.is_empty());
+        }
+    }
+
+    #[test]
+    fn app_state_new_accepts_sqlite_but_disables_direct_db_pool() {
+        let mut config = test_config();
+        config.database_url = Some("sqlite:///tmp/runtime.db".to_string());
+
+        let state = AppState::new(&config).expect("state");
+
+        assert!(state.db_pool().is_none());
+    }
+
+    #[test]
+    fn app_state_new_rejects_invalid_database_url() {
+        let mut config = test_config();
+        config.database_url =
+            Some("postgresql+psycopg://user:pass@127.0.0.1:notaport/db".to_string());
+
+        let error = match AppState::new(&config) {
+            Ok(_) => panic!("invalid db url should fail"),
+            Err(err) => err,
+        };
+
+        match error {
+            RuntimeError::Config(message) => {
+                assert!(message.contains("invalid MCP_RUST_DATABASE_URL"));
+            }
+            other => panic!("expected config error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn app_state_new_rejects_invalid_redis_url() {
+        let mut config = test_config();
+        config.redis_url = Some("not a redis url".to_string());
+
+        let error = match AppState::new(&config) {
+            Ok(_) => panic!("invalid redis url should fail"),
+            Err(err) => err,
+        };
+
+        match error {
+            RuntimeError::Config(message) => {
+                assert!(message.contains("invalid MCP_RUST_REDIS_URL"));
+            }
+            other => panic!("expected config error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn backend_url_derivation_helpers_cover_all_supported_rpc_suffixes() {
+        type Deriver = fn(&str) -> String;
+
+        let derivations: [(&str, Deriver); 21] = [
+            ("_internal/mcp/tools/list", derive_backend_tools_list_url),
+            (
+                "_internal/mcp/resources/list",
+                derive_backend_resources_list_url,
+            ),
+            (
+                "_internal/mcp/resources/read",
+                derive_backend_resources_read_url,
+            ),
+            (
+                "_internal/mcp/resources/subscribe",
+                derive_backend_resources_subscribe_url,
+            ),
+            (
+                "_internal/mcp/resources/unsubscribe",
+                derive_backend_resources_unsubscribe_url,
+            ),
+            (
+                "_internal/mcp/resources/templates/list",
+                derive_backend_resource_templates_list_url,
+            ),
+            (
+                "_internal/mcp/prompts/list",
+                derive_backend_prompts_list_url,
+            ),
+            ("_internal/mcp/prompts/get", derive_backend_prompts_get_url),
+            ("_internal/mcp/roots/list", derive_backend_roots_list_url),
+            (
+                "_internal/mcp/completion/complete",
+                derive_backend_completion_complete_url,
+            ),
+            (
+                "_internal/mcp/sampling/createMessage",
+                derive_backend_sampling_create_message_url,
+            ),
+            (
+                "_internal/mcp/logging/setLevel",
+                derive_backend_logging_set_level_url,
+            ),
+            ("_internal/mcp/initialize", derive_backend_initialize_url),
+            ("_internal/mcp/transport", derive_backend_transport_url),
+            ("_internal/mcp/session", derive_backend_session_delete_url),
+            (
+                "_internal/mcp/notifications/initialized",
+                derive_backend_notifications_initialized_url,
+            ),
+            (
+                "_internal/mcp/notifications/message",
+                derive_backend_notifications_message_url,
+            ),
+            (
+                "_internal/mcp/notifications/cancelled",
+                derive_backend_notifications_cancelled_url,
+            ),
+            (
+                "_internal/mcp/tools/list/authz",
+                derive_backend_tools_list_authz_url,
+            ),
+            (
+                "_internal/mcp/resources/list/authz",
+                derive_backend_resources_list_authz_url,
+            ),
+            (
+                "_internal/mcp/resources/read/authz",
+                derive_backend_resources_read_authz_url,
+            ),
+        ];
+
+        let inputs = [
+            (
+                "http://gateway.example/_internal/mcp/rpc",
+                "http://gateway.example",
+            ),
+            (
+                "http://gateway.example/_internal/mcp/rpc/",
+                "http://gateway.example",
+            ),
+            ("http://gateway.example/rpc", "http://gateway.example"),
+            ("http://gateway.example/rpc/", "http://gateway.example"),
+            (
+                "http://gateway.example/custom/base/",
+                "http://gateway.example/custom/base",
+            ),
+        ];
+
+        for (suffix, derive) in derivations {
+            for (input, prefix) in inputs {
+                assert_eq!(derive(input), format!("{prefix}/{suffix}"), "input {input}");
+            }
+        }
+
+        let authz_derivations: [(&str, Deriver); 6] = [
+            (
+                "_internal/mcp/resources/templates/list/authz",
+                derive_backend_resource_templates_list_authz_url,
+            ),
+            (
+                "_internal/mcp/prompts/list/authz",
+                derive_backend_prompts_list_authz_url,
+            ),
+            (
+                "_internal/mcp/prompts/get/authz",
+                derive_backend_prompts_get_authz_url,
+            ),
+            ("_internal/mcp/tools/call", derive_backend_tools_call_url),
+            (
+                "_internal/mcp/tools/call/resolve",
+                derive_backend_tools_call_resolve_url,
+            ),
+            (
+                "_internal/mcp/authenticate",
+                derive_backend_authenticate_url,
+            ),
+        ];
+
+        for (suffix, derive) in authz_derivations {
+            for (input, prefix) in inputs {
+                assert_eq!(derive(input), format!("{prefix}/{suffix}"), "input {input}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn run_http_listener_can_exit_after_startup_delay() {
+        let mut config = test_config();
+        config.exit_after_startup_ms = Some(5);
+
+        run(config).await.expect("run http listener");
+    }
+
+    #[tokio::test]
+    async fn run_dual_http_listeners_can_exit_after_startup_delay() {
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.exit_after_startup_ms = Some(5);
+
+        run(config).await.expect("run dual http listeners");
+    }
+
+    #[tokio::test]
+    async fn run_uds_listener_can_exit_after_startup_delay() {
+        let mut config = test_config();
+        config.listen_uds = Some(PathBuf::from(format!(
+            "/tmp/contextforge-mcp-runtime-{}.sock",
+            Uuid::new_v4()
+        )));
+        config.exit_after_startup_ms = Some(5);
+
+        run(config.clone()).await.expect("run uds listener");
+
+        if let Some(path) = config.listen_uds {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[tokio::test]
+    async fn run_uds_and_public_http_can_exit_after_startup_delay() {
+        let mut config = test_config();
+        config.listen_uds = Some(PathBuf::from(format!(
+            "/tmp/contextforge-mcp-runtime-{}.sock",
+            Uuid::new_v4()
+        )));
+        config.public_listen_http = Some(free_tcp_addr());
+        config.exit_after_startup_ms = Some(5);
+
+        run(config.clone())
+            .await
+            .expect("run uds and public http listeners");
+
+        if let Some(path) = config.listen_uds {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn direct_server_scope_helper_predicates_cover_valid_and_invalid_shapes() {
+        let mut headers = HeaderMap::new();
+        assert!(!has_server_scope(&headers));
+        headers.insert(
+            HeaderName::from_static("x-contextforge-server-id"),
+            HeaderValue::from_static("server-1"),
+        );
+        assert!(has_server_scope(&headers));
+
+        assert!(!can_use_direct_resources_read(&Value::Null));
+        assert!(!can_use_direct_resources_read(&json!({"uri": ""})));
+        assert!(!can_use_direct_resources_read(
+            &json!({"uri": "resource://one", "requestId": "123"})
+        ));
+        assert!(!can_use_direct_resources_read(
+            &json!({"uri": "resource://one", "_meta": {"trace": true}})
+        ));
+        assert!(can_use_direct_resources_read(
+            &json!({"uri": "resource://one"})
+        ));
+
+        assert!(!can_use_direct_prompts_get(&Value::Null));
+        assert!(!can_use_direct_prompts_get(&json!({"name": ""})));
+        assert!(!can_use_direct_prompts_get(
+            &json!({"name": "prompt-1", "arguments": {"who": "world"}})
+        ));
+        assert!(!can_use_direct_prompts_get(
+            &json!({"name": "prompt-1", "_meta": {"trace": true}})
+        ));
+        assert!(can_use_direct_prompts_get(&json!({"name": "prompt-1"})));
+        assert!(can_use_direct_prompts_get(
+            &json!({"name": "prompt-1", "arguments": {}})
+        ));
+        assert!(can_use_direct_prompts_get(
+            &json!({"name": "prompt-1", "arguments": null})
+        ));
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_returns_early_for_python_ingress_and_existing_auth_context()
+     {
+        let state = AppState::new(&test_config()).expect("state");
+        let uri: Uri = "/mcp?session_id=abc".parse().expect("uri");
+        let (headers, path) = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &uri,
+            Some("server-1"),
+        )
+        .await
+        .expect("python ingress path");
+        assert_eq!(path, "/servers/server-1/mcp");
+        assert_eq!(
+            headers
+                .get("x-contextforge-server-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("server-1")
+        );
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_rpc_url = "http://127.0.0.1:1/rpc".to_string();
+        let state = AppState::new(&config).expect("state");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("x-contextforge-auth-context"),
+            HeaderValue::from_static("already-present"),
+        );
+        let (headers, path) = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+        )
+        .await
+        .expect("existing auth context bypasses backend auth");
+        assert_eq!(path, "/mcp");
+        assert_eq!(
+            headers
+                .get("x-contextforge-auth-context")
+                .and_then(|value| value.to_str().ok()),
+            Some("already-present")
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_surfaces_backend_transport_and_decode_failures() {
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_rpc_url = "http://127.0.0.1:1/rpc".to_string();
+        let state = AppState::new(&config).expect("state");
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+        )
+        .await
+        .expect_err("unreachable backend should fail");
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+
+        let backend = Router::new().route(
+            "/_internal/mcp/authenticate",
+            post(|| async move { (StatusCode::OK, "not-json") }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        let state = AppState::new(&config).expect("state");
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+        )
+        .await
+        .expect_err("invalid backend payload should fail");
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn event_store_endpoints_report_disabled_and_unavailable_states() {
+        let mut disabled_config = test_config();
+        disabled_config.event_store_enabled = false;
+        let state = AppState::new(&disabled_config).expect("state");
+
+        let disabled_store = store_event_endpoint(
+            State(state.clone()),
+            Json(EventStoreStoreRequest {
+                stream_id: "stream-1".to_string(),
+                message: Some(json!({"hello": "world"})),
+                key_prefix: None,
+                max_events_per_stream: None,
+                ttl_seconds: None,
+            }),
+        )
+        .await;
+        assert_eq!(disabled_store.status(), StatusCode::NOT_IMPLEMENTED);
+
+        let disabled_replay = replay_events_endpoint(
+            State(state),
+            Json(EventStoreReplayRequest {
+                last_event_id: "event-1".to_string(),
+                key_prefix: None,
+            }),
+        )
+        .await;
+        assert_eq!(disabled_replay.status(), StatusCode::NOT_IMPLEMENTED);
+
+        let mut config = test_config();
+        config.event_store_enabled = true;
+        let state = AppState::new(&config).expect("state");
+
+        let unavailable_store = store_event_endpoint(
+            State(state.clone()),
+            Json(EventStoreStoreRequest {
+                stream_id: "stream-1".to_string(),
+                message: Some(json!({"hello": "world"})),
+                key_prefix: None,
+                max_events_per_stream: None,
+                ttl_seconds: None,
+            }),
+        )
+        .await;
+        assert_eq!(unavailable_store.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let unavailable_replay = replay_events_endpoint(
+            State(state),
+            Json(EventStoreReplayRequest {
+                last_event_id: "event-1".to_string(),
+                key_prefix: None,
+            }),
+        )
+        .await;
+        assert_eq!(unavailable_replay.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn server_scoped_transport_wrappers_inject_server_header() {
+        let calls = Arc::new(Mutex::new(Vec::<(String, Option<String>)>::new()));
+        let backend = {
+            let get_calls = calls.clone();
+            let delete_calls = calls.clone();
+            Router::new().route(
+                "/_internal/mcp/transport",
+                get(move |headers: HeaderMap| {
+                    let calls = get_calls.clone();
+                    async move {
+                        calls.lock().expect("lock").push((
+                            "GET".to_string(),
+                            headers
+                                .get("x-contextforge-server-id")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
+                        ));
+                        (
+                            StatusCode::OK,
+                            [(
+                                "content-type",
+                                HeaderValue::from_static("text/event-stream"),
+                            )],
+                            "data: ok\n\n",
+                        )
+                    }
+                })
+                .delete(move |headers: HeaderMap| {
+                    let calls = delete_calls.clone();
+                    async move {
+                        calls.lock().expect("lock").push((
+                            "DELETE".to_string(),
+                            headers
+                                .get("x-contextforge-server-id")
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_string),
+                        ));
+                        StatusCode::NO_CONTENT
+                    }
+                }),
+            )
+        };
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.backend_rpc_url = format!("{backend_url}/_internal/mcp/rpc");
+        config.session_core_enabled = false;
+        config.live_stream_core_enabled = false;
+        let state = AppState::new(&config).expect("state");
+
+        let get_response = transport_get_server_scoped(
+            State(state.clone()),
+            AxumPath("server-xyz".to_string()),
+            HeaderMap::new(),
+            "/servers/server-xyz/mcp".parse::<Uri>().expect("uri"),
+        )
+        .await;
+        assert_eq!(get_response.status(), StatusCode::OK);
+
+        let delete_response = transport_delete_server_scoped(
+            State(state),
+            AxumPath("server-xyz".to_string()),
+            HeaderMap::new(),
+            "/servers/server-xyz/mcp".parse::<Uri>().expect("uri"),
+        )
+        .await;
+        assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+        let calls = calls.lock().expect("lock");
+        assert_eq!(
+            *calls,
+            vec![
+                ("GET".to_string(), Some("server-xyz".to_string())),
+                ("DELETE".to_string(), Some("server-xyz".to_string())),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn public_transport_wrappers_return_backend_auth_failures() {
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_rpc_url = "http://127.0.0.1:1/rpc".to_string();
+        let state = AppState::new(&config).expect("state");
+
+        let get_response = super::transport_get(
+            State(state.clone()),
+            HeaderMap::new(),
+            "/mcp".parse::<Uri>().expect("uri"),
+        )
+        .await;
+        assert_eq!(get_response.status(), StatusCode::BAD_GATEWAY);
+
+        let delete_response = super::transport_delete(
+            State(state.clone()),
+            HeaderMap::new(),
+            "/mcp".parse::<Uri>().expect("uri"),
+        )
+        .await;
+        assert_eq!(delete_response.status(), StatusCode::BAD_GATEWAY);
+
+        let post_response = super::rpc(
+            State(state),
+            HeaderMap::new(),
+            "/mcp".parse::<Uri>().expect("uri"),
+            Bytes::from(
+                serde_json::to_vec(&json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "ping",
+                    "params": {}
+                }))
+                .expect("request body"),
+            ),
+        )
+        .await;
+        assert_eq!(post_response.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn serve_http_without_shutdown_can_be_aborted_after_serving_requests() {
+        let addr: SocketAddr = free_tcp_addr().parse().expect("socket addr");
+        let app = Router::new().route("/health", get(|| async { "ok" }));
+        let handle = tokio::spawn(serve_http(app, addr, None));
+        let client = reqwest::Client::new();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut seen_ok = false;
+        while Instant::now() < deadline {
+            if let Ok(response) = client.get(format!("http://{addr}/health")).send().await {
+                if response.status() == StatusCode::OK {
+                    seen_ok = true;
+                    break;
+                }
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        assert!(seen_ok, "serve_http should accept requests before abort");
+        handle.abort();
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn serve_uds_without_shutdown_removes_existing_socket_file_and_can_be_aborted() {
+        let path = PathBuf::from(format!(
+            "/tmp/contextforge-mcp-runtime-existing-{}.sock",
+            Uuid::new_v4()
+        ));
+        std::fs::write(&path, b"placeholder").expect("seed placeholder socket file");
+        let app = Router::new().route("/health", get(|| async { "ok" }));
+        let handle = tokio::spawn(serve_uds(app, path.clone(), None));
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut rebound = false;
+        while Instant::now() < deadline {
+            if path.exists() {
+                rebound = true;
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        assert!(rebound, "serve_uds should replace the seeded socket path");
+
+        handle.abort();
+        let _ = handle.await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn decode_request_and_validation_helpers_cover_error_paths() {
+        let state = AppState::new(&test_config()).expect("state");
+        let invalid_json = decode_request(br#"{"jsonrpc":"2.0""#).expect_err("parse error");
+        assert_eq!(invalid_json.status(), StatusCode::BAD_REQUEST);
+
+        let batch = decode_request(br#"[{"jsonrpc":"2.0","id":1,"method":"ping"}]"#)
+            .expect_err("batch should fail");
+        assert_eq!(batch.status(), StatusCode::BAD_REQUEST);
+
+        let invalid_version = decode_request(br#"{"jsonrpc":"1.0","id":1,"method":"ping"}"#)
+            .expect_err("invalid version should fail");
+        assert_eq!(invalid_version.status(), StatusCode::BAD_REQUEST);
+
+        let missing_method =
+            decode_request(br#"{"jsonrpc":"2.0","id":1}"#).expect_err("missing method should fail");
+        assert_eq!(missing_method.status(), StatusCode::BAD_REQUEST);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("mcp-protocol-version"),
+            HeaderValue::from_static("2099-01-01"),
+        );
+        let unsupported_protocol =
+            validate_protocol_version(&state, &headers).expect_err("unsupported protocol");
+        assert_eq!(unsupported_protocol.status(), StatusCode::BAD_REQUEST);
+
+        let invalid_params =
+            validate_initialize_params(&state, &json!({"protocolVersion": 5}), Some(json!(7)))
+                .expect_err("invalid params");
+        assert_eq!(invalid_params.status(), StatusCode::OK);
+
+        let missing_protocol =
+            validate_initialize_params(&state, &json!({"capabilities": {}}), Some(json!(8)))
+                .expect_err("missing protocol");
+        assert_eq!(missing_protocol.status(), StatusCode::OK);
+
+        let unsupported_initialize = validate_initialize_params(
+            &state,
+            &json!({"protocolVersion": "2099-01-01", "capabilities": {}}),
+            Some(json!(9)),
+        )
+        .expect_err("unsupported initialize protocol");
+        assert_eq!(unsupported_initialize.status(), StatusCode::OK);
+
+        assert_eq!(parse_error_response().status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            invalid_request_response(json!(1)).status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(batch_rejected_response().status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn client_ip_and_session_auth_reuse_helpers_cover_edge_cases() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(public_client_ip(&headers), None);
+
+        headers.insert(
+            HeaderName::from_static("x-forwarded-for"),
+            HeaderValue::from_static(" 198.51.100.10 , 203.0.113.5 "),
+        );
+        assert_eq!(
+            public_client_ip(&headers),
+            Some("198.51.100.10".to_string())
+        );
+
+        headers.insert(
+            HeaderName::from_static("x-real-ip"),
+            HeaderValue::from_static("203.0.113.9"),
+        );
+        assert_eq!(public_client_ip(&headers), Some("203.0.113.9".to_string()));
+        assert_eq!(auth_binding_fingerprint(&HeaderMap::new()), None);
+
+        let mut auth_headers = HeaderMap::new();
+        auth_headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer alpha"),
+        );
+        let fingerprint = auth_binding_fingerprint(&auth_headers).expect("fingerprint");
+
+        let mut config = test_config();
+        config.session_auth_reuse_enabled = true;
+        let state = AppState::new(&config).expect("state");
+        let now = super::unix_epoch_millis();
+        let record = RuntimeSessionRecord {
+            owner_email: Some("owner@example.com".to_string()),
+            server_id: Some("server-1".to_string()),
+            protocol_version: None,
+            client_capabilities: None,
+            encoded_auth_context: Some("encoded-context".to_string()),
+            auth_binding_fingerprint: Some(fingerprint.clone()),
+            auth_context_expires_at_epoch_ms: Some(now + 60_000),
+            created_at: std::time::Instant::now(),
+            last_used: std::time::Instant::now(),
+        };
+
+        assert_eq!(
+            can_reuse_session_auth(&state, &record, &auth_headers, Some("server-1")),
+            Some("encoded-context".to_string())
+        );
+        assert_eq!(
+            can_reuse_session_auth(&state, &record, &auth_headers, Some("server-2")),
+            None
+        );
+
+        let mut mismatched_headers = HeaderMap::new();
+        mismatched_headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer beta"),
+        );
+        assert_eq!(
+            can_reuse_session_auth(&state, &record, &mismatched_headers, Some("server-1")),
+            None
+        );
+
+        let expired = RuntimeSessionRecord {
+            auth_context_expires_at_epoch_ms: Some(now.saturating_sub(1)),
+            ..record.clone()
+        };
+        assert_eq!(
+            can_reuse_session_auth(&state, &expired, &auth_headers, Some("server-1")),
+            None
+        );
+
+        let mut disabled_config = test_config();
+        disabled_config.session_auth_reuse_enabled = false;
+        let disabled_state = AppState::new(&disabled_config).expect("state");
+        assert_eq!(
+            can_reuse_session_auth(&disabled_state, &record, &auth_headers, Some("server-1")),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_handles_invalid_reused_auth_header_and_backend_denials() {
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.session_core_enabled = true;
+        config.session_auth_reuse_enabled = true;
+        let state = AppState::new(&config).expect("state");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer alpha"),
+        );
+        headers.insert(
+            HeaderName::from_static("mcp-session-id"),
+            HeaderValue::from_static("session-1"),
+        );
+        let fingerprint = auth_binding_fingerprint(&headers).expect("fingerprint");
+        state.runtime_sessions().lock().await.insert(
+            "session-1".to_string(),
+            RuntimeSessionRecord {
+                owner_email: Some("owner@example.com".to_string()),
+                server_id: None,
+                protocol_version: None,
+                client_capabilities: None,
+                encoded_auth_context: Some("bad\nheader".to_string()),
+                auth_binding_fingerprint: Some(fingerprint),
+                auth_context_expires_at_epoch_ms: Some(super::unix_epoch_millis() + 60_000),
+                created_at: std::time::Instant::now(),
+                last_used: std::time::Instant::now(),
+            },
+        );
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+        )
+        .await
+        .expect_err("invalid stored auth header should fail");
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+
+        let backend = Router::new().route(
+            "/_internal/mcp/authenticate",
+            post(|| async move { (StatusCode::UNAUTHORIZED, Json(json!({"detail": "denied"}))) }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        let state = AppState::new(&config).expect("state");
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+        )
+        .await
+        .expect_err("backend denial should be forwarded");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
 }

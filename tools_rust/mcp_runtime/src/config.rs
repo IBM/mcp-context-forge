@@ -170,6 +170,9 @@ pub struct RuntimeConfig {
 
     #[arg(long, env = "MCP_RUST_LOG", default_value = "info")]
     pub log_filter: String,
+
+    #[arg(long, env = "MCP_RUST_EXIT_AFTER_STARTUP_MS", hide = true)]
+    pub exit_after_startup_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -223,5 +226,150 @@ impl RuntimeConfig {
             ListenTarget::Http(existing) if existing == parsed => Ok(None),
             _ => Ok(Some(parsed)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ListenTarget, RuntimeConfig};
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    fn config_from<I, T>(args: I) -> RuntimeConfig
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        RuntimeConfig::parse_from(args)
+    }
+
+    #[test]
+    fn effective_supported_protocol_versions_uses_defaults_and_inserts_protocol() {
+        let config = config_from([
+            "contextforge-mcp-runtime",
+            "--protocol-version",
+            "2099-01-01",
+        ]);
+
+        let versions = config.effective_supported_protocol_versions();
+
+        assert_eq!(versions.first().map(String::as_str), Some("2099-01-01"));
+        assert!(versions.iter().any(|value| value == "2025-11-25"));
+        assert!(versions.iter().any(|value| value == "2025-03-26"));
+    }
+
+    #[test]
+    fn effective_supported_protocol_versions_preserves_existing_protocol() {
+        let config = config_from([
+            "contextforge-mcp-runtime",
+            "--protocol-version",
+            "2025-03-26",
+            "--supported-protocol-version",
+            "2025-03-26,2025-06-18",
+        ]);
+
+        let versions = config.effective_supported_protocol_versions();
+
+        assert_eq!(
+            versions,
+            vec!["2025-03-26".to_string(), "2025-06-18".to_string()]
+        );
+    }
+
+    #[test]
+    fn listen_target_uses_uds_when_configured() {
+        let mut config = config_from(["contextforge-mcp-runtime"]);
+        config.listen_uds = Some(PathBuf::from("/tmp/contextforge.sock"));
+
+        assert!(matches!(
+            config.listen_target().expect("uds target"),
+            ListenTarget::Uds(path) if path == PathBuf::from("/tmp/contextforge.sock")
+        ));
+    }
+
+    #[test]
+    fn listen_target_rejects_invalid_http_address() {
+        let config = config_from(["contextforge-mcp-runtime", "--listen-http", "not-an-addr"]);
+
+        let error = config
+            .listen_target()
+            .expect_err("invalid listen addr should fail");
+
+        assert!(error.contains("invalid listen address"));
+        assert!(error.contains("not-an-addr"));
+    }
+
+    #[test]
+    fn public_listen_addr_returns_none_when_unset() {
+        let config = config_from(["contextforge-mcp-runtime"]);
+
+        assert_eq!(config.public_listen_addr().expect("public addr"), None);
+    }
+
+    #[test]
+    fn public_listen_addr_returns_none_when_same_as_primary_http_listener() {
+        let config = config_from([
+            "contextforge-mcp-runtime",
+            "--listen-http",
+            "127.0.0.1:8787",
+            "--public-listen-http",
+            "127.0.0.1:8787",
+        ]);
+
+        assert_eq!(config.public_listen_addr().expect("public addr"), None);
+    }
+
+    #[test]
+    fn public_listen_addr_returns_some_when_distinct() {
+        let config = config_from([
+            "contextforge-mcp-runtime",
+            "--listen-http",
+            "127.0.0.1:8787",
+            "--public-listen-http",
+            "127.0.0.1:9797",
+        ]);
+
+        assert_eq!(
+            config.public_listen_addr().expect("public addr"),
+            Some("127.0.0.1:9797".parse().expect("socket addr"))
+        );
+    }
+
+    #[test]
+    fn public_listen_addr_rejects_invalid_public_address() {
+        let config = config_from([
+            "contextforge-mcp-runtime",
+            "--public-listen-http",
+            "invalid-public-addr",
+        ]);
+
+        let error = config
+            .public_listen_addr()
+            .expect_err("invalid public addr should fail");
+
+        assert!(error.contains("invalid public listen address"));
+        assert!(error.contains("invalid-public-addr"));
+    }
+
+    #[test]
+    fn public_listen_addr_ignores_public_http_when_primary_target_is_uds() {
+        let mut config = config_from([
+            "contextforge-mcp-runtime",
+            "--public-listen-http",
+            "127.0.0.1:9797",
+        ]);
+        config.listen_uds = Some(PathBuf::from("/tmp/contextforge.sock"));
+
+        assert_eq!(
+            config.public_listen_addr().expect("public addr"),
+            Some("127.0.0.1:9797".parse().expect("socket addr"))
+        );
+    }
+
+    #[test]
+    fn hidden_exit_after_startup_flag_is_parseable() {
+        let config = config_from(["contextforge-mcp-runtime", "--exit-after-startup-ms", "25"]);
+
+        assert_eq!(config.exit_after_startup_ms, Some(25));
     }
 }
