@@ -5696,15 +5696,24 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     >
                       Issuer URL
                     </label>
-                    <input
-                      type="url"
-                      name="oauth_issuer"
-                      class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                      placeholder="http://localhost:3003 or https://oauth.example.com"
-                    />
+                    <div class="mt-1 flex gap-2">
+                      <input
+                        type="url"
+                        name="oauth_issuer"
+                        class="px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        placeholder="http://localhost:3003 or https://oauth.example.com"
+                      />
+                      <button
+                        type="button"
+                        onclick="discoverOAuthEndpoints(this)"
+                        class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
+                        title="Auto-discover token &amp; authorization endpoints from issuer metadata"
+                      >🔍 Discover</button>
+                    </div>
                     <p class="mt-1 text-sm text-gray-500">
                       The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
                     </p>
+                    <div class="oauth-discover-status mt-1 hidden"></div>
                   </div>
 
                   <div>
@@ -7114,15 +7123,24 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     >
                       Issuer URL
                     </label>
-                    <input
-                      type="url"
-                      name="oauth_issuer"
-                      class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                      placeholder="http://localhost:3003 or https://oauth.example.com"
-                    />
+                    <div class="mt-1 flex gap-2">
+                      <input
+                        type="url"
+                        name="oauth_issuer"
+                        class="px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        placeholder="http://localhost:3003 or https://oauth.example.com"
+                      />
+                      <button
+                        type="button"
+                        onclick="discoverOAuthEndpoints(this)"
+                        class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
+                        title="Auto-discover token &amp; authorization endpoints from issuer metadata"
+                      >🔍 Discover</button>
+                    </div>
                     <p class="mt-1 text-sm text-gray-500">
                       The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
                     </p>
+                    <div class="oauth-discover-status mt-1 hidden"></div>
                   </div>
 
                   <div>
@@ -10028,16 +10046,25 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           >
                             Issuer URL
                           </label>
-                          <input
-                            type="url"
-                            name="oauth_issuer"
-                            id="oauth-issuer-gw-edit"
-                            class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                            placeholder="http://localhost:3003 or https://oauth.example.com"
-                          />
+                          <div class="mt-1 flex gap-2">
+                            <input
+                              type="url"
+                              name="oauth_issuer"
+                              id="oauth-issuer-gw-edit"
+                              class="px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                              placeholder="http://localhost:3003 or https://oauth.example.com"
+                            />
+                            <button
+                              type="button"
+                              onclick="discoverOAuthEndpoints(this)"
+                              class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
+                              title="Auto-discover token &amp; authorization endpoints from issuer metadata"
+                            >🔍 Discover</button>
+                          </div>
                           <p class="mt-1 text-sm text-gray-500">
                             The OAuth Authorization Server issuer URL. Required for DCR.
                           </p>
+                          <div class="oauth-discover-status mt-1 hidden"></div>
                         </div>
 
                         <div>
@@ -10491,19 +10518,21 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           >
                             Issuer URL
                           </label>
-                          <input
-                            type="url"
-                            name="oauth_issuer"
-                            class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                            placeholder="http://localhost:3003 or https://oauth.example.com"
-                          />
-
-                          <!--
-                          <p class="mt-1 text-sm text-gray-500">
-                            The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
-                          </p>
-                          -->
-
+                          <div class="mt-1 flex gap-2">
+                            <input
+                              type="url"
+                              name="oauth_issuer"
+                              class="px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                              placeholder="http://localhost:3003 or https://oauth.example.com"
+                            />
+                            <button
+                              type="button"
+                              onclick="discoverOAuthEndpoints(this)"
+                              class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
+                              title="Auto-discover token &amp; authorization endpoints from issuer metadata"
+                            >🔍 Discover</button>
+                          </div>
+                          <div class="oauth-discover-status mt-1 hidden"></div>
                           </div>
 
                           <div>
@@ -15196,6 +15225,110 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+      }
+
+      // ---------------------------------------------------------------------------
+      // OAuth endpoint discovery (RFC 8414 / OIDC Discovery)
+      // Called by the 🔍 Discover buttons next to each Issuer URL field.
+      // ---------------------------------------------------------------------------
+      async function discoverOAuthEndpoints(btn) {
+        // DOM layout:
+        //   <div>                                  ← grandparent (section wrapper)
+        //     <label>Issuer URL</label>
+        //     <div class="mt-1 flex gap-2">        ← btn.parentElement
+        //       <input name="oauth_issuer" />
+        //       <button onclick="discoverOAuthEndpoints(this)">
+        //     </div>
+        //     <p>...</p>
+        //     <div class="oauth-discover-status">  ← status target
+        //   </div>
+        const section   = btn.parentElement.parentElement;
+        const statusEl  = section.querySelector('.oauth-discover-status');
+        const form      = btn.closest('form');
+
+        const issuerInput = form
+          ? form.querySelector('input[name="oauth_issuer"]')
+          : section.querySelector('input[name="oauth_issuer"]');
+        const issuer = issuerInput?.value?.trim();
+
+        if (!issuer) {
+          _oauthDiscoverStatus(statusEl, 'error', 'Please enter an Issuer URL first.');
+          return;
+        }
+
+        btn.disabled    = true;
+        btn.textContent = '⏳ Discovering…';
+        _oauthDiscoverStatus(statusEl, 'info', 'Contacting issuer metadata endpoint…');
+
+        try {
+          const resp = await fetch(
+            `${window.ROOT_PATH}/admin/gateways/discover-oauth`,
+            {
+              method:  'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ issuer }),
+            }
+          );
+          const data = await resp.json();
+
+          if (!data.success) {
+            _oauthDiscoverStatus(statusEl, 'error',
+              `Discovery failed: ${data.error || data.message || 'Unknown error'}. ` +
+              'Please configure Token URL and Authorization URL manually.');
+            return;
+          }
+
+          // Map discovered values → form field names
+          const discovered = {
+            oauth_token_url:         data.token_endpoint,
+            oauth_authorization_url: data.authorization_endpoint,
+          };
+
+          let populated = 0;
+          for (const [name, value] of Object.entries(discovered)) {
+            if (!value) continue;
+            const el = form
+              ? form.querySelector(`input[name="${name}"]`)
+              : document.querySelector(`input[name="${name}"]`);
+            if (!el) continue;
+            el.value              = value;
+            el.dataset.discovered = 'true';
+            el.readOnly           = true;
+            el.title              = 'Auto-discovered — clear the Issuer URL field to edit manually';
+            el.classList.add('bg-gray-50', 'text-gray-500', 'cursor-not-allowed');
+            populated++;
+          }
+
+          const dcrBadge = data.dcr_available
+            ? '<span class="ml-2 inline-flex items-center px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded">DCR available</span>'
+            : '<span class="ml-2 inline-flex items-center px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500 rounded">No DCR</span>';
+
+          _oauthDiscoverStatus(statusEl, 'success',
+            `✅ Discovered ${populated} endpoint${populated !== 1 ? 's' : ''} from ` +
+            `<code class="font-mono text-xs">${_escHtml(issuer)}</code>${dcrBadge}`);
+
+        } catch (err) {
+          _oauthDiscoverStatus(statusEl, 'error', `Network error: ${_escHtml(err.message)}`);
+        } finally {
+          btn.disabled    = false;
+          btn.textContent = '🔍 Discover';
+        }
+      }
+
+      function _oauthDiscoverStatus(el, type, html) {
+        if (!el) return;
+        const colours = { info: 'text-blue-600', success: 'text-green-600', error: 'text-red-600' };
+        el.className = `oauth-discover-status mt-1 text-sm ${colours[type] || ''}`;
+        el.innerHTML = html;
+        el.classList.remove('hidden');
+      }
+
+      function _escHtml(str) {
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
       }
     </script>
         </main>

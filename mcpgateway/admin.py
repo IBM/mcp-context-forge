@@ -11330,6 +11330,54 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         raise e
 
 
+@admin_router.post("/gateways/discover-oauth")
+@require_permission("gateways.create", allow_admin_bypass=False)
+async def admin_discover_oauth(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:  # pylint: disable=unused-argument
+    """Discover OAuth/OIDC endpoints from an issuer URL (RFC 8414 / OIDC discovery).
+
+    Args:
+        request: FastAPI request containing JSON body with 'issuer' field.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        JSONResponse with discovered endpoints or error message.
+
+    Examples:
+        >>> callable(admin_discover_oauth)
+        True
+    """
+    try:
+        body = await request.json()
+        issuer = body.get("issuer", "").strip()
+        if not issuer:
+            return JSONResponse({"success": False, "error": "issuer is required"}, status_code=400)
+
+        # First-Party
+        from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
+
+        dcr = DcrService()
+        metadata = await dcr.discover_as_metadata(issuer)
+
+        return JSONResponse({
+            "success": True,
+            "token_endpoint": metadata.get("token_endpoint"),
+            "authorization_endpoint": metadata.get("authorization_endpoint"),
+            "jwks_uri": metadata.get("jwks_uri"),
+            "registration_endpoint": metadata.get("registration_endpoint"),
+            "dcr_available": bool(metadata.get("registration_endpoint")),
+            "scopes_supported": metadata.get("scopes_supported", []),
+            "grant_types_supported": metadata.get("grant_types_supported", []),
+        })
+    except Exception as e:
+        LOGGER.warning(f"OAuth discovery failed: {e}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e),
+            "message": "Discovery failed. Please configure token and authorization endpoints manually.",
+        }, status_code=200)
+
+
 @admin_router.post("/gateways")
 @require_permission("gateways.create", allow_admin_bypass=False)
 async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
