@@ -126,22 +126,29 @@ def _get_rpc_filter_context(request: Request, user: Any) -> tuple:
 def _get_base_url(request: Request) -> str:
     """Get the gateway's base URL from the request.
 
+    Uses request.base_url which includes root_path (set via APP_ROOT_PATH).
     Respects X-Forwarded-Proto for reverse proxy deployments.
+
+    This follows the same pattern as update_url_protocol() in main.py and
+    get_base_url_with_protocol() in routers/well_known.py.
 
     Args:
         request: FastAPI request object.
 
     Returns:
-        Base URL string without trailing slash.
+        Base URL string (including root_path) without trailing slash.
     """
+    from urllib.parse import urlparse, urlunparse
+
     forwarded_proto = request.headers.get("x-forwarded-proto")
     if forwarded_proto:
         proto = forwarded_proto.split(",")[0].strip()
     else:
         proto = request.url.scheme
 
-    host = request.headers.get("host", request.url.netloc)
-    return f"{proto}://{host}"
+    parsed = urlparse(str(request.base_url))
+    new_parsed = parsed._replace(scheme=proto)
+    return str(urlunparse(new_parsed)).rstrip("/")
 
 
 @router.get("/{agent_id}/.well-known/agent-card.json", response_model=Dict[str, Any])
