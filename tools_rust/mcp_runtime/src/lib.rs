@@ -1,3 +1,13 @@
+// Copyright 2026
+// SPDX-License-Identifier: Apache-2.0
+// Authors: Mihai Criveti
+
+//! Rust MCP runtime sidecar for `ContextForge`.
+//!
+//! This crate owns the Rust-backed public MCP HTTP edge and, in `full` mode,
+//! can also own MCP session/event-store/resume/live-stream/affinity cores while
+//! still delegating authentication and RBAC authority to Python.
+
 pub mod config;
 
 use axum::{
@@ -69,6 +79,7 @@ const INTERNAL_AFFINITY_FORWARDED_HEADER: &str = "x-contextforge-affinity-forwar
 const INTERNAL_AFFINITY_FORWARDED_VALUE: &str = "rust";
 
 #[derive(Debug, Error)]
+/// Top-level runtime errors surfaced during startup and listener execution.
 pub enum RuntimeError {
     #[error("{0}")]
     Config(String),
@@ -81,6 +92,14 @@ pub enum RuntimeError {
 }
 
 #[derive(Clone)]
+/// Shared application state for the Rust MCP runtime.
+///
+/// The state intentionally separates:
+///
+/// - the direct-path reqwest client used for Python/internal HTTP calls
+/// - the RMCP reqwest client used by the optional RMCP upstream transport
+/// - runtime/session/tool caches that keep the public MCP hot path off repeated
+///   backend lookups where possible
 pub struct AppState {
     backend_rpc_url: Arc<str>,
     backend_authenticate_url: Arc<str>,
@@ -110,6 +129,9 @@ pub struct AppState {
     backend_tools_call_url: Arc<str>,
     backend_tools_call_resolve_url: Arc<str>,
     client: Client,
+    // RMCP currently uses reqwest 0.13 while the direct gateway/runtime path
+    // uses reqwest 0.12, so the runtime keeps a separate shared client for that
+    // transport instead of rebuilding it per upstream session/client.
     #[cfg(feature = "rmcp-upstream-client")]
     rmcp_client: RmcpReqwestClient,
     redis_client: Option<redis::Client>,
@@ -145,6 +167,7 @@ pub struct AppState {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+/// Minimal JSON-RPC request envelope accepted by the runtime edge.
 pub struct JsonRpcRequest {
     pub jsonrpc: Option<String>,
     pub method: String,
@@ -155,6 +178,7 @@ pub struct JsonRpcRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Health payload returned by `/health` and `/healthz`.
 pub struct HealthResponse {
     pub status: &'static str,
     pub runtime: &'static str,
@@ -195,6 +219,10 @@ struct InitializeParams {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+/// Minimal normalized auth context returned by Python to the Rust edge.
+///
+/// Rust uses this for ownership checks and optional session-bound auth reuse,
+/// but Python remains the source of truth for authentication and RBAC.
 struct InternalAuthContext {
     email: Option<String>,
     teams: Option<Vec<String>>,
@@ -206,6 +234,10 @@ struct InternalAuthContext {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Payload sent to Python's trusted internal authenticate endpoint.
+///
+/// The request captures the public MCP request shape after nginx/Rust ingress
+/// normalization so Python can evaluate auth and token scoping exactly once.
 struct InternalAuthenticateRequest {
     method: String,
     path: String,
@@ -217,12 +249,18 @@ struct InternalAuthenticateRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Successful response from Python's trusted internal authenticate endpoint.
 struct InternalAuthenticateResponse {
     auth_context: Value,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Pre-resolved direct-execution plan for a `tools/call` request.
+///
+/// Python decides whether a call is eligible for Rust-side direct execution and
+/// returns the concrete upstream routing information. Rust then caches the
+/// parsed form of the plan to keep the hot path off repeated JSON/header work.
 struct ResolvedMcpToolCallPlan {
     eligible: bool,
     #[serde(default)]
@@ -244,6 +282,11 @@ struct ResolvedMcpToolCallPlan {
 }
 
 #[derive(Debug, Clone)]
+/// Cached upstream session for a direct or RMCP tool target.
+///
+/// The key is derived from the downstream MCP session plus the resolved tool
+/// plan so unrelated callers or upstreams never share the same upstream MCP
+/// session accidentally.
 struct UpstreamToolSession {
     session_id: Option<String>,
     last_used: Instant,
@@ -251,6 +294,10 @@ struct UpstreamToolSession {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
+/// Runtime-owned metadata for a public MCP session.
+///
+/// This is the central record used for session ownership, optional auth-context
+/// reuse, server-scope pinning, and cross-worker sharing via Redis.
 struct RuntimeSessionRecord {
     owner_email: Option<String>,
     server_id: Option<String>,
@@ -277,6 +324,10 @@ struct CachedResolvedToolCallPlan {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Redis-serializable subset of [`RuntimeSessionRecord`].
+///
+/// Local-only timing state such as `created_at` and `last_used` is intentionally
+/// rebuilt per worker because it is only used for in-process cache management.
 struct StoredRuntimeSessionRecord {
     owner_email: Option<String>,
     server_id: Option<String>,
@@ -839,6 +890,10 @@ impl AppState {
     }
 }
 
+/// Builds the Axum router for the Rust MCP runtime.
+///
+/// The router exposes public MCP ingress, health probes, and internal helpers
+/// used by tests and mode-specific runtime slices.
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(healthz))
@@ -2266,6 +2321,9 @@ async fn authenticate_public_request_if_needed(
     uri: &axum::http::Uri,
     server_id: Option<&str>,
 ) -> Result<(HeaderMap, String), Response> {
+    // Public Rust ingress still treats Python as the auth authority. The Rust
+    // edge only short-circuits when the request already carries an internal
+    // auth context or when the bound runtime session can safely reuse one.
     if let Some(server_id) = server_id {
         inject_server_id_header(&mut incoming_headers, server_id);
     }
@@ -2840,6 +2898,10 @@ async fn forward_transport_request_via_affinity_owner(
     incoming_headers: &HeaderMap,
     body: &[u8],
 ) -> Result<Option<Response>, Response> {
+    // Affinity forwarding keeps a session on the worker that already owns the
+    // long-lived transport state. Requests are only forwarded when affinity is
+    // enabled, Redis knows a different owner, and the current request is not
+    // itself already an affinity-forwarded replay.
     if !state.affinity_core_enabled() || is_affinity_forwarded_request(incoming_headers) {
         return Ok(None);
     }
@@ -3108,6 +3170,9 @@ async fn store_event_in_rust_event_store(
     state: &AppState,
     request: EventStoreStoreRequest,
 ) -> Result<String, Response> {
+    // The Redis event store keeps a bounded per-stream history plus an index
+    // from event id -> (stream id, sequence number). That lets resume lookups
+    // answer "replay everything after event X" without scanning all streams.
     let Some(mut redis) = state.redis().await else {
         return Err(json_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -3174,6 +3239,9 @@ async fn replay_events_from_rust_event_store(
     state: &AppState,
     request: EventStoreReplayRequest,
 ) -> Result<EventStoreReplayResponse, Response> {
+    // Replay is intentionally tolerant. Missing index entries or replay points
+    // older than the retained stream window return an empty replay rather than
+    // surfacing a hard error to the public transport path.
     let Some(mut redis) = state.redis().await else {
         return Err(json_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -3281,6 +3349,12 @@ async fn validate_runtime_session_request(
     incoming_headers: &mut HeaderMap,
     uri: &axum::http::Uri,
 ) -> Result<Option<String>, Response> {
+    // Session validation is intentionally strict:
+    // - the session must exist
+    // - server-scoped requests must stay on the original server
+    // - the current caller must match the stored auth binding/owner
+    // Only after that do we normalize the session/server headers that the
+    // downstream Python transport bridge expects.
     let Some(session_id) = runtime_session_id_from_request(incoming_headers, uri) else {
         return Ok(None);
     };
@@ -3332,6 +3406,9 @@ fn runtime_session_allows_access(
     auth_context: Option<&InternalAuthContext>,
     incoming_headers: &HeaderMap,
 ) -> bool {
+    // The auth-binding fingerprint prevents a caller from reusing another
+    // client's session identifier even when the email or visible scope appears
+    // superficially compatible.
     if let Some(expected_fingerprint) = record.auth_binding_fingerprint.as_deref() {
         let Some(actual_fingerprint) = auth_binding_fingerprint(incoming_headers) else {
             return false;
@@ -3409,6 +3486,9 @@ fn maybe_bind_session_auth_context(
     incoming_headers: &HeaderMap,
     auth_context: Option<&InternalAuthContext>,
 ) {
+    // Session auth reuse is opt-in and conservative. Any missing or
+    // unauthenticated signal clears the cached auth material so the next public
+    // request will round-trip back through Python authentication.
     if !state.session_auth_reuse_enabled() {
         record.encoded_auth_context = None;
         record.auth_binding_fingerprint = None;
@@ -3483,6 +3563,9 @@ async fn maybe_upsert_runtime_session_from_transport_response(
     request_session_id: Option<&str>,
     response_headers: &reqwest::header::HeaderMap,
 ) -> Option<String> {
+    // The runtime tracks both sessions created by initialize responses and
+    // client-provided session ids reused by the Python transport bridge so that
+    // follow-up GET/POST/DELETE requests can be validated consistently.
     let response_session_id = response_headers
         .get("mcp-session-id")
         .and_then(|value| value.to_str().ok())
@@ -3551,6 +3634,9 @@ fn accepts_sse(headers: &HeaderMap) -> bool {
 }
 
 fn parse_sse_line(frame: &mut PendingSseFrame, raw_line: &str) {
+    // This is a minimal SSE parser for upstream responses. It keeps only the
+    // fields the runtime needs to preserve (`id`, `event`, `data`, `retry`) and
+    // intentionally ignores comments and unknown fields.
     if raw_line.starts_with(':') {
         return;
     }
@@ -3581,6 +3667,8 @@ fn parse_sse_line(frame: &mut PendingSseFrame, raw_line: &str) {
 }
 
 fn finalize_sse_frame(frame: &mut PendingSseFrame) -> Option<FinalizedSseFrame> {
+    // Empty lines terminate the current SSE frame. Frames without any parsed
+    // fields are treated as keep-alive noise and dropped.
     if !frame.saw_field {
         *frame = PendingSseFrame::default();
         return None;
@@ -3616,6 +3704,9 @@ async fn handle_resume_transport_request(
     _uri: axum::http::Uri,
     session_id: Option<&str>,
 ) -> Response {
+    // Resumable GET /mcp replays events from the Rust event store first and
+    // then tails the same stream by polling Redis for newly appended events.
+    // The stream stops once the owning runtime session disappears.
     let Some(last_event_id) = incoming_headers
         .get("last-event-id")
         .and_then(|value| value.to_str().ok())
@@ -3771,6 +3862,9 @@ fn handle_live_stream_transport_request(
     uri: &axum::http::Uri,
     session_id: Option<&str>,
 ) -> Response {
+    // Live stream mode keeps Python as the transport source of truth and has
+    // Rust act as an SSE relay. Rust parses the upstream byte stream into SSE
+    // frames so it can preserve event ids and attach its own runtime metadata.
     let keep_alive = KeepAlive::new().interval(Duration::from_secs(15)).text("");
     let state_cloned = state.clone();
     let backend_headers = incoming_headers.clone();
@@ -3996,6 +4090,14 @@ async fn forward_transport_request(
     public_path: String,
     uri: axum::http::Uri,
 ) -> Response {
+    // This is the main transport router for GET/DELETE streamable-HTTP traffic.
+    // It decides, in order:
+    // - whether a runtime session must be validated
+    // - whether the request is a resumable GET served by Rust event replay
+    // - whether affinity should forward the request to another Rust worker
+    // - whether live SSE streaming should be proxied directly by Rust
+    // - otherwise, whether the request should fall through to Python's
+    //   existing transport/session implementation
     let session_id = if state.session_core_enabled() {
         match validate_runtime_session_request(state, &mut incoming_headers, &uri).await {
             Ok(session_id) => session_id,
@@ -4469,6 +4571,9 @@ async fn direct_server_resources_list(
     incoming_headers: HeaderMap,
     request_id: Option<Value>,
 ) -> Response {
+    // Direct DB-backed reads are only used when Rust already has the trusted
+    // auth context and Python authorizes the server-scoped method. Any missing
+    // context or DB/read-shape mismatch falls back to the Python dispatcher.
     let server_id = incoming_headers
         .get("x-contextforge-server-id")
         .and_then(|value| value.to_str().ok())
@@ -4531,6 +4636,9 @@ async fn direct_server_resource_templates_list(
     incoming_headers: HeaderMap,
     request_id: Option<Value>,
 ) -> Response {
+    // Resource template listing follows the same conservative pattern as
+    // `resources/list`: trust Python for authz, use Rust for the common DB read
+    // path, and fall back immediately when the local preconditions are missing.
     let server_id = incoming_headers
         .get("x-contextforge-server-id")
         .and_then(|value| value.to_str().ok())
@@ -4597,6 +4705,8 @@ async fn direct_server_prompts_list(
     incoming_headers: HeaderMap,
     request_id: Option<Value>,
 ) -> Response {
+    // Prompt listing is safe to serve directly from Rust when visibility can be
+    // expressed with a single DB query over the trusted auth context.
     let server_id = incoming_headers
         .get("x-contextforge-server-id")
         .and_then(|value| value.to_str().ok())
@@ -4661,6 +4771,10 @@ async fn direct_server_resources_read(
     request: &JsonRpcRequest,
     body: Bytes,
 ) -> Response {
+    // `resources/read` is intentionally more conservative than list-style
+    // methods. Rust only serves the read directly for simple stored-resource
+    // rows; gateway-backed content, templates, ambiguous rows, or unsupported
+    // shapes deliberately fall back to Python for parity.
     let server_id = incoming_headers
         .get("x-contextforge-server-id")
         .and_then(|value| value.to_str().ok())
@@ -4738,6 +4852,9 @@ async fn direct_server_prompts_get(
     request: &JsonRpcRequest,
     body: Bytes,
 ) -> Response {
+    // `prompts/get` also uses a conservative direct path. Rust handles the
+    // straightforward stored-template case and falls back when the request
+    // shape or backing data requires Python's broader compatibility logic.
     let server_id = incoming_headers
         .get("x-contextforge-server-id")
         .and_then(|value| value.to_str().ok())
@@ -4811,6 +4928,9 @@ async fn query_server_resources_list_from_db(
     server_id: &str,
     auth_context: &InternalAuthContext,
 ) -> Result<Vec<Value>, RuntimeError> {
+    // Visibility is derived from the same normalized auth context Python
+    // produced: unrestricted admins with `teams=null` bypass filters; all other
+    // callers see public rows plus any owner/team rows implied by the token.
     let pool = state
         .db_pool()
         .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
@@ -4970,6 +5090,9 @@ async fn query_server_resource_read_from_db(
     auth_context: &InternalAuthContext,
     uri: &str,
 ) -> Result<Option<Value>, RuntimeError> {
+    // This helper returns `fallback-python` for any case where Rust cannot
+    // reproduce Python behavior exactly: duplicate matches, gateway-backed
+    // resources, templates, or rows without directly serializable content.
     let pool = state
         .db_pool()
         .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
@@ -5062,6 +5185,9 @@ async fn query_server_prompt_get_from_db(
     auth_context: &InternalAuthContext,
     name: &str,
 ) -> Result<Option<Value>, RuntimeError> {
+    // Prompt reads are intentionally normalized into the MCP prompt result
+    // shape expected by clients so the direct Rust path can substitute for the
+    // Python dispatcher without changing the wire contract.
     let pool = state
         .db_pool()
         .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
@@ -5276,6 +5402,9 @@ async fn authorize_server_method_via_backend(
 fn decode_internal_auth_context_from_headers(
     incoming_headers: &HeaderMap,
 ) -> Result<InternalAuthContext, String> {
+    // The internal auth header is produced by Python and transported as a
+    // base64url-encoded JSON blob so Rust can validate session ownership
+    // without trusting any client-supplied identity fields directly.
     let header_value = incoming_headers
         .get("x-contextforge-auth-context")
         .and_then(|value| value.to_str().ok())
@@ -5937,6 +6066,9 @@ async fn send_transport_to_backend(
     body: Option<Bytes>,
     session_validated: bool,
 ) -> Result<reqwest::Response, Response> {
+    // Generic transport bridge to Python. When Rust already validated the
+    // runtime session, it marks that fact in forwarded headers so Python can
+    // skip repeating the same session-ownership check on the internal hop.
     let target_url = build_backend_transport_url(state.backend_transport_url(), uri);
     let mut request = state.client.request(method, target_url).headers(
         build_forwarded_headers_with_session_validation(incoming_headers, session_validated),
@@ -5987,6 +6119,9 @@ async fn send_tools_list_to_backend(
     state: &AppState,
     incoming_headers: HeaderMap,
 ) -> Result<reqwest::Response, Response> {
+    // The helpers below are thin, method-specific bridges to Python's internal
+    // MCP handlers. They keep the runtime's public response shaping separate
+    // from the actual HTTP dispatch and error translation.
     state
         .client
         .post(state.backend_tools_list_url())
@@ -6335,6 +6470,10 @@ async fn handle_tools_call(
     body: Bytes,
     request: JsonRpcRequest,
 ) -> Response {
+    // `tools/call` is the main Rust fast path. The runtime first asks Python to
+    // resolve whether the call is eligible for direct execution. Only eligible
+    // streamable-http targets stay in Rust; everything else falls back to the
+    // existing Python implementation.
     let plan = match resolve_tools_call(state, &incoming_headers, &request, body.clone()).await {
         Ok(plan) => plan,
         Err(ResolveToolsCallError::JsonRpcError { payload, headers }) => {
@@ -6428,6 +6567,9 @@ async fn resolve_tools_call(
     request: &JsonRpcRequest,
     body: Bytes,
 ) -> Result<ResolvedMcpToolCallPlan, ResolveToolsCallError> {
+    // Plan resolution is cached by the resolved request shape and selected
+    // forwarded headers. This keeps steady-state tools/call traffic off Python
+    // resolve requests when the upstream target is stable.
     let cache_key = build_tools_call_plan_cache_key(incoming_headers, request)
         .map_err(ResolveToolsCallError::Fallback)?;
     {
@@ -6488,6 +6630,9 @@ async fn execute_tools_call_direct(
     request: &JsonRpcRequest,
     plan: &ResolvedMcpToolCallPlan,
 ) -> Result<Response, String> {
+    // Direct execution mirrors the MCP client lifecycle explicitly:
+    // initialize once, reuse the upstream session while it is healthy, and
+    // retry once with a fresh upstream session if the cached session fails.
     if state.use_rmcp_upstream_client() {
         #[cfg(feature = "rmcp-upstream-client")]
         match execute_tools_call_via_rmcp(state, incoming_headers, request, plan).await {
@@ -6650,6 +6795,9 @@ async fn ensure_upstream_session(
     protocol_version: &str,
     timeout_ms: u64,
 ) -> Result<Option<String>, String> {
+    // Upstream sessions are keyed by both downstream session identity and the
+    // resolved upstream target. That keeps parallel callers from sharing an
+    // upstream MCP session across users or servers.
     let session_key = build_upstream_session_key(downstream_session_id, plan)?;
     let mut sessions = state.upstream_tool_sessions().lock().await;
     if let Some(existing) = sessions.get_mut(&session_key)
@@ -6677,6 +6825,9 @@ async fn initialize_upstream_session(
     protocol_version: &str,
     timeout_ms: u64,
 ) -> Result<Option<String>, String> {
+    // Rust behaves like a well-formed MCP client here: send initialize, record
+    // the upstream session id if present, then best-effort send the matching
+    // initialized notification before using the session for tools/call.
     let server_url = plan
         .server_url
         .as_deref()
@@ -6796,6 +6947,9 @@ fn build_upstream_headers(
     protocol_version: &str,
     upstream_session_id: Option<&str>,
 ) -> Result<reqwest::header::HeaderMap, String> {
+    // These are the exact headers Rust forwards to the upstream MCP server for
+    // direct execution. Resolved plan headers come from Python authorization
+    // and are already filtered before they reach this point.
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::ACCEPT,
@@ -6840,6 +6994,9 @@ async fn get_or_create_rmcp_upstream_client(
     session_key: &str,
     protocol_version: &str,
 ) -> Result<Arc<RmcpRunningService<RmcpRoleClient, RmcpClientInfo>>, String> {
+    // RMCP clients are cached at the same session granularity as direct
+    // upstream sessions so the sidecar can amortize setup/TLS cost without
+    // weakening cross-user or cross-server isolation.
     {
         let mut clients = state.rmcp_upstream_clients().lock().await;
         if let Some(existing) = clients.get_mut(session_key) {
@@ -7081,6 +7238,9 @@ fn prepare_resolved_tools_call_plan(plan: &mut ResolvedMcpToolCallPlan) -> Resul
         return Ok(());
     };
 
+    // Parse and hash backend-provided headers once when the plan is decoded so
+    // hot-path request execution can reuse them without reparsing or rebuilding
+    // ordered header maps on every tools/call.
     let mut parsed_headers = Vec::with_capacity(header_values.len());
     for (name, value) in header_values {
         let header_name = HeaderName::from_str(name)

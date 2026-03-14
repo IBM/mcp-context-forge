@@ -1,3 +1,9 @@
+// Copyright 2026
+// SPDX-License-Identifier: Apache-2.0
+// Authors: Mihai Criveti
+
+//! Binary entry point for the Rust MCP runtime.
+
 use clap::Parser;
 use contextforge_mcp_runtime::{config::RuntimeConfig, run};
 use tracing_subscriber::EnvFilter;

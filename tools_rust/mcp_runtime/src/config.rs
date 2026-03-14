@@ -1,3 +1,9 @@
+// Copyright 2026
+// SPDX-License-Identifier: Apache-2.0
+// Authors: Mihai Criveti
+
+//! CLI and environment-backed configuration for the Rust MCP runtime.
+
 use clap::Parser;
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -7,6 +13,11 @@ const DEFAULT_SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
 #[derive(Debug, Clone, Parser)]
 #[command(name = "contextforge-mcp-runtime")]
 #[command(about = "Experimental Rust MCP runtime edge for ContextForge")]
+/// Runtime configuration parsed from CLI flags and environment variables.
+///
+/// These options are intentionally low-level. In normal compose/test workflows,
+/// the top-level `RUST_MCP_MODE` helper configures the right runtime behavior
+/// and these values are only used as advanced overrides.
 pub struct RuntimeConfig {
     #[arg(
         long,
@@ -176,6 +187,7 @@ pub struct RuntimeConfig {
 }
 
 #[derive(Debug, Clone)]
+/// Primary listener target for the runtime.
 pub enum ListenTarget {
     Http(SocketAddr),
     Uds(PathBuf),
@@ -183,6 +195,10 @@ pub enum ListenTarget {
 
 impl RuntimeConfig {
     #[must_use]
+    /// Returns the effective list of protocol versions accepted by this runtime.
+    ///
+    /// The configured primary protocol version is always included even when the
+    /// caller provided an explicit supported-version list.
     pub fn effective_supported_protocol_versions(&self) -> Vec<String> {
         let mut versions = self.supported_protocol_versions.clone();
 

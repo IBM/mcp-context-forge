@@ -1,3 +1,7 @@
+// Copyright 2026
+// SPDX-License-Identifier: Apache-2.0
+// Authors: Mihai Criveti
+
 use std::{net::TcpListener, process::Command};
 
 fn free_tcp_addr() -> String {

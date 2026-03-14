@@ -3,6 +3,7 @@ name = "contextforge_mcp_runtime"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
+authors = ["Mihai Criveti"]
 description = "Experimental Rust MCP runtime edge for ContextForge"
 
 [features]
