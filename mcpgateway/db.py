@@ -1123,6 +1123,11 @@ class Permissions:
     A2A_DELETE = "a2a.delete"
     A2A_INVOKE = "a2a.invoke"
 
+    # A2A Gateway permissions (native A2A protocol endpoints)
+    A2A_GATEWAY_READ = "a2a_gateway.read"
+    A2A_GATEWAY_EXECUTE = "a2a_gateway.execute"
+    A2A_GATEWAY_MANAGE = "a2a_gateway.manage"
+
     # Tag permissions
     TAGS_READ = "tags.read"
     TAGS_CREATE = "tags.create"

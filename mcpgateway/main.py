@@ -7764,6 +7764,15 @@ if settings.metrics_cleanup_enabled or settings.metrics_rollup_enabled:
 if settings.mcpgateway_a2a_enabled:
     app.include_router(a2a_router)
     logger.info("A2A router included - A2A features enabled")
+
+    # Conditionally include A2A Gateway router (native A2A protocol) if enabled
+    if settings.mcpgateway_a2a_gateway_enabled:
+        from mcpgateway.routers.a2a_gateway import router as a2a_gateway_router
+
+        app.include_router(a2a_gateway_router)
+        logger.info("A2A Gateway router included - native A2A protocol enabled")
+    else:
+        logger.info("A2A Gateway router not included - native A2A protocol disabled")
 else:
     logger.info("A2A router not included - A2A features disabled")
 

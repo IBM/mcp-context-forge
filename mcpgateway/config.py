@@ -617,6 +617,13 @@ class Settings(BaseSettings):
     mcpgateway_a2a_max_retries: int = 3
     mcpgateway_a2a_metrics_enabled: bool = True
 
+    # A2A Native Protocol Gateway
+    mcpgateway_a2a_gateway_enabled: bool = Field(default=True, description="Enable native A2A protocol gateway endpoints (/a2a/v1/)")
+    a2a_gateway_rate_limit: int = Field(default=100, description="Max requests per minute per agent per user for A2A gateway")
+    a2a_gateway_client_timeout: int = Field(default=30, description="Downstream A2A agent HTTP timeout in seconds")
+    a2a_gateway_stream_timeout: int = Field(default=300, description="SSE stream timeout in seconds for A2A gateway")
+    a2a_gateway_max_concurrent_streams: int = Field(default=100, description="Max concurrent SSE streams for A2A gateway")
+
     # gRPC Support Configuration (EXPERIMENTAL - disabled by default)
     mcpgateway_grpc_enabled: bool = Field(default=False, description="Enable gRPC to MCP translation support (experimental feature)")
     mcpgateway_grpc_reflection_enabled: bool = Field(default=True, description="Enable gRPC server reflection by default")

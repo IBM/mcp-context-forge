@@ -38,6 +38,7 @@ from mcpgateway.plugins.framework.hooks.http import (
     HttpPreRequestPayload,
     HttpPreRequestResult,
 )
+from mcpgateway.plugins.framework.hooks.a2a_gateway import A2AGatewayHookType, A2AGatewayPostInvokePayload, A2AGatewayPostInvokeResult, A2AGatewayPreInvokePayload, A2AGatewayPreInvokeResult
 from mcpgateway.plugins.framework.hooks.agents import AgentHookType, AgentPostInvokePayload, AgentPostInvokeResult, AgentPreInvokePayload, AgentPreInvokeResult
 from mcpgateway.plugins.framework.hooks.resources import ResourceHookType, ResourcePostFetchPayload, ResourcePostFetchResult, ResourcePreFetchPayload, ResourcePreFetchResult
 from mcpgateway.plugins.framework.hooks.prompts import (
@@ -105,6 +106,11 @@ def get_plugin_manager(observability: Optional[ObservabilityProvider] = None) ->
 
 
 __all__ = [
+    "A2AGatewayHookType",
+    "A2AGatewayPostInvokePayload",
+    "A2AGatewayPostInvokeResult",
+    "A2AGatewayPreInvokePayload",
+    "A2AGatewayPreInvokeResult",
     "AgentHookType",
     "AgentPostInvokePayload",
     "AgentPostInvokeResult",
