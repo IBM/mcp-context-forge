@@ -357,6 +357,16 @@ class TestTokenCatalogService:
             assert call_kwargs["user_data"]["is_admin"] is True
 
     @pytest.mark.asyncio
+    async def test_generate_token_no_team_sets_teams_none(self, token_service):
+        """Regression: no team_id → teams=None (not []) so admin bypass works. GH-3654."""
+        with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
+            mock_create_jwt.return_value = "jwt_token_no_team"
+            jti = str(uuid.uuid4())
+            await token_service._generate_token("admin@example.com", jti=jti)
+            call_kwargs = mock_create_jwt.call_args.kwargs
+            assert call_kwargs["teams"] is None
+
+    @pytest.mark.asyncio
     async def test_create_token_success(self, token_service, mock_db, mock_user):
         """Test create_token method - successful creation."""
         # Setup mocks
