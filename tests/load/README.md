@@ -21,8 +21,8 @@ sqlite3 mcp.db "SELECT COUNT(*) FROM email_users;"
 |---------|-------|-------|---------------|------|----------|---------|
 | **Small** | 100 | ~600 | ~74K | <1 min | SQLite OK | `make generate-small` |
 | **Medium** | 10K | ~110K | ~70M | ~10 min | PostgreSQL recommended | `make generate-medium` |
-| **Large** | 100K | ~1.1M | ~700M | ~1-2 hours | PostgreSQL/MySQL required | `make generate-large` |
-| **Massive** | 1M | ~11M | ~7B | ~10-20 hours | PostgreSQL/MySQL + high-end hardware | `make generate-massive` |
+| **Large** | 100K | ~1.1M | ~700M | ~1-2 hours | PostgreSQL required | `make generate-large` |
+| **Massive** | 1M | ~11M | ~7B | ~10-20 hours | PostgreSQL + high-end hardware | `make generate-massive` |
 
 ## Command-Line Usage
 
@@ -81,13 +81,6 @@ DATABASE_URL=postgresql://postgres:pass@localhost:5432/mcp
 alembic upgrade head
 ```
 
-### MySQL
-```bash
-docker run -d --name mysql -e MYSQL_ROOT_PASSWORD=pass -e MYSQL_DATABASE=mcp -p 3306:3306 mysql:8.0
-DATABASE_URL=mysql+pymysql://root:pass@localhost:3306/mcp
-alembic upgrade head
-```
-
 ## Reports
 
 ```bash
@@ -104,7 +97,7 @@ jq . reports/small_load_report.json
 **Fixed!** Run migration: `alembic upgrade head`
 
 ### Out of Memory
-Use PostgreSQL/MySQL, reduce batch size, increase swap.
+Use PostgreSQL, reduce batch size, increase swap.
 
 ### Slow Generation
 Use SSD storage, PostgreSQL, increase DB_POOL_SIZE.
@@ -148,7 +141,7 @@ For full documentation, see sections below.
 
 ### Performance Optimization
 
-1. Use PostgreSQL/MySQL for large datasets
+1. Use PostgreSQL for large datasets
 2. Increase batch size: `--batch-size 2000`
 3. Use SSD storage
 4. Increase DB pool: `DB_POOL_SIZE=50` in `.env`

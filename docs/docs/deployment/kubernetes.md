@@ -146,40 +146,6 @@ You can load your `.env` as a ConfigMap:
     !!! info "Authentication"
         The Admin UI uses email/password authentication. Basic auth for API endpoints is disabled by default. Use JWT tokens for API access.
 
-=== "With MariaDB"
-    ```bash
-    # Create .env file
-    cat > .env << EOF
-    HOST=0.0.0.0
-    PORT=4444
-    DATABASE_URL=mysql+pymysql://mysql:changeme@mariadb-service:3306/mcp
-    JWT_SECRET_KEY=your-secret-key
-    PLATFORM_ADMIN_EMAIL=admin@example.com
-    PLATFORM_ADMIN_PASSWORD=changeme
-    MCPGATEWAY_UI_ENABLED=true
-    MCPGATEWAY_ADMIN_API_ENABLED=true
-    EOF
-
-    kubectl create configmap mcpgateway-env --from-env-file=.env
-    ```
-
-=== "With MySQL"
-    ```bash
-    # Create .env file
-    cat > .env << EOF
-    HOST=0.0.0.0
-    PORT=4444
-    DATABASE_URL=mysql+pymysql://mysql:changeme@mysql-service:3306/mcp
-    JWT_SECRET_KEY=your-secret-key
-    PLATFORM_ADMIN_EMAIL=admin@example.com
-    PLATFORM_ADMIN_PASSWORD=changeme
-    MCPGATEWAY_UI_ENABLED=true
-    MCPGATEWAY_ADMIN_API_ENABLED=true
-    EOF
-
-    kubectl create configmap mcpgateway-env --from-env-file=.env
-    ```
-
 === "With PostgreSQL"
     ```bash
     # Create .env file
@@ -198,82 +164,6 @@ You can load your `.env` as a ConfigMap:
 ```
 
 > Make sure it includes `JWT_SECRET_KEY`, `PLATFORM_ADMIN_EMAIL`, etc.
-
----
-
-## 🗄 Database Deployment Examples
-
-### MySQL Deployment
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mysql
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mysql
-  template:
-    metadata:
-      labels:
-        app: mysql
-    spec:
-      containers:
-
-        - name: mysql
-          image: mysql:8
-          env:
-
-            - name: MYSQL_ROOT_PASSWORD
-              value: mysecretpassword
-
-            - name: MYSQL_DATABASE
-              value: mcp
-
-            - name: MYSQL_USER
-              value: mysql
-
-            - name: MYSQL_PASSWORD
-              value: changeme
-          ports:
-
-            - containerPort: 3306
-          volumeMounts:
-
-            - name: mysql-storage
-              mountPath: /var/lib/mysql
-      volumes:
-
-        - name: mysql-storage
-          persistentVolumeClaim:
-            claimName: mysql-pvc
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mysql-service
-spec:
-  selector:
-    app: mysql
-  ports:
-
-    - port: 3306
-      targetPort: 3306
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mysql-pvc
-spec:
-  accessModes:
-
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 10Gi
-```
 
 ---
 
@@ -313,7 +203,7 @@ metadata:
 data:
   HOST: "0.0.0.0"
   PORT: "4444"
-  DATABASE_URL: "mysql+pymysql://mysql:changeme@mysql-service:3306/mcp"
+  DATABASE_URL: "postgresql+psycopg://postgres:changeme@postgres-service:5432/mcp"
 
   # Asymmetric JWT Configuration
   JWT_ALGORITHM: "RS256"
@@ -452,13 +342,6 @@ roleRef:
   name: jwt-key-reader
   apiGroup: rbac.authorization.k8s.io
 ```
-
-!!! info "MariaDB & MySQL Kubernetes Support"
-    MariaDB and MySQL are **fully supported** in Kubernetes deployments:
-
-    - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
-    - All **VARCHAR length issues** resolved for MariaDB/MySQL compatibility
-    - Use connection string: `mysql+pymysql://mysql:changeme@mariadb-service:3306/mcp`
 
 ---
 

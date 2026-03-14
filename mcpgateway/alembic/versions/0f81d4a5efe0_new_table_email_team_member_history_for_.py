@@ -47,7 +47,7 @@ def upgrade() -> None:
     bind = op.get_bind()
 
     # Use database-agnostic query for boolean columns
-    # PostgreSQL uses TRUE/FALSE, MySQL and SQLite use 1/0
+    # PostgreSQL uses TRUE/FALSE, SQLite uses 1/0
     if bind.dialect.name == "postgresql":
         # For PostgreSQL, use proper boolean comparison
         result = bind.execute(
@@ -60,7 +60,7 @@ def upgrade() -> None:
             )
         )
     else:
-        # For MySQL and SQLite, use integer comparison
+        # For SQLite, use integer comparison
         result = bind.execute(
             sa.text(
                 """

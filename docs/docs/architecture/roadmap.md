@@ -300,7 +300,7 @@
     - ⏳ [**#307**](https://github.com/IBM/mcp-context-forge/issues/307) - [CHORE]: GitHub Actions to build docs, with diagrams and test report, and deploy to GitHub Pages using MkDocs on every push to main
     - ⏳ [**#402**](https://github.com/IBM/mcp-context-forge/issues/402) - [CHORE][HELM]: Add post-deploy hook to register Time Server as Gateway
     - ⏳ [**#1340**](https://github.com/IBM/mcp-context-forge/issues/1340) - [CHORE] Proposal: Split Monorepo into Separate Repositories in contextforge-org
-    - ⏳ [**#1688**](https://github.com/IBM/mcp-context-forge/issues/1688) - [CHORE]: Deprecate MySQL/MariaDB support - Focus on SQLite and PostgreSQL
+    - ✅ [**#1688**](https://github.com/IBM/mcp-context-forge/issues/1688) - [CHORE]: Deprecate MySQL/MariaDB support - Focus on SQLite and PostgreSQL
     - ⏳ [**#2139**](https://github.com/IBM/mcp-context-forge/issues/2139) - [CHORE]: Documentation rationalization and Diataxis framework adoption
     - ⏳ [**#2383**](https://github.com/IBM/mcp-context-forge/issues/2383) - [CHORE] Evaluate and select additional CI/CD quality tools
 
@@ -1349,7 +1349,7 @@
 ???+ check "✨ Features - Completed (25)"
 
     - ✅ [**#80**](https://github.com/IBM/mcp-context-forge/issues/80) - [Feature Request]: Publish a multi-architecture container (including ARM64) support
-    - ✅ [**#288**](https://github.com/IBM/mcp-context-forge/issues/288) - [Feature Request]: MariaDB Support Testing, Documentation, CI/CD (alongside PostgreSQL & SQLite)
+    - ✅ [**#288**](https://github.com/IBM/mcp-context-forge/issues/288) - [Feature Request]: MariaDB Support Testing, Documentation, CI/CD (alongside PostgreSQL & SQLite) *(deprecated — MySQL/MariaDB support removed)*
     - ✅ [**#898**](https://github.com/IBM/mcp-context-forge/issues/898) - Sample MCP Server - Go (system-monitor-server)
     - ✅ [**#932**](https://github.com/IBM/mcp-context-forge/issues/932) - [Feature Request]: Air-Gapped Environment Support
     - ✅ [**#1019**](https://github.com/IBM/mcp-context-forge/issues/1019) - [Feature] Authentication Architecture through Plugin System
@@ -1614,7 +1614,7 @@
     - ✅ [**#989**](https://github.com/IBM/mcp-context-forge/issues/989) - [Feature Request]: Sample MCP Server - Python PowerPoint Editor (python-pptx)
     - ✅ [**#986**](https://github.com/IBM/mcp-context-forge/issues/986) - Plugin Request: Implement Argument Normalizer Plugin (Native)
     - ✅ [**#928**](https://github.com/IBM/mcp-context-forge/issues/928) - Migrate container base images from UBI9 to UBI10 and Python from 3.11 to 3.12
-    - ✅ [**#925**](https://github.com/IBM/mcp-context-forge/issues/925) - Add MySQL database support to ContextForge
+    - ✅ [**#925**](https://github.com/IBM/mcp-context-forge/issues/925) - Add MySQL database support to ContextForge *(deprecated — MySQL/MariaDB support removed)*
     - ✅ [**#860**](https://github.com/IBM/mcp-context-forge/issues/860) - [EPIC]: Complete Enterprise Multi-Tenancy System with Team-Based Resource Scoping
     - ✅ [**#859**](https://github.com/IBM/mcp-context-forge/issues/859) - [Feature Request]: Authentication & Authorization - IBM Security Verify Enterprise SSO Integration (Depends on #220)
     - ✅ [**#846**](https://github.com/IBM/mcp-context-forge/issues/846) - [Bug]: Editing server converts hex UUID to hyphenated UUID format, lacks error handling

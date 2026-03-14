@@ -311,7 +311,7 @@ def upgrade() -> None:
     conn.execute(text("INSERT INTO server_prompt_association_tmp (server_id, prompt_id) SELECT spa.server_id, p.id_new FROM server_prompt_association spa JOIN prompts p ON spa.prompt_id = p.id"))
 
     # Update observability spans that reference prompts: remap integer prompt IDs -> new uuid
-    # PostgreSQL requires explicit cast when comparing varchar to int; other DBs (SQLite/MySQL) are permissive.
+    # PostgreSQL requires explicit cast when comparing varchar to int; other DBs (SQLite) are permissive.
     dialect = conn.dialect.name if hasattr(conn, "dialect") else None
     if dialect == "postgresql":
         conn.execute(text("UPDATE observability_spans SET resource_id = p.id_new FROM prompts p WHERE observability_spans.resource_type = 'prompts' AND observability_spans.resource_id = p.id::text"))
