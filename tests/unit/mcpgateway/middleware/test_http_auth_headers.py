@@ -13,7 +13,7 @@ These tests verify the low-level header modification works correctly:
 """
 
 # Standard
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 from fastapi import Depends, FastAPI, Request
@@ -661,6 +661,7 @@ class TestCorrelationIdExists:
 
     def test_existing_correlation_id_used(self):
         """When get_correlation_id returns a value, no fallback generated."""
+        # Standard
         from unittest.mock import patch as _patch
 
         app = FastAPI()
@@ -690,6 +691,7 @@ class TestNoRequestClient:
 
     def test_no_client_sets_none_host(self):
         """When request.client is None, client_host/port are None."""
+        # Standard
         from unittest.mock import patch as _patch
 
         app = FastAPI()
@@ -1024,3 +1026,119 @@ class TestRunPreRequestHooks:
         provided_ctx = GlobalContext(request_id="req-123", server_id="srv-1", tenant_id=None)
         _, ctx, _ = await run_pre_request_hooks(pm, {}, "/test", "GET", global_context=provided_ctx)
         assert ctx is provided_ctx
+
+
+class TestPluginsCanOverrideAuthHeaders:
+    """Test the plugins_can_override_auth_headers setting controls auth header override behavior."""
+
+    @pytest.fixture
+    def app_with_auth_override_plugin(self):
+        """Create app where plugin attempts to override the Authorization header."""
+        app = FastAPI()
+
+        mock_plugin_manager = MagicMock()
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            if hook_type == HttpHookType.HTTP_PRE_REQUEST:
+                headers = dict(payload.headers.root)
+                # Plugin always tries to override Authorization
+                headers["authorization"] = "Bearer plugin-injected-token"
+                return PluginResult(modified_payload=HttpHeaderPayload(headers), continue_processing=True), {}
+            return PluginResult(continue_processing=True), {}
+
+        mock_plugin_manager.invoke_hook = mock_invoke_hook
+        mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
+
+        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+
+        bearer_scheme = HTTPBearer(auto_error=False)
+
+        @app.get("/test-override")
+        async def test_endpoint(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme)):
+            """Return what credentials the endpoint received."""
+            if credentials:
+                return {"scheme": credentials.scheme, "credentials": credentials.credentials}
+            return {"credentials": None}
+
+        return app
+
+    def test_auth_header_override_blocked_by_default(self, app_with_auth_override_plugin):
+        """Deny-path: plugin override of existing Authorization header is stripped when setting is False (default)."""
+        client = TestClient(app_with_auth_override_plugin)
+
+        mock_settings = MagicMock()
+        mock_settings.plugins_can_override_auth_headers = False
+
+        with patch("mcpgateway.middleware.http_auth_middleware.settings", mock_settings):
+            response = client.get(
+                "/test-override",
+                headers={"Authorization": "Bearer original-client-token"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        # The endpoint should see the ORIGINAL Authorization header, not the plugin's
+        assert data["scheme"] == "Bearer"
+        assert data["credentials"] == "original-client-token"
+
+    def test_auth_header_override_blocked_with_case_variation(self):
+        """Deny-path: plugin cannot bypass protection by returning a differently-cased header key."""
+        app = FastAPI()
+
+        mock_plugin_manager = MagicMock()
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            if hook_type == HttpHookType.HTTP_PRE_REQUEST:
+                headers = dict(payload.headers.root)
+                # Plugin uses Title-Case to try to bypass lowercase check
+                headers["Authorization"] = "Bearer sneaky-plugin-token"
+                return PluginResult(modified_payload=HttpHeaderPayload(headers), continue_processing=True), {}
+            return PluginResult(continue_processing=True), {}
+
+        mock_plugin_manager.invoke_hook = mock_invoke_hook
+        mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
+
+        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+
+        bearer_scheme = HTTPBearer(auto_error=False)
+
+        @app.get("/test-override")
+        async def test_endpoint(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme)):
+            if credentials:
+                return {"scheme": credentials.scheme, "credentials": credentials.credentials}
+            return {"credentials": None}
+
+        client = TestClient(app)
+
+        mock_settings = MagicMock()
+        mock_settings.plugins_can_override_auth_headers = False
+
+        with patch("mcpgateway.middleware.http_auth_middleware.settings", mock_settings):
+            response = client.get(
+                "/test-override",
+                headers={"Authorization": "Bearer original-client-token"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["scheme"] == "Bearer"
+        assert data["credentials"] == "original-client-token"
+
+    def test_auth_header_override_allowed_when_enabled(self, app_with_auth_override_plugin):
+        """When plugins_can_override_auth_headers is True, plugin CAN override the Authorization header."""
+        client = TestClient(app_with_auth_override_plugin)
+
+        mock_settings = MagicMock()
+        mock_settings.plugins_can_override_auth_headers = True
+
+        with patch("mcpgateway.middleware.http_auth_middleware.settings", mock_settings):
+            response = client.get(
+                "/test-override",
+                headers={"Authorization": "Bearer original-client-token"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        # The endpoint should see the PLUGIN's Authorization header value
+        assert data["scheme"] == "Bearer"
+        assert data["credentials"] == "plugin-injected-token"
