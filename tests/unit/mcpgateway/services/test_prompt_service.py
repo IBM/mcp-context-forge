@@ -66,6 +66,7 @@ def mock_prompt():
     prompt.version = 1
     prompt.visibility = "public"
     prompt.team_id = None
+    prompt.gateway_id = None
     prompt.owner_email = None
 
     return prompt
@@ -1881,6 +1882,72 @@ class TestListPromptsAdvanced:
             )
 
         assert result == ["converted"]
+
+    @pytest.mark.asyncio
+    async def test_filter_by_gateway_id(self, prompt_service):
+        """Unit test for filtering by a specific gateway_id."""
+        db = MagicMock()
+        mock_prompt = _build_db_prompt()
+        mock_prompt.gateway_id = "active-gateway-123"
+
+        with (
+            patch.object(prompt_service, "convert_prompt_to_read", return_value="converted"),
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache.get.return_value = None 
+            mock_cache_fn.return_value = mock_cache
+            
+            mock_paginate.return_value = ([mock_prompt], "next-cursor-123")
+
+            result, cursor = await prompt_service.list_prompts(db, gateway_id="active-gateway-123")
+
+        assert result == ["converted"]
+        assert cursor == "next-cursor-123"
+
+    @pytest.mark.asyncio
+    async def test_filter_by_gateway_id_null(self, prompt_service):
+        """Unit test for filtering when gateway_id is explicitly None."""
+        db = MagicMock()
+        mock_prompt = _build_db_prompt()
+        mock_prompt.gateway_id = None
+
+        with (
+            patch.object(prompt_service, "convert_prompt_to_read", return_value="converted"),
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache.get.return_value = None 
+            mock_cache_fn.return_value = mock_cache
+            
+            mock_paginate.return_value = ([mock_prompt], None)
+
+            result, cursor = await prompt_service.list_prompts(db, gateway_id=None)
+
+        assert result == ["converted"]
+        assert cursor is None
+
+    @pytest.mark.asyncio
+    async def test_filter_by_gateway_id_nonexistent(self, prompt_service):
+        """Unit test for filtering by a nonexistent gateway_id (empty result)."""
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache.get.return_value = None # Prevenim cache hit-ul
+            mock_cache_fn.return_value = mock_cache
+            
+            # Setează explicit return_value ca fiind un TUPLU de (lista, cursor)
+            mock_paginate.return_value = ([], None) 
+
+            result, cursor = await prompt_service.list_prompts(db, gateway_id="ghost-gateway")
+
+        assert result == []
+        assert cursor is None
 
 
 class TestListPromptsForUser:

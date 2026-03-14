@@ -345,6 +345,8 @@ class ResourceService(BaseService):
         resource_dict["tags"] = normalized_tags
         resource_dict["team"] = getattr(resource, "team", None)
 
+        resource_dict["gateway_id"] = getattr(resource, "gateway_id", None)
+
         # Include metadata fields for proper API response
         resource_dict["created_by"] = getattr(resource, "created_by", None)
         resource_dict["modified_by"] = getattr(resource, "modified_by", None)
@@ -925,6 +927,7 @@ class ResourceService(BaseService):
         per_page: Optional[int] = None,
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
+        gateway_id: Optional[str] = None,
         visibility: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> Union[tuple[List[ResourceRead], Optional[str]], Dict[str, Any]]:
@@ -944,6 +947,7 @@ class ResourceService(BaseService):
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
             limit (Optional[int]): Maximum number of resources to return. Use 0 for all resources (no limit).
                 If not specified, uses pagination_default_page_size.
+            gateway_id (Optional[str]): Filter tools by gateway ID. Accepts the literal value 'null' to match NULL gateway_id.
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
             user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
@@ -988,7 +992,7 @@ class ResourceService(BaseService):
         # This prevents cache poisoning where admin results could leak to public-only requests
         cache = _get_registry_cache()
         if cursor is None and user_email is None and token_teams is None and page is None:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, limit=limit)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit)
             cached = await cache.get("resources", filters_hash)
             if cached is not None:
                 # Reconstruct ResourceRead objects from cached dicts
@@ -1006,6 +1010,13 @@ class ResourceService(BaseService):
 
         if visibility:
             query = query.where(DbResource.visibility == visibility)
+
+        # Add gateway_id filtering if provided
+        if gateway_id:
+            if gateway_id.lower() == "null":
+                query = query.where(DbResource.gateway_id.is_(None))
+            else:
+                query = query.where(DbResource.gateway_id == gateway_id)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:

@@ -4479,6 +4479,7 @@ async def list_resources(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -4494,6 +4495,7 @@ async def list_resources(
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Filter by specific team ID.
         visibility (Optional[str]): Filter by visibility (private, team, public).
+        gateway_id (Optional[str]): Filter by specific gateway ID.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -4542,6 +4544,7 @@ async def list_resources(
         tags=tags_list,
         user_email=user_email,
         team_id=team_id,
+        gateway_id=gateway_id,
         visibility=visibility,
         token_teams=token_teams,
     )
@@ -4977,6 +4980,7 @@ async def list_prompts(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -4991,6 +4995,7 @@ async def list_prompts(
         include_inactive: Include inactive prompts.
         tags: Comma-separated list of tags to filter by.
         team_id: Filter by specific team ID.
+        gateway_id (Optional[str]): Filter by specific gateway ID.
         visibility: Filter by visibility (private, team, public).
         db: Database session.
         user: Authenticated user.
@@ -5040,6 +5045,7 @@ async def list_prompts(
         tags=tags_list,
         user_email=user_email,
         team_id=team_id,
+        gateway_id=gateway_id,
         visibility=visibility,
         token_teams=token_teams,
     )

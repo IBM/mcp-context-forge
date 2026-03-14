@@ -1889,6 +1889,8 @@ class ResourceRead(BaseModelWithConfigDict):
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
 
+    gateway_id: Optional[str] = Field(None)
+
     # MCP protocol fields
     title: Optional[str] = Field(None, description="Human-readable title for the resource")
     annotations: Optional[Annotations] = Field(None, description="Optional annotations for client rendering hints")
@@ -2478,6 +2480,8 @@ class PromptRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+
+    gateway_id: Optional[str] = Field(None)
 
     # MCP protocol fields
     title: Optional[str] = Field(None, description="Human-readable title for the prompt")
