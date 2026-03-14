@@ -1,0 +1,10 @@
+[package]
+name = "contextforge_benchmark_console"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[dependencies]
+crossterm = "0.28.1"
+ratatui = "0.29.0"
+shlex = "1.3.0"

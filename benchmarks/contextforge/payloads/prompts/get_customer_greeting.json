@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "prompts/get",
+  "params": {
+    "name": "fast-time-schedule-meeting",
+    "arguments": {
+      "participants": "New York,London,Tokyo",
+      "duration": "60",
+      "preferred_hours": "09:00-17:00",
+      "date_range": "next-week"
+    }
+  }
+}

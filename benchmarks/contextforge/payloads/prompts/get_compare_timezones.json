@@ -3,7 +3,7 @@
   "id": 1,
   "method": "prompts/get",
   "params": {
-    "name": "compare_timezones",
+    "name": "fast-time-compare-timezones",
     "arguments": {
       "timezones": "America/New_York,Europe/London,Asia/Tokyo"
     }

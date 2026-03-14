@@ -1,0 +1,117 @@
+[suite]
+name = "benchmark-gunicorn-a2a-invoke-compare"
+description = "Gunicorn benchmark suite comparing Python and Rust A2A invoke performance on the 1624_rewrite_a2a_rust branch"
+output_root = "reports/benchmarks"
+continue_on_failure = false
+save_intermediate_artifacts = true
+flamegraph_enabled = false
+
+[defaults.setup]
+target_kind = "gateway"
+auth_mode = "jwt"
+plugins_enabled = false
+
+[defaults.build]
+rust_plugins = false
+profiling_image = false
+container_file = "benchmarks/contextforge/Containerfile"
+image_name = "mcpgateway/mcpgateway"
+image_tag = "benchmark-suite-a2a"
+rebuild_policy = "missing"
+repo_url = "https://github.com/IBM/mcp-context-forge"
+git_ref = "1624_rewrite_a2a_rust"
+
+[defaults.runtime]
+http_server = "gunicorn"
+host = "127.0.0.1"
+transport_type = "streamablehttp"
+
+[defaults.runtime.gunicorn]
+workers = 12
+timeout = 30
+graceful_timeout = 30
+keep_alive = 10
+max_requests = 0
+max_requests_jitter = 0
+backlog = 16384
+preload_app = true
+dev_mode = false
+
+[defaults.gateway]
+disable_access_log = true
+templates_auto_reload = false
+structured_logging_database_enabled = false
+sqlalchemy_echo = false
+log_level = "ERROR"
+
+[defaults.load]
+locustfile = "benchmarks/contextforge/locust/locustfile_benchmark_ab.py"
+user_class = ""
+headless = true
+only_summary = true
+html_report = false
+users = 300
+spawn_rate = 60
+run_time = "180s"
+target_service = "nginx"
+extra_args = ["--reset-stats"]
+
+[defaults.load.workload]
+fallback_endpoint = "/a2a/a2a-echo-agent/invoke"
+
+[defaults.load.workload.endpoints."/health"]
+enabled = false
+
+[defaults.load.workload.endpoints."/servers"]
+enabled = false
+
+[defaults.load.workload.endpoints."/a2a"]
+enabled = false
+
+[defaults.load.workload.endpoints."/a2a/a2a-echo-agent/invoke"]
+enabled = true
+weight = 1
+
+[defaults.measurement]
+warmup_seconds = 30
+measure_seconds = 120
+profile_seconds = 0
+cooldown_seconds = 30
+
+[defaults.profiling]
+enabled = false
+tools = []
+py_spy = false
+duration_seconds = 0
+required = false
+
+[defaults.execution]
+retry_enabled = true
+max_attempts = 2
+capture_logs = true
+save_raw_results = true
+reuse_stack = true
+
+[[scenario]]
+name = "gunicorn-a2a-invoke-python"
+description = "Python A2A invoke baseline on the Rust A2A branch without the gateway_rs extension in the benchmark image"
+scenario_type = "a2a_invoke_baseline"
+
+[scenario.setup]
+expected_a2a_runtime = "python"
+
+[scenario.build]
+rust_plugins = false
+image_tag = "benchmark-suite-a2a-python"
+
+[[scenario]]
+name = "gunicorn-a2a-invoke-rust"
+description = "Rust A2A invoke comparison on the same branch with the gateway_rs extension installed in the benchmark image"
+scenario_type = "a2a_invoke_compare"
+
+[scenario.setup]
+expected_a2a_runtime = "rust"
+
+[scenario.build]
+rust_plugins = true
+image_tag = "benchmark-suite-a2a-rust"
