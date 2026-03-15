@@ -139,10 +139,11 @@ Likely area:
 Recommended next step:
 - Add targeted instrumentation around `_ensure_admin_logged_in(...)` and capture redirect/response traces when JWT-cookie login falls back to `/admin/login`.
 
-### 5a. Rust full-mode plugin parity still needs a dedicated release gate
+### 5a. Prompt/plugin deny-path parity is still follow-up work
 
 Status:
-- Important Rust-specific compatibility follow-up
+- Important compatibility follow-up, but no longer a prompt happy-path release
+  blocker
 
 Observed behavior:
 - The compose testing stack enables the plugin framework with `PLUGINS_ENABLED=true`.
@@ -169,8 +170,11 @@ Why this matters:
 - We now have a stable automated parity gate for:
   - `resources/read` + `LicenseHeaderInjector`
   - `tools/call` + `ToolOutputSentinelPlugin`
-- `prompts/get` is not yet a good release gate because the Python deny-path response shape is noisy.
-- We still do not have broader parity proof for prompt hooks or more complex tool/resource plugin families.
+  - `prompts/get` + `PromptOutputSentinelPlugin`
+- We also have a Rust-only regression guard that invalid prompt argument shapes
+  return a structured MCP error instead of a Rust-side decode failure.
+- The remaining prompt follow-up is the plugin deny-path, not the normal
+  `prompts/get` happy path.
 
 Likely area:
 - [tool_service.py](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/services/tool_service.py)
@@ -181,7 +185,7 @@ Likely area:
 Recommended next step:
 - Keep `make test-mcp-plugin-parity` green in both Python mode and Rust full mode using `tests/e2e/plugin_parity_config.yaml`.
 - Follow-up gates:
-  - `prompts/get` after the Python-side blocked-prompt response shape is cleaned up
+  - blocked `prompts/get` parity after the Python-side prompt deny-path response shape is cleaned up
   - additional plugin families if Rust fast paths expand beyond the current resource/tool parity probes
 
 ### 6. Circuit breaker unit test timing flake

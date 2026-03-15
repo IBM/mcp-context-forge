@@ -396,6 +396,56 @@ class TestPromptService:
         assert msg.content.text == "Hello, Alice!"
 
     @pytest.mark.asyncio
+    async def test_get_prompt_gateway_backed_blank_template_fetches_remote_result(self, prompt_service, test_db):
+        """Gateway-backed prompts without local templates should execute upstream."""
+        gateway = MagicMock()
+        gateway.id = "gw-1"
+        gateway.url = "http://gateway.example.com/mcp"
+        gateway.transport = "streamable_http"
+
+        db_prompt = _build_db_prompt(
+            name="fast-time-convert-time-detailed",
+            template="",
+            desc="Convert time with detailed context",
+        )
+        db_prompt.original_name = "convert_time_detailed"
+        db_prompt.gateway_id = gateway.id
+        db_prompt.gateway = gateway
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
+        test_db.commit = Mock()
+
+        remote_result = PromptResult(
+            messages=[
+                Message(
+                    role=Role.USER,
+                    content=TextContent(
+                        type="text",
+                        text="Rendered prompt for America/New_York and Europe/Dublin",
+                    ),
+                )
+            ],
+            description="Convert time with detailed context",
+        )
+        prompt_service._fetch_gateway_prompt_result = AsyncMock(return_value=remote_result)
+
+        result = await prompt_service.get_prompt(
+            test_db,
+            db_prompt.name,
+            {"from_timezone": "UTC", "to_timezones": "America/New_York,Europe/Dublin"},
+            user="user@test.com",
+        )
+
+        prompt_service._fetch_gateway_prompt_result.assert_awaited_once_with(
+            db_prompt,
+            {"from_timezone": "UTC", "to_timezones": "America/New_York,Europe/Dublin"},
+            "user@test.com",
+        )
+        test_db.commit.assert_called_once()
+        assert result.description == "Convert time with detailed context"
+        assert result.messages[0].content.text == "Rendered prompt for America/New_York and Europe/Dublin"
+
+    @pytest.mark.asyncio
     async def test_get_prompt_by_name(self, prompt_service, test_db):
         """Prompt lookup falls back to name when ID lookup misses."""
         db_prompt = _build_db_prompt(template="Hello!")

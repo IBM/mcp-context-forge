@@ -63,8 +63,14 @@ Rules:
 - [ ] `make test-mcp-cli`
 - [ ] `make test-mcp-rbac`
 - [ ] `make test-mcp-access-matrix`
+- [ ] `make 2025-11-25-core`
+- [ ] `make 2025-11-25-auth`
+- [ ] `make testing-down`
 - [ ] `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-up`
 - [ ] `MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=python make test-mcp-plugin-parity`
+- [ ] Confirm Python plugin parity covers `resources/read`, `tools/call`, and `prompts/get`
+- [ ] `make testing-down`
+- [ ] `make testing-up`
 - [ ] Perform one manual `/mcp` tool call and confirm `x-contextforge-mcp-runtime: python`
 - [ ] Perform one freshness check against `fast-time-get-system-time`
 
@@ -77,6 +83,8 @@ Rules:
 - [ ] `make test-mcp-cli`
 - [ ] `make test-mcp-rbac`
 - [ ] `make test-mcp-access-matrix`
+- [ ] `make 2025-11-25-core`
+- [ ] `make 2025-11-25-auth`
 
 ## 7. Rust Edge Validation
 
@@ -88,6 +96,8 @@ Rules:
 - [ ] `make test-mcp-cli`
 - [ ] `make test-mcp-rbac`
 - [ ] `make test-mcp-access-matrix`
+- [ ] `make 2025-11-25-core`
+- [ ] `make 2025-11-25-auth`
 
 ## 8. Rust Full Validation
 
@@ -101,8 +111,14 @@ Rules:
 - [ ] `make test-mcp-access-matrix`
 - [ ] `make test-mcp-session-isolation`
 - [ ] `make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s`
+- [ ] `make 2025-11-25-core`
+- [ ] `make 2025-11-25-auth`
 - [ ] `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-rebuild-rust-full`
 - [ ] `MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=rust make test-mcp-plugin-parity`
+- [ ] Confirm Rust plugin parity covers `resources/read`, `tools/call`, and `prompts/get`
+- [ ] `make testing-rebuild-rust-full`
+- [ ] `uv run pytest tests/e2e_rust/test_mcp_access_matrix.py -q -k 'invalid_arguments_return_structured_error'`
+- [ ] Confirm malformed `prompts/get` arguments return MCP `-32602` on the Rust public path instead of an opaque backend decode failure
 - [ ] `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
 - [ ] Perform one manual `/mcp` tool call and confirm `x-contextforge-mcp-runtime: rust`
 - [ ] Perform one manual freshness check against `fast-time-get-system-time`
@@ -146,6 +162,11 @@ support beyond local non-TLS compose testing.
 - [ ] Record Python baseline tools-only benchmark numbers for comparison
 - [ ] Record Rust full tools-only benchmark numbers for comparison
 
+## 11a. Optional MCP Compliance Artifacts
+
+- [ ] `make 2025-11-25-report`
+- [ ] Review generated artifacts under `artifacts/mcp-2025-11-25/`
+
 ## 12. Profiling
 
 - [ ] `make -C tools_rust/mcp_runtime setup-profiling`
@@ -154,10 +175,74 @@ support beyond local non-TLS compose testing.
 - [ ] Review artifacts under `tools_rust/mcp_runtime/profiles/`
 - [ ] Confirm any performance-sensitive change has a profiling note or rationale
 
-## 13. Security / Correctness Review
+## 13. SonarQube Static Analysis
+
+Run a full SonarQube scan with Clippy enabled against the Rust runtime.
+See `todo/sonar-rust.md` for detailed reproduction steps and prior findings.
+
+```bash
+# Start SonarQube and fix ES disk watermarks
+make sonar-up-docker
+docker exec mcp-context-forge-sonarqube-1 bash -c \
+  'wget -q -O- --method=PUT \
+    --body-data="{\"persistent\":{\"cluster.routing.allocation.disk.watermark.flood_stage\":\"99%\",\"cluster.routing.allocation.disk.watermark.high\":\"98%\",\"cluster.routing.allocation.disk.watermark.low\":\"97%\"}}" \
+    --header="Content-Type: application/json" "http://localhost:9001/_cluster/settings"'
+docker exec mcp-context-forge-sonarqube-1 bash -c \
+  'wget -q -O- --method=PUT \
+    --body-data="{\"index.blocks.read_only_allow_delete\": null}" \
+    --header="Content-Type: application/json" "http://localhost:9001/_all/_settings"'
+
+# Build the Rust-enabled scanner image (one-time)
+docker build -t sonar-scanner-rust:latest -f- /tmp <<'DOCKERFILE'
+FROM docker.io/sonarsource/sonar-scanner-cli:latest
+USER root
+RUN dnf install -y gcc make openssl-devel pkgconfig git && dnf clean all
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
+ENV PATH="/usr/local/cargo/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable --profile minimal --component clippy
+RUN chmod -R a+rwX /usr/local/cargo /usr/local/rustup
+USER scanner-cli
+DOCKERFILE
+
+# Create project and token (skip if already exists)
+curl -s -u admin:admin -X POST \
+  "http://localhost:9000/api/projects/create?name=mcp-runtime-rust&project=mcp-runtime-rust"
+TOKEN=$(curl -s -u admin:admin -X POST \
+  "http://localhost:9000/api/user_tokens/generate?name=scan-$(date +%s)" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
+
+# Run the scan
+docker run --rm \
+  --network mcp-context-forge_sonarnet \
+  -v "$PWD/tools_rust/mcp_runtime:/usr/src:ro" \
+  -e SONAR_HOST_URL="http://sonarqube:9000" \
+  -e SONAR_TOKEN="$TOKEN" \
+  -e CARGO_TARGET_DIR="/tmp/cargo-target" \
+  sonar-scanner-rust:latest \
+  -Dsonar.projectKey=mcp-runtime-rust \
+  -Dsonar.sources=src \
+  -Dsonar.tests=tests \
+  -Dsonar.exclusions="**/target/**,**/*.lock" \
+  -Dsonar.scm.disabled=true
+
+# View results
+echo "Dashboard: http://localhost:9000/dashboard?id=mcp-runtime-rust"
+```
+
+- [ ] SonarQube quality gate passes (status: OK)
+- [ ] No new bugs or vulnerabilities introduced
+- [ ] No new security hotspots
+- [ ] Clippy sensor ran successfully (check scanner output for `Sensor Clippy [rust] (done)` without `ERROR Failed to run Clippy`)
+- [ ] Cognitive complexity issues are not worse than the baseline in `todo/sonar-rust.md`
+- [ ] Duplication percentage is not significantly worse than baseline (13.2% as of 2026-03-15)
+- [ ] Review any new findings against `todo/sonar-rust.md` and note regressions
+
+## 14. Security / Correctness Review
 
 - [ ] Review `todo/code-review.md`
 - [ ] Review `todo/findings.md`
+- [ ] Review `todo/sonar-rust.md`
 - [ ] Review `tools_rust/mcp_runtime/STATUS.md`
 - [ ] Confirm remaining open items are documented and acceptable for release
 - [ ] Recheck that direct public Rust ingress strips internal-only headers
@@ -165,7 +250,7 @@ support beyond local non-TLS compose testing.
 - [ ] Recheck that error responses do not leak internal transport details on the Rust path
 - [ ] Review Rust `/health` `runtime_stats` and confirm reuse/fallback/denial counters look sane during the validation run
 
-## 14. Docs And Release Docs
+## 15. Docs And Release Docs
 
 - [ ] Review `tools_rust/mcp_runtime/README.md`
 - [ ] Review `tools_rust/mcp_runtime/STATUS.md`
@@ -178,7 +263,7 @@ support beyond local non-TLS compose testing.
 - [ ] Review `docs/docs/development/profiling.md`
 - [ ] `cd docs && make build`
 
-## 15. Final Release Notes
+## 16. Final Release Notes
 
 - [ ] Record final Python baseline MCP result summary
 - [ ] Record final Rust full MCP result summary

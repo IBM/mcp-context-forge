@@ -3058,7 +3058,7 @@ async fn resources_subscribe_uses_specialized_internal_endpoint() {
     let runtime_url = spawn_router(runtime).await;
 
     let response = reqwest::Client::new()
-        .post(format!("{runtime_url}/mcp"))
+        .post(format!("{runtime_url}/servers/server-1/mcp"))
         .header("authorization", "Bearer test-token")
         .json(&json!({
             "jsonrpc": "2.0",
@@ -3409,6 +3409,86 @@ async fn prompts_get_uses_specialized_internal_endpoint() {
     let body: Value = response.json().await.expect("json body");
     assert_eq!(body["result"]["name"], "prompt-one");
     assert_eq!(*prompts_get_calls.lock().expect("lock"), 1);
+    assert_eq!(*rpc_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
+async fn prompts_get_rejects_non_string_argument_values_before_backend_dispatch() {
+    let rpc_calls = Arc::new(Mutex::new(0usize));
+    let prompts_get_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let rpc_calls = rpc_calls.clone();
+        let prompts_get_calls = prompts_get_calls.clone();
+        Router::new()
+            .route(
+                "/rpc",
+                post(move || {
+                    let rpc_calls = rpc_calls.clone();
+                    async move {
+                        *rpc_calls.lock().expect("lock") += 1;
+                        Json(json!({"jsonrpc":"2.0","id":"unexpected-rpc-path","result":{}}))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/prompts/get",
+                post(move || {
+                    let prompts_get_calls = prompts_get_calls.clone();
+                    async move {
+                        *prompts_get_calls.lock().expect("lock") += 1;
+                        Json(json!({"unexpected": true}))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 17,
+            "method": "prompts/get",
+            "params": {
+                "name": "prompt-one",
+                "arguments": {
+                    "target_timezones": ["America/New_York", "Europe/Dublin"]
+                }
+            }
+        }))
+        .send()
+        .await
+        .expect("prompts/get response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["error"]["code"], -32602);
+    assert_eq!(
+        body["error"]["message"],
+        "Prompt argument 'target_timezones' must be a string value"
+    );
+    assert_eq!(*prompts_get_calls.lock().expect("lock"), 0);
     assert_eq!(*rpc_calls.lock().expect("lock"), 0);
 }
 

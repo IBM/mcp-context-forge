@@ -118,6 +118,11 @@ PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-rebuild-rust-
 MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=rust make test-mcp-plugin-parity
 ```
 
+This parity gate currently proves live plugin behavior on:
+- `resources/read`
+- `tools/call`
+- `prompts/get`
+
 For revocation and membership/role-drift validation, shorten the reuse TTL so
 the bounded-TTL contract completes quickly:
 

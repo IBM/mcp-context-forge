@@ -156,8 +156,8 @@ Expected outcome:
 - `make test-mcp-access-matrix` passes and verifies scoped-user access with
   strong tool/resource/prompt sentinels
 - `make test-mcp-plugin-parity` passes with the Python runtime header and proves
-  active `resource_post_fetch` / `tool_post_invoke` behavior on the public MCP
-  path
+  active `resource_post_fetch`, `tool_post_invoke`, and `prompt_post_fetch`
+  behavior on the public MCP path
 
 ### Rust Shadow
 
@@ -215,8 +215,8 @@ Expected outcome:
 - `make test-mcp-session-isolation-load` validates owner traffic and hijack
   denial under concurrent Locust load
 - `make test-mcp-plugin-parity` passes with the Rust runtime header and proves
-  the live plugin hooks still affect public MCP `resources/read` and
-  `tools/call`
+  the live plugin hooks still affect public MCP `resources/read`,
+  `tools/call`, and `prompts/get`
 - release Rust tests pass
 
 For revocation and membership/role-drift changes, validate with a short reuse

@@ -32,6 +32,7 @@ MCP_PROTOCOL_VERSION = "2025-11-25"
 PLUGIN_PARITY_PREFIX = "mcp-plugin-parity"
 RESOURCE_LICENSE_PREFIX = "# SPDX-License-Identifier: Apache-2.0"
 TOOL_OUTPUT_SENTINEL = "[TOOL-POST-INVOKE-SENTINEL]"
+PROMPT_OUTPUT_SENTINEL = "[PROMPT-POST-FETCH-SENTINEL]"
 EXPECTED_RUNTIME = os.getenv("MCP_PLUGIN_PARITY_EXPECTED_RUNTIME")
 
 
@@ -237,8 +238,10 @@ def plugin_parity_server(admin_client: httpx.Client) -> Generator[dict[str, str]
 
     tools = _request_json(admin_client, "GET", "/tools")
     resources = _request_json(admin_client, "GET", "/resources")
+    prompts = _request_json(admin_client, "GET", "/prompts")
     time_tool = next(tool for tool in tools if tool["name"] == "fast-time-get-system-time")
     formats_resource = next(resource for resource in resources if resource["uri"] == "time://formats")
+    detailed_prompt = next(prompt for prompt in prompts if prompt["name"] == "fast-time-convert-time-detailed")
 
     server = _request_json(
         admin_client,
@@ -250,7 +253,7 @@ def plugin_parity_server(admin_client: httpx.Client) -> Generator[dict[str, str]
                 "description": "Plugin parity virtual server",
                 "associated_tools": [time_tool["id"]],
                 "associated_resources": [formats_resource["id"]],
-                "associated_prompts": [],
+                "associated_prompts": [detailed_prompt["id"]],
             },
             "team_id": team_id,
             "visibility": "team",
@@ -326,3 +329,41 @@ class TestMcpPluginParity:
         assert lines[-1] == TOOL_OUTPUT_SENTINEL, text
         parsed = datetime.fromisoformat(lines[0].replace("Z", "+00:00"))
         assert parsed.tzinfo is not None
+
+    def test_prompts_get_appends_sentinel(self, plugin_parity_server: dict[str, str]) -> None:
+        """`prompts/get` should still run `prompt_post_fetch` hooks.
+
+        Args:
+            plugin_parity_server: Provisioned server fixture.
+        """
+        with httpx.Client(base_url=BASE_URL, timeout=20.0) as client:
+            session_id = _initialize_session(client, server_id=plugin_parity_server["server_id"], token=plugin_parity_server["token"])
+            result = _extract_result(
+                _mcp_post(
+                    client,
+                    server_id=plugin_parity_server["server_id"],
+                    token=plugin_parity_server["token"],
+                    session_id=session_id,
+                    method="prompts/get",
+                    params={
+                        "name": "fast-time-convert-time-detailed",
+                        "arguments": {
+                            "time": "2025-01-15T12:00:00Z",
+                            "from_timezone": "UTC",
+                            "to_timezones": "America/New_York,Europe/Dublin",
+                            "include_context": "true",
+                        },
+                    },
+                    request_id=4,
+                )
+            )
+
+        assert result["description"] == "Detailed time conversion"
+        messages = result.get("messages", [])
+        assert len(messages) == 1, messages
+        text = messages[0]["content"]["text"]
+        assert isinstance(text, str) and text, result
+        lines = text.splitlines()
+        assert lines[-1] == PROMPT_OUTPUT_SENTINEL, text
+        assert "America/New_York" in text, text
+        assert "Europe/Dublin" in text, text

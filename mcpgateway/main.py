@@ -2971,7 +2971,10 @@ def get_db():
                 pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass  # nosec B110 - Best effort cleanup on already-failed prompt bridge sessions
 
 
 async def _read_request_json(request: Request) -> Any:
@@ -7240,6 +7243,7 @@ async def handle_internal_mcp_resources_read(request: Request):
             plugin_global_context=plugin_global_context,
             meta_data=meta_data,
         )
+        # First-Party
         from mcpgateway.common.models import ResourceContent  # pylint: disable=import-outside-toplevel
 
         if isinstance(result, ResourceContent):
@@ -8071,6 +8075,23 @@ async def handle_internal_mcp_prompts_get(request: Request):
             status_code=404,
             content={
                 "code": -32002,
+                "message": str(exc),
+                "data": {"name": name} if name else None,
+            },
+        )
+    except PromptError as exc:
+        try:
+            if db.is_active and db.in_transaction() is not None:
+                db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        return ORJSONResponse(
+            status_code=422,
+            content={
+                "code": -32000,
                 "message": str(exc),
                 "data": {"name": name} if name else None,
             },

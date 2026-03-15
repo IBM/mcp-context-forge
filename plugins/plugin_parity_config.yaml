@@ -31,6 +31,22 @@ plugins:
       separator: "\n"
       append_to_all_text_blocks: false
 
+  - name: "PromptOutputSentinelPlugin"
+    kind: "plugins.test_prompt_output_sentinel.PromptOutputSentinelPlugin"
+    description: "Appends a deterministic sentinel to prompt results for MCP parity tests."
+    version: "0.1"
+    author: "ContextForge Team"
+    hooks: ["prompt_post_fetch"]
+    tags: ["plugin", "prompt", "parity", "test"]
+    mode: "enforce"
+    priority: 120
+    conditions:
+      - prompts: ["fast-time-convert-time-detailed"]
+    config:
+      sentinel_text: "[PROMPT-POST-FETCH-SENTINEL]"
+      separator: "\n"
+      append_to_all_messages: false
+
 plugin_settings:
   parallel_execution_within_band: true
   plugin_timeout: 30

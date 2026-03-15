@@ -218,6 +218,14 @@ def _extract_result(response: httpx.Response) -> dict[str, Any]:
     return payload["result"]
 
 
+def _extract_error(response: httpx.Response, *, expected_status: int) -> dict[str, Any]:
+    """Return the JSON-RPC error payload from a failed response."""
+    assert response.status_code == expected_status, response.text
+    payload = response.json()
+    assert "error" in payload, payload
+    return payload["error"]
+
+
 def _assert_access_denied(response: httpx.Response) -> None:
     """Assert the MCP request was denied without leaking resource data."""
     assert response.status_code == 200, response.text
@@ -283,13 +291,17 @@ def _assert_formats_resource(result: dict[str, Any]) -> None:
 
 def _assert_prompt_get(result: dict[str, Any]) -> None:
     """Assert prompt retrieval returns the expected structured prompt shape."""
-    assert result["description"] == "Convert time with detailed context"
+    assert result["description"] == "Detailed time conversion"
     messages = result.get("messages", [])
     assert len(messages) == 1, messages
     message = messages[0]
     assert message["role"] == "user"
     assert message["content"]["type"] == "text"
-    assert isinstance(message["content"]["text"], str)
+    text = message["content"]["text"]
+    assert isinstance(text, str)
+    assert text.strip(), result
+    assert "America/New_York" in text, text
+    assert "Europe/Dublin" in text, text
 
 
 def _assert_tool_call_success(result: dict[str, Any]) -> None:
@@ -458,6 +470,37 @@ class TestMcpAccessMatrix:
                     )
                 )
             )
+
+    def test_admin_prompt_invalid_arguments_return_structured_error(self, access_matrix_env: dict[str, Any]) -> None:
+        """Prompt bridge errors should surface as MCP errors, not Rust decode failures."""
+        server_id = access_matrix_env["server_id"]
+        token = access_matrix_env["users"]["admin_scoped"]["access_token"]
+
+        with httpx.Client(base_url=BASE_URL, timeout=20.0) as client:
+            session_id = _initialize_session(client, server_id=server_id, token=token)
+            error = _extract_error(
+                _mcp_post(
+                    client,
+                    server_id=server_id,
+                    token=token,
+                    session_id=session_id,
+                    method="prompts/get",
+                    params={
+                        "name": "fast-time-convert-time-detailed",
+                        "arguments": {
+                            "time": "2025-01-15T12:00:00Z",
+                            "source_timezone": "UTC",
+                            "target_timezones": ["America/New_York", "Europe/Dublin"],
+                        },
+                    },
+                    request_id=8,
+                ),
+                expected_status=200,
+            )
+
+        assert error["code"] == -32602
+        assert "decode failed" not in error["message"].lower()
+        assert error["message"] == "Prompt argument 'target_timezones' must be a string value"
 
     def test_non_admin_read_only_token_has_read_access_with_strong_sentinels(self, access_matrix_env: dict[str, Any]) -> None:
         """Non-admin read-only token should initialize and verify tools/resources/prompts output shapes."""

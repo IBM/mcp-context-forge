@@ -31,7 +31,7 @@ use reqwest::{Client, Url};
 use reqwest_rmcp::Client as RmcpReqwestClient;
 use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, hash_map::DefaultHasher},
@@ -51,7 +51,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio_postgres::config::SslMode;
 use tokio_postgres_rustls::MakeRustlsConnect;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 #[cfg(feature = "rmcp-upstream-client")]
@@ -1568,6 +1568,13 @@ async fn rpc_inner(
         && can_use_direct_prompts_get(&request.params);
     let mut effective_headers = headers.clone();
 
+    if specialized_prompts_get
+        && let Some(params) = request.params.as_object()
+        && let Err(response) = validate_prompt_get_arguments(params, request.id.as_ref())
+    {
+        return response;
+    }
+
     if state.session_core_enabled() {
         if specialized_initialize {
             return handle_initialize_with_session_core(
@@ -2561,6 +2568,48 @@ fn validate_initialize_params(
                 },
             }),
         ));
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_prompt_get_arguments(
+    params: &Map<String, Value>,
+    request_id: Option<&Value>,
+) -> Result<(), Response> {
+    let Some(arguments) = params.get("arguments") else {
+        return Ok(());
+    };
+
+    let Some(arguments_object) = arguments.as_object() else {
+        return Err(json_response(
+            StatusCode::OK,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id.cloned(),
+                "error": {
+                    "code": -32602,
+                    "message": "Prompt arguments must be an object with string values",
+                },
+            }),
+        ));
+    };
+
+    for (key, value) in arguments_object {
+        if !value.is_string() {
+            return Err(json_response(
+                StatusCode::OK,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request_id.cloned(),
+                    "error": {
+                        "code": -32602,
+                        "message": format!("Prompt argument '{key}' must be a string value"),
+                    },
+                }),
+            ));
+        }
     }
 
     Ok(())
@@ -4744,31 +4793,26 @@ async fn direct_server_prompts_get(
     request: &JsonRpcRequest,
     body: Bytes,
 ) -> Response {
-    // `prompts/get` also uses a conservative direct path. Rust handles the
-    // straightforward stored-template case and falls back when the request
-    // shape or backing data requires Python's broader compatibility logic.
-    let server_id = incoming_headers
-        .get("x-contextforge-server-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
-    let auth_context = decode_internal_auth_context_from_headers(&incoming_headers);
-
-    let (Some(server_id), Ok(auth_context)) = (server_id, auth_context) else {
-        warn!(
-            "Rust MCP direct prompts/get missing trusted context; falling back to Python dispatcher"
-        );
+    // Prompt execution depends on Python-owned rendering and plugin hooks for
+    // gateway-backed prompts. The Rust runtime still short-circuits authz to
+    // avoid unnecessary backend work on obvious deny paths, but all successful
+    // `prompts/get` requests are delegated to Python for authoritative
+    // rendering/normalization.
+    let Some(params) = request.params.as_object() else {
         return forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await;
     };
 
-    let Some(name) = request
-        .params
-        .as_object()
-        .and_then(|params| params.get("name"))
+    let Some(name) = params
+        .get("name")
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
     else {
         return forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await;
     };
+
+    if let Err(response) = validate_prompt_get_arguments(params, request_id.as_ref()) {
+        return response;
+    }
 
     if let Err(response) = authorize_server_method_via_backend(
         state,
@@ -4782,37 +4826,10 @@ async fn direct_server_prompts_get(
         return response;
     }
 
-    match query_server_prompt_get_from_db(state, &server_id, &auth_context, name).await {
-        Ok(Some(result)) => json_response(
-            StatusCode::OK,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": request_id,
-                "result": result,
-            }),
-        ),
-        Ok(None) => json_response(
-            StatusCode::NOT_FOUND,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": request_id,
-                "error": {
-                    "code": -32002,
-                    "message": format!("Prompt not found: {name}"),
-                    "data": {"name": name},
-                },
-            }),
-        ),
-        Err(RuntimeError::Config(reason)) if reason == "fallback-python" => {
-            forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await
-        }
-        Err(err) => {
-            error!(
-                "Rust MCP direct prompts/get DB query failed: {err}; falling back to Python dispatcher"
-            );
-            forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await
-        }
-    }
+    debug!(
+        "Rust MCP direct prompts/get delegated to Python dispatcher for prompt '{name}'"
+    );
+    forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await
 }
 
 async fn query_server_resources_list_from_db(
@@ -5071,6 +5088,7 @@ async fn query_server_resource_read_from_db(
     Err(RuntimeError::Config("fallback-python".to_string()))
 }
 
+#[allow(dead_code)]
 async fn query_server_prompt_get_from_db(
     state: &AppState,
     server_id: &str,
@@ -9623,6 +9641,100 @@ mod unit_tests {
         assert_eq!(
             response_json(prompts_response).await["result"]["marker"],
             "prompts-get"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_server_prompts_get_falls_back_when_arguments_are_supplied() {
+        let backend = Router::new()
+            .route(
+                "/_internal/mcp/prompts/get/authz",
+                post(|| async { StatusCode::OK }),
+            )
+            .route(
+                "/_internal/mcp/prompts/get",
+                post(|| async {
+                    Json(json!({
+                        "description": "rendered",
+                        "messages": [{
+                            "role": "user",
+                            "content": {
+                                "type": "text",
+                                "text": "Rendered prompt for America/New_York and Europe/Dublin"
+                            }
+                        }]
+                    }))
+                }),
+            );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        let state = AppState::new(&config).expect("state");
+
+        let response = direct_server_prompts_get(
+            &state,
+            trusted_server_headers("server-1"),
+            Some(json!(31)),
+            &JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                method: "prompts/get".to_string(),
+                params: json!({
+                    "name": "fast-time-convert-time-detailed",
+                    "arguments": {
+                        "time": "2025-01-15T12:00:00Z",
+                        "from_timezone": "UTC",
+                        "to_timezones": "America/New_York,Europe/Dublin",
+                    }
+                }),
+                id: Some(json!(31)),
+            },
+            Bytes::from_static(
+                br#"{"jsonrpc":"2.0","id":31,"method":"prompts/get","params":{"name":"fast-time-convert-time-detailed","arguments":{"time":"2025-01-15T12:00:00Z","from_timezone":"UTC","to_timezones":"America/New_York,Europe/Dublin"}}}"#,
+            ),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = response_json(response).await;
+        assert_eq!(payload["result"]["description"], "rendered");
+        assert_eq!(
+            payload["result"]["messages"][0]["content"]["text"],
+            "Rendered prompt for America/New_York and Europe/Dublin"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_server_prompts_get_rejects_non_string_argument_values() {
+        let state = AppState::new(&test_config()).expect("state");
+
+        let response = direct_server_prompts_get(
+            &state,
+            trusted_server_headers("server-1"),
+            Some(json!(32)),
+            &JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                method: "prompts/get".to_string(),
+                params: json!({
+                    "name": "fast-time-convert-time-detailed",
+                    "arguments": {
+                        "target_timezones": ["America/New_York", "Europe/Dublin"]
+                    }
+                }),
+                id: Some(json!(32)),
+            },
+            Bytes::from_static(
+                br#"{"jsonrpc":"2.0","id":32,"method":"prompts/get","params":{"name":"fast-time-convert-time-detailed","arguments":{"target_timezones":["America/New_York","Europe/Dublin"]}}}"#,
+            ),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = response_json(response).await;
+        assert_eq!(payload["error"]["code"], -32602);
+        assert_eq!(
+            payload["error"]["message"],
+            "Prompt argument 'target_timezones' must be a string value"
         );
     }
 

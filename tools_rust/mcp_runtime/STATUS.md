@@ -1,6 +1,6 @@
 # Rust MCP Runtime Status
 
-Last updated: March 14, 2026
+Last updated: March 15, 2026
 
 ## Current snapshot
 
@@ -114,6 +114,12 @@ Most recent rebuilt full-Rust compose validation on this branch:
   - `23 passed`
 - `make test-mcp-rbac`
   - `40 passed`
+- `make test-mcp-plugin-parity`
+  - plugin-parity gate is green in both Python mode and Rust full mode
+  - live coverage now includes:
+    - `resources/read` with `LicenseHeaderInjector`
+    - `tools/call` with `TestToolOutputSentinelPlugin`
+    - `prompts/get` with `PromptOutputSentinelPlugin`
 - `make test-mcp-session-isolation`
   - `10 passed`
 - `make test-mcp-session-isolation-load`
@@ -208,6 +214,21 @@ See [TESTING-DESIGN.md](TESTING-DESIGN.md).
 The wider Playwright suite still has broader repo instability/flakiness. That
 should not be used as the primary signal for the MCP runtime slice unless the
 failure path actually exercises `/mcp`.
+
+### 5. Prompt deny-path parity is still follow-up work
+
+Prompt happy-path correctness is now covered and release-gated:
+
+- `prompts/get` succeeds on both Python mode and Rust full mode under the
+  plugin-parity stack
+- the prompt post-fetch sentinel plugin is exercised live in both modes
+- malformed prompt argument shapes now return a structured MCP `-32602` error
+  on the Rust public path instead of an opaque backend decode failure
+
+The remaining prompt caveat is narrower:
+
+- blocked `prompts/get` parity is still noisy on the Python side and remains
+  tracked as follow-up work rather than a Rust MCP correctness gap
 
 ## Code review follow-up
 

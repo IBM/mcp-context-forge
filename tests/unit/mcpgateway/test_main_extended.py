@@ -7092,7 +7092,7 @@ class TestRpcHandling:
         error_db.invalidate.assert_called_once()
 
     async def test_handle_internal_mcp_prompts_get_missing_name_and_not_found(self):
-        from mcpgateway.services.prompt_service import PromptNotFoundError
+        from mcpgateway.services.prompt_service import PromptError, PromptNotFoundError
 
         request_missing = self._make_request({"jsonrpc": "2.0", "id": "prompt-get", "method": "prompts/get", "params": []})
         request_missing.headers = {
@@ -7131,6 +7131,27 @@ class TestRpcHandling:
 
         assert response.status_code == 404
         assert json.loads(response.body.decode())["data"] == {"name": "missing"}
+
+        request_invalid = self._make_request({"jsonrpc": "2.0", "id": "prompt-get", "method": "prompts/get", "params": {"name": "broken"}})
+        request_invalid.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
+        }
+        request_invalid.client = SimpleNamespace(host="127.0.0.1")
+        request_invalid.state = MagicMock()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(side_effect=PromptError("bad prompt arguments"))),
+        ):
+            response = await handle_internal_mcp_prompts_get(request_invalid)
+
+        assert response.status_code == 422
+        body = json.loads(response.body.decode())
+        assert body["message"] == "bad prompt arguments"
+        assert body["data"] == {"name": "broken"}
 
     async def test_handle_internal_mcp_prompts_get_public_only_and_generic_cleanup_path(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "prompt-get-2", "method": "prompts/get", "params": {"name": "prompt-one"}})
