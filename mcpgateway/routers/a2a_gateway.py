@@ -17,6 +17,7 @@ The route prefix is configurable via A2A_GATEWAY_ROUTE_PREFIX (default: "a2a/age
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -54,6 +55,9 @@ router = APIRouter(prefix=f"/{_route_prefix}", tags=["A2A Gateway"])
 # Service singletons
 _gateway_service = A2AGatewayService()
 _client_service = A2AClientService()
+
+# Semaphore to enforce max concurrent SSE streams
+_stream_semaphore = asyncio.Semaphore(settings.a2a_gateway_max_concurrent_streams)
 
 
 def get_db():
@@ -154,11 +158,13 @@ def _get_base_url(request: Request) -> str:
 
 
 # A2A protocol headers that should always be forwarded to the downstream agent
-_A2A_PROTOCOL_HEADERS = frozenset({
-    "a2a-version",
-    "x-a2a-extensions",
-    "accept",
-})
+_A2A_PROTOCOL_HEADERS = frozenset(
+    {
+        "a2a-version",
+        "x-a2a-extensions",
+        "accept",
+    }
+)
 
 
 def _extract_forwarded_headers(request: Request, agent_passthrough_headers: Optional[List[str]] = None) -> Dict[str, str]:
@@ -309,10 +315,11 @@ async def jsonrpc_endpoint(
 
     Supported methods:
         - message/send: Send a message (non-streaming)
-        - message/stream: Send a message (streaming SSE) [Phase 2]
+        - message/stream: Send a message (streaming SSE)
         - tasks/get: Get task by ID
+        - tasks/list: List tasks with filtering and pagination
         - tasks/cancel: Cancel a task
-        - tasks/resubscribe: Resubscribe to task events [Phase 2]
+        - tasks/resubscribe: Resubscribe to task events
         - tasks/pushNotificationConfig/*: Push notification config management
         - agent/getAuthenticatedExtendedCard: Get extended agent card
 
@@ -399,11 +406,21 @@ async def jsonrpc_endpoint(
 
     # Streaming methods return SSE event streams
     if _gateway_service.is_streaming_method(method):
+        # Enforce max concurrent streams limit
+        if _stream_semaphore.locked():
+            from mcpgateway.services.a2a_gateway_service import A2A_UNSUPPORTED_OPERATION  # pylint: disable=import-outside-toplevel
+
+            return JSONResponse(
+                content=make_jsonrpc_error(A2A_UNSUPPORTED_OPERATION, "Too many concurrent streams, try again later", request_id),
+                status_code=200,
+            )
+
         a2a_gateway_streams_active.labels(agent_id=agent_id).inc()
 
         async def _stream_with_metrics():
             stream_start = datetime.now(timezone.utc)
             stream_success = False
+            await _stream_semaphore.acquire()
             try:
                 async for event in _client_service.stream_jsonrpc(
                     endpoint_url=endpoint_url,
@@ -423,6 +440,7 @@ async def jsonrpc_endpoint(
                 a2a_gateway_errors_counter.labels(agent_id=agent_id, error_type="stream_error").inc()
                 raise
             finally:
+                _stream_semaphore.release()
                 a2a_gateway_streams_active.labels(agent_id=agent_id).dec()
                 _record_gateway_db_metrics(agent_id, stream_start, stream_success, method, None if stream_success else "stream_error")
 

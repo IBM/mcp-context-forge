@@ -286,8 +286,11 @@ class A2AClientService:
 
                     async for event in event_source.aiter_sse():
                         event_count += 1
-                        # Forward the SSE event to the client
-                        if event.event:
+                        # Forward the SSE event to the client.
+                        # httpx_sse defaults event.event to "message" when no explicit
+                        # event: field was sent. Only include event: for non-default
+                        # types to avoid injecting headers the downstream didn't send.
+                        if event.event and event.event != "message":
                             yield f"event: {event.event}\ndata: {event.data}\n\n"
                         else:
                             yield f"data: {event.data}\n\n"

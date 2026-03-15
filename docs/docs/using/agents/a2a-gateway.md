@@ -19,34 +19,33 @@ A2A Client ──► ContextForge Gateway ──► Downstream A2A Agent
 
 ### Supported Methods
 
-| JSON-RPC Method | Type | Description |
-|----------------|------|-------------|
-| `message/send` | Non-streaming | Send a message, get a complete response |
-| `message/stream` | Streaming (SSE) | Send a message, receive events as they arrive |
-| `tasks/get` | Non-streaming | Get current task status by ID |
-| `tasks/cancel` | Non-streaming | Cancel a running task |
-| `tasks/resubscribe` | Streaming (SSE) | Re-subscribe to task events |
-| `tasks/pushNotificationConfig/set` | Non-streaming | Configure push notifications |
-| `tasks/pushNotificationConfig/get` | Non-streaming | Get push notification config |
-| `tasks/pushNotificationConfig/list` | Non-streaming | List push notification configs |
-| `tasks/pushNotificationConfig/delete` | Non-streaming | Delete push notification config |
-| `agent/getAuthenticatedExtendedCard` | Local | Get agent card (handled by gateway) |
+| JSON-RPC Method                       | Type            | Description                                   |
+| ------------------------------------- | --------------- | --------------------------------------------- |
+| `message/send`                        | Non-streaming   | Send a message, get a complete response       |
+| `message/stream`                      | Streaming (SSE) | Send a message, receive events as they arrive |
+| `tasks/get`                           | Non-streaming   | Get current task status by ID                 |
+| `tasks/list`                          | Non-streaming   | List tasks with filtering and pagination      |
+| `tasks/cancel`                        | Non-streaming   | Cancel a running task                         |
+| `tasks/resubscribe`                   | Streaming (SSE) | Re-subscribe to task events                   |
+| `tasks/pushNotificationConfig/set`    | Non-streaming   | Configure push notifications                  |
+| `tasks/pushNotificationConfig/get`    | Non-streaming   | Get push notification config                  |
+| `tasks/pushNotificationConfig/list`   | Non-streaming   | List push notification configs                |
+| `tasks/pushNotificationConfig/delete` | Non-streaming   | Delete push notification config               |
+| `agent/getAuthenticatedExtendedCard`  | Local           | Get agent card (handled by gateway)           |
 
 ### Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/{prefix}/{agent_id}` | POST | JSON-RPC 2.0 dispatcher — all methods routed from the request body |
-| `/{prefix}/{agent_id}/.well-known/agent-card.json` | GET | Agent Card discovery (A2A-spec compliant) |
+| Endpoint                                           | Method | Description                                                        |
+| -------------------------------------------------- | ------ | ------------------------------------------------------------------ |
+| `/{prefix}/{agent_id}`                             | POST   | JSON-RPC 2.0 dispatcher — all methods routed from the request body |
+| `/{prefix}/{agent_id}/.well-known/agent-card.json` | GET    | Agent Card discovery (A2A-spec compliant)                          |
 
 !!! note "Route Prefix"
-    The `{prefix}` defaults to `a2a/agent` and is configurable via the `A2A_GATEWAY_ROUTE_PREFIX` environment variable. The `{agent_id}` is the agent's database UUID (returned when registering the agent via the admin API).
+The `{prefix}` defaults to `a2a/agent` and is configurable via the `A2A_GATEWAY_ROUTE_PREFIX` environment variable. The `{agent_id}` is the agent's database UUID (returned when registering the agent via the admin API).
 
 ## Quick Start
 
-!!! tip "Base URL"
-    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
-    - Docker Compose (nginx proxy): `http://localhost:8080`
+!!! tip "Base URL" - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444` - Docker Compose (nginx proxy): `http://localhost:8080`
 
 ### 1. Enable the Gateway
 
@@ -92,24 +91,25 @@ curl "http://localhost:4444/a2a/agent/$AGENT_ID/.well-known/agent-card.json" \
 ```
 
 Response:
+
 ```json
 {
-  "name": "Echo Agent",
-  "description": "Echoes back messages for testing",
-  "url": "http://localhost:4444/a2a/agent/abc123def456",
-  "version": "1.0",
-  "protocolVersion": "1.0",
-  "capabilities": {
-    "streaming": true,
-    "pushNotifications": false,
-    "stateTransitionHistory": false
-  },
-  "defaultInputModes": ["text"],
-  "defaultOutputModes": ["text"],
-  "skills": [
-    {"id": "echo", "name": "echo", "description": "Skill: echo"},
-    {"id": "test", "name": "test", "description": "Skill: test"}
-  ]
+    "name": "Echo Agent",
+    "description": "Echoes back messages for testing",
+    "url": "http://localhost:4444/a2a/agent/abc123def456",
+    "version": "1.0",
+    "protocolVersion": "1.0",
+    "capabilities": {
+        "streaming": true,
+        "pushNotifications": false,
+        "stateTransitionHistory": false
+    },
+    "defaultInputModes": ["text"],
+    "defaultOutputModes": ["text"],
+    "skills": [
+        { "id": "echo", "name": "echo", "description": "Skill: echo" },
+        { "id": "test", "name": "test", "description": "Skill: test" }
+    ]
 }
 ```
 
@@ -134,19 +134,20 @@ curl -X POST "http://localhost:4444/a2a/agent/$AGENT_ID" \
 ```
 
 Response:
+
 ```json
 {
-  "jsonrpc": "2.0",
-  "result": {
-    "id": "task-abc123",
-    "status": {"state": "completed"},
-    "artifacts": [
-      {
-        "parts": [{"kind": "text", "text": "Hello, Echo Agent!"}]
-      }
-    ]
-  },
-  "id": 1
+    "jsonrpc": "2.0",
+    "result": {
+        "id": "task-abc123",
+        "status": { "state": "completed" },
+        "artifacts": [
+            {
+                "parts": [{ "kind": "text", "text": "Hello, Echo Agent!" }]
+            }
+        ]
+    },
+    "id": 1
 }
 ```
 
@@ -363,14 +364,14 @@ with httpx.Client(timeout=300) as client:
 
 ## Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MCPGATEWAY_A2A_GATEWAY_ENABLED` | Enable/disable the native A2A gateway | `true` |
-| `A2A_GATEWAY_ROUTE_PREFIX` | Route prefix for gateway endpoints (without leading/trailing slashes) | `a2a/agent` |
-| `A2A_GATEWAY_CLIENT_TIMEOUT` | HTTP timeout for downstream agent calls (seconds) | `30` |
-| `A2A_GATEWAY_STREAM_TIMEOUT` | SSE stream timeout (seconds) | `300` |
-| `A2A_GATEWAY_MAX_CONCURRENT_STREAMS` | Max concurrent SSE streams | `100` |
-| `A2A_GATEWAY_RATE_LIMIT` | Max requests per minute per agent per user | `100` |
+| Variable                             | Description                                                           | Default     |
+| ------------------------------------ | --------------------------------------------------------------------- | ----------- |
+| `MCPGATEWAY_A2A_GATEWAY_ENABLED`     | Enable/disable the native A2A gateway                                 | `true`      |
+| `A2A_GATEWAY_ROUTE_PREFIX`           | Route prefix for gateway endpoints (without leading/trailing slashes) | `a2a/agent` |
+| `A2A_GATEWAY_CLIENT_TIMEOUT`         | HTTP timeout for downstream agent calls (seconds)                     | `30`        |
+| `A2A_GATEWAY_STREAM_TIMEOUT`         | SSE stream timeout (seconds)                                          | `300`       |
+| `A2A_GATEWAY_MAX_CONCURRENT_STREAMS` | Max concurrent SSE streams                                            | `100`       |
+| `A2A_GATEWAY_RATE_LIMIT`             | Max requests per minute per agent per user                            | `100`       |
 
 ## Authentication & RBAC
 
@@ -378,20 +379,20 @@ The A2A gateway uses the same authentication and RBAC model as the rest of Conte
 
 ### Required Permissions
 
-| Permission | Required For |
-|-----------|-------------|
-| `a2a_gateway.read` | Agent card discovery (`GET /.well-known/agent-card.json`) |
-| `a2a_gateway.execute` | JSON-RPC requests (`POST /{agent_id}`) |
-| `a2a_gateway.manage` | Administrative operations |
+| Permission            | Required For                                              |
+| --------------------- | --------------------------------------------------------- |
+| `a2a_gateway.read`    | Agent card discovery (`GET /.well-known/agent-card.json`) |
+| `a2a_gateway.execute` | JSON-RPC requests (`POST /{agent_id}`)                    |
+| `a2a_gateway.manage`  | Administrative operations                                 |
 
 ### Role Permissions
 
-| Role | Read | Execute | Manage |
-|------|------|---------|--------|
-| `platform_admin` | Yes | Yes | Yes |
-| `team_admin` | Yes | Yes | Yes |
-| `developer` | Yes | Yes | No |
-| `viewer` | Yes | No | No |
+| Role             | Read | Execute | Manage |
+| ---------------- | ---- | ------- | ------ |
+| `platform_admin` | Yes  | Yes     | Yes    |
+| `team_admin`     | Yes  | Yes     | Yes    |
+| `developer`      | Yes  | Yes     | No     |
+| `viewer`         | Yes  | No      | No     |
 
 ### Token Scoping
 
@@ -407,11 +408,11 @@ Access denied returns **404** (not 403) to avoid leaking the existence of privat
 
 The gateway exposes Prometheus metrics for monitoring:
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `a2a_gateway_requests_total` | Counter | `agent_id`, `method`, `status` | Total JSON-RPC requests |
-| `a2a_gateway_errors_total` | Counter | `agent_id`, `error_type` | Total gateway errors |
-| `a2a_gateway_streams_active` | Gauge | `agent_id` | Currently active SSE streams |
+| Metric                       | Type    | Labels                         | Description                  |
+| ---------------------------- | ------- | ------------------------------ | ---------------------------- |
+| `a2a_gateway_requests_total` | Counter | `agent_id`, `method`, `status` | Total JSON-RPC requests      |
+| `a2a_gateway_errors_total`   | Counter | `agent_id`, `error_type`       | Total gateway errors         |
+| `a2a_gateway_streams_active` | Gauge   | `agent_id`                     | Currently active SSE streams |
 
 ## Plugin Hooks
 
@@ -424,22 +425,23 @@ The gateway supports pre-invoke and post-invoke plugin hooks:
 
 All errors are returned as proper JSON-RPC 2.0 error responses with HTTP 200:
 
-| Code | Name | When |
-|------|------|------|
-| `-32700` | Parse Error | Request body is not valid JSON |
-| `-32600` | Invalid Request | Missing `jsonrpc`, `method`, or wrong version |
-| `-32601` | Method Not Found | Unknown JSON-RPC method |
-| `-32603` | Internal Error | Agent not found, disabled, downstream error, timeout |
+| Code     | Name             | When                                                 |
+| -------- | ---------------- | ---------------------------------------------------- |
+| `-32700` | Parse Error      | Request body is not valid JSON                       |
+| `-32600` | Invalid Request  | Missing `jsonrpc`, `method`, or wrong version        |
+| `-32601` | Method Not Found | Unknown JSON-RPC method                              |
+| `-32603` | Internal Error   | Agent not found, disabled, downstream error, timeout |
 
 Example error response:
+
 ```json
 {
-  "jsonrpc": "2.0",
-  "error": {
-    "code": -32603,
-    "message": "Agent not found: nonexistent-agent"
-  },
-  "id": 1
+    "jsonrpc": "2.0",
+    "error": {
+        "code": -32603,
+        "message": "Agent not found: nonexistent-agent"
+    },
+    "id": 1
 }
 ```
 
@@ -447,14 +449,14 @@ Example error response:
 
 ContextForge offers two ways to interact with A2A agents:
 
-| Feature | A2A Gateway (`/a2a/agent/`) | MCP Tool Wrapping (`/rpc`) |
-|---------|--------------------------|----------------------------|
-| Protocol | Native A2A JSON-RPC 2.0 | MCP `tools/call` |
-| Streaming | SSE (`message/stream`) | Not supported |
-| Task Management | `tasks/get`, `tasks/cancel` | Not supported |
-| Push Notifications | `pushNotificationConfig/*` | Not supported |
-| Client Compatibility | Any A2A client | Any MCP client |
-| Use Case | Full A2A protocol features | Simple tool invocation |
+| Feature              | A2A Gateway (`/a2a/agent/`) | MCP Tool Wrapping (`/rpc`) |
+| -------------------- | --------------------------- | -------------------------- |
+| Protocol             | Native A2A JSON-RPC 2.0     | MCP `tools/call`           |
+| Streaming            | SSE (`message/stream`)      | Not supported              |
+| Task Management      | `tasks/get`, `tasks/cancel` | Not supported              |
+| Push Notifications   | `pushNotificationConfig/*`  | Not supported              |
+| Client Compatibility | Any A2A client              | Any MCP client             |
+| Use Case             | Full A2A protocol features  | Simple tool invocation     |
 
 Use the **A2A gateway** when you need streaming, task management, or A2A protocol compliance. Use **MCP tool wrapping** when integrating with MCP-only clients.
 

@@ -29,24 +29,29 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 # Supported JSON-RPC methods for the A2A protocol
-A2A_JSONRPC_METHODS = frozenset({
-    "message/send",
-    "message/stream",
-    "tasks/get",
-    "tasks/cancel",
-    "tasks/resubscribe",
-    "tasks/pushNotificationConfig/set",
-    "tasks/pushNotificationConfig/get",
-    "tasks/pushNotificationConfig/list",
-    "tasks/pushNotificationConfig/delete",
-    "agent/getAuthenticatedExtendedCard",
-})
+A2A_JSONRPC_METHODS = frozenset(
+    {
+        "message/send",
+        "message/stream",
+        "tasks/get",
+        "tasks/list",
+        "tasks/cancel",
+        "tasks/resubscribe",
+        "tasks/pushNotificationConfig/set",
+        "tasks/pushNotificationConfig/get",
+        "tasks/pushNotificationConfig/list",
+        "tasks/pushNotificationConfig/delete",
+        "agent/getAuthenticatedExtendedCard",
+    }
+)
 
 # Methods that return SSE streaming responses
-A2A_STREAMING_METHODS = frozenset({
-    "message/stream",
-    "tasks/resubscribe",
-})
+A2A_STREAMING_METHODS = frozenset(
+    {
+        "message/stream",
+        "tasks/resubscribe",
+    }
+)
 
 # Standard JSON-RPC 2.0 error codes
 JSONRPC_PARSE_ERROR = -32700
@@ -388,4 +393,3 @@ class A2AGatewayService:
             True if the method streams SSE events.
         """
         return method in A2A_STREAMING_METHODS
-
