@@ -101,6 +101,7 @@ For the Rust MCP runtime path, the most important stack-backed checks are:
 make testing-rebuild-rust-full
 make test-mcp-cli
 make test-mcp-rbac
+make test-mcp-access-matrix
 make test-mcp-session-isolation
 make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s
 cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml
@@ -111,6 +112,7 @@ the bounded-TTL contract completes quickly:
 
 ```bash
 MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS=2 MCP_RUST_SESSION_AUTH_REUSE_GRACE_SECONDS=1 make testing-rebuild-rust-full
+make test-mcp-access-matrix
 make test-mcp-session-isolation
 make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s
 ```

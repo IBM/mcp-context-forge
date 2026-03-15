@@ -62,6 +62,7 @@ Rules:
 - [ ] Confirm Version Info shows the MCP Runtime card in Python mode
 - [ ] `make test-mcp-cli`
 - [ ] `make test-mcp-rbac`
+- [ ] `make test-mcp-access-matrix`
 - [ ] Perform one manual `/mcp` tool call and confirm `x-contextforge-mcp-runtime: python`
 - [ ] Perform one freshness check against `fast-time-get-system-time`
 
@@ -73,6 +74,7 @@ Rules:
 - [ ] Confirm admin Overview shows Rust runtime present but Python public transport semantics
 - [ ] `make test-mcp-cli`
 - [ ] `make test-mcp-rbac`
+- [ ] `make test-mcp-access-matrix`
 
 ## 7. Rust Edge Validation
 
@@ -83,6 +85,7 @@ Rules:
 - [ ] Confirm Version Info shows MCP Runtime card with Rust transport mounted
 - [ ] `make test-mcp-cli`
 - [ ] `make test-mcp-rbac`
+- [ ] `make test-mcp-access-matrix`
 
 ## 8. Rust Full Validation
 
@@ -93,6 +96,7 @@ Rules:
 - [ ] Confirm Version Info shows MCP Runtime card with the expected mounted/core modes
 - [ ] `make test-mcp-cli`
 - [ ] `make test-mcp-rbac`
+- [ ] `make test-mcp-access-matrix`
 - [ ] `make test-mcp-session-isolation`
 - [ ] `make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s`
 - [ ] `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
@@ -102,6 +106,7 @@ Rules:
   `MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS=2 MCP_RUST_SESSION_AUTH_REUSE_GRACE_SECONDS=1 make testing-rebuild-rust-full`
 - [ ] Re-run `make test-mcp-session-isolation` on the short-TTL stack
 - [ ] Re-run `make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s` on the short-TTL stack
+- [ ] Re-run `make test-mcp-access-matrix` on the short-TTL stack
 
 ## 9. Optional PostgreSQL TLS Validation
 

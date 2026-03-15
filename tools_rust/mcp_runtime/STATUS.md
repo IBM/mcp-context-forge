@@ -257,6 +257,10 @@ design tradeoffs.
 - `session_id` query-parameter compatibility still exists in both Rust and
   Python; this branch documents it as compatibility debt rather than making a
   breaking behavior change
+- the new Rust access-matrix coverage shows that non-admin scoped tokens can
+  initialize and read on `/servers/{id}/mcp`, but are still denied at
+  `tools/call` even when the token includes `tools.execute`; this needs a
+  product/RBAC follow-up to decide whether that restriction is intentional
 - Rust direct DB mode still does not support client certificate authentication
   via `sslcert` / `sslkey`; the current TLS support covers the common
   `sslmode=require`/system-roots path and optional `sslrootcert`

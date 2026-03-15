@@ -57,7 +57,40 @@ Recommended next step:
   explicit warnings/telemetry, and retire it in a separate compatibility
   cleanup.
 
-### 3. Python aggregated `/mcp` resource-read ambiguity
+### 3. Non-admin scoped `tools.execute` on `/servers/{id}/mcp`
+
+Status:
+- Important product/RBAC follow-up
+
+Observed behavior:
+- The new Rust access-matrix suite proves that server-scoped non-admin tokens
+  can:
+  - initialize a team-scoped MCP session
+  - list tools, resources, and prompts
+  - read resources and fetch prompts with correct data
+- However, a non-admin token that explicitly includes `tools.execute` is still
+  denied at `tools/call` on `/servers/{id}/mcp`.
+- A scoped admin token with the same MCP permissions succeeds.
+
+Why this matters:
+- This is easy to misread as a transport bug because the token carries
+  `tools.execute`, but the current live behavior still denies execution for the
+  non-admin path.
+- The new access-matrix coverage now documents and locks in this behavior, but
+  the underlying product decision is still unresolved.
+
+Likely area:
+- RBAC / MCP permission evaluation for server-scoped execution
+- Python auth/RBAC enforcement versus Rust transport parity
+
+Recommended next step:
+- Decide whether non-admin scoped tokens with `tools.execute` should be able to
+  execute tools on `/servers/{id}/mcp`.
+- If yes, change the product behavior and update the access-matrix tests to
+  prove the positive path.
+- If no, document this restriction more explicitly in the MCP/RBAC docs.
+
+### 4. Python aggregated `/mcp` resource-read ambiguity
 
 Status:
 - Needs a Python/product behavior follow-up
@@ -85,7 +118,7 @@ Recommended next step:
   the Rust behavior by returning an explicit ambiguity error whenever multiple
   resources share the same URI across servers.
 
-### 4. Playwright admin JWT login instability
+### 5. Playwright admin JWT login instability
 
 Status:
 - Needs investigation
@@ -106,7 +139,7 @@ Likely area:
 Recommended next step:
 - Add targeted instrumentation around `_ensure_admin_logged_in(...)` and capture redirect/response traces when JWT-cookie login falls back to `/admin/login`.
 
-### 5. Circuit breaker unit test timing flake
+### 6. Circuit breaker unit test timing flake
 
 Status:
 - Likely brittle test
@@ -123,7 +156,7 @@ Likely cause:
 Recommended next step:
 - Rewrite the test to poll until reset rather than relying on a fixed sleep margin.
 
-### 6. Gateway delete Playwright assertion is too strict
+### 7. Gateway delete Playwright assertion is too strict
 
 Status:
 - Likely brittle test
@@ -138,7 +171,7 @@ Why this matters:
 Recommended next step:
 - Verify deletion by name or empty-state handling instead of requiring at least one remaining row.
 
-### 7. Gateway edit modal file-scope instability
+### 8. Gateway edit modal file-scope instability
 
 Status:
 - Needs investigation
@@ -152,7 +185,7 @@ Why this matters:
 Recommended next step:
 - Reproduce on a fresh stack with focused instrumentation around modal open requests and Alpine/HTMX state changes.
 
-### 8. Prompt/admin page file-scope login failures
+### 9. Prompt/admin page file-scope login failures
 
 Status:
 - Needs investigation
@@ -166,7 +199,7 @@ Why this matters:
 Recommended next step:
 - Treat as part of the admin login fixture investigation rather than fixing prompt-specific tests first.
 
-### 9. `register_fast_time_sse` sync quirk
+### 10. `register_fast_time_sse` sync quirk
 
 Status:
 - Needs investigation
