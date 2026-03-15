@@ -41,7 +41,10 @@ use std::{
     net::{IpAddr, SocketAddr},
     path::Path,
     str::{self, FromStr},
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
@@ -169,6 +172,7 @@ pub struct AppState {
     session_ttl: Duration,
     session_auth_reuse_ttl: Duration,
     public_ingress_enabled: bool,
+    runtime_stats: Arc<RuntimeStats>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -198,12 +202,89 @@ pub struct HealthResponse {
     pub affinity_core_enabled: bool,
     pub session_auth_reuse_enabled: bool,
     pub active_sessions: usize,
+    pub runtime_stats: RuntimeStatsSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PublicHealthResponse {
     status: &'static str,
     runtime: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RuntimeStatsSnapshot {
+    pub session_auth_reuse: SessionAuthReuseStatsSnapshot,
+    pub session_access_denials: SessionAccessDenialStatsSnapshot,
+    pub affinity: AffinityStatsSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SessionAuthReuseStatsSnapshot {
+    pub hits: u64,
+    pub misses: u64,
+    pub backend_auth_round_trips: u64,
+    pub miss_disabled: u64,
+    pub miss_no_session: u64,
+    pub miss_server_scope_mismatch: u64,
+    pub miss_missing_encoded_auth_context: u64,
+    pub miss_missing_auth_binding_fingerprint: u64,
+    pub miss_auth_binding_mismatch: u64,
+    pub miss_ttl_expired: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SessionAccessDenialStatsSnapshot {
+    pub server_scope_mismatches: u64,
+    pub missing_auth_context: u64,
+    pub owner_email_mismatches: u64,
+    pub missing_auth_binding_fingerprint: u64,
+    pub auth_binding_mismatches: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AffinityStatsSnapshot {
+    pub forward_attempts: u64,
+    pub forwarded_requests: u64,
+}
+
+#[derive(Debug, Default)]
+struct RuntimeStats {
+    session_auth_reuse_hits: AtomicU64,
+    session_auth_reuse_misses: AtomicU64,
+    session_auth_backend_round_trips: AtomicU64,
+    session_auth_reuse_miss_disabled: AtomicU64,
+    session_auth_reuse_miss_no_session: AtomicU64,
+    session_auth_reuse_miss_server_scope_mismatch: AtomicU64,
+    session_auth_reuse_miss_missing_encoded_auth_context: AtomicU64,
+    session_auth_reuse_miss_missing_auth_binding_fingerprint: AtomicU64,
+    session_auth_reuse_miss_auth_binding_mismatch: AtomicU64,
+    session_auth_reuse_miss_ttl_expired: AtomicU64,
+    session_access_server_scope_mismatches: AtomicU64,
+    session_access_missing_auth_context: AtomicU64,
+    session_access_owner_email_mismatches: AtomicU64,
+    session_access_missing_auth_binding_fingerprint: AtomicU64,
+    session_access_auth_binding_mismatches: AtomicU64,
+    affinity_forward_attempts: AtomicU64,
+    affinity_forwarded_requests: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionAuthReuseMissReason {
+    Disabled,
+    NoSession,
+    ServerScopeMismatch,
+    MissingEncodedAuthContext,
+    MissingAuthBindingFingerprint,
+    AuthBindingMismatch,
+    TtlExpired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionAccessDenyReason {
+    MissingAuthContext,
+    OwnerEmailMismatch,
+    MissingAuthBindingFingerprint,
+    AuthBindingMismatch,
 }
 
 const CLIENT_ERROR_DETAIL: &str = "See server logs";
@@ -639,6 +720,7 @@ impl AppState {
             session_ttl: Duration::from_secs(config.session_ttl_seconds),
             session_auth_reuse_ttl: Duration::from_secs(config.session_auth_reuse_ttl_seconds),
             public_ingress_enabled: config.public_listen_http.is_some(),
+            runtime_stats: Arc::new(RuntimeStats::default()),
         })
     }
 
@@ -920,6 +1002,146 @@ impl AppState {
     fn public_ingress_enabled(&self) -> bool {
         self.public_ingress_enabled
     }
+
+    fn runtime_stats(&self) -> &Arc<RuntimeStats> {
+        &self.runtime_stats
+    }
+}
+
+impl RuntimeStats {
+    fn snapshot(&self) -> RuntimeStatsSnapshot {
+        RuntimeStatsSnapshot {
+            session_auth_reuse: SessionAuthReuseStatsSnapshot {
+                hits: self.session_auth_reuse_hits.load(Ordering::Relaxed),
+                misses: self.session_auth_reuse_misses.load(Ordering::Relaxed),
+                backend_auth_round_trips: self
+                    .session_auth_backend_round_trips
+                    .load(Ordering::Relaxed),
+                miss_disabled: self
+                    .session_auth_reuse_miss_disabled
+                    .load(Ordering::Relaxed),
+                miss_no_session: self
+                    .session_auth_reuse_miss_no_session
+                    .load(Ordering::Relaxed),
+                miss_server_scope_mismatch: self
+                    .session_auth_reuse_miss_server_scope_mismatch
+                    .load(Ordering::Relaxed),
+                miss_missing_encoded_auth_context: self
+                    .session_auth_reuse_miss_missing_encoded_auth_context
+                    .load(Ordering::Relaxed),
+                miss_missing_auth_binding_fingerprint: self
+                    .session_auth_reuse_miss_missing_auth_binding_fingerprint
+                    .load(Ordering::Relaxed),
+                miss_auth_binding_mismatch: self
+                    .session_auth_reuse_miss_auth_binding_mismatch
+                    .load(Ordering::Relaxed),
+                miss_ttl_expired: self
+                    .session_auth_reuse_miss_ttl_expired
+                    .load(Ordering::Relaxed),
+            },
+            session_access_denials: SessionAccessDenialStatsSnapshot {
+                server_scope_mismatches: self
+                    .session_access_server_scope_mismatches
+                    .load(Ordering::Relaxed),
+                missing_auth_context: self
+                    .session_access_missing_auth_context
+                    .load(Ordering::Relaxed),
+                owner_email_mismatches: self
+                    .session_access_owner_email_mismatches
+                    .load(Ordering::Relaxed),
+                missing_auth_binding_fingerprint: self
+                    .session_access_missing_auth_binding_fingerprint
+                    .load(Ordering::Relaxed),
+                auth_binding_mismatches: self
+                    .session_access_auth_binding_mismatches
+                    .load(Ordering::Relaxed),
+            },
+            affinity: AffinityStatsSnapshot {
+                forward_attempts: self.affinity_forward_attempts.load(Ordering::Relaxed),
+                forwarded_requests: self.affinity_forwarded_requests.load(Ordering::Relaxed),
+            },
+        }
+    }
+
+    fn record_session_auth_reuse_hit(&self) {
+        self.session_auth_reuse_hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_session_auth_reuse_miss(&self, reason: SessionAuthReuseMissReason) {
+        self.session_auth_reuse_misses
+            .fetch_add(1, Ordering::Relaxed);
+        match reason {
+            SessionAuthReuseMissReason::Disabled => {
+                self.session_auth_reuse_miss_disabled
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            SessionAuthReuseMissReason::NoSession => {
+                self.session_auth_reuse_miss_no_session
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            SessionAuthReuseMissReason::ServerScopeMismatch => {
+                self.session_auth_reuse_miss_server_scope_mismatch
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            SessionAuthReuseMissReason::MissingEncodedAuthContext => {
+                self.session_auth_reuse_miss_missing_encoded_auth_context
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            SessionAuthReuseMissReason::MissingAuthBindingFingerprint => {
+                self.session_auth_reuse_miss_missing_auth_binding_fingerprint
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            SessionAuthReuseMissReason::AuthBindingMismatch => {
+                self.session_auth_reuse_miss_auth_binding_mismatch
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            SessionAuthReuseMissReason::TtlExpired => {
+                self.session_auth_reuse_miss_ttl_expired
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn record_session_auth_backend_round_trip(&self) {
+        self.session_auth_backend_round_trips
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_session_access_denial(&self, reason: SessionAccessDenyReason) {
+        match reason {
+            SessionAccessDenyReason::MissingAuthContext => {
+                self.session_access_missing_auth_context
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            SessionAccessDenyReason::OwnerEmailMismatch => {
+                self.session_access_owner_email_mismatches
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            SessionAccessDenyReason::MissingAuthBindingFingerprint => {
+                self.session_access_missing_auth_binding_fingerprint
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            SessionAccessDenyReason::AuthBindingMismatch => {
+                self.session_access_auth_binding_mismatches
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn record_session_server_scope_mismatch(&self) {
+        self.session_access_server_scope_mismatches
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_affinity_forward_attempt(&self) {
+        self.affinity_forward_attempts
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_affinity_forwarded_request(&self) {
+        self.affinity_forwarded_requests
+            .fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// Builds the Axum router for the Rust MCP runtime.
@@ -1093,6 +1315,7 @@ async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
         affinity_core_enabled: state.affinity_core_enabled(),
         session_auth_reuse_enabled: state.session_auth_reuse_enabled(),
         active_sessions,
+        runtime_stats: state.runtime_stats().snapshot(),
     })
 }
 
@@ -2229,6 +2452,7 @@ fn build_db_pool(config: &RuntimeConfig) -> Result<Option<Pool>, RuntimeError> {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
 struct PostgresTlsOptions {
     ssl_root_cert: Option<String>,
     ssl_cert: Option<String>,
@@ -2486,27 +2710,37 @@ fn can_reuse_session_auth(
     record: &RuntimeSessionRecord,
     incoming_headers: &HeaderMap,
     requested_server_id: Option<&str>,
-) -> Option<String> {
+) -> Result<String, SessionAuthReuseMissReason> {
     if !state.session_auth_reuse_enabled() {
-        return None;
+        return Err(SessionAuthReuseMissReason::Disabled);
     }
 
     if requested_server_id.is_some() && record.server_id.as_deref() != requested_server_id {
-        return None;
+        return Err(SessionAuthReuseMissReason::ServerScopeMismatch);
     }
 
-    let expected_fingerprint = record.auth_binding_fingerprint.as_deref()?;
-    let actual_fingerprint = auth_binding_fingerprint(incoming_headers)?;
+    let encoded_auth_context = record
+        .encoded_auth_context
+        .clone()
+        .ok_or(SessionAuthReuseMissReason::MissingEncodedAuthContext)?;
+    let expected_fingerprint = record
+        .auth_binding_fingerprint
+        .as_deref()
+        .ok_or(SessionAuthReuseMissReason::MissingAuthBindingFingerprint)?;
+    let actual_fingerprint = auth_binding_fingerprint(incoming_headers)
+        .ok_or(SessionAuthReuseMissReason::MissingAuthBindingFingerprint)?;
     if actual_fingerprint != expected_fingerprint {
-        return None;
+        return Err(SessionAuthReuseMissReason::AuthBindingMismatch);
     }
 
-    let expires_at = record.auth_context_expires_at_epoch_ms?;
+    let expires_at = record
+        .auth_context_expires_at_epoch_ms
+        .ok_or(SessionAuthReuseMissReason::TtlExpired)?;
     if unix_epoch_millis() >= expires_at {
-        return None;
+        return Err(SessionAuthReuseMissReason::TtlExpired);
     }
 
-    record.encoded_auth_context.clone()
+    Ok(encoded_auth_context)
 }
 
 #[allow(clippy::result_large_err)]
@@ -2559,26 +2793,39 @@ async fn authenticate_public_request_if_needed(
 
     if state.session_core_enabled()
         && let Some(session_id) = runtime_session_id_from_request(&incoming_headers, uri)
-        && let Some(record) = get_runtime_session(state, &session_id).await
-        && let Some(encoded_auth_context) =
-            can_reuse_session_auth(state, &record, &incoming_headers, server_id)
     {
-        let encoded_auth_context = HeaderValue::from_str(&encoded_auth_context).map_err(|err| {
-            error!("stored MCP auth context header encoding failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "detail": "Stored MCP auth context header encoding failed",
-                }),
-            )
-        })?;
-        incoming_headers.insert(
-            HeaderName::from_static("x-contextforge-auth-context"),
-            encoded_auth_context,
-        );
-        return Ok((incoming_headers, public_path));
+        if let Some(record) = get_runtime_session(state, &session_id).await {
+            match can_reuse_session_auth(state, &record, &incoming_headers, server_id) {
+                Ok(encoded_auth_context) => {
+                    state.runtime_stats().record_session_auth_reuse_hit();
+                    let encoded_auth_context = HeaderValue::from_str(&encoded_auth_context)
+                        .map_err(|err| {
+                            error!("stored MCP auth context header encoding failed: {err}");
+                            json_response(
+                                StatusCode::BAD_GATEWAY,
+                                json!({
+                                    "detail": "Stored MCP auth context header encoding failed",
+                                }),
+                            )
+                        })?;
+                    incoming_headers.insert(
+                        HeaderName::from_static("x-contextforge-auth-context"),
+                        encoded_auth_context,
+                    );
+                    return Ok((incoming_headers, public_path));
+                }
+                Err(reason) => state.runtime_stats().record_session_auth_reuse_miss(reason),
+            }
+        } else {
+            state
+                .runtime_stats()
+                .record_session_auth_reuse_miss(SessionAuthReuseMissReason::NoSession);
+        }
     }
 
+    state
+        .runtime_stats()
+        .record_session_auth_backend_round_trip();
     let request_body = InternalAuthenticateRequest {
         method: method.to_string(),
         path: public_path.clone(),
@@ -2835,8 +3082,10 @@ async fn handle_initialize_with_session_core(
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
     if let Some(existing) = get_runtime_session(state, &session_id).await
-        && !runtime_session_allows_access(&existing, auth_context.as_ref(), &incoming_headers)
+        && let Err(reason) =
+            runtime_session_access_outcome(&existing, auth_context.as_ref(), &incoming_headers)
     {
+        state.runtime_stats().record_session_access_denial(reason);
         return json_response(
             StatusCode::OK,
             json!({
@@ -3187,6 +3436,7 @@ async fn forward_transport_request_via_affinity_owner(
         return Ok(None);
     };
 
+    state.runtime_stats().record_affinity_forward_attempt();
     let owner_channel = pool_http_channel(state, &owner_worker_id);
     let response_channel = pool_http_response_channel(state, &Uuid::new_v4().simple().to_string());
     let mut pubsub = redis_client
@@ -3265,6 +3515,7 @@ async fn forward_transport_request_via_affinity_owner(
     let payload: AffinityForwardResponse = serde_json::from_str(&payload_json).map_err(|err| {
         affinity_forward_error_response("Affinity response JSON decode failed", err)
     })?;
+    state.runtime_stats().record_affinity_forwarded_request();
     Ok(Some(response_from_affinity_forward_response(
         payload,
         Some(session_id),
@@ -3651,6 +3902,7 @@ async fn validate_runtime_session_request(
         extract_server_id_header(incoming_headers).as_deref(),
     ) && session_server_id != request_server_id
     {
+        state.runtime_stats().record_session_server_scope_mismatch();
         return Err(json_response(
             StatusCode::FORBIDDEN,
             json!({
@@ -3660,7 +3912,10 @@ async fn validate_runtime_session_request(
     }
 
     let auth_context = decode_internal_auth_context_from_headers_optional(incoming_headers);
-    if !runtime_session_allows_access(&record, auth_context.as_ref(), incoming_headers) {
+    if let Err(reason) =
+        runtime_session_access_outcome(&record, auth_context.as_ref(), incoming_headers)
+    {
+        state.runtime_stats().record_session_access_denial(reason);
         return Err(json_response(
             StatusCode::FORBIDDEN,
             json!({
@@ -3679,30 +3934,34 @@ async fn validate_runtime_session_request(
     Ok(Some(session_id))
 }
 
-fn runtime_session_allows_access(
+fn runtime_session_access_outcome(
     record: &RuntimeSessionRecord,
     auth_context: Option<&InternalAuthContext>,
     incoming_headers: &HeaderMap,
-) -> bool {
+) -> Result<(), SessionAccessDenyReason> {
     // The auth-binding fingerprint prevents a caller from reusing another
     // client's session identifier even when the email or visible scope appears
     // superficially compatible.
     if let Some(expected_fingerprint) = record.auth_binding_fingerprint.as_deref() {
         let Some(actual_fingerprint) = auth_binding_fingerprint(incoming_headers) else {
-            return false;
+            return Err(SessionAccessDenyReason::MissingAuthBindingFingerprint);
         };
         if actual_fingerprint != expected_fingerprint {
-            return false;
+            return Err(SessionAccessDenyReason::AuthBindingMismatch);
         }
     }
 
     let Some(owner_email) = record.owner_email.as_deref() else {
-        return true;
+        return Ok(());
     };
     let Some(auth_context) = auth_context else {
-        return false;
+        return Err(SessionAccessDenyReason::MissingAuthContext);
     };
-    auth_context.email.as_deref() == Some(owner_email)
+    if auth_context.email.as_deref() == Some(owner_email) {
+        Ok(())
+    } else {
+        Err(SessionAccessDenyReason::OwnerEmailMismatch)
+    }
 }
 
 fn requested_initialize_session_id(
@@ -4410,7 +4669,10 @@ async fn forward_transport_request(
 
             let auth_context =
                 decode_internal_auth_context_from_headers_optional(&incoming_headers);
-            if !runtime_session_allows_access(&record, auth_context.as_ref(), &incoming_headers) {
+            if let Err(reason) =
+                runtime_session_access_outcome(&record, auth_context.as_ref(), &incoming_headers)
+            {
+                state.runtime_stats().record_session_access_denial(reason);
                 return json_response(
                     StatusCode::FORBIDDEN,
                     json!({
@@ -7746,17 +8008,17 @@ mod unit_tests {
     use super::{
         AffinityForwardResponse, AppState, Bytes, CLIENT_ERROR_DETAIL, EventStoreReplayRequest,
         EventStoreStoreRequest, InternalAuthContext, InternalAuthenticateRequest, JsonRpcRequest,
-        RuntimeConfig, RuntimeError, RuntimeSessionRecord, TrustedPeerAddr, URL_SAFE_NO_PAD,
-        accepts_sse, active_runtime_session_count, affinity_forward_error_response,
-        auth_binding_fingerprint, authenticate_public_request_if_needed, batch_rejected_response,
-        build_public_router, can_reuse_session_auth, can_use_direct_prompts_get,
-        can_use_direct_resources_read, decode_request, derive_backend_authenticate_url,
-        derive_backend_completion_complete_url, derive_backend_initialize_url,
-        derive_backend_logging_set_level_url, derive_backend_notifications_cancelled_url,
-        derive_backend_notifications_initialized_url, derive_backend_notifications_message_url,
-        derive_backend_prompts_get_authz_url, derive_backend_prompts_get_url,
-        derive_backend_prompts_list_authz_url, derive_backend_prompts_list_url,
-        derive_backend_resource_templates_list_authz_url,
+        RuntimeConfig, RuntimeError, RuntimeSessionRecord, SessionAuthReuseMissReason,
+        TrustedPeerAddr, URL_SAFE_NO_PAD, accepts_sse, active_runtime_session_count,
+        affinity_forward_error_response, auth_binding_fingerprint,
+        authenticate_public_request_if_needed, batch_rejected_response, build_public_router,
+        can_reuse_session_auth, can_use_direct_prompts_get, can_use_direct_resources_read,
+        decode_request, derive_backend_authenticate_url, derive_backend_completion_complete_url,
+        derive_backend_initialize_url, derive_backend_logging_set_level_url,
+        derive_backend_notifications_cancelled_url, derive_backend_notifications_initialized_url,
+        derive_backend_notifications_message_url, derive_backend_prompts_get_authz_url,
+        derive_backend_prompts_get_url, derive_backend_prompts_list_authz_url,
+        derive_backend_prompts_list_url, derive_backend_resource_templates_list_authz_url,
         derive_backend_resource_templates_list_url, derive_backend_resources_list_authz_url,
         derive_backend_resources_list_url, derive_backend_resources_read_authz_url,
         derive_backend_resources_read_url, derive_backend_resources_subscribe_url,
@@ -7773,7 +8035,7 @@ mod unit_tests {
         parse_error_response, pool_owner_key, public_client_ip, query_param,
         remove_runtime_session, replay_events_endpoint, requested_initialize_session_id,
         requested_protocol_version, response_from_affinity_forward_response, run,
-        runtime_session_allows_access, runtime_session_id_from_request, runtime_session_key,
+        runtime_session_access_outcome, runtime_session_id_from_request, runtime_session_key,
         serve_http, serve_uds, store_event_endpoint, transport_delete_server_scoped,
         transport_get_server_scoped, upsert_runtime_session, validate_initialize_params,
         validate_protocol_version, validate_runtime_session_request,
@@ -8883,11 +9145,11 @@ mod unit_tests {
 
         assert_eq!(
             can_reuse_session_auth(&state, &record, &auth_headers, Some("server-1")),
-            Some("encoded-context".to_string())
+            Ok("encoded-context".to_string())
         );
         assert_eq!(
             can_reuse_session_auth(&state, &record, &auth_headers, Some("server-2")),
-            None
+            Err(SessionAuthReuseMissReason::ServerScopeMismatch)
         );
 
         let mut mismatched_headers = HeaderMap::new();
@@ -8897,7 +9159,7 @@ mod unit_tests {
         );
         assert_eq!(
             can_reuse_session_auth(&state, &record, &mismatched_headers, Some("server-1")),
-            None
+            Err(SessionAuthReuseMissReason::AuthBindingMismatch)
         );
 
         let expired = RuntimeSessionRecord {
@@ -8906,7 +9168,7 @@ mod unit_tests {
         };
         assert_eq!(
             can_reuse_session_auth(&state, &expired, &auth_headers, Some("server-1")),
-            None
+            Err(SessionAuthReuseMissReason::TtlExpired)
         );
 
         let mut disabled_config = test_config();
@@ -8914,7 +9176,7 @@ mod unit_tests {
         let disabled_state = AppState::new(&disabled_config).expect("state");
         assert_eq!(
             can_reuse_session_auth(&disabled_state, &record, &auth_headers, Some("server-1")),
-            None
+            Err(SessionAuthReuseMissReason::Disabled)
         );
     }
 
@@ -9172,11 +9434,7 @@ mod unit_tests {
             record.auth_context_expires_at_epoch_ms.expect("ttl is set")
                 > super::unix_epoch_millis()
         );
-        assert!(runtime_session_allows_access(
-            &record,
-            Some(&auth_context),
-            &headers
-        ));
+        assert!(runtime_session_access_outcome(&record, Some(&auth_context), &headers).is_ok());
 
         upsert_runtime_session(&state, "session-validate".to_string(), record.clone()).await;
 
@@ -9214,6 +9472,14 @@ mod unit_tests {
         .await
         .expect_err("server mismatch is denied");
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            state
+                .runtime_stats()
+                .snapshot()
+                .session_access_denials
+                .server_scope_mismatches,
+            1
+        );
 
         let mut wrong_auth_headers = headers.clone();
         wrong_auth_headers.insert(
@@ -9230,6 +9496,122 @@ mod unit_tests {
         .await
         .expect_err("auth mismatch is denied");
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let runtime_stats = state.runtime_stats().snapshot();
+        assert_eq!(
+            runtime_stats.session_access_denials.auth_binding_mismatches,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_updates_runtime_stats_for_reuse_hits_and_misses() {
+        let backend = Router::new().route(
+            "/_internal/mcp/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "owner@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": true,
+                        "is_admin": false,
+                        "permission_is_admin": false,
+                        "token_use": "session"
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.session_core_enabled = true;
+        config.session_auth_reuse_enabled = true;
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        let state = AppState::new(&config).expect("state");
+
+        let auth_context_json = json!({
+            "email": "owner@example.com",
+            "teams": ["team-a"],
+            "is_authenticated": true
+        });
+        let encoded_auth_context =
+            encode_internal_auth_context_header(&auth_context_json).expect("auth context");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer alpha"),
+        );
+        headers.insert(
+            HeaderName::from_static("mcp-session-id"),
+            HeaderValue::from_static("session-hit"),
+        );
+        headers.insert(
+            HeaderName::from_static("x-contextforge-auth-context"),
+            encoded_auth_context.clone(),
+        );
+        let fingerprint = auth_binding_fingerprint(&headers).expect("fingerprint");
+        upsert_runtime_session(
+            &state,
+            "session-hit".to_string(),
+            RuntimeSessionRecord {
+                owner_email: Some("owner@example.com".to_string()),
+                server_id: None,
+                protocol_version: None,
+                client_capabilities: None,
+                encoded_auth_context: Some(
+                    encoded_auth_context
+                        .to_str()
+                        .expect("encoded auth context str")
+                        .to_string(),
+                ),
+                auth_binding_fingerprint: Some(fingerprint),
+                auth_context_expires_at_epoch_ms: Some(super::unix_epoch_millis() + 60_000),
+                created_at: std::time::Instant::now(),
+                last_used: std::time::Instant::now(),
+            },
+        )
+        .await;
+
+        let (returned_headers, _) = authenticate_public_request_if_needed(
+            &state,
+            "POST",
+            headers.clone(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            None,
+        )
+        .await
+        .expect("reused auth context");
+        assert!(returned_headers.contains_key("x-contextforge-auth-context"));
+
+        let mut miss_headers = HeaderMap::new();
+        miss_headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer beta"),
+        );
+        miss_headers.insert(
+            HeaderName::from_static("mcp-session-id"),
+            HeaderValue::from_static("session-hit"),
+        );
+        let (_returned_headers, _path) = authenticate_public_request_if_needed(
+            &state,
+            "POST",
+            miss_headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            None,
+        )
+        .await
+        .expect("backend auth fallback succeeds");
+
+        let runtime_stats = state.runtime_stats().snapshot();
+        assert_eq!(runtime_stats.session_auth_reuse.hits, 1);
+        assert_eq!(runtime_stats.session_auth_reuse.misses, 1);
+        assert_eq!(
+            runtime_stats.session_auth_reuse.miss_auth_binding_mismatch,
+            1
+        );
+        assert_eq!(runtime_stats.session_auth_reuse.backend_auth_round_trips, 1);
     }
 
     #[test]

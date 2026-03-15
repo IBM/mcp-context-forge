@@ -63,6 +63,7 @@ make test
 make test-mcp-cli
 make test-mcp-rbac
 make test-mcp-session-isolation
+make test-mcp-session-isolation-load
 cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml
 ```
 
@@ -217,6 +218,10 @@ That means:
 - session-auth reuse is session-bound, not a global user cache
 - same-email / different-token and cross-user session reuse attempts are denied
   by the runtime session ownership checks
+- bounded-TTL revocation and membership/role drift cases are now covered in the
+  compose-backed Rust isolation suite
+- runtime `/health` now exposes `runtime_stats` so reuse hits, misses,
+  denial reasons, and affinity forwarding can be inspected during validation
 
 See [TESTING-DESIGN.md](TESTING-DESIGN.md) for the threat model and
 compose-backed isolation coverage.
@@ -316,11 +321,20 @@ For the full-Rust public path:
 
 ```bash
 make testing-rebuild-rust-full
-make test-mcp-session-isolation
 make test-mcp-cli
 make test-mcp-rbac
+make test-mcp-session-isolation
 cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml
 make benchmark-mcp-tools
+```
+
+For the bounded-TTL drift checks, rerun the Rust full stack with a short reuse
+TTL:
+
+```bash
+MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS=2 MCP_RUST_SESSION_AUTH_REUSE_GRACE_SECONDS=1 make testing-rebuild-rust-full
+make test-mcp-session-isolation
+make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s
 ```
 
 For the safe fallback path:

@@ -37,7 +37,7 @@ Use the smallest set that matches your change.
 | --- | --- |
 | Pure Rust refactor in `src/` or `tests/` | `make -C tools_rust/mcp_runtime fmt-check clippy-all test test-rmcp` |
 | Rust + Python integration change | Rust-local checks plus `make doctest test htmlcov` |
-| MCP protocol, auth, session, or transport behavior | Rebuild stack and run `make test-mcp-cli test-mcp-rbac`; add `make test-mcp-session-isolation` for Rust public path work |
+| MCP protocol, auth, session, or transport behavior | Rebuild stack and run `make test-mcp-cli test-mcp-rbac`; add `make test-mcp-session-isolation` for Rust public path work and `make test-mcp-session-isolation-load` for correctness-under-load changes |
 | Overview / Version Info / templates / JS / CSS | `make test-js-coverage lint-web flake8 bandit interrogate pylint`, plus `make test-ui-smoke` and targeted Playwright tests |
 | Packaging / release readiness | `make verify` |
 | Performance-sensitive hot path | relevant tests plus benchmark and profiling targets |
@@ -188,6 +188,7 @@ make testing-rebuild-rust-full
 make test-mcp-cli
 make test-mcp-rbac
 make test-mcp-session-isolation
+make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s
 cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml
 ```
 
@@ -197,7 +198,18 @@ Expected outcome:
 - `make test-mcp-cli` passes
 - `make test-mcp-rbac` passes
 - `make test-mcp-session-isolation` passes on the Rust path
+- `make test-mcp-session-isolation-load` validates owner traffic and hijack
+  denial under concurrent Locust load
 - release Rust tests pass
+
+For revocation and membership/role-drift changes, validate with a short reuse
+TTL so the bounded-TTL contract completes quickly:
+
+```bash
+MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS=2 MCP_RUST_SESSION_AUTH_REUSE_GRACE_SECONDS=1 make testing-rebuild-rust-full
+make test-mcp-session-isolation
+make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s
+```
 
 ## Verify What Is Actually Running
 

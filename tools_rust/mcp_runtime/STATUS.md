@@ -115,7 +115,10 @@ Most recent rebuilt full-Rust compose validation on this branch:
 - `make test-mcp-rbac`
   - `40 passed`
 - `make test-mcp-session-isolation`
-  - `7 passed`
+  - `10 passed`
+- `make test-mcp-session-isolation-load`
+  - dedicated Rust-only Locust correctness harness
+  - validate with a short session-auth reuse TTL during release-style checks
 - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
   - `48 passed`
 - `make test`
@@ -183,15 +186,20 @@ If they fail, validate whether the issue is:
 
 before attributing the result to Rust MCP itself.
 
-### 3. Session-auth reuse still needs more hardening coverage
+### 3. Session-auth reuse is still TTL-based
 
-The compose-backed isolation suite now proves the main hijack-deny paths, but
-the following still need stronger automated coverage:
+The isolation and correctness coverage is much stronger now:
 
-- revocation after initialize
-- team membership / role changes after initialize
-- explicit multi-worker affinity ownership under forced cross-worker routing
-- multi-user load tests that validate correctness, not only throughput
+- revocation-after-initialize is covered with a bounded TTL contract
+- team membership removal and role revocation are covered with the same bounded
+  TTL contract
+- forced cross-worker affinity ownership is covered in Rust integration tests
+- there is now a dedicated multi-user correctness load harness
+
+The remaining caveat is architectural, not missing test coverage:
+
+- session-auth reuse still depends on a bounded reuse TTL and therefore does
+  not react instantly to revocation without another Python auth check
 
 See [TESTING-DESIGN.md](TESTING-DESIGN.md).
 
@@ -229,11 +237,26 @@ design tradeoffs.
 - Rust direct DB mode now supports optional PostgreSQL TLS via
   `MCP_RUST_DATABASE_URL` / `sslmode=disable|prefer|require`, while preserving
   the existing non-TLS local/test path
+- Rust `/health` now exposes runtime fast-path observability counters for:
+  - session-auth reuse hits and misses
+  - miss reasons
+  - internal Python auth round-trips
+  - session access denial reasons
+  - affinity forward attempts and forwarded requests
+- the compose-backed Rust isolation suite now includes bounded-TTL coverage for:
+  - token revocation after initialize
+  - team membership removal after initialize
+  - team role revocation after initialize
+- the Rust integration suite now includes forced cross-worker affinity
+  ownership validation
+- a dedicated Rust-only correctness load harness now exists at
+  `tests/loadtest/locustfile_mcp_isolation.py`
 
 ### Still open / follow-up
 
 - `session_id` query-parameter compatibility still exists in both Rust and
-  Python and should be either retired or explicitly documented as an exception
+  Python; this branch documents it as compatibility debt rather than making a
+  breaking behavior change
 - Rust direct DB mode still does not support client certificate authentication
   via `sslcert` / `sslkey`; the current TLS support covers the common
   `sslmode=require`/system-roots path and optional `sslrootcert`
@@ -242,33 +265,17 @@ design tradeoffs.
   behavior, but it should be documented or revisited
 - session-auth reuse is still TTL-based and therefore does not immediately
   react to revocation events without a fresh Python auth check
+- broader Python MCP handlers outside the Rust runtime proxy still need their
+  own repository-wide error-redaction pass
 
 ## Recommended next steps
 
-### 1. Add observability for the session-auth fast path
-
-Add counters for:
-
-- session-auth reuse hits
-- session-auth reuse misses
-- fallback reasons
-- internal Python auth round-trips
-
-### 2. Extend the isolation suite
-
-Add explicit coverage for:
-
-- revocation after initialize
-- membership/role changes after initialize
-- forced cross-worker affinity ownership
-- multi-user load/correctness validation
-
-### 3. Investigate residual long-run tools-only failures
+### 1. Investigate residual long-run tools-only failures
 
 The remaining low-rate failures in sustained tools-only runs are the clearest
 quality issue left on the hot path.
 
-### 4. Keep reducing avoidable seam work
+### 2. Use the new runtime stats to keep reducing avoidable seam work
 
 The next meaningful gains are more likely to come from:
 
@@ -277,6 +284,19 @@ The next meaningful gains are more likely to come from:
 - improving upstream server behavior
 
 than from small Rust micro-optimizations inside the current crate.
+
+### 3. Decide the `session_id` compatibility strategy
+
+This branch intentionally does not make breaking Python behavior changes. The
+remaining decision is whether to:
+
+- keep the query-parameter fallback as an explicit compatibility exception, or
+- deprecate it and later retire it across both Rust and Python
+
+### 4. Decide whether Rust needs DB client-certificate TLS
+
+The common PostgreSQL TLS path is now supported. Only the `sslcert` / `sslkey`
+client-certificate mode remains unimplemented.
 
 ## Related documents
 
@@ -298,20 +318,20 @@ items below and any remaining issues are either fixed or explicitly understood.
   - `make test-mcp-rbac`
   - `make test-mcp-session-isolation`
   - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
-- [ ] Add observability for the session-auth fast path:
+- [x] Add observability for the session-auth fast path:
   - reuse hits
   - reuse misses
   - fallback-to-Python reasons
   - owner mismatch denials
   - server-id mismatch denials
   - internal Python auth round-trips
-- [ ] Extend the isolation suite with explicit revocation-after-initialize
+- [x] Extend the isolation suite with explicit revocation-after-initialize
   coverage.
-- [ ] Extend the isolation suite with explicit membership/role-change coverage
+- [x] Extend the isolation suite with explicit membership/role-change coverage
   after initialize.
-- [ ] Add forced cross-worker affinity ownership coverage so forwarded and
+- [x] Add forced cross-worker affinity ownership coverage so forwarded and
   local handling prove the same ownership rules.
-- [ ] Add a dedicated multi-user load/correctness harness separate from the
+- [x] Add a dedicated multi-user load/correctness harness separate from the
   throughput benchmarks.
 - [ ] Investigate and explain the remaining low-rate failures in sustained
   tools-only runs.

@@ -650,7 +650,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-session-isolation test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-session-isolation test-mcp-session-isolation-load test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
 # Dirs/files always excluded from standard pytest runs
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
@@ -695,6 +695,27 @@ test-mcp-session-isolation:  ## MCP session/auth isolation tests for the Rust pu
 		uv run --active pytest tests/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
 			|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }; \
 		echo "✅ MCP session/auth isolation tests passed!"'
+
+MCP_ISOLATION_LOCUSTFILE ?= tests/loadtest/locustfile_mcp_isolation.py
+MCP_ISOLATION_LOAD_HOST ?= http://localhost:8080
+MCP_ISOLATION_LOAD_USERS ?= 12
+MCP_ISOLATION_LOAD_SPAWN_RATE ?= 3
+MCP_ISOLATION_LOAD_RUN_TIME ?= 60s
+
+test-mcp-session-isolation-load: ## Multi-user MCP session/auth isolation correctness load test
+	@echo "🧪 Running MCP session/auth isolation load test against $(MCP_ISOLATION_LOAD_HOST)..."
+	@echo "   Requires: docker-compose stack rebuilt in Rust full mode"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_ISOLATION_LOCUSTFILE) \
+			--host=$(MCP_ISOLATION_LOAD_HOST) \
+			--users=$(MCP_ISOLATION_LOAD_USERS) \
+			--spawn-rate=$(MCP_ISOLATION_LOAD_SPAWN_RATE) \
+			--run-time=$(MCP_ISOLATION_LOAD_RUN_TIME) \
+			--headless \
+			--stop-timeout=30 \
+			--exit-code-on-error=1 \
+			--only-summary'
 
 test:
 	@echo "🧪 Running tests..."

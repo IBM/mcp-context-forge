@@ -20,7 +20,7 @@ The first end-to-end implementation is already in place:
 
 Current compose-backed validation on this branch:
 
-- `make test-mcp-session-isolation` -> `7 passed`
+- `make test-mcp-session-isolation` -> `10 passed`
 - `make test-mcp-cli` -> `23 passed`
 - `make test-mcp-rbac` -> `40 passed`
 - `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
@@ -35,6 +35,18 @@ The implemented suite currently proves:
 - cross-user `DELETE /mcp` denial with owner-session survival
 - live tool-result freshness validation
 - concurrent owner traffic plus peer hijack attempts without result leakage
+- token revocation after `initialize` is denied within the documented bounded
+  reuse TTL
+- team membership removal after `initialize` is denied within the documented
+  bounded reuse TTL
+- team role revocation after `initialize` is denied within the documented
+  bounded reuse TTL
+
+Rust integration coverage also now proves:
+
+- forced cross-worker affinity ownership preserves owner access
+- peer reuse attempts are still denied when the request is forwarded across
+  workers
 
 This design therefore supplements existing coverage now; it is no longer purely
 aspirational.
@@ -176,17 +188,15 @@ HTTP gateway:
 That fallback is acceptable because the suite is proving session/auth binding,
 not benchmarking a specific upstream server.
 
-## Remaining gaps
+## Implemented hardening additions
 
-The important remaining gaps are:
+The following design items are now implemented:
 
 1. Revocation after initialize
 2. Team membership / role change after initialize
 3. Forced cross-worker affinity ownership scenarios
-4. Multi-user load tests that validate correctness under concurrency
+4. Multi-user correctness load harness
 5. Explicit reuse/fallback observability counters
-
-## Recommended next tests
 
 ### 1. Revocation after initialize
 
@@ -201,6 +211,11 @@ Required outcome:
 - either strict invalidation, or
 - a clearly documented and explicitly tested bounded TTL contract
 
+Current status:
+
+- implemented as a bounded TTL contract in
+  `tests/e2e_rust/test_mcp_session_isolation.py`
+
 ### 2. Team membership / role change after initialize
 
 Scenario:
@@ -212,6 +227,11 @@ Scenario:
 Required outcome:
 
 - same explicit contract as revocation
+
+Current status:
+
+- implemented for both membership removal and role revocation in
+  `tests/e2e_rust/test_mcp_session_isolation.py`
 
 ### 3. Forced cross-worker affinity ownership
 
@@ -227,6 +247,10 @@ Required outcome:
 - non-owner is denied across workers
 - forwarded and local handling enforce the same ownership rule
 
+Current status:
+
+- implemented in `tools_rust/mcp_runtime/tests/runtime.rs`
+
 ### 4. Multi-user load correctness harness
 
 Add a dedicated load harness that validates:
@@ -239,42 +263,32 @@ Add a dedicated load harness that validates:
 This should be a separate correctness harness, not a replacement for the
 throughput benchmarks.
 
-## Recommended new files
+Current status:
 
-### Integration coverage
+- implemented in `tests/loadtest/locustfile_mcp_isolation.py`
+- exposed as `make test-mcp-session-isolation-load`
 
-- `tests/integration/test_rust_mcp_session_auth_reuse.py`
+## Observability now available
 
-Suggested focus:
-
-- fingerprint mismatch
-- TTL expiry
-- server-id mismatch
-- owner-email mismatch
-- explicit fallback reasons
-
-### Load/correctness harness
-
-- `tests/loadtest/locustfile_mcp_isolation.py`
-
-Suggested focus:
-
-- multiple real users/tokens
-- per-user allowlist and denylist validation
-- active hijack probes during load
-- freshness probes during load
-
-## Observability needed
-
-Before calling the fast path fully hardened, add counters/logs for:
+Rust `/health` now exposes `runtime_stats` for:
 
 - session-auth reuse hits
 - session-auth reuse misses
-- fallback-to-Python-auth reason
-- session-owner mismatch denials
-- server-id mismatch denials
-- replay/resume ownership denials
-- delete ownership denials
+- miss reasons
+- backend Python auth round-trips
+- session-owner and auth-binding denials
+- server-scope mismatch denials
+- affinity forward attempts and forwarded requests
+
+## Remaining gaps
+
+The main remaining gaps are now narrower:
+
+1. Routine release validation of the bounded TTL contract under a short test TTL
+2. Broader correctness-load validation as part of release-style testing, not
+   just availability of the harness
+3. Longer-term architectural work if the project wants revocation-aware
+   invalidation instead of a bounded TTL contract
 
 ## Rollout gate
 
@@ -287,20 +301,28 @@ fallback?"
 Recommended gate:
 
 1. Keep `test-mcp-session-isolation` green
-2. Add revocation and membership/role-change coverage
-3. Add forced cross-worker affinity ownership coverage
-4. Add the multi-user load/correctness harness
-5. Add observability for reuse, fallback, and denial reasons
+2. Keep the short-TTL revocation/membership/role-change cases green
+3. Keep forced cross-worker affinity ownership coverage green
+4. Run the multi-user load/correctness harness
+5. Review `runtime_stats` to confirm the fast path is being exercised and that
+   denial/fallback behavior looks sane
 
 ## Short version
 
 We now have an initial proof that the Rust fast path preserves session
 ownership for the main hijack and freshness cases.
 
-What is still missing is not the basic deny path. It is the broader hardening
-proof around:
+What is now implemented covers the main deny path plus the bounded-TTL drift
+cases around:
 
 - revocation
 - membership/role drift
 - forced cross-worker ownership
 - correctness under concurrent multi-user load
+
+What remains is mostly operational rigor:
+
+- re-running the short-TTL correctness suite before release
+- using the new stats to understand reuse/fallback behavior in real runs
+- deciding whether bounded TTL reuse is acceptable long-term or should be
+  replaced with revocation-aware invalidation

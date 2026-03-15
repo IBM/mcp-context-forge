@@ -27,6 +27,27 @@ struct BackendObservation {
     calls: Arc<Mutex<Vec<ObservedBackendCall>>>,
 }
 
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut encoded, "{byte:02x}");
+    }
+    encoded
+}
+
+fn hex_decode(input: &str) -> Vec<u8> {
+    input
+        .as_bytes()
+        .chunks_exact(2)
+        .filter_map(|chunk| {
+            let high = (chunk[0] as char).to_digit(16)?;
+            let low = (chunk[1] as char).to_digit(16)?;
+            u8::try_from((high << 4) | low).ok()
+        })
+        .collect()
+}
+
 async fn spawn_router(router: Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -249,6 +270,14 @@ async fn health_alias_is_available_for_gateway_style_probes() {
     assert_eq!(body["live_stream_core_enabled"], json!(false));
     assert_eq!(body["session_auth_reuse_enabled"], json!(false));
     assert_eq!(body["active_sessions"], json!(0));
+    assert_eq!(
+        body["runtime_stats"]["session_auth_reuse"]["hits"],
+        json!(0)
+    );
+    assert_eq!(
+        body["runtime_stats"]["session_access_denials"]["server_scope_mismatches"],
+        json!(0)
+    );
     assert!(
         body["supported_protocol_versions"]
             .as_array()
@@ -1006,6 +1035,10 @@ async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_tran
     let health_body: Value = health_response.json().await.expect("health json");
     assert_eq!(health_body["session_core_enabled"], json!(true));
     assert_eq!(health_body["active_sessions"], json!(0));
+    assert_eq!(
+        health_body["runtime_stats"]["session_auth_reuse"]["hits"],
+        json!(0)
+    );
 
     let calls = transport_calls.lock().expect("lock");
     assert_eq!(calls[0].0, "POST".to_string());
@@ -1033,6 +1066,322 @@ async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_tran
             Some("rust".to_string()),
         )
     );
+}
+
+#[tokio::test]
+async fn affinity_core_preserves_owner_access_across_workers_and_denies_peer_reuse() {
+    let redis_url = "redis://127.0.0.1:6379/0";
+    if !redis_is_available(redis_url).await {
+        eprintln!(
+            "skipping cross-worker affinity test because Redis is unavailable at {redis_url}"
+        );
+        return;
+    }
+
+    let cache_prefix = format!("mcpgw:rust-affinity-itest:{}:", Uuid::new_v4());
+    cleanup_redis_prefix(redis_url, &cache_prefix).await;
+
+    let owner_worker_id = format!("worker-{}", Uuid::new_v4().simple());
+    let session_id = format!("affinity-session-{}", Uuid::new_v4().simple());
+    let backend_calls = Arc::new(Mutex::new(Vec::<String>::new()));
+    let backend_calls_clone = backend_calls.clone();
+    let initialize_session_id = session_id.clone();
+    let backend = Router::new()
+        .route(
+            "/_internal/mcp/authenticate",
+            post(|Json(body): Json<Value>| async move {
+                let auth_context = if body["headers"]["authorization"]
+                    .as_str()
+                    .is_some_and(|value| value.contains("peer-token"))
+                {
+                    json!({
+                        "email": "peer@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": true,
+                        "is_admin": false,
+                        "permission_is_admin": false,
+                        "token_use": "session"
+                    })
+                } else {
+                    json!({
+                        "email": "owner@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": true,
+                        "is_admin": false,
+                        "permission_is_admin": false,
+                        "token_use": "session"
+                    })
+                };
+                Json(json!({"authContext": auth_context}))
+            }),
+        )
+        .route(
+            "/_internal/mcp/transport",
+            post(move || {
+                let initialize_session_id = initialize_session_id.clone();
+                async move {
+                    (
+                        StatusCode::OK,
+                        [("mcp-session-id", initialize_session_id)],
+                        Json(json!({
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {}
+                        })),
+                    )
+                }
+            }),
+        )
+        .route(
+            "/_internal/mcp/rpc",
+            post(move || {
+                let backend_calls = backend_calls_clone.clone();
+                async move {
+                    backend_calls
+                        .lock()
+                        .expect("lock")
+                        .push("tools-list".to_string());
+                    Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "result": {"tools": [{"name": "fast-time-get-system-time"}]},
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/_internal/mcp/tools/list",
+            post({
+                let backend_calls = backend_calls.clone();
+                move || {
+                    let backend_calls = backend_calls.clone();
+                    async move {
+                        backend_calls
+                            .lock()
+                            .expect("lock")
+                            .push("tools-list".to_string());
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": 2,
+                            "result": {"tools": [{"name": "fast-time-get-system-time"}]},
+                        }))
+                    }
+                }
+            }),
+        )
+        .fallback({
+            let backend_calls = backend_calls.clone();
+            any(move |uri: Uri| {
+                let backend_calls = backend_calls.clone();
+                async move {
+                    backend_calls
+                        .lock()
+                        .expect("lock")
+                        .push(format!("unexpected:{}", uri.path()));
+                    (StatusCode::NOT_FOUND, uri.path().to_string())
+                }
+            })
+        });
+    let backend_url = spawn_router(backend).await;
+
+    let runtime_1 = {
+        let mut config = test_runtime_config();
+        config.backend_rpc_url = format!("{backend_url}/_internal/mcp/rpc");
+        config.public_listen_http = Some("127.0.0.1:8788".to_string());
+        config.session_core_enabled = true;
+        config.affinity_core_enabled = true;
+        config.session_auth_reuse_enabled = true;
+        config.redis_url = Some(redis_url.to_string());
+        config.cache_prefix = cache_prefix.clone();
+        build_router(AppState::new(&config).expect("state 1"))
+    };
+    let runtime_2 = {
+        let mut config = test_runtime_config();
+        config.backend_rpc_url = format!("{backend_url}/_internal/mcp/rpc");
+        config.public_listen_http = Some("127.0.0.1:8788".to_string());
+        config.session_core_enabled = true;
+        config.affinity_core_enabled = true;
+        config.session_auth_reuse_enabled = true;
+        config.redis_url = Some(redis_url.to_string());
+        config.cache_prefix = cache_prefix.clone();
+        build_router(AppState::new(&config).expect("state 2"))
+    };
+    let runtime_1_url = spawn_router(runtime_1).await;
+    let runtime_2_url = spawn_router(runtime_2).await;
+
+    let redis_client = redis::Client::open(redis_url).expect("redis client");
+    let mut redis = redis_client
+        .get_multiplexed_async_connection()
+        .await
+        .expect("redis connection");
+    redis
+        .set_ex::<_, _, ()>(
+            format!("{cache_prefix}pool_owner:{session_id}"),
+            owner_worker_id.clone(),
+            300,
+        )
+        .await
+        .expect("set owner");
+
+    let responder = {
+        let redis_client = redis_client.clone();
+        let runtime_2_url = runtime_2_url.clone();
+        let owner_worker_id = owner_worker_id.clone();
+        let cache_prefix = cache_prefix.clone();
+        tokio::spawn(async move {
+            let mut pubsub = redis_client.get_async_pubsub().await.expect("pubsub");
+            pubsub
+                .subscribe(format!("{cache_prefix}pool_http:{owner_worker_id}"))
+                .await
+                .expect("subscribe");
+            let mut stream = pubsub.on_message();
+            if let Some(message) = stream.next().await {
+                let payload_json: String = message.get_payload().expect("payload");
+                let payload: Value = serde_json::from_str(&payload_json).expect("payload json");
+                let method = payload["method"].as_str().expect("method");
+                let path = payload["path"].as_str().expect("path");
+                let query = payload["query_string"].as_str().unwrap_or_default();
+                let response_channel = payload["response_channel"]
+                    .as_str()
+                    .expect("response channel")
+                    .to_string();
+
+                let mut request_builder = reqwest::Client::new()
+                    .request(
+                        reqwest::Method::from_bytes(method.as_bytes()).expect("request method"),
+                        if query.is_empty() {
+                            format!("{runtime_2_url}{path}")
+                        } else {
+                            format!("{runtime_2_url}{path}?{query}")
+                        },
+                    )
+                    .header("x-contextforge-affinity-forwarded", "rust");
+
+                for (name, value) in payload["headers"].as_object().expect("headers map") {
+                    request_builder =
+                        request_builder.header(name, value.as_str().expect("header value"));
+                }
+
+                let body_hex = payload["body"].as_str().unwrap_or_default();
+                if !body_hex.is_empty() {
+                    request_builder = request_builder.body(hex_decode(body_hex));
+                }
+
+                let response = request_builder.send().await.expect("forwarded response");
+                let status = response.status().as_u16();
+                let headers = response
+                    .headers()
+                    .iter()
+                    .filter_map(|(name, value)| {
+                        value
+                            .to_str()
+                            .ok()
+                            .map(|value_str| (name.as_str().to_string(), value_str.to_string()))
+                    })
+                    .collect::<std::collections::HashMap<String, String>>();
+                let body = response.bytes().await.expect("response body");
+                let response = serde_json::to_string(&json!({
+                    "status": status,
+                    "headers": headers,
+                    "body": hex_encode(&body),
+                }))
+                .expect("response payload");
+                let mut publish_conn = redis_client
+                    .get_multiplexed_async_connection()
+                    .await
+                    .expect("publish connection");
+                redis::cmd("PUBLISH")
+                    .arg(response_channel)
+                    .arg(response)
+                    .query_async::<i64>(&mut publish_conn)
+                    .await
+                    .expect("publish response");
+            }
+        })
+    };
+
+    let client = reqwest::Client::new();
+    let initialize = client
+        .post(format!("{runtime_1_url}/mcp"))
+        .header("authorization", "Bearer owner-token")
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"initialize",
+            "params":{"protocolVersion":"2025-11-25","capabilities":{}}
+        }))
+        .send()
+        .await
+        .expect("initialize response");
+    assert_eq!(initialize.status(), StatusCode::OK);
+
+    let owner_response = client
+        .post(format!("{runtime_1_url}/mcp"))
+        .header("authorization", "Bearer owner-token")
+        .header("mcp-protocol-version", "2025-11-25")
+        .header("mcp-session-id", session_id.clone())
+        .json(&json!({
+            "jsonrpc":"2.0",
+            "id":2,
+            "method":"tools/list",
+            "params":{}
+        }))
+        .send()
+        .await
+        .expect("owner response");
+    let owner_status = owner_response.status();
+    let owner_text = owner_response.text().await.expect("owner body");
+    assert!(
+        owner_status == StatusCode::OK,
+        "owner status={owner_status} body={owner_text}"
+    );
+    let owner_body: Value = serde_json::from_str(&owner_text).expect("owner json");
+    assert_eq!(
+        owner_body["result"]["tools"][0]["name"],
+        json!("fast-time-get-system-time")
+    );
+    responder.await.expect("responder");
+
+    let peer_response = client
+        .post(format!("{runtime_1_url}/mcp"))
+        .header("authorization", "Bearer peer-token")
+        .header("mcp-protocol-version", "2025-11-25")
+        .header("mcp-session-id", session_id.clone())
+        .json(&json!({
+            "jsonrpc":"2.0",
+            "id":3,
+            "method":"tools/list",
+            "params":{}
+        }))
+        .send()
+        .await
+        .expect("peer response");
+    assert_eq!(peer_response.status(), StatusCode::FORBIDDEN);
+
+    let health_response = client
+        .get(format!("{runtime_1_url}/health"))
+        .send()
+        .await
+        .expect("health response");
+    let health_body: Value = health_response.json().await.expect("health json");
+    assert_eq!(
+        health_body["runtime_stats"]["affinity"]["forward_attempts"],
+        json!(1)
+    );
+    assert_eq!(
+        health_body["runtime_stats"]["affinity"]["forwarded_requests"],
+        json!(1)
+    );
+    assert_eq!(
+        health_body["runtime_stats"]["session_access_denials"]["auth_binding_mismatches"],
+        json!(1)
+    );
+
+    {
+        let calls = backend_calls.lock().expect("lock");
+        assert_eq!(calls.as_slice(), &["tools-list".to_string()]);
+    }
+    cleanup_redis_prefix(redis_url, &cache_prefix).await;
 }
 
 #[tokio::test]

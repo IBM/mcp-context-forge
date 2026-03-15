@@ -41,6 +41,7 @@ make smoketest                    # Container build + simple E2E flow
 make test-mcp-cli                 # MCP protocol via mcp-cli (needs live gateway)
 make test-mcp-rbac                # MCP RBAC transport E2E (needs live gateway)
 make test-mcp-session-isolation   # Rust-only MCP session isolation E2E
+make test-mcp-session-isolation-load  # Rust-only Locust correctness load test
 
 # Selective runs
 pytest -k "fragment"              # By name substring

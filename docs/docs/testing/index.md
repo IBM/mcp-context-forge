@@ -102,7 +102,17 @@ make testing-rebuild-rust-full
 make test-mcp-cli
 make test-mcp-rbac
 make test-mcp-session-isolation
+make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s
 cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml
+```
+
+For revocation and membership/role-drift validation, shorten the reuse TTL so
+the bounded-TTL contract completes quickly:
+
+```bash
+MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS=2 MCP_RUST_SESSION_AUTH_REUSE_GRACE_SECONDS=1 make testing-rebuild-rust-full
+make test-mcp-session-isolation
+make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s
 ```
 
 Use these mode-specific rebuild targets when validating rollout behavior:

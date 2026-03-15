@@ -12,7 +12,52 @@ These items are intentionally separated from the main Rust MCP runtime work beca
 
 ## Current Follow-Ups
 
-### 1. Playwright admin JWT login instability
+### 1. Broader Python MCP error redaction
+
+Status:
+- Needs a separate Python-focused hardening pass
+
+Observed behavior:
+- The Rust runtime and Rust runtime proxy now redact client-visible transport
+  errors, but broader Python MCP handlers still return some raw exception text.
+
+Why this matters:
+- Error-shaping parity is still incomplete outside the Rust-specific path.
+
+Likely area:
+- `mcpgateway/main.py`
+- Python MCP handlers that still return `str(exc)` or equivalent error data
+
+Recommended next step:
+- Audit the remaining Python MCP handlers and replace client-visible exception
+  text with generic transport-safe messages while keeping detailed logs
+  server-side.
+
+### 2. Python `session_id` query-parameter compatibility debt
+
+Status:
+- Intentionally not changed in this PR
+
+Observed behavior:
+- Both Python and Rust still accept `session_id` via query parameters for MCP
+  transport compatibility.
+
+Why this matters:
+- This is security-sensitive compatibility debt because session identifiers can
+  appear in browser history, reverse-proxy logs, and access logs.
+- The current Rust MCP work deliberately documents this behavior instead of
+  making a breaking Python change.
+
+Likely area:
+- `mcpgateway/main.py`
+- `tools_rust/mcp_runtime/src/lib.rs`
+
+Recommended next step:
+- Decide whether to formally deprecate the query-parameter fallback, add
+  explicit warnings/telemetry, and retire it in a separate compatibility
+  cleanup.
+
+### 3. Playwright admin JWT login instability
 
 Status:
 - Needs investigation
@@ -33,7 +78,7 @@ Likely area:
 Recommended next step:
 - Add targeted instrumentation around `_ensure_admin_logged_in(...)` and capture redirect/response traces when JWT-cookie login falls back to `/admin/login`.
 
-### 2. Circuit breaker unit test timing flake
+### 4. Circuit breaker unit test timing flake
 
 Status:
 - Likely brittle test
@@ -50,7 +95,7 @@ Likely cause:
 Recommended next step:
 - Rewrite the test to poll until reset rather than relying on a fixed sleep margin.
 
-### 3. Gateway delete Playwright assertion is too strict
+### 5. Gateway delete Playwright assertion is too strict
 
 Status:
 - Likely brittle test
@@ -65,7 +110,7 @@ Why this matters:
 Recommended next step:
 - Verify deletion by name or empty-state handling instead of requiring at least one remaining row.
 
-### 4. Gateway edit modal file-scope instability
+### 6. Gateway edit modal file-scope instability
 
 Status:
 - Needs investigation
@@ -79,7 +124,7 @@ Why this matters:
 Recommended next step:
 - Reproduce on a fresh stack with focused instrumentation around modal open requests and Alpine/HTMX state changes.
 
-### 5. Prompt/admin page file-scope login failures
+### 7. Prompt/admin page file-scope login failures
 
 Status:
 - Needs investigation
@@ -93,7 +138,7 @@ Why this matters:
 Recommended next step:
 - Treat as part of the admin login fixture investigation rather than fixing prompt-specific tests first.
 
-### 6. `register_fast_time_sse` sync quirk
+### 8. `register_fast_time_sse` sync quirk
 
 Status:
 - Needs investigation
