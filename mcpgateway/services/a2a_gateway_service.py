@@ -12,7 +12,9 @@ and transparent proxying of requests to downstream A2A agents.
 """
 
 # Standard
+import time
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse, urlunparse
 
 # Third-Party
 from sqlalchemy.orm import Session
@@ -92,6 +94,81 @@ class A2AGatewayAgentIncompatibleError(A2AGatewayError):
 
 # Agent types that speak JSON-RPC 2.0 and are compatible with the A2A gateway
 A2A_COMPATIBLE_AGENT_TYPES = frozenset({"generic", "jsonrpc"})
+
+# A2A well-known agent card paths (new standard first, then legacy)
+A2A_CARD_PATHS = ("/.well-known/agent-card.json", "/.well-known/agent.json")
+
+# In-memory cache for fetched downstream agent cards: {agent_id: (card_dict, fetch_timestamp)}
+_agent_card_cache: Dict[str, Tuple[Dict[str, Any], float]] = {}
+_AGENT_CARD_CACHE_TTL = 300  # 5 minutes
+
+
+async def fetch_downstream_agent_card(
+    endpoint_url: str,
+    auth_headers: Dict[str, str],
+    agent_id: str,
+    cache_ttl: float = _AGENT_CARD_CACHE_TTL,
+) -> Optional[Dict[str, Any]]:
+    """Fetch the original agent card from a downstream A2A agent.
+
+    Tries the standard well-known paths (/.well-known/agent-card.json, then
+    /.well-known/agent.json) with a short timeout. Results are cached per
+    agent_id for cache_ttl seconds.
+
+    Args:
+        endpoint_url: The downstream agent's endpoint URL.
+        auth_headers: Authentication headers for the downstream agent.
+        agent_id: The agent's database ID (used as cache key).
+        cache_ttl: Cache TTL in seconds (default 300).
+
+    Returns:
+        The original agent card dict, or None if unavailable.
+    """
+    # Check cache first
+    cached = _agent_card_cache.get(agent_id)
+    if cached:
+        card_data, ts = cached
+        if time.monotonic() - ts < cache_ttl:
+            return card_data
+
+    # Build base URL from endpoint_url (strip path to get the root)
+    parsed = urlparse(endpoint_url.rstrip("/"))
+    base_url = urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
+
+    # Also try the endpoint URL directly (some agents serve the card relative to their path)
+    endpoint_base = endpoint_url.rstrip("/")
+
+    try:
+        from mcpgateway.services.http_client_service import get_http_client
+
+        client = await get_http_client()
+        headers = dict(auth_headers) if auth_headers else {}
+        headers.setdefault("Accept", "application/json")
+
+        for card_path in A2A_CARD_PATHS:
+            # Try root-relative URL first, then endpoint-relative
+            urls_to_try = []
+            root_url = f"{base_url}{card_path}"
+            endpoint_card_url = f"{endpoint_base}{card_path}"
+            urls_to_try.append(root_url)
+            if endpoint_card_url != root_url:
+                urls_to_try.append(endpoint_card_url)
+
+            for url in urls_to_try:
+                try:
+                    resp = await client.get(url, headers=headers, timeout=5.0)
+                    if resp.status_code == 200:
+                        card_data = resp.json()
+                        if isinstance(card_data, dict) and "name" in card_data:
+                            _agent_card_cache[agent_id] = (card_data, time.monotonic())
+                            return card_data
+                except Exception:
+                    continue
+
+    except Exception as e:
+        logger.debug(f"Failed to fetch downstream agent card for {agent_id}: {e}")
+
+    return None
 
 
 def make_jsonrpc_error(code: int, message: str, request_id: Any = None, data: Any = None) -> Dict[str, Any]:
@@ -200,15 +277,23 @@ class A2AGatewayService:
 
         return agent, auth_headers, auth_query_params_decrypted
 
-    def generate_agent_card(self, agent: DbA2AAgent, base_url: str) -> Dict[str, Any]:
+    def generate_agent_card(
+        self,
+        agent: DbA2AAgent,
+        base_url: str,
+        original_card: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Generate an A2A-spec compliant Agent Card for a registered agent.
 
-        The agent card points clients to the gateway's JSON-RPC endpoint rather than
-        the downstream agent, so all requests flow through the gateway pipeline.
+        When an original_card (fetched from the downstream agent) is provided,
+        its fields are used as the base and the gateway overrides only the url
+        field. DB-configured fields (description, capabilities, etc.) override
+        the original card only when they are explicitly populated.
 
         Args:
             agent: The A2A agent to generate a card for.
             base_url: The gateway's base URL (e.g., "https://gateway.example.com").
+            original_card: Optional agent card dict fetched from the downstream agent.
 
         Returns:
             Agent card as a dict (JSON-serializable).
@@ -218,6 +303,28 @@ class A2AGatewayService:
         route_prefix = settings.a2a_gateway_route_prefix.strip("/")
         gateway_url = f"{base_url}/{route_prefix}/{agent.id}"
 
+        if original_card:
+            # Use the original card as the base, override url to point to gateway
+            card = dict(original_card)
+            card["url"] = gateway_url
+
+            # Override with DB fields only when explicitly set by the user
+            if agent.description:
+                card["description"] = agent.description
+
+            # Ensure required A2A card fields exist
+            card.setdefault("name", agent.name)
+            card.setdefault("description", "")
+            card.setdefault("version", str(agent.protocol_version or "1.0"))
+            card.setdefault("protocolVersion", card.get("version", "1.0"))
+            card.setdefault("capabilities", {})
+            card.setdefault("defaultInputModes", ["text"])
+            card.setdefault("defaultOutputModes", ["text"])
+            card.setdefault("skills", [])
+
+            return card
+
+        # Fallback: construct card from DB fields when no original card is available
         capabilities = agent.capabilities or {}
 
         card: Dict[str, Any] = {

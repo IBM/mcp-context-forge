@@ -76,6 +76,8 @@ def mock_services():
         patch("mcpgateway.routers.a2a_gateway.a2a_gateway_errors_counter") as mock_err_counter,
         patch("mcpgateway.routers.a2a_gateway.a2a_gateway_streams_active") as mock_streams_gauge,
         patch("mcpgateway.routers.a2a_gateway._get_rpc_filter_context", return_value=("testuser@example.com", [], False)),
+        patch("mcpgateway.routers.a2a_gateway.fetch_downstream_agent_card", new_callable=AsyncMock, return_value=None),
+        patch("mcpgateway.routers.a2a_gateway._record_gateway_db_metrics"),
         patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService),
     ):
         yield {

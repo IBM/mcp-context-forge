@@ -38,6 +38,7 @@ from mcpgateway.services.a2a_gateway_service import (
     JSONRPC_INTERNAL_ERROR,
     JSONRPC_INVALID_REQUEST,
     JSONRPC_PARSE_ERROR,
+    fetch_downstream_agent_card,
     make_jsonrpc_error,
 )
 from mcpgateway.services.a2a_client_service import A2AClientService
@@ -236,9 +237,14 @@ async def get_agent_card(
         elif token_teams is None:
             token_teams = []  # Non-admin without teams = public-only
 
-        agent, _, _ = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
+        agent, auth_headers_card, _ = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
+        endpoint_url = getattr(agent, "_gateway_endpoint_url", agent.endpoint_url)
+
+        # Fetch the original card from the downstream agent
+        original_card = await fetch_downstream_agent_card(endpoint_url, auth_headers_card, agent_id)
+
         base_url = _get_base_url(request)
-        card = _gateway_service.generate_agent_card(agent, base_url)
+        card = _gateway_service.generate_agent_card(agent, base_url, original_card)
 
         return JSONResponse(content=card, media_type="application/json")
 
@@ -450,9 +456,12 @@ async def _handle_get_authenticated_card(
         elif token_teams is None:
             token_teams = []
 
-        agent, _, _ = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
+        agent, auth_headers_card, _ = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
+        endpoint_url = getattr(agent, "_gateway_endpoint_url", agent.endpoint_url)
+        original_card = await fetch_downstream_agent_card(endpoint_url, auth_headers_card, agent_id)
+
         base_url = _get_base_url(request)
-        card = _gateway_service.generate_agent_card(agent, base_url)
+        card = _gateway_service.generate_agent_card(agent, base_url, original_card)
 
         from mcpgateway.services.a2a_gateway_service import make_jsonrpc_response
 
