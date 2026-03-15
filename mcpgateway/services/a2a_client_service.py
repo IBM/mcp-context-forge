@@ -70,6 +70,7 @@ class A2AClientService:
         Returns:
             The JSON-RPC response from the downstream agent.
         """
+        # First-Party
         from mcpgateway.services.http_client_service import get_http_client
         from mcpgateway.utils.url_auth import sanitize_exception_message, sanitize_url_for_logging
 
@@ -239,6 +240,7 @@ class A2AClientService:
         Yields:
             SSE event strings in the format "data: {...}\n\n".
         """
+        # First-Party
         from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
         headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
@@ -309,6 +311,7 @@ class A2AClientService:
                 metadata={"event": "a2a_client_stream_timeout", "agent_id": agent_id, "method": method, "event_count": event_count},
             )
             # Yield an error event to the client
+            # Standard
             import json
 
             error_data = json.dumps(make_jsonrpc_error(JSONRPC_INTERNAL_ERROR, "Stream timed out", body.get("id")))
@@ -316,6 +319,7 @@ class A2AClientService:
 
         except Exception as e:
             duration_ms = (datetime.now(timezone.utc) - call_start).total_seconds() * 1000
+            # First-Party
             from mcpgateway.utils.url_auth import sanitize_exception_message
 
             error_str = sanitize_exception_message(str(e), auth_query_params_decrypted)
@@ -331,6 +335,7 @@ class A2AClientService:
                 error_details={"error_type": type(e).__name__, "error_message": error_str},
                 metadata={"event": "a2a_client_stream_error", "agent_id": agent_id, "method": method, "event_count": event_count},
             )
+            # Standard
             import json
 
             error_data = json.dumps(make_jsonrpc_error(JSONRPC_INTERNAL_ERROR, f"Stream error: {error_str}", body.get("id")))

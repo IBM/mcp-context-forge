@@ -19,7 +19,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, or_, select
+from sqlalchemy import and_, case, delete, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -225,6 +225,7 @@ def prepare_agent_auth(
 
     # Handle query_param auth - decrypt and apply to URL
     if agent.auth_type == "query_param" and agent.auth_query_params:
+        # First-Party
         from mcpgateway.utils.url_auth import apply_query_param_auth  # pylint: disable=import-outside-toplevel
 
         auth_query_params_decrypted = {}
@@ -1776,14 +1777,14 @@ class A2AAgentService(BaseService):
         # Use single SQL query with full aggregation (efficient)
         result = (
             db.query(
-                func.count(DbA2AAgentMetric.id),  # pylint: disable=not-callable
-                func.sum(case((DbA2AAgentMetric.is_success.is_(True), 1), else_=0)),
-                func.min(DbA2AAgentMetric.response_time),  # pylint: disable=not-callable
-                func.max(DbA2AAgentMetric.response_time),  # pylint: disable=not-callable
-                func.avg(DbA2AAgentMetric.response_time),  # pylint: disable=not-callable
-                func.max(DbA2AAgentMetric.timestamp),  # pylint: disable=not-callable
+                func.count(A2AAgentMetric.id),  # pylint: disable=not-callable
+                func.sum(case((A2AAgentMetric.is_success.is_(True), 1), else_=0)),
+                func.min(A2AAgentMetric.response_time),  # pylint: disable=not-callable
+                func.max(A2AAgentMetric.response_time),  # pylint: disable=not-callable
+                func.avg(A2AAgentMetric.response_time),  # pylint: disable=not-callable
+                func.max(A2AAgentMetric.timestamp),  # pylint: disable=not-callable
             )
-            .filter(DbA2AAgentMetric.a2a_agent_id == db_agent.id)
+            .filter(A2AAgentMetric.a2a_agent_id == db_agent.id)
             .one()
         )
 

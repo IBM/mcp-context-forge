@@ -7767,6 +7767,7 @@ if settings.mcpgateway_a2a_enabled:
 
     # Conditionally include A2A Gateway router (native A2A protocol) if enabled
     if settings.mcpgateway_a2a_gateway_enabled:
+        # First-Party
         from mcpgateway.routers.a2a_gateway import router as a2a_gateway_router
 
         app.include_router(a2a_gateway_router)

@@ -72,8 +72,7 @@ from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric
-from mcpgateway.db import EmailApiToken, EmailTeam, extract_json_field
+from mcpgateway.db import A2AAgentMetric, EmailApiToken, EmailTeam, extract_json_field
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt

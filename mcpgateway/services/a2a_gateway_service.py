@@ -144,6 +144,7 @@ async def fetch_downstream_agent_card(
     endpoint_base = endpoint_url.rstrip("/")
 
     try:
+        # First-Party
         from mcpgateway.services.http_client_service import get_http_client
 
         client = await get_http_client()
@@ -303,6 +304,7 @@ class A2AGatewayService:
         Returns:
             Agent card as a dict (JSON-serializable).
         """
+        # First-Party
         from mcpgateway.config import settings
 
         route_prefix = settings.a2a_gateway_route_prefix.strip("/")

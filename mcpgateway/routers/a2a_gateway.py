@@ -30,19 +30,19 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.services.a2a_client_service import A2AClientService
 from mcpgateway.services.a2a_gateway_service import (
     A2AGatewayAgentDisabledError,
     A2AGatewayAgentIncompatibleError,
     A2AGatewayAgentNotFoundError,
     A2AGatewayError,
     A2AGatewayService,
+    fetch_downstream_agent_card,
     JSONRPC_INTERNAL_ERROR,
     JSONRPC_INVALID_REQUEST,
     JSONRPC_PARSE_ERROR,
-    fetch_downstream_agent_card,
     make_jsonrpc_error,
 )
-from mcpgateway.services.a2a_client_service import A2AClientService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import a2a_gateway_errors_counter, a2a_gateway_requests_counter, a2a_gateway_streams_active
 
@@ -62,6 +62,7 @@ _stream_semaphore = asyncio.Semaphore(settings.a2a_gateway_max_concurrent_stream
 
 def get_db():
     """Database session dependency for A2A gateway router."""
+    # First-Party
     from mcpgateway.db import SessionLocal
 
     db = SessionLocal()
@@ -101,6 +102,7 @@ def _get_rpc_filter_context(request: Request, user: Any) -> tuple:
     token_teams = getattr(request.state, "token_teams", _not_set)
     if token_teams is _not_set or (token_teams is not None and not isinstance(token_teams, list)):
         # Fallback: use cached verified payload and call normalize_token_teams
+        # First-Party
         from mcpgateway.auth import normalize_token_teams
 
         cached = getattr(request.state, "_jwt_verified_payload", None)
@@ -144,6 +146,7 @@ def _get_base_url(request: Request) -> str:
     Returns:
         Base URL string (including root_path) without trailing slash.
     """
+    # Standard
     from urllib.parse import urlparse, urlunparse
 
     forwarded_proto = request.headers.get("x-forwarded-proto")
@@ -217,6 +220,7 @@ def _record_gateway_db_metrics(
 
     # Record to A2AAgentMetric table via buffer service
     try:
+        # First-Party
         from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
 
         metrics_buffer = get_metrics_buffer_service()
@@ -232,7 +236,9 @@ def _record_gateway_db_metrics(
 
     # Update last_interaction timestamp
     try:
-        from mcpgateway.db import A2AAgent, fresh_db_session, get_for_update as get_for_update_fn  # pylint: disable=import-outside-toplevel
+        # First-Party
+        from mcpgateway.db import A2AAgent, fresh_db_session
+        from mcpgateway.db import get_for_update as get_for_update_fn  # pylint: disable=import-outside-toplevel
 
         with fresh_db_session() as ts_db:
             db_agent = get_for_update_fn(ts_db, A2AAgent, agent_id)
@@ -408,6 +414,7 @@ async def jsonrpc_endpoint(
     if _gateway_service.is_streaming_method(method):
         # Enforce max concurrent streams limit
         if _stream_semaphore.locked():
+            # First-Party
             from mcpgateway.services.a2a_gateway_service import A2A_UNSUPPORTED_OPERATION  # pylint: disable=import-outside-toplevel
 
             return JSONResponse(
@@ -527,6 +534,7 @@ async def _handle_get_authenticated_card(
         passthrough_list = getattr(agent, "passthrough_headers", None)
         fwd_headers = _extract_forwarded_headers(request, passthrough_list)
 
+        # First-Party
         from mcpgateway.services.a2a_gateway_service import make_jsonrpc_response
 
         # Forward the request to the downstream agent
@@ -543,6 +551,7 @@ async def _handle_get_authenticated_card(
 
         # If the downstream returned a successful card, patch the url to point to the gateway
         if "result" in result and isinstance(result["result"], dict):
+            # First-Party
             from mcpgateway.config import settings
 
             route_prefix = settings.a2a_gateway_route_prefix.strip("/")
@@ -581,11 +590,13 @@ async def _run_pre_invoke_hook(
 ) -> None:
     """Run A2A gateway pre-invoke plugin hook if plugins are enabled."""
     try:
+        # First-Party
         from mcpgateway.plugins.framework import get_plugin_manager
         from mcpgateway.plugins.framework.hooks.a2a_gateway import A2AGatewayHookType, A2AGatewayPreInvokePayload
 
         pm = get_plugin_manager()
         if pm and pm.has_hooks_for(A2AGatewayHookType.A2A_GATEWAY_PRE_INVOKE):
+            # First-Party
             from mcpgateway.plugins.framework import GlobalContext
 
             global_context = GlobalContext()
@@ -613,11 +624,13 @@ async def _run_post_invoke_hook(
 ) -> None:
     """Run A2A gateway post-invoke plugin hook if plugins are enabled."""
     try:
+        # First-Party
         from mcpgateway.plugins.framework import get_plugin_manager
         from mcpgateway.plugins.framework.hooks.a2a_gateway import A2AGatewayHookType, A2AGatewayPostInvokePayload
 
         pm = get_plugin_manager()
         if pm and pm.has_hooks_for(A2AGatewayHookType.A2A_GATEWAY_POST_INVOKE):
+            # First-Party
             from mcpgateway.plugins.framework import GlobalContext
 
             global_context = GlobalContext()
