@@ -226,14 +226,17 @@ design tradeoffs.
   instead of the detailed internal runtime view
 - runtime/proxy transport failures now log full exception details server-side
   while returning redacted client-visible error data
+- Rust direct DB mode now supports optional PostgreSQL TLS via
+  `MCP_RUST_DATABASE_URL` / `sslmode=disable|prefer|require`, while preserving
+  the existing non-TLS local/test path
 
 ### Still open / follow-up
 
 - `session_id` query-parameter compatibility still exists in both Rust and
   Python and should be either retired or explicitly documented as an exception
-- Rust runtime PostgreSQL connections still use `NoTls`, so encrypted
-  PostgreSQL transport support remains a follow-up if the runtime is to be used
-  against deployments that require DB TLS
+- Rust direct DB mode still does not support client certificate authentication
+  via `sslcert` / `sslkey`; the current TLS support covers the common
+  `sslmode=require`/system-roots path and optional `sslrootcert`
 - catch-all `sampling/`, `completion/`, `logging/`, and `elicitation/` methods
   still return an empty success object; that appears to be existing project
   behavior, but it should be documented or revisited

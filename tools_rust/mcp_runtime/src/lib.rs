@@ -26,25 +26,28 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use futures_util::{StreamExt, TryStreamExt};
 use redis::{AsyncCommands, Script, aio::ConnectionManager as RedisConnectionManager};
-use reqwest::Client;
+use reqwest::{Client, Url};
 #[cfg(feature = "rmcp-upstream-client")]
 use reqwest_rmcp::Client as RmcpReqwestClient;
+use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, hash_map::DefaultHasher},
     convert::Infallible,
+    fs,
     hash::{Hash, Hasher},
     net::{IpAddr, SocketAddr},
     path::Path,
     str::{self, FromStr},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 use tokio::sync::Mutex;
-use tokio_postgres::NoTls;
+use tokio_postgres::config::SslMode;
+use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -2200,22 +2203,133 @@ fn build_db_pool(config: &RuntimeConfig) -> Result<Option<Pool>, RuntimeError> {
         return Ok(None);
     }
 
-    let normalized_url = database_url.replace("postgresql+psycopg://", "postgresql://");
+    let (normalized_url, tls_options) = normalize_postgres_database_url(database_url)?;
     let pg_config = tokio_postgres::Config::from_str(&normalized_url).map_err(|err| {
         RuntimeError::Config(format!(
             "invalid MCP_RUST_DATABASE_URL '{normalized_url}': {err}"
         ))
     })?;
+    let tls_connector = build_postgres_tls_connector(&tls_options)?;
     let mgr_config = ManagerConfig {
         recycling_method: RecyclingMethod::Fast,
     };
-    let manager = Manager::from_config(pg_config, NoTls, mgr_config);
+    match pg_config.get_ssl_mode() {
+        SslMode::Disable => info!("Rust MCP direct DB pool TLS disabled via sslmode=disable"),
+        SslMode::Prefer => info!("Rust MCP direct DB pool TLS optional via sslmode=prefer"),
+        SslMode::Require => info!("Rust MCP direct DB pool TLS required via sslmode=require"),
+        _ => info!("Rust MCP direct DB pool TLS configured with a non-default sslmode"),
+    }
+    let manager = Manager::from_config(pg_config, tls_connector, mgr_config);
     let pool = Pool::builder(manager)
         .max_size(config.db_pool_max_size)
         .build()
         .map_err(|err| RuntimeError::Config(format!("failed to build Rust MCP DB pool: {err}")))?;
 
     Ok(Some(pool))
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct PostgresTlsOptions {
+    ssl_root_cert: Option<String>,
+    ssl_cert: Option<String>,
+    ssl_key: Option<String>,
+}
+
+fn normalize_postgres_database_url(
+    database_url: &str,
+) -> Result<(String, PostgresTlsOptions), RuntimeError> {
+    let normalized_url = database_url.replace("postgresql+psycopg://", "postgresql://");
+    let mut parsed = Url::parse(&normalized_url).map_err(|err| {
+        RuntimeError::Config(format!(
+            "invalid MCP_RUST_DATABASE_URL '{normalized_url}': {err}"
+        ))
+    })?;
+    let mut tls_options = PostgresTlsOptions::default();
+    let retained_query_pairs = parsed
+        .query_pairs()
+        .into_owned()
+        .filter_map(|(key, value)| match key.as_str() {
+            "sslrootcert" => {
+                tls_options.ssl_root_cert = Some(value);
+                None
+            }
+            "sslcert" => {
+                tls_options.ssl_cert = Some(value);
+                None
+            }
+            "sslkey" => {
+                tls_options.ssl_key = Some(value);
+                None
+            }
+            _ => Some((key, value)),
+        })
+        .collect::<Vec<_>>();
+    {
+        let mut query_pairs = parsed.query_pairs_mut();
+        query_pairs.clear();
+        query_pairs.extend_pairs(
+            retained_query_pairs
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        );
+    }
+
+    Ok((parsed.to_string(), tls_options))
+}
+
+fn build_postgres_tls_connector(
+    tls_options: &PostgresTlsOptions,
+) -> Result<MakeRustlsConnect, RuntimeError> {
+    if tls_options.ssl_cert.is_some() || tls_options.ssl_key.is_some() {
+        return Err(RuntimeError::Config(
+            "MCP_RUST_DATABASE_URL client certificate authentication via sslcert/sslkey is not supported yet".to_string(),
+        ));
+    }
+
+    ensure_rustls_crypto_provider();
+
+    let mut root_cert_store = RootCertStore::empty();
+    let native_certs = rustls_native_certs::load_native_certs();
+    for load_error in native_certs.errors {
+        warn!("Rust MCP DB TLS native root load warning: {load_error}");
+    }
+    let (_added, _ignored) = root_cert_store.add_parsable_certificates(native_certs.certs);
+
+    if let Some(path) = tls_options.ssl_root_cert.as_deref() {
+        let pem_bytes = fs::read(path).map_err(|err| {
+            RuntimeError::Config(format!(
+                "invalid MCP_RUST_DATABASE_URL sslrootcert '{path}': {err}"
+            ))
+        })?;
+        let mut pem_reader = std::io::BufReader::new(pem_bytes.as_slice());
+        let certificates = rustls_pemfile::certs(&mut pem_reader)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| {
+                RuntimeError::Config(format!(
+                    "invalid MCP_RUST_DATABASE_URL sslrootcert '{path}': {err}"
+                ))
+            })?;
+        let (added, _ignored) = root_cert_store.add_parsable_certificates(certificates);
+        if added == 0 {
+            return Err(RuntimeError::Config(format!(
+                "invalid MCP_RUST_DATABASE_URL sslrootcert '{path}': no certificates were parsed"
+            )));
+        }
+    }
+
+    let tls_connector = RustlsClientConfig::builder()
+        .with_root_certificates(root_cert_store)
+        .with_no_client_auth();
+
+    Ok(MakeRustlsConnect::new(tls_connector))
+}
+
+fn ensure_rustls_crypto_provider() {
+    static RUSTLS_CRYPTO_PROVIDER: OnceLock<()> = OnceLock::new();
+
+    RUSTLS_CRYPTO_PROVIDER.get_or_init(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
 }
 
 fn build_redis_client(config: &RuntimeConfig) -> Result<Option<redis::Client>, RuntimeError> {
@@ -7655,14 +7769,14 @@ mod unit_tests {
         get_runtime_session, handle_initialize_with_session_core, has_server_scope, hex_decode,
         hex_encode, inject_server_id_header, inject_session_header, invalid_request_response,
         is_affinity_forwarded_request, maybe_bind_session_auth_context,
-        maybe_upsert_runtime_session_from_transport_response, parse_error_response, pool_owner_key,
-        public_client_ip, query_param, remove_runtime_session, replay_events_endpoint,
-        requested_initialize_session_id, requested_protocol_version,
-        response_from_affinity_forward_response, run, runtime_session_allows_access,
-        runtime_session_id_from_request, runtime_session_key, serve_http, serve_uds,
-        store_event_endpoint, transport_delete_server_scoped, transport_get_server_scoped,
-        upsert_runtime_session, validate_initialize_params, validate_protocol_version,
-        validate_runtime_session_request,
+        maybe_upsert_runtime_session_from_transport_response, normalize_postgres_database_url,
+        parse_error_response, pool_owner_key, public_client_ip, query_param,
+        remove_runtime_session, replay_events_endpoint, requested_initialize_session_id,
+        requested_protocol_version, response_from_affinity_forward_response, run,
+        runtime_session_allows_access, runtime_session_id_from_request, runtime_session_key,
+        serve_http, serve_uds, store_event_endpoint, transport_delete_server_scoped,
+        transport_get_server_scoped, upsert_runtime_session, validate_initialize_params,
+        validate_protocol_version, validate_runtime_session_request,
     };
     use axum::{
         Json, Router,
@@ -7671,6 +7785,7 @@ mod unit_tests {
         http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
         routing::{get, post},
     };
+    use reqwest::Url;
     use serde_json::{Value, json};
     use std::{
         net::{SocketAddr, TcpListener},
@@ -7920,6 +8035,85 @@ mod unit_tests {
             }
             other => panic!("expected config error, got {other}"),
         }
+    }
+
+    #[test]
+    fn app_state_new_accepts_database_url_with_sslmode_require() {
+        let mut config = test_config();
+        config.database_url =
+            Some("postgresql+psycopg://user:pass@127.0.0.1:5432/db?sslmode=require".to_string());
+
+        let state = AppState::new(&config).expect("state");
+
+        assert!(state.db_pool().is_some());
+    }
+
+    #[test]
+    fn app_state_new_rejects_missing_sslrootcert_file() {
+        let mut config = test_config();
+        config.database_url = Some(
+            "postgresql+psycopg://user:pass@127.0.0.1:5432/db?sslmode=require&sslrootcert=/tmp/contextforge-missing-root-ca.pem".to_string(),
+        );
+
+        let Err(error) = AppState::new(&config) else {
+            panic!("missing sslrootcert should fail");
+        };
+
+        match error {
+            RuntimeError::Config(message) => {
+                assert!(message.contains("sslrootcert"));
+            }
+            other => panic!("expected config error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn app_state_new_rejects_unsupported_client_certificate_parameters() {
+        let mut config = test_config();
+        config.database_url = Some(
+            "postgresql+psycopg://user:pass@127.0.0.1:5432/db?sslmode=require&sslcert=/tmp/client.pem&sslkey=/tmp/client.key".to_string(),
+        );
+
+        let Err(error) = AppState::new(&config) else {
+            panic!("sslcert/sslkey should fail");
+        };
+
+        match error {
+            RuntimeError::Config(message) => {
+                assert!(message.contains("sslcert/sslkey"));
+            }
+            other => panic!("expected config error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn normalize_postgres_database_url_strips_tls_only_query_parameters() {
+        let (normalized_url, tls_options) = normalize_postgres_database_url(
+            "postgresql+psycopg://user:pass@db.example.com:5432/mcp?sslmode=require&options=-c%20search_path%3Dmcp_gateway&sslrootcert=/tmp/root-ca.pem",
+        )
+        .expect("normalized");
+        let parsed = Url::parse(&normalized_url).expect("parsed");
+        let query_pairs = parsed
+            .query_pairs()
+            .into_owned()
+            .collect::<std::collections::HashMap<_, _>>();
+
+        assert!(normalized_url.starts_with("postgresql://user:pass@db.example.com:5432/mcp?"));
+        assert!(!normalized_url.contains("sslrootcert"));
+        assert_eq!(
+            query_pairs.get("sslmode").map(String::as_str),
+            Some("require")
+        );
+        assert_eq!(
+            query_pairs.get("options").map(String::as_str),
+            Some("-c search_path=mcp_gateway")
+        );
+        assert_eq!(
+            tls_options.ssl_root_cert.as_deref(),
+            Some("/tmp/root-ca.pem")
+        );
+        assert_eq!(tls_options.ssl_cert, None);
+        assert_eq!(tls_options.ssl_key, None);
     }
 
     #[test]
