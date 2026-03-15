@@ -487,7 +487,7 @@ def _build_internal_mcp_auth_scope(
         "raw_path": path.encode("latin-1"),
         "query_string": query_string.encode("latin-1"),
         "headers": raw_headers,
-        "client": (client_ip or "127.0.0.1", 0),
+        "client": (client_ip or "unknown", 0),
         "state": {},
     }
 

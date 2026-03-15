@@ -643,8 +643,8 @@ class TestInternalTrustedMcpTransportBridge:
 
         assert exc_info.value.status_code == 403
 
-    def test_build_internal_mcp_auth_scope_skips_non_string_headers_and_defaults_loopback(self):
-        """Internal auth scope should ignore malformed headers and default to loopback."""
+    def test_build_internal_mcp_auth_scope_skips_non_string_headers_and_defaults_unknown_client(self):
+        """Internal auth scope should ignore malformed headers and avoid loopback defaults."""
         scope = _build_internal_mcp_auth_scope(
             method="get",
             path="/mcp",
@@ -653,7 +653,7 @@ class TestInternalTrustedMcpTransportBridge:
             client_ip=None,
         )
 
-        assert scope["client"] == ("127.0.0.1", 0)
+        assert scope["client"] == ("unknown", 0)
         assert scope["query_string"] == b"cursor=1"
         assert scope["headers"] == [(b"authorization", b"Bearer token")]
 

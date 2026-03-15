@@ -869,7 +869,7 @@ async def test_get_prompt_no_content(monkeypatch, caplog):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(return_value=mock_result))
 
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
         result = await get_prompt("empty_prompt")
         assert result == []
         assert "No content returned by prompt: empty_prompt" in caplog.text
@@ -890,7 +890,7 @@ async def test_get_prompt_no_result(monkeypatch, caplog):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(return_value=None))
 
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
         result = await get_prompt("missing_prompt")
         assert result == []
         assert "No content returned by prompt: missing_prompt" in caplog.text
@@ -1241,7 +1241,7 @@ async def test_read_resource_no_content(monkeypatch, caplog):
     monkeypatch.setattr(resource_service, "read_resource", AsyncMock(return_value=mock_result))
 
     test_uri = AnyUrl("file:///empty.txt")
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
         result = await read_resource(test_uri)
         assert result == ""
         assert "No content returned by resource: file:///empty.txt" in caplog.text
@@ -1266,7 +1266,7 @@ async def test_read_resource_no_result(monkeypatch, caplog):
     monkeypatch.setattr(resource_service, "read_resource", AsyncMock(return_value=None))
 
     test_uri = AnyUrl("file:///missing.txt")
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
         result = await read_resource(test_uri)
         assert result == ""
         assert "No content returned by resource: file:///missing.txt" in caplog.text

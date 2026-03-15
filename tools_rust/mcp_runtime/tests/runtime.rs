@@ -359,7 +359,7 @@ async fn server_scoped_public_initialize_authenticates_before_backend_dispatch()
     let auth_call = auth_calls.lock().expect("lock");
     assert_eq!(auth_call.len(), 1);
     assert_eq!(auth_call[0]["path"], "/servers/server-1/mcp");
-    assert_eq!(auth_call[0]["clientIp"], "203.0.113.10");
+    assert!(auth_call[0]["clientIp"].is_null());
     assert_eq!(
         auth_call[0]["headers"]["authorization"],
         "Bearer test-token"

@@ -13,7 +13,8 @@ pub mod config;
 use axum::{
     Json, Router,
     body::{Body, Bytes},
-    extract::{Path as AxumPath, State},
+    extract::{ConnectInfo, FromRequestParts, Path as AxumPath, State},
+    http::request::Parts,
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{
         IntoResponse, Response,
@@ -35,6 +36,7 @@ use std::{
     collections::{HashMap, hash_map::DefaultHasher},
     convert::Infallible,
     hash::{Hash, Hasher},
+    net::{IpAddr, SocketAddr},
     path::Path,
     str::{self, FromStr},
     sync::Arc,
@@ -195,6 +197,31 @@ pub struct HealthResponse {
     pub active_sessions: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PublicHealthResponse {
+    status: &'static str,
+    runtime: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct TrustedPeerAddr(Option<SocketAddr>);
+
+impl<S> FromRequestParts<S> for TrustedPeerAddr
+where
+    S: Send + Sync,
+{
+    type Rejection = Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(
+            parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|info| info.0),
+        ))
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 struct PendingSseFrame {
     id: Option<String>,
@@ -232,7 +259,7 @@ struct InternalAuthContext {
     is_authenticated: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Payload sent to Python's trusted internal authenticate endpoint.
 ///
@@ -928,6 +955,35 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+fn build_public_router(state: AppState) -> Router {
+    Router::new()
+        .route("/health", get(public_healthz))
+        .route("/healthz", get(public_healthz))
+        .route("/rpc", post(rpc))
+        .route("/rpc/", post(rpc))
+        .route(
+            "/mcp",
+            get(transport_get).delete(transport_delete).post(rpc),
+        )
+        .route(
+            "/mcp/",
+            get(transport_get).delete(transport_delete).post(rpc),
+        )
+        .route(
+            "/servers/{server_id}/mcp",
+            get(transport_get_server_scoped)
+                .delete(transport_delete_server_scoped)
+                .post(rpc_server_scoped),
+        )
+        .route(
+            "/servers/{server_id}/mcp/",
+            get(transport_get_server_scoped)
+                .delete(transport_delete_server_scoped)
+                .post(rpc_server_scoped),
+        )
+        .with_state(state)
+}
+
 /// Runs the Rust MCP runtime with the configured listeners.
 ///
 /// # Errors
@@ -936,7 +992,9 @@ pub fn build_router(state: AppState) -> Router {
 /// exits with an application-level runtime error.
 pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
     let state = AppState::new(&config)?;
-    let app = build_router(state);
+    spawn_local_cache_sweeper(state.clone());
+    let app = build_router(state.clone());
+    let public_app = build_public_router(state);
 
     let primary_target = config.listen_target().map_err(RuntimeError::Config)?;
     let public_http_addr = config.public_listen_addr().map_err(RuntimeError::Config)?;
@@ -949,7 +1007,7 @@ pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
         (ListenTarget::Http(addr), Some(public_addr)) => {
             tokio::try_join!(
                 serve_http(app.clone(), addr, shutdown_after),
-                serve_http(app, public_addr, shutdown_after)
+                serve_http(public_app, public_addr, shutdown_after)
             )?;
         }
         (ListenTarget::Uds(path), None) => {
@@ -958,7 +1016,7 @@ pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
         (ListenTarget::Uds(path), Some(public_addr)) => {
             tokio::try_join!(
                 serve_uds(app.clone(), path, shutdown_after),
-                serve_http(app, public_addr, shutdown_after)
+                serve_http(public_app, public_addr, shutdown_after)
             )?;
         }
     }
@@ -974,13 +1032,20 @@ async fn serve_http(
     info!("starting Rust MCP runtime on http://{addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     if let Some(delay) = shutdown_after {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                tokio::time::sleep(delay).await;
-            })
-            .await?;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            tokio::time::sleep(delay).await;
+        })
+        .await?;
     } else {
-        axum::serve(listener, app).await?;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
     }
     Ok(())
 }
@@ -1026,42 +1091,54 @@ async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
     })
 }
 
+async fn public_healthz() -> Json<PublicHealthResponse> {
+    Json(PublicHealthResponse {
+        status: "ok",
+        runtime: RUNTIME_NAME,
+    })
+}
+
 async fn transport_get(
     State(state): State<AppState>,
+    peer_addr: TrustedPeerAddr,
     headers: HeaderMap,
     uri: axum::http::Uri,
 ) -> Response {
-    transport_get_inner(state, headers, uri, None).await
+    transport_get_inner(state, peer_addr.0, headers, uri, None).await
 }
 
 async fn transport_delete(
     State(state): State<AppState>,
+    peer_addr: TrustedPeerAddr,
     headers: HeaderMap,
     uri: axum::http::Uri,
 ) -> Response {
-    transport_delete_inner(state, headers, uri, None).await
+    transport_delete_inner(state, peer_addr.0, headers, uri, None).await
 }
 
 async fn transport_get_server_scoped(
     State(state): State<AppState>,
     AxumPath(server_id): AxumPath<String>,
+    peer_addr: TrustedPeerAddr,
     headers: HeaderMap,
     uri: axum::http::Uri,
 ) -> Response {
-    transport_get_inner(state, headers, uri, Some(server_id)).await
+    transport_get_inner(state, peer_addr.0, headers, uri, Some(server_id)).await
 }
 
 async fn transport_delete_server_scoped(
     State(state): State<AppState>,
     AxumPath(server_id): AxumPath<String>,
+    peer_addr: TrustedPeerAddr,
     headers: HeaderMap,
     uri: axum::http::Uri,
 ) -> Response {
-    transport_delete_inner(state, headers, uri, Some(server_id)).await
+    transport_delete_inner(state, peer_addr.0, headers, uri, Some(server_id)).await
 }
 
 async fn transport_get_inner(
     state: AppState,
+    peer_addr: Option<SocketAddr>,
     headers: HeaderMap,
     uri: axum::http::Uri,
     server_id: Option<String>,
@@ -1072,6 +1149,7 @@ async fn transport_get_inner(
         headers,
         &uri,
         server_id.as_deref(),
+        peer_addr,
     )
     .await
     {
@@ -1083,6 +1161,7 @@ async fn transport_get_inner(
 
 async fn transport_delete_inner(
     state: AppState,
+    peer_addr: Option<SocketAddr>,
     headers: HeaderMap,
     uri: axum::http::Uri,
     server_id: Option<String>,
@@ -1093,6 +1172,7 @@ async fn transport_delete_inner(
         headers,
         &uri,
         server_id.as_deref(),
+        peer_addr,
     )
     .await
     {
@@ -1160,25 +1240,28 @@ async fn replay_events_endpoint(
 
 async fn rpc(
     State(state): State<AppState>,
+    peer_addr: TrustedPeerAddr,
     headers: HeaderMap,
     uri: axum::http::Uri,
     body: Bytes,
 ) -> Response {
-    rpc_inner(state, headers, uri, body, None).await
+    rpc_inner(state, peer_addr.0, headers, uri, body, None).await
 }
 
 async fn rpc_server_scoped(
     State(state): State<AppState>,
     AxumPath(server_id): AxumPath<String>,
+    peer_addr: TrustedPeerAddr,
     headers: HeaderMap,
     uri: axum::http::Uri,
     body: Bytes,
 ) -> Response {
-    rpc_inner(state, headers, uri, body, Some(server_id)).await
+    rpc_inner(state, peer_addr.0, headers, uri, body, Some(server_id)).await
 }
 
 async fn rpc_inner(
     state: AppState,
+    peer_addr: Option<SocketAddr>,
     headers: HeaderMap,
     uri: axum::http::Uri,
     body: Bytes,
@@ -1190,6 +1273,7 @@ async fn rpc_inner(
         headers,
         &uri,
         server_id.as_deref(),
+        peer_addr,
     )
     .await
     {
@@ -2193,6 +2277,7 @@ fn build_public_auth_headers(incoming_headers: &HeaderMap) -> HashMap<String, St
                 | SESSION_VALIDATED_HEADER
                 | INTERNAL_AFFINITY_FORWARDED_HEADER
                 | "x-contextforge-auth-context"
+                | "x-contextforge-server-id"
         ) {
             continue;
         }
@@ -2204,23 +2289,38 @@ fn build_public_auth_headers(incoming_headers: &HeaderMap) -> HashMap<String, St
     headers
 }
 
-fn public_client_ip(incoming_headers: &HeaderMap) -> Option<String> {
-    if let Some(value) = incoming_headers
+fn public_client_ip(incoming_headers: &HeaderMap, peer_addr: Option<SocketAddr>) -> Option<String> {
+    let peer_ip = peer_addr.map(|addr| addr.ip());
+    let real_ip = incoming_headers
         .get("x-real-ip")
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
-        return Some(value.to_string());
-    }
-
-    incoming_headers
+        .map(str::to_string);
+    let forwarded_for_ip = incoming_headers
         .get("x-forwarded-for")
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
+        .and_then(|value| value.split(',').next_back())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_string)
+        .map(str::to_string);
+
+    match peer_ip {
+        Some(peer_ip) if proxy_header_hop_is_trusted(peer_ip) => real_ip
+            .or(forwarded_for_ip)
+            .or_else(|| Some(peer_ip.to_string())),
+        Some(peer_ip) => Some(peer_ip.to_string()),
+        None => None,
+    }
+}
+
+fn proxy_header_hop_is_trusted(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ipv4) => ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local(),
+        IpAddr::V6(ipv6) => {
+            ipv6.is_loopback() || ipv6.is_unique_local() || ipv6.is_unicast_link_local()
+        }
+    }
 }
 
 fn unix_epoch_millis() -> u64 {
@@ -2320,20 +2420,23 @@ async fn authenticate_public_request_if_needed(
     mut incoming_headers: HeaderMap,
     uri: &axum::http::Uri,
     server_id: Option<&str>,
+    peer_addr: Option<SocketAddr>,
 ) -> Result<(HeaderMap, String), Response> {
-    // Public Rust ingress still treats Python as the auth authority. The Rust
-    // edge only short-circuits when the request already carries an internal
-    // auth context or when the bound runtime session can safely reuse one.
-    if let Some(server_id) = server_id {
-        inject_server_id_header(&mut incoming_headers, server_id);
-    }
-
+    // Public Rust ingress still treats Python as the auth authority. Incoming
+    // client headers are scrubbed of internal-only state first; the only fast
+    // path is reusing auth that was previously bound to this runtime session.
     let public_path = public_mcp_path(uri, server_id);
     if !state.public_ingress_enabled() {
+        if let Some(server_id) = server_id {
+            inject_server_id_header(&mut incoming_headers, server_id);
+        }
         return Ok((incoming_headers, public_path));
     }
-    if incoming_headers.contains_key("x-contextforge-auth-context") {
-        return Ok((incoming_headers, public_path));
+
+    incoming_headers.remove("x-contextforge-auth-context");
+    incoming_headers.remove("x-contextforge-server-id");
+    if let Some(server_id) = server_id {
+        inject_server_id_header(&mut incoming_headers, server_id);
     }
 
     if state.session_core_enabled()
@@ -2362,7 +2465,7 @@ async fn authenticate_public_request_if_needed(
         path: public_path.clone(),
         query_string: uri.query().unwrap_or_default().to_string(),
         headers: build_public_auth_headers(&incoming_headers),
-        client_ip: public_client_ip(&incoming_headers),
+        client_ip: public_client_ip(&incoming_headers, peer_addr),
     };
 
     let backend_response = state
@@ -2790,13 +2893,56 @@ async fn cache_runtime_session_locally(
 async fn count_runtime_sessions_in_redis(state: &AppState) -> Option<usize> {
     let mut redis = state.redis().await?;
     let pattern = format!("{}rust:mcp:session:*", state.cache_prefix());
-    match redis.keys::<_, Vec<String>>(pattern).await {
-        Ok(keys) => Some(keys.len()),
+    match redis.scan_match::<_, String>(pattern).await {
+        Ok(mut iter) => {
+            let mut count = 0usize;
+            while iter.next_item().await.is_some() {
+                count = count.saturating_add(1);
+            }
+            Some(count)
+        }
         Err(err) => {
             warn!("Rust MCP session count Redis lookup failed: {err}");
             None
         }
     }
+}
+
+async fn sweep_local_caches(state: &AppState) {
+    {
+        let mut sessions = state.runtime_sessions().lock().await;
+        let ttl = state.session_ttl();
+        sessions.retain(|_, record| record.last_used.elapsed() < ttl);
+    }
+
+    {
+        let mut sessions = state.upstream_tool_sessions().lock().await;
+        let ttl = state.upstream_session_ttl();
+        sessions.retain(|_, record| record.last_used.elapsed() < ttl);
+    }
+
+    #[cfg(feature = "rmcp-upstream-client")]
+    {
+        let mut clients = state.rmcp_upstream_clients().lock().await;
+        let ttl = state.upstream_session_ttl();
+        clients.retain(|_, cached| cached.last_used.elapsed() < ttl);
+    }
+
+    {
+        let mut plans = state.resolved_tool_call_plans().lock().await;
+        let ttl = state.tools_call_plan_ttl();
+        plans.retain(|_, cached| cached.cached_at.elapsed() < ttl);
+    }
+}
+
+fn spawn_local_cache_sweeper(state: AppState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            sweep_local_caches(&state).await;
+        }
+    });
 }
 
 async fn get_runtime_session_from_redis(
@@ -2864,8 +3010,16 @@ fn runtime_session_key(state: &AppState, session_id: &str) -> String {
     format!("{}rust:mcp:session:{session_id}", state.cache_prefix())
 }
 
-fn pool_owner_key(session_id: &str) -> String {
-    format!("mcpgw:pool_owner:{session_id}")
+fn pool_owner_key(state: &AppState, session_id: &str) -> String {
+    format!("{}pool_owner:{session_id}", state.cache_prefix())
+}
+
+fn pool_http_channel(state: &AppState, owner_worker_id: &str) -> String {
+    format!("{}pool_http:{owner_worker_id}", state.cache_prefix())
+}
+
+fn pool_http_response_channel(state: &AppState, response_id: &str) -> String {
+    format!("{}pool_http_response:{response_id}", state.cache_prefix())
 }
 
 fn is_affinity_forwarded_request(headers: &HeaderMap) -> bool {
@@ -2878,7 +3032,7 @@ fn is_affinity_forwarded_request(headers: &HeaderMap) -> bool {
 async fn get_pool_session_owner(state: &AppState, session_id: &str) -> Option<String> {
     let mut redis = state.redis().await?;
     match redis
-        .get::<_, Option<String>>(pool_owner_key(session_id))
+        .get::<_, Option<String>>(pool_owner_key(state, session_id))
         .await
     {
         Ok(owner) => owner,
@@ -2914,8 +3068,8 @@ async fn forward_transport_request_via_affinity_owner(
         return Ok(None);
     };
 
-    let owner_channel = format!("mcpgw:pool_http:{owner_worker_id}");
-    let response_channel = format!("mcpgw:pool_http_response:{}", Uuid::new_v4().simple());
+    let owner_channel = pool_http_channel(state, &owner_worker_id);
+    let response_channel = pool_http_response_channel(state, &Uuid::new_v4().simple().to_string());
     let mut pubsub = redis_client
         .get_async_pubsub()
         .await
@@ -6574,11 +6728,12 @@ async fn resolve_tools_call(
         .map_err(ResolveToolsCallError::Fallback)?;
     {
         let mut cached_plans = state.resolved_tool_call_plans().lock().await;
-        if let Some(cached) = cached_plans.get_mut(&cache_key)
-            && cached.cached_at.elapsed() < state.tools_call_plan_ttl()
-        {
-            cached.cached_at = Instant::now();
-            return Ok(cached.plan.clone());
+        if let Some(cached) = cached_plans.get_mut(&cache_key) {
+            if cached.cached_at.elapsed() < state.tools_call_plan_ttl() {
+                cached.cached_at = Instant::now();
+                return Ok(cached.plan.clone());
+            }
+            cached_plans.remove(&cache_key);
         }
     }
 
@@ -6799,6 +6954,19 @@ async fn ensure_upstream_session(
     // resolved upstream target. That keeps parallel callers from sharing an
     // upstream MCP session across users or servers.
     let session_key = build_upstream_session_key(downstream_session_id, plan)?;
+    {
+        let mut sessions = state.upstream_tool_sessions().lock().await;
+        if let Some(existing) = sessions.get_mut(&session_key)
+            && existing.last_used.elapsed() < state.upstream_session_ttl()
+        {
+            existing.last_used = Instant::now();
+            return Ok(existing.session_id.clone());
+        }
+        sessions.remove(&session_key);
+    }
+
+    let upstream_session_id =
+        initialize_upstream_session(state, plan, protocol_version, timeout_ms).await?;
     let mut sessions = state.upstream_tool_sessions().lock().await;
     if let Some(existing) = sessions.get_mut(&session_key)
         && existing.last_used.elapsed() < state.upstream_session_ttl()
@@ -6806,9 +6974,6 @@ async fn ensure_upstream_session(
         existing.last_used = Instant::now();
         return Ok(existing.session_id.clone());
     }
-
-    let upstream_session_id =
-        initialize_upstream_session(state, plan, protocol_version, timeout_ms).await?;
     sessions.insert(
         session_key,
         UpstreamToolSession {
@@ -7432,11 +7597,14 @@ fn empty_response(status: StatusCode) -> Response {
 
 #[cfg(test)]
 mod unit_tests {
+    use base64::Engine;
+
     use super::{
         AffinityForwardResponse, AppState, Bytes, EventStoreReplayRequest, EventStoreStoreRequest,
-        InternalAuthContext, JsonRpcRequest, RuntimeConfig, RuntimeError, RuntimeSessionRecord,
-        accepts_sse, active_runtime_session_count, affinity_forward_error_response,
-        auth_binding_fingerprint, authenticate_public_request_if_needed, batch_rejected_response,
+        InternalAuthContext, InternalAuthenticateRequest, JsonRpcRequest, RuntimeConfig,
+        RuntimeError, RuntimeSessionRecord, TrustedPeerAddr, URL_SAFE_NO_PAD, accepts_sse,
+        active_runtime_session_count, affinity_forward_error_response, auth_binding_fingerprint,
+        authenticate_public_request_if_needed, batch_rejected_response, build_public_router,
         can_reuse_session_auth, can_use_direct_prompts_get, can_use_direct_resources_read,
         decode_request, derive_backend_authenticate_url, derive_backend_completion_complete_url,
         derive_backend_initialize_url, derive_backend_logging_set_level_url,
@@ -7958,8 +8126,8 @@ mod unit_tests {
     }
 
     #[tokio::test]
-    async fn authenticate_public_request_returns_early_for_python_ingress_and_existing_auth_context()
-     {
+    async fn authenticate_public_request_strips_client_supplied_internal_headers_on_public_ingress()
+    {
         let state = AppState::new(&test_config()).expect("state");
         let uri: Uri = "/mcp?session_id=abc".parse().expect("uri");
         let (headers, path) = authenticate_public_request_if_needed(
@@ -7968,6 +8136,7 @@ mod unit_tests {
             HeaderMap::new(),
             &uri,
             Some("server-1"),
+            None,
         )
         .await
         .expect("python ingress path");
@@ -7981,12 +8150,36 @@ mod unit_tests {
 
         let mut config = test_config();
         config.public_listen_http = Some(free_tcp_addr());
-        config.backend_rpc_url = "http://127.0.0.1:1/rpc".to_string();
+        let captured = Arc::new(Mutex::new(None::<InternalAuthenticateRequest>));
+        let captured_auth = captured.clone();
+        let backend = Router::new().route(
+            "/_internal/mcp/authenticate",
+            post(move |Json(request): Json<InternalAuthenticateRequest>| {
+                let captured_auth = captured_auth.clone();
+                async move {
+                    *captured_auth.lock().expect("lock") = Some(request);
+                    Json(json!({
+                        "authContext": {
+                            "email": "trusted@example.com",
+                            "teams": ["team-a"],
+                            "is_authenticated": true,
+                            "is_admin": false
+                        }
+                    }))
+                }
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+        config.backend_rpc_url = format!("{backend_url}/rpc");
         let state = AppState::new(&config).expect("state");
         let mut headers = HeaderMap::new();
         headers.insert(
             HeaderName::from_static("x-contextforge-auth-context"),
             HeaderValue::from_static("already-present"),
+        );
+        headers.insert(
+            HeaderName::from_static("x-contextforge-server-id"),
+            HeaderValue::from_static("forged-server"),
         );
         let (headers, path) = authenticate_public_request_if_needed(
             &state,
@@ -7994,16 +8187,41 @@ mod unit_tests {
             headers,
             &"/mcp".parse::<Uri>().expect("uri"),
             None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
         )
         .await
-        .expect("existing auth context bypasses backend auth");
+        .expect("public ingress auth");
         assert_eq!(path, "/mcp");
+        let decoded_auth_context: Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(
+                    headers
+                        .get("x-contextforge-auth-context")
+                        .and_then(|value| value.to_str().ok())
+                        .expect("auth context header"),
+                )
+                .expect("decode auth context"),
+        )
+        .expect("auth context json");
         assert_eq!(
-            headers
-                .get("x-contextforge-auth-context")
-                .and_then(|value| value.to_str().ok()),
-            Some("already-present")
+            decoded_auth_context,
+            json!({
+                "email": "trusted@example.com",
+                "teams": ["team-a"],
+                "is_authenticated": true,
+                "is_admin": false
+            })
         );
+        assert!(!headers.contains_key("x-contextforge-server-id"));
+
+        let captured = captured
+            .lock()
+            .expect("lock")
+            .clone()
+            .expect("captured request");
+        assert!(!captured.headers.contains_key("x-contextforge-auth-context"));
+        assert!(!captured.headers.contains_key("x-contextforge-server-id"));
+        assert_eq!(captured.client_ip.as_deref(), Some("198.51.100.9"));
     }
 
     #[tokio::test]
@@ -8018,6 +8236,7 @@ mod unit_tests {
             "GET",
             HeaderMap::new(),
             &"/mcp".parse::<Uri>().expect("uri"),
+            None,
             None,
         )
         .await
@@ -8040,6 +8259,7 @@ mod unit_tests {
             "GET",
             HeaderMap::new(),
             &"/mcp".parse::<Uri>().expect("uri"),
+            None,
             None,
         )
         .await
@@ -8105,6 +8325,44 @@ mod unit_tests {
     }
 
     #[tokio::test]
+    async fn public_router_does_not_expose_internal_event_store_routes() {
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        let state = AppState::new(&config).expect("state");
+        let runtime_url = spawn_router(build_public_router(state)).await;
+        let client = reqwest::Client::new();
+
+        let store = client
+            .post(format!("{runtime_url}/_internal/event-store/store"))
+            .json(&json!({
+                "streamId": "stream-1",
+                "message": {"hello": "world"},
+            }))
+            .send()
+            .await
+            .expect("store response");
+        assert_eq!(store.status(), StatusCode::NOT_FOUND);
+
+        let replay = client
+            .post(format!("{runtime_url}/_internal/event-store/replay"))
+            .json(&json!({
+                "lastEventId": "event-1",
+            }))
+            .send()
+            .await
+            .expect("replay response");
+        assert_eq!(replay.status(), StatusCode::NOT_FOUND);
+
+        let health = client
+            .get(format!("{runtime_url}/health"))
+            .send()
+            .await
+            .expect("health response");
+        let payload: Value = health.json().await.expect("health json");
+        assert_eq!(payload, json!({"status": "ok", "runtime": "rust"}));
+    }
+
+    #[tokio::test]
     async fn server_scoped_transport_wrappers_inject_server_header() {
         let calls = Arc::new(Mutex::new(Vec::<(String, Option<String>)>::new()));
         let backend = {
@@ -8158,6 +8416,7 @@ mod unit_tests {
         let get_response = transport_get_server_scoped(
             State(state.clone()),
             AxumPath("server-xyz".to_string()),
+            TrustedPeerAddr::default(),
             HeaderMap::new(),
             "/servers/server-xyz/mcp".parse::<Uri>().expect("uri"),
         )
@@ -8167,6 +8426,7 @@ mod unit_tests {
         let delete_response = transport_delete_server_scoped(
             State(state),
             AxumPath("server-xyz".to_string()),
+            TrustedPeerAddr::default(),
             HeaderMap::new(),
             "/servers/server-xyz/mcp".parse::<Uri>().expect("uri"),
         )
@@ -8192,6 +8452,7 @@ mod unit_tests {
 
         let get_response = super::transport_get(
             State(state.clone()),
+            TrustedPeerAddr::default(),
             HeaderMap::new(),
             "/mcp".parse::<Uri>().expect("uri"),
         )
@@ -8200,6 +8461,7 @@ mod unit_tests {
 
         let delete_response = super::transport_delete(
             State(state.clone()),
+            TrustedPeerAddr::default(),
             HeaderMap::new(),
             "/mcp".parse::<Uri>().expect("uri"),
         )
@@ -8208,6 +8470,7 @@ mod unit_tests {
 
         let post_response = super::rpc(
             State(state),
+            TrustedPeerAddr::default(),
             HeaderMap::new(),
             "/mcp".parse::<Uri>().expect("uri"),
             Bytes::from(
@@ -8328,22 +8591,29 @@ mod unit_tests {
     #[test]
     fn client_ip_and_session_auth_reuse_helpers_cover_edge_cases() {
         let mut headers = HeaderMap::new();
-        assert_eq!(public_client_ip(&headers), None);
+        assert_eq!(public_client_ip(&headers, None), None);
 
         headers.insert(
             HeaderName::from_static("x-forwarded-for"),
             HeaderValue::from_static(" 198.51.100.10 , 203.0.113.5 "),
         );
         assert_eq!(
-            public_client_ip(&headers),
-            Some("198.51.100.10".to_string())
+            public_client_ip(&headers, Some(SocketAddr::from(([127, 0, 0, 1], 8080)))),
+            Some("203.0.113.5".to_string())
         );
 
         headers.insert(
             HeaderName::from_static("x-real-ip"),
             HeaderValue::from_static("203.0.113.9"),
         );
-        assert_eq!(public_client_ip(&headers), Some("203.0.113.9".to_string()));
+        assert_eq!(
+            public_client_ip(&headers, Some(SocketAddr::from(([127, 0, 0, 1], 8080)))),
+            Some("203.0.113.9".to_string())
+        );
+        assert_eq!(
+            public_client_ip(&headers, Some(SocketAddr::from(([198, 51, 100, 77], 9000)))),
+            Some("198.51.100.77".to_string())
+        );
         assert_eq!(auth_binding_fingerprint(&HeaderMap::new()), None);
 
         let mut auth_headers = HeaderMap::new();
@@ -8445,6 +8715,7 @@ mod unit_tests {
             headers,
             &"/mcp".parse::<Uri>().expect("uri"),
             None,
+            None,
         )
         .await
         .expect_err("invalid stored auth header should fail");
@@ -8465,6 +8736,7 @@ mod unit_tests {
             "GET",
             HeaderMap::new(),
             &"/mcp".parse::<Uri>().expect("uri"),
+            None,
             None,
         )
         .await
@@ -8581,7 +8853,10 @@ mod unit_tests {
             runtime_session_key(&state, "session-1"),
             "mcpgw:test:rust:mcp:session:session-1"
         );
-        assert_eq!(pool_owner_key("session-1"), "mcpgw:pool_owner:session-1");
+        assert_eq!(
+            pool_owner_key(&state, "session-1"),
+            "mcpgw:test:pool_owner:session-1"
+        );
 
         let mut forwarded_headers = HeaderMap::new();
         assert!(!is_affinity_forwarded_request(&forwarded_headers));

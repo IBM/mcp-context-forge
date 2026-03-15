@@ -201,6 +201,42 @@ The wider Playwright suite still has broader repo instability/flakiness. That
 should not be used as the primary signal for the MCP runtime slice unless the
 failure path actually exercises `/mcp`.
 
+## Code review follow-up
+
+The March 15, 2026 review in [todo/code-review.md](../../todo/code-review.md)
+identified a mix of real vulnerabilities, performance issues, and longer-term
+design tradeoffs.
+
+### Addressed in the current branch
+
+- public ingress now strips client-supplied internal auth headers before the
+  Rust -> Python auth hop
+- public ingress no longer trusts client-supplied `x-contextforge-server-id`
+  and only uses trusted routing state for server-scoped dispatch
+- internal auth handoff now uses the actual peer address and does not default a
+  missing client IP to loopback
+- the direct public Rust listener now exposes a dedicated public router and no
+  longer exposes internal event-store routes
+- upstream tool-session initialization no longer holds the shared mutex across
+  HTTP I/O
+- local in-memory runtime caches now have periodic sweeping and expiry cleanup
+- Redis affinity keys/channels now honor the configured cache prefix
+- runtime session counting in Redis now uses `SCAN` instead of `KEYS`
+- the direct public Rust listener now returns a minimal public health payload
+  instead of the detailed internal runtime view
+
+### Still open / follow-up
+
+- error detail leakage still needs hardening so backend/transport exceptions are
+  logged server-side but not echoed to clients
+- `session_id` query-parameter compatibility still exists in both Rust and
+  Python and should be either retired or explicitly documented as an exception
+- catch-all `sampling/`, `completion/`, `logging/`, and `elicitation/` methods
+  still return an empty success object; that appears to be existing project
+  behavior, but it should be documented or revisited
+- session-auth reuse is still TTL-based and therefore does not immediately
+  react to revocation events without a fresh Python auth check
+
 ## Recommended next steps
 
 ### 1. Add observability for the session-auth fast path
