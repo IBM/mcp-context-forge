@@ -92,7 +92,7 @@ class TestAgentCard:
 
     def test_agent_card_success(self, client, mock_services):
         agent = MagicMock()
-        mock_services["gateway_service"].resolve_agent.return_value = (agent, {})
+        mock_services["gateway_service"].resolve_agent.return_value = (agent, {}, None)
         mock_services["gateway_service"].generate_agent_card.return_value = {
             "name": "Echo",
             "url": f"https://gw.com{_PREFIX}/abc123",
@@ -147,7 +147,7 @@ class TestJsonrpcEndpoint:
 
         agent = MagicMock(endpoint_url="https://downstream.com/a2a")
         agent._gateway_endpoint_url = "https://downstream.com/a2a"
-        mock_services["gateway_service"].resolve_agent.return_value = (agent, {"Authorization": "Bearer tok"})
+        mock_services["gateway_service"].resolve_agent.return_value = (agent, {"Authorization": "Bearer tok"}, None)
 
         mock_services["client_service"].send_jsonrpc = AsyncMock(
             return_value={"jsonrpc": "2.0", "result": {"id": "task-1", "status": {"state": "completed"}}, "id": 1}
@@ -195,7 +195,7 @@ class TestJsonrpcEndpoint:
 
         agent = MagicMock(endpoint_url="https://downstream.com/a2a")
         agent._gateway_endpoint_url = "https://downstream.com/a2a"
-        mock_services["gateway_service"].resolve_agent.return_value = (agent, {})
+        mock_services["gateway_service"].resolve_agent.return_value = (agent, {}, None)
 
         mock_services["client_service"].send_jsonrpc = AsyncMock(
             return_value={"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}, "id": 1}
@@ -217,7 +217,7 @@ class TestGetAuthenticatedCard:
         mock_services["gateway_service"].validate_jsonrpc_request.return_value = None
 
         agent = MagicMock()
-        mock_services["gateway_service"].resolve_agent.return_value = (agent, {})
+        mock_services["gateway_service"].resolve_agent.return_value = (agent, {}, None)
         mock_services["gateway_service"].generate_agent_card.return_value = {"name": "Echo", "url": f"https://gw.com{_PREFIX}/abc123"}
 
         response = client.post(

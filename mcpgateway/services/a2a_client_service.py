@@ -49,6 +49,7 @@ class A2AClientService:
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         agent_id: Optional[str] = None,
+        auth_query_params_decrypted: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Send a non-streaming JSON-RPC request to a downstream A2A agent.
 
@@ -61,6 +62,7 @@ class A2AClientService:
             user_id: User ID for logging.
             user_email: User email for logging.
             agent_id: Agent ID for logging.
+            auth_query_params_decrypted: Decrypted query param names for URL sanitization.
 
         Returns:
             The JSON-RPC response from the downstream agent.
@@ -77,7 +79,7 @@ class A2AClientService:
             headers["X-Correlation-ID"] = correlation_id
 
         method = body.get("method", "unknown")
-        sanitized_url = sanitize_url_for_logging(endpoint_url)
+        sanitized_url = sanitize_url_for_logging(endpoint_url, auth_query_params_decrypted)
 
         structured_logger.log(
             level="INFO",
@@ -125,7 +127,7 @@ class A2AClientService:
                 return result
             else:
                 raw_error = f"HTTP {response.status_code}: {response.text}"
-                error_message = sanitize_exception_message(raw_error)
+                error_message = sanitize_exception_message(raw_error, auth_query_params_decrypted)
 
                 structured_logger.log(
                     level="ERROR",
@@ -171,7 +173,7 @@ class A2AClientService:
 
         except Exception as e:
             duration_ms = (datetime.now(timezone.utc) - call_start).total_seconds() * 1000
-            error_str = sanitize_exception_message(str(e))
+            error_str = sanitize_exception_message(str(e), auth_query_params_decrypted)
 
             structured_logger.log(
                 level="ERROR",
@@ -200,6 +202,7 @@ class A2AClientService:
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         agent_id: Optional[str] = None,
+        auth_query_params_decrypted: Optional[Dict[str, str]] = None,
     ) -> AsyncGenerator[str, None]:
         """Send a streaming JSON-RPC request and yield SSE events.
 
@@ -215,6 +218,7 @@ class A2AClientService:
             user_id: User ID for logging.
             user_email: User email for logging.
             agent_id: Agent ID for logging.
+            auth_query_params_decrypted: Decrypted query param names for URL sanitization.
 
         Yields:
             SSE event strings in the format "data: {...}\n\n".
@@ -229,7 +233,7 @@ class A2AClientService:
             headers["X-Correlation-ID"] = correlation_id
 
         method = body.get("method", "unknown")
-        sanitized_url = sanitize_url_for_logging(endpoint_url)
+        sanitized_url = sanitize_url_for_logging(endpoint_url, auth_query_params_decrypted)
 
         structured_logger.log(
             level="INFO",
@@ -291,7 +295,7 @@ class A2AClientService:
             duration_ms = (datetime.now(timezone.utc) - call_start).total_seconds() * 1000
             from mcpgateway.utils.url_auth import sanitize_exception_message
 
-            error_str = sanitize_exception_message(str(e))
+            error_str = sanitize_exception_message(str(e), auth_query_params_decrypted)
 
             structured_logger.log(
                 level="ERROR",

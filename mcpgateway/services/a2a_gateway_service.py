@@ -138,7 +138,7 @@ class A2AGatewayService:
         agent_id: str,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
-    ) -> Tuple[DbA2AAgent, Dict[str, str]]:
+    ) -> Tuple[DbA2AAgent, Dict[str, str], Optional[Dict[str, str]]]:
         """Resolve an A2A agent by ID with visibility checking and auth preparation.
 
         Follows the same lock-read-release pattern as a2a_service.invoke_agent:
@@ -156,7 +156,7 @@ class A2AGatewayService:
             token_teams: Teams from the JWT token.
 
         Returns:
-            Tuple of (agent, auth_headers dict).
+            Tuple of (agent, auth_headers dict, auth_query_params_decrypted or None).
 
         Raises:
             A2AGatewayAgentNotFoundError: If agent not found or user lacks access.
@@ -186,7 +186,7 @@ class A2AGatewayService:
             )
 
         # Decrypt auth credentials and prepare endpoint URL using shared function
-        auth_headers, endpoint_url, _ = prepare_agent_auth(agent, error_class=A2AGatewayError)
+        auth_headers, endpoint_url, auth_query_params_decrypted = prepare_agent_auth(agent, error_class=A2AGatewayError)
 
         # Store endpoint URL on agent object for later use (avoids re-reading from DB)
         agent._gateway_endpoint_url = endpoint_url  # type: ignore[attr-defined]
@@ -198,7 +198,7 @@ class A2AGatewayService:
         db.commit()
         db.close()
 
-        return agent, auth_headers
+        return agent, auth_headers, auth_query_params_decrypted
 
     def generate_agent_card(self, agent: DbA2AAgent, base_url: str) -> Dict[str, Any]:
         """Generate an A2A-spec compliant Agent Card for a registered agent.

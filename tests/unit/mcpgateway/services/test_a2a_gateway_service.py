@@ -207,10 +207,11 @@ class TestA2AGatewayService:
         mock_get_for_update.return_value = agent
         mock_decode_auth.return_value = {"Authorization": "Bearer test-token"}
 
-        resolved_agent, auth_headers = service.resolve_agent(mock_db, "agent-789", "user@test.com", [])
+        resolved_agent, auth_headers, auth_qp = service.resolve_agent(mock_db, "agent-789", "user@test.com", [])
 
         assert resolved_agent == agent
         assert auth_headers == {"Authorization": "Bearer test-token"}
+        assert auth_qp is None  # bearer auth doesn't use query params
         mock_db.commit.assert_called_once()
         mock_db.close.assert_called_once()
 
@@ -268,7 +269,7 @@ class TestA2AGatewayService:
         mock_get_for_update.return_value = agent
         mock_decode_auth.return_value = {}
 
-        resolved_agent, _ = service.resolve_agent(mock_db, "agent-jsonrpc", "user@test.com", [])
+        resolved_agent, _, _ = service.resolve_agent(mock_db, "agent-jsonrpc", "user@test.com", [])
         assert resolved_agent == agent
 
     @patch("mcpgateway.services.a2a_service.decode_auth")
@@ -284,7 +285,7 @@ class TestA2AGatewayService:
         mock_get_for_update.return_value = agent
         mock_decode_auth.return_value = {}
 
-        resolved_agent, _ = service.resolve_agent(mock_db, "agent-generic", "user@test.com", [])
+        resolved_agent, _, _ = service.resolve_agent(mock_db, "agent-generic", "user@test.com", [])
         assert resolved_agent == agent
 
     @patch("mcpgateway.services.a2a_service.decode_auth")
@@ -300,7 +301,7 @@ class TestA2AGatewayService:
         mock_get_for_update.return_value = agent
         mock_decode_auth.return_value = {}
 
-        resolved_agent, _ = service.resolve_agent(mock_db, "agent-custom-slash", "user@test.com", [])
+        resolved_agent, _, _ = service.resolve_agent(mock_db, "agent-custom-slash", "user@test.com", [])
         assert resolved_agent == agent
 
     def test_compatible_agent_types_constant(self, service):

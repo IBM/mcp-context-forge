@@ -152,6 +152,56 @@ def _get_base_url(request: Request) -> str:
     return str(urlunparse(new_parsed)).rstrip("/")
 
 
+def _record_gateway_db_metrics(
+    agent_id: str,
+    start_time: datetime,
+    success: bool,
+    interaction_type: str,
+    error_message: Optional[str] = None,
+) -> None:
+    """Record DB metrics and update last_interaction for a gateway call.
+
+    Mirrors a2a_service.invoke_agent Phase 3: writes to A2AAgentMetric via
+    the metrics buffer service and updates the agent's last_interaction timestamp.
+
+    Args:
+        agent_id: The agent's database ID.
+        start_time: UTC datetime when the call started.
+        success: Whether the call succeeded.
+        interaction_type: JSON-RPC method name (e.g., "message/send").
+        error_message: Error message if the call failed.
+    """
+    end_time = datetime.now(timezone.utc)
+    response_time = (end_time - start_time).total_seconds()
+
+    # Record to A2AAgentMetric table via buffer service
+    try:
+        from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+
+        metrics_buffer = get_metrics_buffer_service()
+        metrics_buffer.record_a2a_agent_metric_with_duration(
+            a2a_agent_id=agent_id,
+            response_time=response_time,
+            success=success,
+            interaction_type=interaction_type,
+            error_message=error_message,
+        )
+    except Exception as metrics_error:
+        logger.warning(f"Failed to record A2A gateway DB metrics for '{agent_id}': {metrics_error}")
+
+    # Update last_interaction timestamp
+    try:
+        from mcpgateway.db import A2AAgent, fresh_db_session, get_for_update as get_for_update_fn  # pylint: disable=import-outside-toplevel
+
+        with fresh_db_session() as ts_db:
+            db_agent = get_for_update_fn(ts_db, A2AAgent, agent_id)
+            if db_agent and getattr(db_agent, "enabled", False):
+                db_agent.last_interaction = end_time
+                ts_db.commit()
+    except Exception as ts_error:
+        logger.warning(f"Failed to update last_interaction for gateway agent '{agent_id}': {ts_error}")
+
+
 @router.get("/{agent_id}/.well-known/agent-card.json", response_model=Dict[str, Any])
 @require_permission(Permissions.A2A_GATEWAY_READ)
 async def get_agent_card(
@@ -186,7 +236,7 @@ async def get_agent_card(
         elif token_teams is None:
             token_teams = []  # Non-admin without teams = public-only
 
-        agent, _ = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
+        agent, _, _ = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
         base_url = _get_base_url(request)
         card = _gateway_service.generate_agent_card(agent, base_url)
 
@@ -267,7 +317,7 @@ async def jsonrpc_endpoint(
         elif token_teams is None:
             token_teams = []
 
-        agent, auth_headers = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
+        agent, auth_headers, auth_query_params_decrypted = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
 
     except A2AGatewayAgentNotFoundError:
         return JSONResponse(
@@ -308,6 +358,8 @@ async def jsonrpc_endpoint(
         a2a_gateway_streams_active.labels(agent_id=agent_id).inc()
 
         async def _stream_with_metrics():
+            stream_start = datetime.now(timezone.utc)
+            stream_success = False
             try:
                 async for event in _client_service.stream_jsonrpc(
                     endpoint_url=endpoint_url,
@@ -316,8 +368,10 @@ async def jsonrpc_endpoint(
                     user_id=user_id,
                     user_email=user_email,
                     agent_id=agent_id,
+                    auth_query_params_decrypted=auth_query_params_decrypted,
                 ):
                     yield event
+                stream_success = True
                 a2a_gateway_requests_counter.labels(agent_id=agent_id, method=method, status="success").inc()
             except Exception:
                 a2a_gateway_requests_counter.labels(agent_id=agent_id, method=method, status="error").inc()
@@ -325,6 +379,7 @@ async def jsonrpc_endpoint(
                 raise
             finally:
                 a2a_gateway_streams_active.labels(agent_id=agent_id).dec()
+                _record_gateway_db_metrics(agent_id, stream_start, stream_success, method, None if stream_success else "stream_error")
 
         return StreamingResponse(
             _stream_with_metrics(),
@@ -345,6 +400,7 @@ async def jsonrpc_endpoint(
         user_id=user_id,
         user_email=user_email,
         agent_id=agent_id,
+        auth_query_params_decrypted=auth_query_params_decrypted,
     )
     duration_ms = (datetime.now(timezone.utc) - call_start).total_seconds() * 1000
 
@@ -354,6 +410,9 @@ async def jsonrpc_endpoint(
     a2a_gateway_requests_counter.labels(agent_id=agent_id, method=method, status=status).inc()
     if is_error:
         a2a_gateway_errors_counter.labels(agent_id=agent_id, error_type="downstream_error").inc()
+
+    # Record DB metrics (matches invoke_agent's Phase 3)
+    _record_gateway_db_metrics(agent_id, call_start, not is_error, method, result.get("error", {}).get("message") if is_error else None)
 
     # Run post-invoke plugin hook
     await _run_post_invoke_hook(agent_id, method, result, duration_ms, is_error)
@@ -391,7 +450,7 @@ async def _handle_get_authenticated_card(
         elif token_teams is None:
             token_teams = []
 
-        agent, _ = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
+        agent, _, _ = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
         base_url = _get_base_url(request)
         card = _gateway_service.generate_agent_card(agent, base_url)
 
