@@ -40,6 +40,7 @@ make coverage                     # Full coverage (md + HTML + XML + badge + ann
 make smoketest                    # Container build + simple E2E flow
 make test-mcp-cli                 # MCP protocol via mcp-cli (needs live gateway)
 make test-mcp-rbac                # MCP RBAC transport E2E (needs live gateway)
+make test-mcp-plugin-parity       # MCP plugin parity E2E for the current stack (requires test-specific plugin config)
 make test-mcp-access-matrix       # Rust-only MCP role/access matrix with strong sentinels
 make test-mcp-session-isolation   # Rust-only MCP session isolation E2E
 make test-mcp-session-isolation-load  # Rust-only Locust correctness load test

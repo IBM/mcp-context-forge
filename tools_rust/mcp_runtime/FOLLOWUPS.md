@@ -166,10 +166,11 @@ Observed behavior:
   without an explicit plugin-aware fallback guard.
 
 Why this matters:
-- We still lack a stable automated parity test that proves Python mode and Rust full mode behave the same when plugin hooks are active.
-- `resources/read` is now the cleanest parity probe.
+- We now have a stable automated parity gate for:
+  - `resources/read` + `LicenseHeaderInjector`
+  - `tools/call` + `ToolOutputSentinelPlugin`
 - `prompts/get` is not yet a good release gate because the Python deny-path response shape is noisy.
-- `tools/call` still needs a clear sentinel plugin for mutation parity.
+- We still do not have broader parity proof for prompt hooks or more complex tool/resource plugin families.
 
 Likely area:
 - [tool_service.py](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/services/tool_service.py)
@@ -178,12 +179,10 @@ Likely area:
 - [lib.rs](/home/cmihai/agents2/pr/mcp-context-forge/tools_rust/mcp_runtime/src/lib.rs)
 
 Recommended next step:
-- Add a dedicated live MCP plugin parity target using a test-specific plugin config.
-- First gate:
-  - `resources/read` + `LicenseHeaderInjector`
+- Keep `make test-mcp-plugin-parity` green in both Python mode and Rust full mode using `tests/e2e/plugin_parity_config.yaml`.
 - Follow-up gates:
   - `prompts/get` after the Python-side blocked-prompt response shape is cleaned up
-  - `tools/call` with a tiny test-only plugin that appends a deterministic sentinel to tool output
+  - additional plugin families if Rust fast paths expand beyond the current resource/tool parity probes
 
 ### 6. Circuit breaker unit test timing flake
 

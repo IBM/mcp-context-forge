@@ -107,6 +107,17 @@ make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s
 cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml
 ```
 
+For live plugin parity, use the test-specific plugin config and run the same
+E2E against both Python mode and Rust full mode:
+
+```bash
+PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-up
+MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=python make test-mcp-plugin-parity
+
+PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-rebuild-rust-full
+MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=rust make test-mcp-plugin-parity
+```
+
 For revocation and membership/role-drift validation, shorten the reuse TTL so
 the bounded-TTL contract completes quickly:
 

@@ -37,7 +37,7 @@ Use the smallest set that matches your change.
 | --- | --- |
 | Pure Rust refactor in `src/` or `tests/` | `make -C tools_rust/mcp_runtime fmt-check clippy-all test test-rmcp` |
 | Rust + Python integration change | Rust-local checks plus `make doctest test htmlcov` |
-| MCP protocol, auth, session, or transport behavior | Rebuild stack and run `make test-mcp-cli test-mcp-rbac`; add `make test-mcp-access-matrix` for detailed role/output verification, `make test-mcp-session-isolation` for Rust public path work, and `make test-mcp-session-isolation-load` for correctness-under-load changes |
+| MCP protocol, auth, session, or transport behavior | Rebuild stack and run `make test-mcp-cli test-mcp-rbac`; add `make test-mcp-plugin-parity` with `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml` for live plugin parity, `make test-mcp-access-matrix` for detailed role/output verification, `make test-mcp-session-isolation` for Rust public path work, and `make test-mcp-session-isolation-load` for correctness-under-load changes |
 | Overview / Version Info / templates / JS / CSS | `make test-js-coverage lint-web flake8 bandit interrogate pylint`, plus `make test-ui-smoke` and targeted Playwright tests |
 | Packaging / release readiness | `make verify` |
 | Performance-sensitive hot path | relevant tests plus benchmark and profiling targets |
@@ -144,6 +144,8 @@ make testing-up
 make test-mcp-cli
 make test-mcp-rbac
 make test-mcp-access-matrix
+PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-up
+MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=python make test-mcp-plugin-parity
 ```
 
 Expected outcome:
@@ -153,6 +155,9 @@ Expected outcome:
 - `make test-mcp-rbac` passes
 - `make test-mcp-access-matrix` passes and verifies scoped-user access with
   strong tool/resource/prompt sentinels
+- `make test-mcp-plugin-parity` passes with the Python runtime header and proves
+  active `resource_post_fetch` / `tool_post_invoke` behavior on the public MCP
+  path
 
 ### Rust Shadow
 
@@ -196,6 +201,8 @@ make test-mcp-access-matrix
 make test-mcp-session-isolation
 make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s
 cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml
+PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-rebuild-rust-full
+MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=rust make test-mcp-plugin-parity
 ```
 
 Expected outcome:
@@ -207,6 +214,9 @@ Expected outcome:
 - `make test-mcp-session-isolation` passes on the Rust path
 - `make test-mcp-session-isolation-load` validates owner traffic and hijack
   denial under concurrent Locust load
+- `make test-mcp-plugin-parity` passes with the Rust runtime header and proves
+  the live plugin hooks still affect public MCP `resources/read` and
+  `tools/call`
 - release Rust tests pass
 
 For revocation and membership/role-drift changes, validate with a short reuse

@@ -63,6 +63,8 @@ Rules:
 - [ ] `make test-mcp-cli`
 - [ ] `make test-mcp-rbac`
 - [ ] `make test-mcp-access-matrix`
+- [ ] `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-up`
+- [ ] `MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=python make test-mcp-plugin-parity`
 - [ ] Perform one manual `/mcp` tool call and confirm `x-contextforge-mcp-runtime: python`
 - [ ] Perform one freshness check against `fast-time-get-system-time`
 
@@ -99,6 +101,8 @@ Rules:
 - [ ] `make test-mcp-access-matrix`
 - [ ] `make test-mcp-session-isolation`
 - [ ] `make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s`
+- [ ] `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-rebuild-rust-full`
+- [ ] `MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=rust make test-mcp-plugin-parity`
 - [ ] `cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml`
 - [ ] Perform one manual `/mcp` tool call and confirm `x-contextforge-mcp-runtime: rust`
 - [ ] Perform one manual freshness check against `fast-time-get-system-time`

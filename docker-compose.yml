@@ -393,6 +393,7 @@ services:
       # - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}
       # Uncomment to enable plugins
       - PLUGINS_ENABLED=true
+      - PLUGINS_CONFIG_FILE=${PLUGINS_CONFIG_FILE:-plugins/config.yaml}
       # Uncomment to enable catalog
       - MCPGATEWAY_CATALOG_ENABLED=true
       - MCPGATEWAY_CATALOG_FILE=/app/mcp-catalog.yml
@@ -1430,7 +1431,7 @@ services:
             with urllib.request.urlopen(req) as response:
                 return json.loads(response.read().decode('utf-8'))
 
-        def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 403, 502, 503)):
+        def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 502, 503)):
             '''Retry authenticated API requests while gateway workers settle.'''
             for attempt in range(1, retries + 1):
                 try:
