@@ -5441,6 +5441,53 @@ class TestRpcHandling:
             "contents": [{"uri": "resource://one", "text": "hello"}],
         }
 
+    async def test_handle_internal_mcp_resources_read_normalizes_legacy_resource_content(self):
+        from mcpgateway.common.models import ResourceContent
+
+        request = self._make_request({"jsonrpc": "2.0", "id": "resources-read-legacy", "method": "resources/read", "params": {"uri": "resource://legacy"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = MagicMock()
+
+        resource = ResourceContent(
+            type="resource",
+            id="legacy-id",
+            uri="resource://legacy",
+            mime_type="text/plain",
+            text="legacy-text",
+        )
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(return_value=resource)),
+        ):
+            response = await handle_internal_mcp_resources_read(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "contents": [{"uri": "resource://legacy", "mimeType": "text/plain", "text": "legacy-text"}],
+        }
+
     async def test_handle_internal_mcp_resource_templates_list_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "resource-templates-1", "method": "resources/templates/list", "params": {}})
         request.headers = {

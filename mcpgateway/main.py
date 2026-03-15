@@ -7240,7 +7240,18 @@ async def handle_internal_mcp_resources_read(request: Request):
             plugin_global_context=plugin_global_context,
             meta_data=meta_data,
         )
-        if hasattr(result, "model_dump"):
+        from mcpgateway.common.models import ResourceContent  # pylint: disable=import-outside-toplevel
+
+        if isinstance(result, ResourceContent):
+            normalized_content = {"uri": result.uri}
+            if result.mime_type:
+                normalized_content["mimeType"] = result.mime_type
+            if result.text is not None:
+                normalized_content["text"] = result.text
+            elif result.blob is not None:
+                normalized_content["blob"] = base64.b64encode(result.blob).decode("ascii")
+            payload = {"contents": [normalized_content]}
+        elif hasattr(result, "model_dump"):
             payload = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
         else:
             payload = {"contents": [result]}

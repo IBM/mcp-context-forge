@@ -139,6 +139,52 @@ Likely area:
 Recommended next step:
 - Add targeted instrumentation around `_ensure_admin_logged_in(...)` and capture redirect/response traces when JWT-cookie login falls back to `/admin/login`.
 
+### 5a. Rust full-mode plugin parity still needs a dedicated release gate
+
+Status:
+- Important Rust-specific compatibility follow-up
+
+Observed behavior:
+- The compose testing stack enables the plugin framework with `PLUGINS_ENABLED=true`.
+- However, the default [plugins/config.yaml](/home/cmihai/agents2/pr/mcp-context-forge/plugins/config.yaml) keeps built-in plugins such as `PIIFilterPlugin` in `mode: "disabled"`, so the current Rust MCP end-to-end battery does not exercise live plugin enforcement or transformation behavior.
+- Manual spot checks with temporary plugin enablement showed:
+  - `resource_post_fetch` parity for `resources/read` using `LicenseHeaderInjector`
+  - `prompt_pre_fetch` is reached on Rust full mode using `DenyListPlugin`
+- So the broad “Rust bypasses plugins” concern is not supported by current evidence.
+- Python service implementations invoke plugin hooks for:
+  - `tool_pre_invoke` / `tool_post_invoke`
+  - `prompt_pre_fetch` / `prompt_post_fetch`
+  - `resource_pre_fetch` / `resource_post_fetch`
+- In Rust full mode, the direct fast paths in [lib.rs](/home/cmihai/agents2/pr/mcp-context-forge/tools_rust/mcp_runtime/src/lib.rs) serve several of those methods directly:
+  - `direct_server_tools_list(...)`
+  - `direct_server_resources_list(...)`
+  - `direct_server_resource_templates_list(...)`
+  - `direct_server_prompts_list(...)`
+  - `direct_server_resources_read(...)`
+  - `direct_server_prompts_get(...)`
+  - `execute_tools_call_direct(...)`
+  without an explicit plugin-aware fallback guard.
+
+Why this matters:
+- We still lack a stable automated parity test that proves Python mode and Rust full mode behave the same when plugin hooks are active.
+- `resources/read` is now the cleanest parity probe.
+- `prompts/get` is not yet a good release gate because the Python deny-path response shape is noisy.
+- `tools/call` still needs a clear sentinel plugin for mutation parity.
+
+Likely area:
+- [tool_service.py](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/services/tool_service.py)
+- [prompt_service.py](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/services/prompt_service.py)
+- [resource_service.py](/home/cmihai/agents2/pr/mcp-context-forge/mcpgateway/services/resource_service.py)
+- [lib.rs](/home/cmihai/agents2/pr/mcp-context-forge/tools_rust/mcp_runtime/src/lib.rs)
+
+Recommended next step:
+- Add a dedicated live MCP plugin parity target using a test-specific plugin config.
+- First gate:
+  - `resources/read` + `LicenseHeaderInjector`
+- Follow-up gates:
+  - `prompts/get` after the Python-side blocked-prompt response shape is cleaned up
+  - `tools/call` with a tiny test-only plugin that appends a deterministic sentinel to tool output
+
 ### 6. Circuit breaker unit test timing flake
 
 Status:
