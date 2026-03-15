@@ -1430,15 +1430,30 @@ services:
             with urllib.request.urlopen(req) as response:
                 return json.loads(response.read().decode('utf-8'))
 
+        def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 403, 502, 503)):
+            '''Retry authenticated API requests while gateway workers settle.'''
+            for attempt in range(1, retries + 1):
+                try:
+                    return api_request(method, path, data)
+                except urllib.error.HTTPError as exc:
+                    if exc.code in retry_statuses and attempt < retries:
+                        print(f'Retrying {method} {path} after HTTP {exc.code} ({attempt}/{retries})')
+                        time.sleep(delay)
+                        continue
+                    raise
+                except Exception:
+                    if attempt < retries:
+                        print(f'Retrying {method} {path} after transient error ({attempt}/{retries})')
+                        time.sleep(delay)
+                        continue
+                    raise
+
         print('Checking authenticated gateway readiness...')
         for i in range(1, 61):
             try:
-                req = urllib.request.Request('http://gateway:4444/version')
-                req.add_header('Authorization', f'Bearer {token}')
-                with urllib.request.urlopen(req, timeout=5) as response:
-                    if response.status == 200:
-                        print('✅ Authenticated gateway readiness confirmed')
-                        break
+                gateways = api_request('GET', '/gateways')
+                print(f'✅ Authenticated gateway readiness confirmed ({len(gateways)} gateways visible)')
+                break
             except urllib.error.HTTPError as exc:
                 print(f'Authenticated readiness not ready yet ({i}/60): HTTP {exc.code}')
             except Exception as exc:
@@ -1454,11 +1469,11 @@ services:
         # First check if gateway already exists and delete it
         gateway_id = None
         try:
-            gateways = api_request('GET', '/gateways')
+            gateways = api_request_with_retry('GET', '/gateways')
             for gw in gateways:
                 if gw.get('name') == 'fast_time':
                     print(f'Found existing gateway {gw[\"id\"]}, deleting...')
-                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
+                    api_request_with_retry('DELETE', f'/gateways/{gw[\"id\"]}')
                     print('Deleted existing gateway')
         except Exception as e:
             print(f'Note: Could not check/delete existing gateway: {e}')
@@ -1466,14 +1481,14 @@ services:
         # Delete existing virtual server if present (using fixed ID)
         VIRTUAL_SERVER_ID = '9779b6698cbd4b4995ee04a4fab38737'
         try:
-            api_request('DELETE', f'/servers/{VIRTUAL_SERVER_ID}')
+            api_request_with_retry('DELETE', f'/servers/{VIRTUAL_SERVER_ID}')
             print(f'Deleted existing virtual server {VIRTUAL_SERVER_ID}')
         except Exception as e:
             print(f'Note: No existing virtual server to delete (or error: {e})')
 
         # Register the gateway
         try:
-            result = api_request('POST', '/gateways', {
+            result = api_request_with_retry('POST', '/gateways', {
                 'name': 'fast_time',
                 'url': 'http://fast_time_server:8080/http',
                 'transport': 'STREAMABLEHTTP'
@@ -1551,7 +1566,7 @@ services:
                     'associated_prompts': prompt_ids
                 }
             }
-            result = api_request('POST', '/servers', server_payload)
+            result = api_request_with_retry('POST', '/servers', server_payload)
             print(f'Virtual server created: {result}')
             print(f'✅ Successfully created virtual server with {len(tool_ids)} tools, {len(resource_ids)} resources, {len(prompt_ids)} prompts')
         except Exception as e:
