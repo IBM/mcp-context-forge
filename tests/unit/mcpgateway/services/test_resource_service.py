@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 
 # First-Party
 from mcpgateway.db import Resource as DbResource
@@ -4808,6 +4808,73 @@ class TestReadResourceCoverageEdges:
             out = await svc.read_resource(db, resource_id="res-1", server_id="srv-1")
         assert out.text == "TEXT"
         span.set_attribute.assert_any_call("success", True)
+
+    @pytest.mark.asyncio
+    async def test_read_resource_server_scoped_uri_lookup_avoids_duplicate_uri_collisions(self):
+        """Server-scoped URI reads must not fail when the same URI exists on another gateway."""
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        resource_db = MagicMock(
+            id="res-1",
+            uri="time://formats",
+            enabled=True,
+            content="SCOPED TEXT",
+            gateway=None,
+            visibility="public",
+            owner_email=None,
+            team_id=None,
+        )
+
+        resource_lookup_result = MagicMock()
+        resource_lookup_result.scalar_one_or_none.return_value = resource_db
+        server_match_result = MagicMock()
+        server_match_result.first.return_value = ("res-1",)
+
+        def execute_side_effect(statement, *args, **kwargs):
+            sql = str(statement)
+            if "resources.uri" in sql and "resources.enabled" in sql:
+                if "JOIN server_resource_association" not in sql:
+                    raise MultipleResultsFound("duplicate URI across gateways")
+                return resource_lookup_result
+            if "server_resource_association.resource_id" in sql:
+                return server_match_result
+            raise AssertionError(sql)
+
+        db.execute.side_effect = execute_side_effect
+
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="time://formats", server_id="srv-1")
+
+        assert out.text == "SCOPED TEXT"
+
+    @pytest.mark.asyncio
+    async def test_read_resource_generic_uri_lookup_reports_ambiguity(self):
+        """Generic URI reads should fail cleanly when the same URI exists on multiple servers."""
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        def execute_side_effect(statement, *args, **kwargs):
+            sql = str(statement)
+            if "resources.uri" in sql and "resources.enabled" in sql:
+                raise MultipleResultsFound("duplicate URI across gateways")
+            raise AssertionError(sql)
+
+        db.execute.side_effect = execute_side_effect
+
+        with pytest.raises(ResourceError, match=r"ambiguous across multiple servers; use /servers/\{id\}/mcp"):
+            await svc.read_resource(db, resource_uri="time://formats")
 
     @pytest.mark.asyncio
     async def test_read_resource_quack_branch_stateful_hasattr_covers_unreachable_elif_false_arc(self):

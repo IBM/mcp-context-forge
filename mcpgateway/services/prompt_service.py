@@ -25,6 +25,9 @@ import uuid
 
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape, Template
+from mcp import ClientSession
+from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
@@ -46,15 +49,19 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
+from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -243,6 +250,108 @@ class PromptService(BaseService):
         # Use the module-level singleton for template caching
         self._jinja_env = _get_jinja_env()
         self._plugin_manager: PluginManager | None = get_plugin_manager()
+
+    @staticmethod
+    def _should_fetch_gateway_prompt(prompt: DbPrompt) -> bool:
+        """Return whether a prompt must be executed against its source gateway.
+
+        Federated prompts are synced into the catalog as metadata via
+        ``list_prompts()``. Those records often have ``template=""``, which
+        means the gateway must call the upstream MCP ``prompts/get`` endpoint
+        instead of trying to render a local template.
+
+        Args:
+            prompt: Prompt ORM object resolved from the catalog.
+
+        Returns:
+            ``True`` when the prompt is gateway-backed and has no local template.
+        """
+        return bool(getattr(prompt, "gateway_id", None)) and not bool(getattr(prompt, "template", ""))
+
+    async def _fetch_gateway_prompt_result(self, prompt: DbPrompt, arguments: Optional[Dict[str, str]], user_identity: Optional[str]) -> PromptResult:
+        """Fetch a rendered prompt from the upstream MCP gateway.
+
+        Args:
+            prompt: Gateway-backed prompt record from the catalog.
+            arguments: Optional prompt-rendering arguments.
+            user_identity: Effective requester email for session-pool isolation.
+
+        Returns:
+            Prompt result normalized into ContextForge models.
+
+        Raises:
+            PromptError: If the gateway prompt cannot be fetched.
+        """
+        gateway = getattr(prompt, "gateway", None)
+        if gateway is None:
+            raise PromptError(f"Prompt '{prompt.name}' is gateway-backed but missing gateway metadata")
+
+        gateway_url = str(gateway.url)
+        headers = build_gateway_auth_headers(gateway)
+        auth_query_params_decrypted: Optional[Dict[str, str]] = None
+
+        if getattr(gateway, "auth_type", None) == "query_param" and getattr(gateway, "auth_query_params", None):
+            auth_query_params_decrypted = {}
+            for param_key, encrypted_value in (gateway.auth_query_params or {}).items():
+                try:
+                    decoded = decode_auth(encrypted_value)
+                    auth_query_params_decrypted[param_key] = decoded.get(param_key, "")
+                except Exception as exc:
+                    raise PromptError(f"Failed to decode query-parameter auth for prompt gateway '{gateway.id}'") from exc
+            if auth_query_params_decrypted:
+                gateway_url = apply_query_param_auth(gateway_url, auth_query_params_decrypted)
+
+        remote_name = getattr(prompt, "original_name", None) or prompt.name
+        pool_user_identity = (user_identity or "anonymous").strip() or "anonymous"
+        gateway_id = str(getattr(gateway, "id", ""))
+        transport = str(getattr(gateway, "transport", "streamable_http") or "streamable_http").lower()
+        pool_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
+        prompt_arguments = arguments or None
+
+        try:
+            if settings.mcp_session_pool_enabled:
+                try:
+                    pool = get_mcp_session_pool()
+                except RuntimeError:
+                    pool = None
+                if pool is not None:
+                    async with pool.session(
+                        url=gateway_url,
+                        headers=headers,
+                        transport_type=pool_transport_type,
+                        user_identity=pool_user_identity,
+                        gateway_id=gateway_id,
+                    ) as pooled:
+                        remote_result = await pooled.session.get_prompt(remote_name, arguments=prompt_arguments)
+                        return PromptResult(
+                            messages=[
+                                Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message)
+                                for message in getattr(remote_result, "messages", []) or []
+                            ],
+                            description=getattr(remote_result, "description", None) or prompt.description,
+                        )
+
+            if transport == "sse":
+                async with sse_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as streams:
+                    async with ClientSession(*streams) as session:
+                        await session.initialize()
+                        remote_result = await session.get_prompt(remote_name, arguments=prompt_arguments)
+            else:
+                async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, _get_session_id):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        remote_result = await session.get_prompt(remote_name, arguments=prompt_arguments)
+
+            return PromptResult(
+                messages=[
+                    Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message)
+                    for message in getattr(remote_result, "messages", []) or []
+                ],
+                description=getattr(remote_result, "description", None) or prompt.description,
+            )
+        except Exception as exc:
+            sanitized_error = sanitize_exception_message(str(exc), auth_query_params_decrypted)
+            raise PromptError(f"Failed to fetch prompt '{remote_name}' from gateway: {sanitized_error}") from exc
 
     @staticmethod
     def validate_arguments_json(args_value: Any, context: str = "") -> List[Dict[str, Any]]:
@@ -1642,15 +1751,15 @@ class PromptService(BaseService):
 
                 # Find prompt by ID first, then by name (active prompts only)
                 search_key = str(prompt_id)
-                prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
+                prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
                 if not prompt:
-                    prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
+                    prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.name == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
 
                 if not prompt:
                     # Check if an inactive prompt exists
-                    inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
+                    inactive_prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
                     if not inactive_prompt:
-                        inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
+                        inactive_prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.name == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
 
                     if inactive_prompt:
                         raise PromptNotFoundError(f"Prompt '{search_key}' exists but is inactive")
@@ -1679,7 +1788,11 @@ class PromptService(BaseService):
                         raise PromptNotFoundError(f"Prompt not found: {search_key}")
                     server_scoped = True
 
-                if not arguments:
+                if self._should_fetch_gateway_prompt(prompt):
+                    # Release the read transaction before any remote network I/O.
+                    db.commit()
+                    result = await self._fetch_gateway_prompt_result(prompt, arguments, user)
+                elif not arguments:
                     result = PromptResult(
                         messages=[
                             Message(
@@ -1704,7 +1817,7 @@ class PromptService(BaseService):
                 if has_post_fetch:
                     post_result, _ = await self._plugin_manager.invoke_hook(
                         PromptHookType.PROMPT_POST_FETCH,
-                        payload=PromptPosthookPayload(prompt_id=str(prompt.id), result=result),
+                        payload=PromptPosthookPayload(prompt_id=prompt.name, result=result),
                         global_context=global_context,
                         local_contexts=context_table,
                         violations_as_exceptions=True,

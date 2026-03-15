@@ -29,7 +29,7 @@ class VersionPage(BasePage):
     @property
     def app_overview_card(self) -> Locator:
         """Application overview card with gradient background."""
-        return self.version_panel.locator(".bg-gradient-to-r").first
+        return self.page.locator("#version-app-overview-card")
 
     @property
     def app_name(self) -> Locator:
@@ -61,7 +61,22 @@ class VersionPage(BasePage):
     @property
     def platform_runtime_card(self) -> Locator:
         """Platform & Runtime card container."""
-        return self.version_panel.locator("div.bg-white.rounded-lg.shadow").first
+        return self.page.locator("#version-platform-runtime-card")
+
+    @property
+    def mcp_runtime_card(self) -> Locator:
+        """MCP runtime card container."""
+        return self.page.locator("#version-mcp-runtime-card")
+
+    @property
+    def mcp_core_badge(self) -> Locator:
+        """Primary MCP core badge."""
+        return self.page.locator("#version-mcp-core-badge")
+
+    @property
+    def mcp_runtime_mode_badge(self) -> Locator:
+        """Runtime mode badge."""
+        return self.page.locator("#version-mcp-runtime-mode-badge")
 
     @property
     def python_version(self) -> Locator:
@@ -83,7 +98,7 @@ class VersionPage(BasePage):
     @property
     def services_status_card(self) -> Locator:
         """Services status card container."""
-        return self.version_panel.locator("div.bg-white.rounded-lg.shadow").nth(1)
+        return self.page.locator("#version-services-status-card")
 
     @property
     def database_status_card(self) -> Locator:
@@ -110,7 +125,7 @@ class VersionPage(BasePage):
     @property
     def system_resources_card(self) -> Locator:
         """System resources card container."""
-        return self.version_panel.locator("div.bg-white.rounded-lg.shadow").nth(2)
+        return self.page.locator("#version-system-resources-card")
 
     @property
     def cpu_info(self) -> Locator:
@@ -137,7 +152,7 @@ class VersionPage(BasePage):
     @property
     def support_bundle_card(self) -> Locator:
         """Support bundle download card container."""
-        return self.version_panel.locator("div.bg-white.rounded-lg.shadow").nth(3)
+        return self.page.locator("#version-support-bundle-card")
 
     @property
     def download_support_bundle_btn(self) -> Locator:
@@ -224,6 +239,14 @@ class VersionPage(BasePage):
             FastAPI version as string
         """
         return self.fastapi_version.text_content().strip()
+
+    def get_mcp_core_badge(self) -> str:
+        """Get the primary MCP core badge text."""
+        return self.mcp_core_badge.text_content().strip()
+
+    def get_mcp_runtime_mode_badge(self) -> str:
+        """Get the MCP runtime mode badge text."""
+        return self.mcp_runtime_mode_badge.text_content().strip()
 
     def get_operating_system(self) -> str:
         """Get the operating system information.

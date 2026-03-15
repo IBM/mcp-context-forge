@@ -117,6 +117,9 @@ services:
     build:
       context: .
       dockerfile: Containerfile.lite     # Same one the Makefile builds
+      args:
+        ENABLE_RUST: ${ENABLE_RUST_BUILD:-${RUST_MCP_BUILD:-false}}
+        ENABLE_RUST_MCP_RMCP: ${ENABLE_RUST_MCP_RMCP_BUILD:-${RUST_MCP_BUILD:-false}}
     restart: unless-stopped
     # NOTE: When using replicas > 1, access via nginx:8080 instead of direct port 4444
     # ports:
@@ -139,13 +142,65 @@ services:
       # Both achieve same RPS when database is the bottleneck.
       # ═══════════════════════════════════════════════════════════════════════════
       # - HTTP_SERVER=granian    # Rust-based, native backpressure, +47% memory, -8% CPU
-      - HTTP_SERVER=gunicorn # Python-based, battle-tested, lower memory usage
+      - HTTP_SERVER=${HTTP_SERVER:-gunicorn} # Python-based by default; set granian to benchmark the Rust ASGI front door
       - HOST=0.0.0.0
       - PORT=4444
       # Domain for CORS/cookies (nginx default at http://localhost:8080)
       - APP_DOMAIN=${APP_DOMAIN:-http://localhost:8080}
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
+      # High-level Rust MCP UX:
+      #   RUST_MCP_MODE=off    -> Python MCP transport
+      #   RUST_MCP_MODE=shadow -> Rust sidecar is present, but public /mcp stays on Python for safe fallback
+      #   RUST_MCP_MODE=edge   -> direct public /mcp on Rust with managed UDS sidecar defaults
+      #   RUST_MCP_MODE=full   -> edge + Rust session/event-store/resume/live-stream/affinity cores
+      # Advanced EXPERIMENTAL_/MCP_RUST_* env vars below still work as explicit overrides.
+      - RUST_MCP_MODE=${RUST_MCP_MODE:-off}
+      - RUST_MCP_LOG=${RUST_MCP_LOG:-warn}
+      # Advanced override: force the session-auth-reuse fast path on/off
+      # independently of RUST_MCP_MODE. Prefer the mode presets above.
+      - RUST_MCP_SESSION_AUTH_REUSE=${RUST_MCP_SESSION_AUTH_REUSE:-}
+      # Experimental Rust MCP runtime internals. Leave unset for the simple
+      # RUST_MCP_MODE=shadow/edge/full paths; set explicitly only to override.
+      - EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED:-}
+      - EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED=${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED:-}
+      - EXPERIMENTAL_RUST_MCP_RUNTIME_URL=${EXPERIMENTAL_RUST_MCP_RUNTIME_URL:-}
+      - EXPERIMENTAL_RUST_MCP_RUNTIME_UDS=${EXPERIMENTAL_RUST_MCP_RUNTIME_UDS:-}
+      - EXPERIMENTAL_RUST_MCP_RUNTIME_TIMEOUT_SECONDS=${EXPERIMENTAL_RUST_MCP_RUNTIME_TIMEOUT_SECONDS:-30}
+      - EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED=${EXPERIMENTAL_RUST_MCP_SESSION_CORE_ENABLED:-}
+      - EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED=${EXPERIMENTAL_RUST_MCP_EVENT_STORE_ENABLED:-}
+      - EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED=${EXPERIMENTAL_RUST_MCP_RESUME_CORE_ENABLED:-}
+      - EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED=${EXPERIMENTAL_RUST_MCP_LIVE_STREAM_CORE_ENABLED:-}
+      - EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED=${EXPERIMENTAL_RUST_MCP_AFFINITY_CORE_ENABLED:-}
+      - EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED=${EXPERIMENTAL_RUST_MCP_SESSION_AUTH_REUSE_ENABLED:-}
+      # Sidecar-level knobs. These default from the mode-derived experimental settings above.
+      - MCP_RUST_LISTEN_HTTP=${MCP_RUST_LISTEN_HTTP:-}
+      - MCP_RUST_LISTEN_UDS=${MCP_RUST_LISTEN_UDS:-}
+      - MCP_RUST_PUBLIC_LISTEN_HTTP=${MCP_RUST_PUBLIC_LISTEN_HTTP:-}
+      - MCP_RUST_BACKEND_RPC_URL=${MCP_RUST_BACKEND_RPC_URL:-http://127.0.0.1:4444/_internal/mcp/rpc}
+      - MCP_RUST_REDIS_URL=${MCP_RUST_REDIS_URL:-}
+      - MCP_RUST_CACHE_PREFIX=${MCP_RUST_CACHE_PREFIX:-mcpgw:}
+      - MCP_RUST_DATABASE_URL=${MCP_RUST_DATABASE_URL:-}
+      - MCP_RUST_DB_POOL_MAX_SIZE=${MCP_RUST_DB_POOL_MAX_SIZE:-20}
+      - MCP_RUST_SESSION_CORE_ENABLED=${MCP_RUST_SESSION_CORE_ENABLED:-}
+      - MCP_RUST_SESSION_TTL_SECONDS=${MCP_RUST_SESSION_TTL_SECONDS:-3600}
+      - MCP_RUST_EVENT_STORE_ENABLED=${MCP_RUST_EVENT_STORE_ENABLED:-}
+      - MCP_RUST_RESUME_CORE_ENABLED=${MCP_RUST_RESUME_CORE_ENABLED:-}
+      - MCP_RUST_LIVE_STREAM_CORE_ENABLED=${MCP_RUST_LIVE_STREAM_CORE_ENABLED:-}
+      - MCP_RUST_AFFINITY_CORE_ENABLED=${MCP_RUST_AFFINITY_CORE_ENABLED:-}
+      - MCP_RUST_SESSION_AUTH_REUSE_ENABLED=${MCP_RUST_SESSION_AUTH_REUSE_ENABLED:-}
+      - MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS=${MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS:-30}
+      - MCP_RUST_EVENT_STORE_MAX_EVENTS_PER_STREAM=${MCP_RUST_EVENT_STORE_MAX_EVENTS_PER_STREAM:-100}
+      - MCP_RUST_EVENT_STORE_TTL_SECONDS=${MCP_RUST_EVENT_STORE_TTL_SECONDS:-3600}
+      - MCP_RUST_EVENT_STORE_POLL_INTERVAL_MS=${MCP_RUST_EVENT_STORE_POLL_INTERVAL_MS:-250}
+      - MCP_RUST_LOG=${MCP_RUST_LOG:-}
+      - MCP_RUST_CLIENT_CONNECT_TIMEOUT_MS=${MCP_RUST_CLIENT_CONNECT_TIMEOUT_MS:-5000}
+      - MCP_RUST_CLIENT_POOL_IDLE_TIMEOUT_SECONDS=${MCP_RUST_CLIENT_POOL_IDLE_TIMEOUT_SECONDS:-90}
+      - MCP_RUST_CLIENT_POOL_MAX_IDLE_PER_HOST=${MCP_RUST_CLIENT_POOL_MAX_IDLE_PER_HOST:-1024}
+      - MCP_RUST_CLIENT_TCP_KEEPALIVE_SECONDS=${MCP_RUST_CLIENT_TCP_KEEPALIVE_SECONDS:-30}
+      - MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS=${MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS:-30}
+      - MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS=${MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS:-300}
+      - MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT:-}
       # WebSocket transport features (disabled by default; opt-in only)
       - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
       - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}
@@ -338,6 +393,7 @@ services:
       # - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}
       # Uncomment to enable plugins
       - PLUGINS_ENABLED=true
+      - PLUGINS_CONFIG_FILE=${PLUGINS_CONFIG_FILE:-plugins/config.yaml}
       # Uncomment to enable catalog
       - MCPGATEWAY_CATALOG_ENABLED=true
       - MCPGATEWAY_CATALOG_FILE=/app/mcp-catalog.yml
@@ -422,14 +478,14 @@ services:
       # ═══════════════════════════════════════════════════════════════════════════
       # Gunicorn Configuration (used when HTTP_SERVER=gunicorn)
       # ═══════════════════════════════════════════════════════════════════════════
-      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-24}  # Worker processes per replica
-      - GUNICORN_TIMEOUT=120                   # Worker timeout in seconds
-      - GUNICORN_GRACEFUL_TIMEOUT=60           # Grace period for worker shutdown
-      - GUNICORN_KEEP_ALIVE=30                 # Keep-alive timeout (matches SSE keepalive)
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-24}                    # Worker processes (match CPU cores)
+      - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-120}                   # Worker timeout in seconds
+      - GUNICORN_GRACEFUL_TIMEOUT=${GUNICORN_GRACEFUL_TIMEOUT:-60}           # Grace period for worker shutdown
+      - GUNICORN_KEEP_ALIVE=${GUNICORN_KEEP_ALIVE:-30}                 # Keep-alive timeout (matches SSE keepalive)
       # Worker recycling cleans up MCP SDK stuck task groups (anyio#695 workaround)
-      - GUNICORN_MAX_REQUESTS=1000000          # Recycle workers after 1M requests
-      - GUNICORN_MAX_REQUESTS_JITTER=100000    # ±100000 jitter prevents thundering herd
-      - GUNICORN_BACKLOG=4096                  # Connection queue depth
+      - GUNICORN_MAX_REQUESTS=${GUNICORN_MAX_REQUESTS:-1000000}          # Recycle workers after 1M requests
+      - GUNICORN_MAX_REQUESTS_JITTER=${GUNICORN_MAX_REQUESTS_JITTER:-100000}    # ±100000 jitter prevents thundering herd
+      - GUNICORN_BACKLOG=${GUNICORN_BACKLOG:-4096}                  # Connection queue depth
       # ═══════════════════════════════════════════════════════════════════════════
       # Granian Backpressure Configuration (used when HTTP_SERVER=granian)
       # ═══════════════════════════════════════════════════════════════════════════
@@ -437,11 +493,11 @@ services:
       # immediate 503 responses instead of queuing them (which can cause OOM/timeouts).
       # Total capacity = GRANIAN_WORKERS × GRANIAN_BACKPRESSURE = 16 × 128 = 2048 concurrent
       # Requests beyond this limit receive immediate 503 (no queuing, no OOM)
-      - GRANIAN_WORKERS=16
-      - GRANIAN_BACKLOG=4096
-      - GRANIAN_BACKPRESSURE=128
-      - GRANIAN_HTTP1_BUFFER_SIZE=524288
-      - GRANIAN_RESPAWN_FAILED=true
+      - GRANIAN_WORKERS=${GRANIAN_WORKERS:-16}
+      - GRANIAN_BACKLOG=${GRANIAN_BACKLOG:-4096}
+      - GRANIAN_BACKPRESSURE=${GRANIAN_BACKPRESSURE:-128}
+      - GRANIAN_HTTP1_BUFFER_SIZE=${GRANIAN_HTTP1_BUFFER_SIZE:-524288}
+      - GRANIAN_RESPAWN_FAILED=${GRANIAN_RESPAWN_FAILED:-true}
       # ───────────────────────────────────────────────────────────────────────
       # Granian Worker Lifecycle (recycling to prevent resource leaks)
       # ───────────────────────────────────────────────────────────────────────
@@ -1340,17 +1396,18 @@ services:
 
         echo "Generating JWT token..."
         echo "Environment: JWT_SECRET_KEY=$$JWT_SECRET_KEY"
-        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256"
+        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key --algo HS256"
         # Only capture stdout (the token), let warnings go to stderr
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
         echo "Generated token: $$MCPGATEWAY_BEARER_TOKEN"
 
         # Decode the token to verify it has expiration
         echo "Decoding token to verify claims..."
         python3 -m mcpgateway.utils.create_jwt_token --decode "$$MCPGATEWAY_BEARER_TOKEN" 2>/dev/null || echo "Failed to decode token"
 
-        # Test authentication first
-        echo "Testing authentication..."
+        # Wait for authenticated gateway readiness. /health goes green before the
+        # admin/bootstrap path is fully ready for authenticated registration calls.
+        echo "Waiting for authenticated gateway readiness..."
 
         # Use Python to make HTTP requests
         python3 -c "
@@ -1374,27 +1431,38 @@ services:
             with urllib.request.urlopen(req) as response:
                 return json.loads(response.read().decode('utf-8'))
 
-        # Test version endpoint without auth
-        print('Checking gateway config...')
-        try:
-            with urllib.request.urlopen('http://gateway:4444/version') as response:
-                data = response.read().decode('utf-8')
-                print(f'Gateway version response (no auth): {data[:200]}')
-        except Exception as e:
-            print(f'Version check failed: {e}')
+        def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 502, 503)):
+            '''Retry authenticated API requests while gateway workers settle.'''
+            for attempt in range(1, retries + 1):
+                try:
+                    return api_request(method, path, data)
+                except urllib.error.HTTPError as exc:
+                    if exc.code in retry_statuses and attempt < retries:
+                        print(f'Retrying {method} {path} after HTTP {exc.code} ({attempt}/{retries})')
+                        time.sleep(delay)
+                        continue
+                    raise
+                except Exception:
+                    if attempt < retries:
+                        print(f'Retrying {method} {path} after transient error ({attempt}/{retries})')
+                        time.sleep(delay)
+                        continue
+                    raise
 
-        # Test version endpoint with auth
-        print('Testing authentication...')
-        try:
-            req = urllib.request.Request('http://gateway:4444/version')
-            req.add_header('Authorization', f'Bearer {token}')
-            with urllib.request.urlopen(req) as response:
-                data = response.read().decode('utf-8')
-                print(f'Auth test response: SUCCESS')
-                auth_success = True
-        except Exception as e:
-            print(f'Auth test response: FAILED - {e}')
-            auth_success = False
+        print('Checking authenticated gateway readiness...')
+        for i in range(1, 61):
+            try:
+                gateways = api_request('GET', '/gateways')
+                print(f'✅ Authenticated gateway readiness confirmed ({len(gateways)} gateways visible)')
+                break
+            except urllib.error.HTTPError as exc:
+                print(f'Authenticated readiness not ready yet ({i}/60): HTTP {exc.code}')
+            except Exception as exc:
+                print(f'Authenticated readiness not ready yet ({i}/60): {exc}')
+            time.sleep(2)
+        else:
+            print('❌ Gateway authenticated readiness check failed')
+            sys.exit(1)
 
         # Register fast_time_server with gateway using Streamable HTTP transport
         print('Registering fast_time_server with gateway (Streamable HTTP)...')
@@ -1402,11 +1470,11 @@ services:
         # First check if gateway already exists and delete it
         gateway_id = None
         try:
-            gateways = api_request('GET', '/gateways')
+            gateways = api_request_with_retry('GET', '/gateways')
             for gw in gateways:
                 if gw.get('name') == 'fast_time':
                     print(f'Found existing gateway {gw[\"id\"]}, deleting...')
-                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
+                    api_request_with_retry('DELETE', f'/gateways/{gw[\"id\"]}', retry_statuses=(401, 502, 503))
                     print('Deleted existing gateway')
         except Exception as e:
             print(f'Note: Could not check/delete existing gateway: {e}')
@@ -1414,14 +1482,14 @@ services:
         # Delete existing virtual server if present (using fixed ID)
         VIRTUAL_SERVER_ID = '9779b6698cbd4b4995ee04a4fab38737'
         try:
-            api_request('DELETE', f'/servers/{VIRTUAL_SERVER_ID}')
+            api_request_with_retry('DELETE', f'/servers/{VIRTUAL_SERVER_ID}', retry_statuses=(401, 502, 503))
             print(f'Deleted existing virtual server {VIRTUAL_SERVER_ID}')
         except Exception as e:
             print(f'Note: No existing virtual server to delete (or error: {e})')
 
         # Register the gateway
         try:
-            result = api_request('POST', '/gateways', {
+            result = api_request_with_retry('POST', '/gateways', {
                 'name': 'fast_time',
                 'url': 'http://fast_time_server:8080/http',
                 'transport': 'STREAMABLEHTTP'
@@ -1499,7 +1567,7 @@ services:
                     'associated_prompts': prompt_ids
                 }
             }
-            result = api_request('POST', '/servers', server_payload)
+            result = api_request_with_retry('POST', '/servers', server_payload)
             print(f'Virtual server created: {result}')
             print(f'✅ Successfully created virtual server with {len(tool_ids)} tools, {len(resource_ids)} resources, {len(prompt_ids)} prompts')
         except Exception as e:
@@ -1536,7 +1604,7 @@ services:
         echo "Registering fast_time_server SSE transport with gateway..."
 
         # Generate JWT token
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
 
         python3 -c "
         import json
@@ -1707,7 +1775,7 @@ services:
         echo "Registering slow_time_server with gateway..."
 
         # Generate JWT token
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
 
         python3 -c "
         import urllib.request
@@ -1820,6 +1888,7 @@ services:
 
         # Register using Python
         python3 -c "
+        import urllib.error
         import urllib.request
         import json
         import os
@@ -1837,13 +1906,45 @@ services:
             with urllib.request.urlopen(req) as response:
                 return json.loads(response.read().decode('utf-8'))
 
+        def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 403, 502, 503)):
+            for attempt in range(1, retries + 1):
+                try:
+                    return api_request(method, path, data)
+                except urllib.error.HTTPError as exc:
+                    if exc.code in retry_statuses and attempt < retries:
+                        print(f'Retrying {method} {path} after HTTP {exc.code} ({attempt}/{retries})')
+                        time.sleep(delay)
+                        continue
+                    raise
+                except Exception:
+                    if attempt < retries:
+                        print(f'Retrying {method} {path} after transient error ({attempt}/{retries})')
+                        time.sleep(delay)
+                        continue
+                    raise
+
+        print('Waiting for authenticated gateway readiness...')
+        for i in range(1, 61):
+            try:
+                gateways = api_request('GET', '/gateways')
+                print(f'✅ Authenticated gateway readiness confirmed ({len(gateways)} gateways visible)')
+                break
+            except urllib.error.HTTPError as exc:
+                print(f'Authenticated readiness not ready yet ({i}/60): HTTP {exc.code}')
+            except Exception as exc:
+                print(f'Authenticated readiness not ready yet ({i}/60): {exc}')
+            time.sleep(2)
+        else:
+            print('❌ Gateway authenticated readiness check failed')
+            exit(1)
+
         # Delete existing gateway if present
         try:
-            gateways = api_request('GET', '/gateways')
+            gateways = api_request_with_retry('GET', '/gateways')
             for gw in gateways:
                 if gw.get('name') == 'fast_test':
                     print(f'Deleting existing gateway {gw[\"id\"]}...')
-                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
+                    api_request_with_retry('DELETE', f'/gateways/{gw[\"id\"]}')
         except Exception as e:
             print(f'Note: {e}')
 
@@ -1851,14 +1952,14 @@ services:
 
         # Delete existing virtual server if present
         try:
-            api_request('DELETE', f'/servers/{VIRTUAL_SERVER_ID}')
+            api_request_with_retry('DELETE', f'/servers/{VIRTUAL_SERVER_ID}')
             print(f'Deleted existing virtual server {VIRTUAL_SERVER_ID}')
         except Exception as e:
             print(f'Note: No existing virtual server to delete (or error: {e})')
 
         # Register the gateway
         try:
-            result = api_request('POST', '/gateways', {
+            result = api_request_with_retry('POST', '/gateways', {
                 'name': 'fast_test',
                 'url': 'http://fast_test_server:8880/mcp',
                 'transport': 'STREAMABLEHTTP'
@@ -1874,7 +1975,7 @@ services:
         for i in range(30):
             time.sleep(1)
             try:
-                tools = api_request('GET', '/tools')
+                tools = api_request_with_retry('GET', '/tools')
                 fast_test_tools = [t for t in tools if t.get('gatewayId') == gateway_id]
                 if fast_test_tools:
                     print(f'Found {len(fast_test_tools)} tools from fast_test gateway')
@@ -1888,7 +1989,7 @@ services:
         # Collect tool IDs from the fast_test gateway
         tool_ids = []
         try:
-            tools = api_request('GET', '/tools')
+            tools = api_request_with_retry('GET', '/tools')
             tool_ids = [t['id'] for t in tools if t.get('gatewayId') == gateway_id]
             print(f'Tools: {[t[\"name\"] for t in tools if t.get(\"gatewayId\") == gateway_id]}')
         except Exception as e:
@@ -1907,7 +2008,7 @@ services:
                     'associated_prompts': []
                 }
             }
-            result = api_request('POST', '/servers', server_payload)
+            result = api_request_with_retry('POST', '/servers', server_payload)
             print(f'✅ Virtual server created: {VIRTUAL_SERVER_ID} with {len(tool_ids)} tools')
         except Exception as e:
             print(f'❌ Failed to create virtual server: {e}')

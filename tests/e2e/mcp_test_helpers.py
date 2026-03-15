@@ -57,8 +57,22 @@ def _gateway_reachable() -> bool:
         return False
 
 
+def _rust_mcp_gateway_active() -> bool:
+    try:
+        # Third-Party
+        import httpx
+
+        resp = httpx.get(f"{BASE_URL}/health", timeout=5)
+        if resp.status_code != 200:
+            return False
+        return resp.headers.get("x-contextforge-mcp-transport-mounted") == "rust"
+    except Exception:
+        return False
+
+
 skip_no_mcp_cli = pytest.mark.skipif(not _mcp_cli_available(), reason="mcp-cli not installed (pip install 'mcp-cli[cli]')")
 skip_no_gateway = pytest.mark.skipif(not _gateway_reachable(), reason=f"ContextForge not reachable at {BASE_URL}")
+skip_no_rust_mcp_gateway = pytest.mark.skipif(not _rust_mcp_gateway_active(), reason=f"Rust MCP public transport not active at {BASE_URL}")
 
 
 # ---------------------------------------------------------------------------

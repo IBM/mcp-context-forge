@@ -471,6 +471,25 @@ def _mcp_tool_call(access_token: str, tool_name: str, arguments: dict[str, Any] 
     return resp
 
 
+def _assert_access_denied_tool_call(resp: dict[str, Any], *, method: str = "tools/call") -> str:
+    """Accept either a JSON-RPC access error or an MCP tool-call error result."""
+    if "error" in resp:
+        error = resp["error"]
+        assert error.get("code") == -32003, f"Expected access denied JSON-RPC error: {resp}"
+        message = str(error.get("message", ""))
+        assert "access denied" in message.lower(), f"Expected access denied JSON-RPC error: {resp}"
+        error_method = error.get("data", {}).get("method")
+        if error_method is not None:
+            assert error_method == method, f"Unexpected denied method in JSON-RPC error: {resp}"
+        return message
+
+    result = resp.get("result", {})
+    assert result.get("isError", False), f"Expected access denied tool result or JSON-RPC error: {resp}"
+    message = result.get("content", [{}])[0].get("text", "")
+    assert "access denied" in message.lower(), f"Expected access denied tool result or JSON-RPC error: {resp}"
+    return message
+
+
 def _mcp_initialize_only(access_token: str, server_url: str = BASE_URL) -> list[dict[str, Any]]:
     """Send only initialize and return all responses."""
     env = build_wrapper_env(access_token, server_url)
@@ -642,24 +661,19 @@ class TestMcpToolCallByRole:
     def test_developer_denied_tools_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Developer has team-scoped tools.execute but default /mcp checks global scope only."""
         resp = _mcp_tool_call(test_users["developer"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
-        result = resp.get("result", {})
-        assert result.get("isError", False), f"Developer should be denied tools.execute on default endpoint: {result}"
-        text = result.get("content", [{}])[0].get("text", "")
-        assert "access denied" in text.lower()
+        text = _assert_access_denied_tool_call(resp)
         print(f"    -> Developer denied tools.execute (expected): {text}")
 
     def test_team_admin_denied_tools_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Team admin has team-scoped tools.execute but default /mcp checks global scope only."""
         resp = _mcp_tool_call(test_users["team_admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
-        result = resp.get("result", {})
-        assert result.get("isError", False), f"Team admin should be denied on default endpoint: {result}"
+        _assert_access_denied_tool_call(resp)
         print("    -> Team admin denied tools.execute on default endpoint (expected)")
 
     def test_outsider_denied_tools_execute(self, outsider_user: dict) -> None:
         """Outsider has no RBAC role, should be denied tools.execute."""
         resp = _mcp_tool_call(outsider_user["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
-        result = resp.get("result", {})
-        assert result.get("isError", False), f"Outsider should be denied tools.execute: {result}"
+        _assert_access_denied_tool_call(resp)
         print("    -> Outsider denied tools.execute (expected)")
 
     def test_outsider_calls_nonexistent_tool_error(self, outsider_user: dict) -> None:
@@ -671,8 +685,7 @@ class TestMcpToolCallByRole:
     def test_viewer_denied_tools_execute(self, test_users: dict) -> None:
         """Viewer has tools.read but NOT tools.execute even in team scope."""
         resp = _mcp_tool_call(test_users["viewer"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
-        result = resp.get("result", {})
-        assert result.get("isError", False) or "error" in resp, f"Viewer should be denied tools.execute: {resp}"
+        _assert_access_denied_tool_call(resp)
         print("    -> Viewer denied tools.execute (expected)")
 
 
