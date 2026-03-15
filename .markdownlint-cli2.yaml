@@ -37,6 +37,9 @@ config:
   # MD013/line-length - Line length
   MD013: false  # Disable line length rule completely
 
+  MD060:
+    style: tight
+
   # Optional: Other commonly configured rules
   # MD024: false  # Multiple headings with the same content
   # MD026: false  # Trailing punctuation in heading
