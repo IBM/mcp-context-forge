@@ -50,6 +50,7 @@ class A2AClientService:
         user_email: Optional[str] = None,
         agent_id: Optional[str] = None,
         auth_query_params_decrypted: Optional[Dict[str, str]] = None,
+        forwarded_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Send a non-streaming JSON-RPC request to a downstream A2A agent.
 
@@ -63,6 +64,8 @@ class A2AClientService:
             user_email: User email for logging.
             agent_id: Agent ID for logging.
             auth_query_params_decrypted: Decrypted query param names for URL sanitization.
+            forwarded_headers: Protocol headers from the inbound client request to forward
+                (e.g., A2A-Version, Accept, passthrough headers).
 
         Returns:
             The JSON-RPC response from the downstream agent.
@@ -72,6 +75,8 @@ class A2AClientService:
 
         client = await get_http_client()
         headers = {"Content-Type": "application/json"}
+        if forwarded_headers:
+            headers.update(forwarded_headers)
         headers.update(auth_headers)
 
         correlation_id = get_correlation_id()
@@ -146,6 +151,15 @@ class A2AClientService:
                     },
                 )
 
+                # Try to preserve the downstream's JSON-RPC error structure if present.
+                # Some agents return non-200 HTTP with a valid JSON-RPC error body.
+                try:
+                    downstream_body = response.json()
+                    if isinstance(downstream_body, dict) and "error" in downstream_body and "jsonrpc" in downstream_body:
+                        return downstream_body
+                except Exception:
+                    pass
+
                 return make_jsonrpc_error(
                     JSONRPC_INTERNAL_ERROR,
                     f"Downstream agent error: {error_message}",
@@ -203,6 +217,7 @@ class A2AClientService:
         user_email: Optional[str] = None,
         agent_id: Optional[str] = None,
         auth_query_params_decrypted: Optional[Dict[str, str]] = None,
+        forwarded_headers: Optional[Dict[str, str]] = None,
     ) -> AsyncGenerator[str, None]:
         """Send a streaming JSON-RPC request and yield SSE events.
 
@@ -219,6 +234,7 @@ class A2AClientService:
             user_email: User email for logging.
             agent_id: Agent ID for logging.
             auth_query_params_decrypted: Decrypted query param names for URL sanitization.
+            forwarded_headers: Protocol headers from the inbound client request to forward.
 
         Yields:
             SSE event strings in the format "data: {...}\n\n".
@@ -226,6 +242,10 @@ class A2AClientService:
         from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
         headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+        if forwarded_headers:
+            headers.update(forwarded_headers)
+        # Ensure Accept is set for SSE even if forwarded_headers overrode it
+        headers["Accept"] = "text/event-stream"
         headers.update(auth_headers)
 
         correlation_id = get_correlation_id()

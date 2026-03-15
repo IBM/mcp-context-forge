@@ -219,8 +219,15 @@ class TestGetAuthenticatedCard:
         mock_services["gateway_service"].validate_jsonrpc_request.return_value = None
 
         agent = MagicMock()
+        agent.endpoint_url = "https://downstream.example.com/"
         mock_services["gateway_service"].resolve_agent.return_value = (agent, {}, None)
-        mock_services["gateway_service"].generate_agent_card.return_value = {"name": "Echo", "url": f"https://gw.com{_PREFIX}/abc123"}
+
+        # The handler now forwards to the downstream via send_jsonrpc
+        mock_services["client_service"].send_jsonrpc = AsyncMock(return_value={
+            "jsonrpc": "2.0",
+            "result": {"name": "Echo", "url": "https://downstream.example.com/", "version": "1.0"},
+            "id": 1,
+        })
 
         response = client.post(
             f"{_PREFIX}/abc123",
@@ -230,6 +237,8 @@ class TestGetAuthenticatedCard:
         assert response.status_code == 200
         data = response.json()
         assert data["result"]["name"] == "Echo"
+        # url should be patched to point to the gateway
+        assert f"{_PREFIX}/abc123" in data["result"]["url"]
 
     def test_authenticated_card_agent_not_found(self, client, mock_services):
         mock_services["gateway_service"].validate_jsonrpc_request.return_value = None

@@ -153,6 +153,40 @@ def _get_base_url(request: Request) -> str:
     return str(urlunparse(new_parsed)).rstrip("/")
 
 
+# A2A protocol headers that should always be forwarded to the downstream agent
+_A2A_PROTOCOL_HEADERS = frozenset({
+    "a2a-version",
+    "x-a2a-extensions",
+    "accept",
+})
+
+
+def _extract_forwarded_headers(request: Request, agent_passthrough_headers: Optional[List[str]] = None) -> Dict[str, str]:
+    """Extract headers from the inbound request that should be forwarded to the downstream agent.
+
+    Forwards A2A protocol headers (A2A-Version, X-A2A-Extensions, Accept) and any
+    headers configured in the agent's passthrough_headers list.
+
+    Args:
+        request: The inbound FastAPI request.
+        agent_passthrough_headers: Optional list of additional header names to forward.
+
+    Returns:
+        Dict of header name → value to forward.
+    """
+    forwarded: Dict[str, str] = {}
+    forward_set = set(_A2A_PROTOCOL_HEADERS)
+    if agent_passthrough_headers:
+        forward_set.update(h.lower() for h in agent_passthrough_headers)
+
+    for header_name in forward_set:
+        value = request.headers.get(header_name)
+        if value:
+            forwarded[header_name] = value
+
+    return forwarded
+
+
 def _record_gateway_db_metrics(
     agent_id: str,
     start_time: datetime,
@@ -309,9 +343,9 @@ async def jsonrpc_endpoint(
 
     method = body["method"]
 
-    # Handle agent/getAuthenticatedExtendedCard locally (no downstream call)
+    # Handle agent/getAuthenticatedExtendedCard: forward to downstream, fall back to local card
     if method == "agent/getAuthenticatedExtendedCard":
-        return await _handle_get_authenticated_card(agent_id, request, db, user, request_id)
+        return await _handle_get_authenticated_card(agent_id, request, db, user, request_id, body)
 
     # Resolve agent with visibility/team scoping
     try:
@@ -356,6 +390,10 @@ async def jsonrpc_endpoint(
     # Forward request to downstream agent
     endpoint_url = getattr(agent, "_gateway_endpoint_url", agent.endpoint_url)
 
+    # Extract A2A protocol headers and passthrough headers from inbound request
+    passthrough_list = getattr(agent, "passthrough_headers", None)
+    forwarded_headers = _extract_forwarded_headers(request, passthrough_list)
+
     # Run pre-invoke plugin hook
     await _run_pre_invoke_hook(agent_id, method, body.get("params", {}), user_email, user_id)
 
@@ -375,6 +413,7 @@ async def jsonrpc_endpoint(
                     user_email=user_email,
                     agent_id=agent_id,
                     auth_query_params_decrypted=auth_query_params_decrypted,
+                    forwarded_headers=forwarded_headers,
                 ):
                     yield event
                 stream_success = True
@@ -407,6 +446,7 @@ async def jsonrpc_endpoint(
         user_email=user_email,
         agent_id=agent_id,
         auth_query_params_decrypted=auth_query_params_decrypted,
+        forwarded_headers=forwarded_headers,
     )
     duration_ms = (datetime.now(timezone.utc) - call_start).total_seconds() * 1000
 
@@ -432,10 +472,14 @@ async def _handle_get_authenticated_card(
     db: Session,
     user: Any,
     request_id: Any,
+    body: Dict[str, Any],
 ) -> JSONResponse:
-    """Handle agent/getAuthenticatedExtendedCard locally.
+    """Handle agent/getAuthenticatedExtendedCard by forwarding to the downstream agent.
 
-    Returns the gateway-generated agent card with extended info.
+    Forwards the JSON-RPC request to the downstream A2A agent to get its
+    authenticated extended card. Patches the ``url`` field in the response
+    to point to the gateway endpoint. Falls back to a gateway-generated card
+    if the downstream doesn't support this method.
 
     Args:
         agent_id: The agent's database ID.
@@ -443,6 +487,7 @@ async def _handle_get_authenticated_card(
         db: Database session.
         user: Authenticated user.
         request_id: JSON-RPC request ID.
+        body: The original JSON-RPC request body.
 
     Returns:
         JSONResponse with agent card as JSON-RPC result.
@@ -456,16 +501,45 @@ async def _handle_get_authenticated_card(
         elif token_teams is None:
             token_teams = []
 
-        agent, auth_headers_card, _ = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
+        agent, auth_headers_card, auth_qp = _gateway_service.resolve_agent(db, agent_id, user_email, token_teams)
         endpoint_url = getattr(agent, "_gateway_endpoint_url", agent.endpoint_url)
-        original_card = await fetch_downstream_agent_card(endpoint_url, auth_headers_card, agent_id)
-
         base_url = _get_base_url(request)
-        card = _gateway_service.generate_agent_card(agent, base_url, original_card)
+
+        # Forward protocol headers to the downstream agent
+        passthrough_list = getattr(agent, "passthrough_headers", None)
+        fwd_headers = _extract_forwarded_headers(request, passthrough_list)
 
         from mcpgateway.services.a2a_gateway_service import make_jsonrpc_response
 
-        return JSONResponse(content=make_jsonrpc_response(card, request_id), status_code=200)
+        # Forward the request to the downstream agent
+        result = await _client_service.send_jsonrpc(
+            endpoint_url=endpoint_url,
+            auth_headers=auth_headers_card,
+            body=body,
+            user_id=str(user) if user else None,
+            user_email=user_email,
+            agent_id=agent_id,
+            auth_query_params_decrypted=auth_qp,
+            forwarded_headers=fwd_headers,
+        )
+
+        # If the downstream returned a successful card, patch the url to point to the gateway
+        if "result" in result and isinstance(result["result"], dict):
+            from mcpgateway.config import settings
+
+            route_prefix = settings.a2a_gateway_route_prefix.strip("/")
+            result["result"]["url"] = f"{base_url}/{route_prefix}/{agent_id}"
+            return JSONResponse(content=result, status_code=200)
+
+        # If the downstream returned an error (e.g., method not supported, not configured),
+        # fall back to a gateway-generated card so clients still get useful metadata
+        if "error" in result:
+            logger.debug(f"Downstream does not support getAuthenticatedExtendedCard for {agent_id}, falling back to gateway card")
+            original_card = await fetch_downstream_agent_card(endpoint_url, auth_headers_card, agent_id)
+            card = _gateway_service.generate_agent_card(agent, base_url, original_card)
+            return JSONResponse(content=make_jsonrpc_response(card, request_id), status_code=200)
+
+        return JSONResponse(content=result, status_code=200)
 
     except A2AGatewayAgentNotFoundError:
         return JSONResponse(
