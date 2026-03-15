@@ -548,7 +548,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                 HTTPException: If user authentication or permission check fails
             """
             # Extract user context from named kwargs only (security: avoid picking up request body dicts)
-            user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
+            user_context = kwargs.get("user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
 
@@ -768,7 +768,7 @@ def require_admin_permission():
                 HTTPException: If user authentication or admin permission check fails
             """
             # Extract user context from named kwargs only (security: avoid picking up request body dicts)
-            user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
+            user_context = kwargs.get("user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
 
@@ -854,7 +854,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                 HTTPException: If user authentication or any-permission check fails
             """
             # Extract user context from named kwargs only (security: avoid picking up request body dicts)
-            user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
+            user_context = kwargs.get("user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
 

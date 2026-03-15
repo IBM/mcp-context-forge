@@ -692,7 +692,7 @@ async def test_get_gateway_models_success(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DummyPermissionService)
 
-    result = await llmchat_router.get_gateway_models(_user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
+    result = await llmchat_router.get_gateway_models(current_user_ctx={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
 
     assert result["count"] == 1
     assert result["models"][0]["id"] == "m1"
@@ -728,7 +728,7 @@ async def test_get_gateway_models_failure(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DummyPermissionService)
 
     with pytest.raises(HTTPException) as excinfo:
-        await llmchat_router.get_gateway_models(_user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
+        await llmchat_router.get_gateway_models(current_user_ctx={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
 
     assert excinfo.value.status_code == 500
 

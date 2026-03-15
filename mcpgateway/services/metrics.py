@@ -265,12 +265,12 @@ def setup_metrics(app):
         from mcpgateway.utils.verify_credentials import require_auth
 
         @app.get("/metrics/prometheus", include_in_schema=True, tags=["Metrics"])
-        def prometheus_metrics(request: Request, _user=Depends(require_auth)):
+        def prometheus_metrics(request: Request, current_user_ctx=Depends(require_auth)):  # pylint: disable=unused-argument
             """Prometheus metrics endpoint (requires authentication).
 
             Args:
                 request: The incoming HTTP request (used to check Accept-Encoding).
-                _user: Authenticated user from require_auth dependency.
+                current_user_ctx: Authenticated user from require_auth dependency.
 
             Returns:
                 Response: Prometheus metrics in text exposition format.
@@ -299,11 +299,11 @@ def setup_metrics(app):
         from mcpgateway.utils.verify_credentials import require_auth
 
         @app.get("/metrics/prometheus", tags=["Metrics"])
-        async def metrics_disabled(_user=Depends(require_auth)):  # pylint: disable=unused-argument
+        async def metrics_disabled(current_user_ctx=Depends(require_auth)):  # pylint: disable=unused-argument
             """Returns 503 when metrics collection is disabled (requires authentication).
 
             Args:
-                _user: Authenticated user from require_auth dependency.
+                current_user_ctx: Authenticated user from require_auth dependency.
 
             Returns:
                 Response: HTTP 503 response indicating metrics are disabled.
