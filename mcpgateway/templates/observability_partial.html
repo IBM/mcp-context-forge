@@ -13,6 +13,32 @@ if (!window.getChartDefaults) {
     };
   };
 }
+
+// Global Chart.js registry for centralized chart cleanup
+if (!window.chartRegistry) {
+  window.chartRegistry = {
+    charts: {},
+    register(id, chart) {
+      if (this.charts[id]) {
+        this.charts[id].destroy();
+      }
+      this.charts[id] = chart;
+    },
+    destroy(id) {
+      if (this.charts[id]) {
+        this.charts[id].destroy();
+        delete this.charts[id];
+      }
+    },
+    destroyByPrefix(prefix) {
+      Object.keys(this.charts).forEach(id => {
+        if (id.startsWith(prefix)) {
+          this.destroy(id);
+        }
+      });
+    }
+  };
+}
 </script>
 <div class="observability-container" x-data="{
     viewMode: 'traces',
@@ -41,10 +67,12 @@ if (!window.getChartDefaults) {
     toolsLoaded: false,
     promptsLoaded: false,
     resourcesLoaded: false,
+    a2aAgentsLoaded: false,
     metricsLoading: false,
     toolsLoading: false,
     promptsLoading: false,
     resourcesLoading: false,
+    a2aAgentsLoading: false,
     async loadMetricsView() {
         // Only load once, but allow retry if previous load was interrupted
         if (this.metricsLoaded) {
@@ -325,6 +353,49 @@ if (!window.getChartDefaults) {
             this.resourcesLoading = false;
         }
     },
+    async loadA2AAgentsView() {
+        if (this.a2aAgentsLoaded) return;
+        if (this.a2aAgentsLoading) return;
+
+        this.a2aAgentsLoading = true;
+        try {
+            const response = await fetch('{{ root_path }}/admin/observability/a2a-agents/partial');
+            if (!response.ok || this.viewMode !== 'a2a-agents') {
+                this.a2aAgentsLoading = false;
+                return;
+            }
+
+            const html = await response.text();
+            const container = document.getElementById('a2a-agents-container');
+            if (container) {
+                // Use DOMParser to safely parse HTML
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+
+                // Clear container and append parsed content
+                while (container.firstChild) container.removeChild(container.firstChild);
+                Array.from(doc.body.childNodes).forEach(node => {
+                    container.appendChild(node.cloneNode(true));
+                });
+
+                // Execute scripts
+                container.querySelectorAll('script').forEach(script => {
+                    const newScript = document.createElement('script');
+                    if (script.src) newScript.src = script.src;
+                    else newScript.textContent = script.textContent;
+                    document.head.appendChild(newScript);
+                });
+
+                await new Promise(r => setTimeout(r, 100));
+                if (window.Alpine) window.Alpine.initTree(container);
+                if (this.viewMode === 'a2a-agents') this.a2aAgentsLoaded = true;
+            }
+        } catch (error) {
+            console.error('Failed to load A2A agents view:', error);
+        } finally {
+            this.a2aAgentsLoading = false;
+        }
+    },
     refreshTraces() {
         let url = `{{ root_path }}/admin/observability/traces?time_range=${this.timeRange}&status_filter=${this.statusFilter}&limit=50`;
         if (this.minDuration) url += `&min_duration=${this.minDuration}`;
@@ -452,6 +523,7 @@ if (!window.getChartDefaults) {
         this.toolsLoaded = false;
         this.promptsLoaded = false;
         this.resourcesLoaded = false;
+        this.a2aAgentsLoaded = false;
         console.log('Observability loaded flags reset');
     }
 }" x-init="
@@ -599,6 +671,13 @@ if (!window.getChartDefaults) {
                 class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
             >
                 📦 Resources
+            </button>
+            <button
+                @click="viewMode = 'a2a-agents'; loadA2AAgentsView()"
+                :class="viewMode === 'a2a-agents' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
+                class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
+            >
+                🤖 A2A Agents
             </button>
         </div>
     </div>
@@ -880,6 +959,13 @@ if (!window.getChartDefaults) {
     <div x-show="viewMode === 'resources'" id="resources-container">
         <div class="p-8 text-center text-gray-600 dark:text-gray-400">
             Loading resource metrics dashboard...
+        </div>
+    </div>
+
+    <!-- A2A Agents View -->
+    <div x-show="viewMode === 'a2a-agents'" id="a2a-agents-container">
+        <div class="p-8 text-center text-gray-600 dark:text-gray-400">
+            Loading A2A agent metrics dashboard...
         </div>
     </div>
 </div>

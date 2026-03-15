@@ -1,0 +1,766 @@
+<!-- htmlhint doctype-first:false, tag-pair:false -->
+<script>
+window.createA2AAgentsController = function() {
+  return {
+    timeRange: 24,
+    limit: 20,
+    charts: {},
+    loading: false,
+    error: null,
+    autoRefreshInterval: null,
+    summaryCards: {
+      slowest: null,
+      mostErrorProne: null,
+      mostUsed: null,
+      overallHealth: 'good'
+    },
+
+    /**
+     * Destroy all Chart.js instances to prevent canvas reuse errors
+     */
+    destroyAllCharts() {
+      // Use global registry for centralized cleanup
+      window.chartRegistry.destroyByPrefix('a2a-agents-');
+      this.charts = {};
+    },
+
+    /**
+     * Cleanup resources on component destroy
+     */
+    cleanup() {
+      this.destroyAllCharts();
+      this.stopAutoRefresh();
+      if (this.leaveHandler) {
+        document.removeEventListener('observability:leave', this.leaveHandler);
+      }
+    },
+
+    async init() {
+      // Clean up any existing charts first
+      this.destroyAllCharts();
+
+      await this.loadAllMetrics();
+      this.startAutoRefresh();
+
+      // Listen for tab leave event to stop auto-refresh and cleanup
+      this.leaveHandler = () => {
+        console.log('A2A Agents: received observability:leave event, stopping auto-refresh');
+        this.cleanup();
+      };
+      document.addEventListener('observability:leave', this.leaveHandler);
+
+      // Cleanup on page unload as fallback
+      window.addEventListener('beforeunload', () => this.cleanup());
+    },
+    async loadAllMetrics() {
+      this.loading = true;
+      this.error = null;
+      try {
+        await Promise.all([
+          this.loadAgentUsage(),
+          this.loadAgentPerformance(),
+          this.loadAgentErrors(),
+          this.loadAgentSlowness(),
+          this.loadAgentErrorProne(),
+        ]);
+      } catch (e) {
+        console.error('Failed to load A2A agent metrics:', e);
+        this.error = e.message;
+      } finally {
+        this.loading = false;
+      }
+    },
+    async loadAgentUsage() {
+      const response = await fetch(
+        `{{ root_path }}/admin/observability/a2a-agents/usage?hours=${this.timeRange}&limit=${this.limit}`
+      );
+      if (!response.ok) throw new Error('Failed to load A2A agent usage');
+      const data = await response.json();
+      this.renderAgentUsageChart(data);
+
+      // Update most used card
+      if (data.agents && data.agents.length > 0) {
+        this.summaryCards.mostUsed = {
+          name: data.agents[0].agent_name,
+          value: data.agents[0].count,
+          metric: 'invocations'
+        };
+      }
+    },
+    async loadAgentPerformance() {
+      const response = await fetch(
+        `{{ root_path }}/admin/observability/a2a-agents/performance?hours=${this.timeRange}&limit=${this.limit}`
+      );
+      if (!response.ok) throw new Error('Failed to load A2A agent performance');
+      const data = await response.json();
+      this.renderAgentPerformanceTable(data);
+
+      // Update slowest agent card
+      if (data.agents && data.agents.length > 0) {
+        const slowest = [...data.agents].sort((a, b) => b.avg_duration - a.avg_duration)[0];
+        this.summaryCards.slowest = {
+          name: slowest.agent_name,
+          value: (slowest.avg_duration * 1000).toFixed(2),
+          metric: 'ms (avg)'
+        };
+      }
+    },
+    async loadAgentErrors() {
+      const response = await fetch(
+        `{{ root_path }}/admin/observability/a2a-agents/errors?hours=${this.timeRange}&limit=${this.limit}`
+      );
+      if (!response.ok) throw new Error('Failed to load A2A agent errors');
+      const data = await response.json();
+      this.renderAgentErrorsTable(data);
+
+      // Update most error-prone card and overall health
+      if (data.agents && data.agents.length > 0) {
+        const mostErrorProne = [...data.agents].sort((a, b) => b.error_rate - a.error_rate)[0];
+        this.summaryCards.mostErrorProne = {
+          name: mostErrorProne.agent_name,
+          value: mostErrorProne.error_rate,
+          metric: '% errors'
+        };
+
+        // Calculate overall health (average error rate)
+        const avgErrorRate = data.agents.reduce((sum, a) => sum + a.error_rate, 0) / data.agents.length;
+        if (avgErrorRate < 5) {
+          this.summaryCards.overallHealth = 'good';
+        } else if (avgErrorRate < 20) {
+          this.summaryCards.overallHealth = 'warning';
+        } else {
+          this.summaryCards.overallHealth = 'critical';
+        }
+      } else {
+        this.summaryCards.overallHealth = 'good';
+      }
+    },
+    async loadAgentSlowness() {
+      const response = await fetch(
+        `{{ root_path }}/admin/observability/a2a-agents/performance?hours=${this.timeRange}&limit=10`
+      );
+      if (!response.ok) throw new Error('Failed to load A2A agent slowness');
+      const data = await response.json();
+      this.renderAgentSlownessChart(data);
+    },
+    async loadAgentErrorProne() {
+      const response = await fetch(
+        `{{ root_path }}/admin/observability/a2a-agents/errors?hours=${this.timeRange}&limit=10`
+      );
+      if (!response.ok) throw new Error('Failed to load A2A agent errors');
+      const data = await response.json();
+      this.renderAgentErrorProneChart(data);
+    },
+    renderAgentUsageChart(data) {
+      const canvas = document.getElementById('agentUsageChart');
+      if (!canvas) return;
+
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('agentUsageChart canvas is hidden, deferring render');
+        return;
+      }
+
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('a2a-agents-usage');
+
+      // Handle empty data
+      if (!data.agents || data.agents.length === 0) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        try {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('agentUsageChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for agentUsageChart');
+            return;
+          }
+
+          const defaults = getChartDefaults();
+          const chart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: data.agents.map(a => a.agent_name),
+          datasets: [
+            {
+              label: 'Invocation Count',
+              data: data.agents.map(a => a.count),
+              backgroundColor: 'rgba(59, 130, 246, 0.6)',
+              borderColor: '#3b82f6',
+              borderWidth: 1,
+            },
+          ],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: {
+              display: true,
+              text: `A2A Agent Usage Frequency (Last ${this.timeRange}h)`,
+              color: defaults.titleColor,
+            },
+            legend: {
+              display: false,
+            },
+            tooltip: {
+              callbacks: {
+                label: function (context) {
+                  const agent = data.agents[context.dataIndex];
+                  return [
+                    `Invocations: ${agent.count}`,
+                    `Percentage: ${agent.percentage}%`
+                  ];
+                },
+              },
+            },
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              title: {
+                display: true,
+                text: 'Number of Invocations',
+                color: defaults.titleColor,
+              },
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
+              },
+            },
+            y: {
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
+              },
+            },
+          },
+        },
+      });
+          // Register with global registry
+          window.chartRegistry.register('a2a-agents-usage', chart);
+          this.charts.agentUsage = chart;
+        } catch (e) {
+          console.error('Failed to create A2A agent usage chart:', e);
+        }
+      });
+    },
+    renderAgentPerformanceTable(data) {
+      const tbody = document.querySelector('#agentPerformanceTable tbody');
+      if (!tbody) return;
+
+      // Clear existing rows safely
+      while (tbody.firstChild) {
+        tbody.removeChild(tbody.firstChild);
+      }
+
+      // Build table rows using DOM manipulation
+      data.agents.forEach((agent, idx) => {
+        const row = document.createElement('tr');
+        row.className = 'hover:bg-gray-50 dark:hover:bg-gray-700/50';
+
+        const cells = [
+          { text: String(idx + 1), className: 'px-4 py-2 text-sm text-gray-700 dark:text-gray-400' },
+          { text: agent.agent_name, className: 'px-4 py-2 text-sm font-mono text-gray-900 dark:text-gray-200' },
+          { text: String(agent.count), className: 'px-4 py-2 text-sm text-gray-600 dark:text-gray-400' },
+          { text: `${(agent.avg_duration * 1000).toFixed(2)} ms`, className: 'px-4 py-2 text-sm text-orange-600 dark:text-orange-400 font-medium' },
+          { text: `${(agent.min_duration * 1000).toFixed(2)} ms`, className: 'px-4 py-2 text-sm text-green-600 dark:text-green-400' },
+          { text: `${(agent.max_duration * 1000).toFixed(2)} ms`, className: 'px-4 py-2 text-sm text-red-600 dark:text-red-400' }
+        ];
+
+        cells.forEach(cellData => {
+          const td = document.createElement('td');
+          td.className = cellData.className;
+          td.textContent = cellData.text;
+          row.appendChild(td);
+        });
+
+        tbody.appendChild(row);
+      });
+    },
+    renderAgentErrorsTable(data) {
+      const tbody = document.querySelector('#agentErrorsTable tbody');
+      if (!tbody) return;
+
+      // Clear existing rows safely
+      while (tbody.firstChild) {
+        tbody.removeChild(tbody.firstChild);
+      }
+
+      // Build table rows using DOM manipulation
+      data.agents.forEach((agent, idx) => {
+        const row = document.createElement('tr');
+        row.className = 'hover:bg-gray-50 dark:hover:bg-gray-700/50';
+
+        const cells = [
+          { text: String(idx + 1), className: 'px-4 py-2 text-sm text-gray-700 dark:text-gray-400' },
+          { text: agent.agent_name, className: 'px-4 py-2 text-sm font-mono text-gray-900 dark:text-gray-200' },
+          { text: String(agent.total_count), className: 'px-4 py-2 text-sm text-gray-600 dark:text-gray-400' },
+          { text: String(agent.error_count), className: 'px-4 py-2 text-sm text-red-600 dark:text-red-400 font-medium' },
+          { text: `${agent.error_rate}%`, className: 'px-4 py-2 text-sm text-red-700 dark:text-red-300 font-bold' }
+        ];
+
+        cells.forEach(cellData => {
+          const td = document.createElement('td');
+          td.className = cellData.className;
+          td.textContent = cellData.text;
+          row.appendChild(td);
+        });
+
+        tbody.appendChild(row);
+      });
+    },
+    renderAgentSlownessChart(data) {
+      const canvas = document.getElementById('agentSlownessChart');
+      if (!canvas) return;
+
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('agentSlownessChart canvas is hidden, deferring render');
+        return;
+      }
+
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('a2a-agents-slowness');
+
+      // Handle empty data
+      if (!data.agents || data.agents.length === 0) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+
+      // Sort by avg_duration descending and take top 10
+      const sortedAgents = [...data.agents]
+        .sort((a, b) => b.avg_duration - a.avg_duration)
+        .slice(0, 10);
+
+      requestAnimationFrame(() => {
+        try {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('agentSlownessChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for agentSlownessChart');
+            return;
+          }
+
+          const defaults = getChartDefaults();
+          const chart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: sortedAgents.map(a => a.agent_name),
+          datasets: [
+            {
+              label: 'Avg Latency (ms)',
+              data: sortedAgents.map(a => a.avg_duration * 1000),
+              backgroundColor: 'rgba(239, 68, 68, 0.6)',
+              borderColor: '#ef4444',
+              borderWidth: 1,
+            },
+            {
+              label: 'Min Latency (ms)',
+              data: sortedAgents.map(a => a.min_duration * 1000),
+              backgroundColor: 'rgba(34, 197, 94, 0.6)',
+              borderColor: '#22c55e',
+              borderWidth: 1,
+            },
+          ],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: {
+              display: true,
+              text: `Top 10 Slowest A2A Agents (Last ${this.timeRange}h)`,
+              color: defaults.titleColor,
+            },
+            legend: {
+              display: true,
+              position: 'top',
+              labels: {
+                color: defaults.color,
+              },
+            },
+            tooltip: {
+              callbacks: {
+                label: function (context) {
+                  const agent = sortedAgents[context.dataIndex];
+                  return [
+                    `${context.dataset.label}: ${context.parsed.x.toFixed(2)} ms`,
+                    `Avg: ${(agent.avg_duration * 1000).toFixed(2)} ms`,
+                    `Max: ${(agent.max_duration * 1000).toFixed(2)} ms`,
+                    `Invocations: ${agent.count}`
+                  ];
+                },
+              },
+            },
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              title: {
+                display: true,
+                text: 'Latency (ms)',
+                color: defaults.titleColor,
+              },
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
+              },
+            },
+            y: {
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
+              },
+            },
+          },
+        },
+      });
+          // Register with global registry
+          window.chartRegistry.register('a2a-agents-slowness', chart);
+          this.charts.agentSlowness = chart;
+        } catch (e) {
+          console.error('Failed to create A2A agent slowness chart:', e);
+        }
+      });
+    },
+    renderAgentErrorProneChart(data) {
+      const canvas = document.getElementById('agentErrorProneChart');
+      if (!canvas) return;
+
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('agentErrorProneChart canvas is hidden, deferring render');
+        return;
+      }
+
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('a2a-agents-errorprone');
+
+      // Handle empty data
+      if (!data.agents || data.agents.length === 0) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+
+      // Sort by error_rate descending and take top 10
+      const sortedAgents = [...data.agents]
+        .filter(a => a.error_rate > 0)
+        .sort((a, b) => b.error_rate - a.error_rate)
+        .slice(0, 10);
+
+      if (sortedAgents.length === 0) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const parent = canvas.parentElement;
+        if (parent) {
+          // Use safe DOM manipulation instead of template literal
+          parent.textContent = '';
+          const p = document.createElement('p');
+          p.className = 'text-center text-emerald-500 p-8';
+          p.textContent = '✓ No errors found - all A2A agents operating normally!';
+          parent.appendChild(p);
+        }
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        try {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('agentErrorProneChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for agentErrorProneChart');
+            return;
+          }
+
+          const defaults = getChartDefaults();
+          const chart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: sortedAgents.map(a => a.agent_name),
+          datasets: [
+            {
+              label: 'Error Rate (%)',
+              data: sortedAgents.map(a => a.error_rate),
+              backgroundColor: 'rgba(239, 68, 68, 0.6)',
+              borderColor: '#ef4444',
+              borderWidth: 1,
+            },
+          ],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: {
+              display: true,
+              text: `Top 10 Error-Prone A2A Agents (Last ${this.timeRange}h)`,
+              color: defaults.titleColor,
+            },
+            legend: {
+              display: false,
+            },
+            tooltip: {
+              callbacks: {
+                label: function (context) {
+                  const agent = sortedAgents[context.dataIndex];
+                  return [
+                    `Error Rate: ${agent.error_rate}%`,
+                    `Errors: ${agent.error_count}`,
+                    `Total: ${agent.total_count}`,
+                    `Success: ${agent.total_count - agent.error_count}`
+                  ];
+                },
+              },
+            },
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              max: 100,
+              title: {
+                display: true,
+                text: 'Error Rate (%)',
+                color: defaults.titleColor,
+              },
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
+              },
+            },
+            y: {
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
+              },
+            },
+          },
+        },
+      });
+          // Register with global registry
+          window.chartRegistry.register('a2a-agents-errorprone', chart);
+          this.charts.agentErrorProne = chart;
+        } catch (e) {
+          console.error('Failed to create A2A agent error-prone chart:', e);
+        }
+      });
+    },
+
+    startAutoRefresh() {
+      // Clear any existing interval
+      if (this.autoRefreshInterval) {
+        clearInterval(this.autoRefreshInterval);
+      }
+      // Refresh every 60 seconds
+      this.autoRefreshInterval = setInterval(() => {
+        if (!this.loading) {
+          this.loadAllMetrics();
+        }
+      }, 60000);
+    },
+
+    stopAutoRefresh() {
+      if (this.autoRefreshInterval) {
+        clearInterval(this.autoRefreshInterval);
+        this.autoRefreshInterval = null;
+      }
+    },
+    async applyFilters() {
+      await this.loadAllMetrics();
+    },
+  };
+};
+</script>
+
+<div class="a2a-agents-dashboard" x-data="createA2AAgentsController()" x-init="init()">
+  <!-- Header with filters -->
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-4">
+    <div class="flex flex-wrap gap-4 items-end">
+      <div class="flex-1 min-w-[200px]">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Time Range</label>
+        <select x-model="timeRange" class="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400">
+          <option value="1">Last 1 Hour</option>
+          <option value="6">Last 6 Hours</option>
+          <option value="24">Last 24 Hours</option>
+          <option value="72">Last 3 Days</option>
+          <option value="168">Last 7 Days</option>
+        </select>
+      </div>
+      <div class="flex-1 min-w-[200px]">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Results Limit</label>
+        <select x-model="limit" class="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400">
+          <option value="10">Top 10</option>
+          <option value="20">Top 20</option>
+          <option value="50">Top 50</option>
+          <option value="100">Top 100</option>
+        </select>
+      </div>
+      <div class="flex-shrink-0">
+        <button @click="applyFilters()" class="px-4 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded-md hover:bg-blue-700 dark:hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 transition-colors">
+          Apply Filters
+        </button>
+      </div>
+    </div>
+    <div x-show="loading" class="mt-3 text-sm text-gray-600 dark:text-gray-400">
+      Loading A2A agent metrics...
+    </div>
+    <div x-show="error" class="mt-3 text-sm text-red-600 dark:text-red-400" x-text="error"></div>
+  </div>
+
+  <!-- Summary Cards -->
+  <div class="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    <!-- Overall Health Card -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6 border-l-4" :class="{
+      'border-green-500': summaryCards.overallHealth === 'good',
+      'border-yellow-500': summaryCards.overallHealth === 'warning',
+      'border-red-500': summaryCards.overallHealth === 'critical'
+    }">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Overall Health</p>
+          <p class="mt-2 text-3xl font-bold" :class="{
+            'text-green-600 dark:text-green-400': summaryCards.overallHealth === 'good',
+            'text-yellow-600 dark:text-yellow-400': summaryCards.overallHealth === 'warning',
+            'text-red-600 dark:text-red-400': summaryCards.overallHealth === 'critical'
+          }" x-text="summaryCards.overallHealth === 'good' ? '🟢 Healthy' : summaryCards.overallHealth === 'warning' ? '🟡 Warning' : '🔴 Critical'"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Most Used Agent Card -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6 border-l-4 border-blue-500">
+      <div class="flex items-center justify-between">
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Most Used Agent</p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.mostUsed?.name || 'N/A'"></p>
+          <p class="text-sm text-blue-600 dark:text-blue-400 font-medium" x-text="summaryCards.mostUsed ? `${summaryCards.mostUsed.value} ${summaryCards.mostUsed.metric}` : ''"></p>
+        </div>
+        <div class="text-3xl">🤖</div>
+      </div>
+    </div>
+
+    <!-- Slowest Agent Card -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6 border-l-4 border-orange-500">
+      <div class="flex items-center justify-between">
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Slowest Agent</p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.slowest?.name || 'N/A'"></p>
+          <p class="text-sm text-orange-600 dark:text-orange-400 font-medium" x-text="summaryCards.slowest ? `${summaryCards.slowest.value} ${summaryCards.slowest.metric}` : ''"></p>
+        </div>
+        <div class="text-3xl">🐌</div>
+      </div>
+    </div>
+
+    <!-- Most Error-Prone Agent Card -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6 border-l-4 border-red-500">
+      <div class="flex items-center justify-between">
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Most Error-Prone</p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.mostErrorProne?.name || 'None'"></p>
+          <p class="text-sm text-red-600 dark:text-red-400 font-medium" x-text="summaryCards.mostErrorProne ? `${summaryCards.mostErrorProne.value}${summaryCards.mostErrorProne.metric}` : '0% errors'"></p>
+        </div>
+        <div class="text-3xl">⚠️</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent Usage Chart -->
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6">
+    <div class="h-[400px]">
+      <canvas id="agentUsageChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Top 10 Slowest Agents Chart -->
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6">
+    <div class="h-[400px]">
+      <canvas id="agentSlownessChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Top 10 Error-Prone Agents Chart -->
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6">
+    <div class="h-[400px]">
+      <canvas id="agentErrorProneChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Agent Performance Table -->
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6">
+    <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">A2A Agent Performance Metrics</h3>
+    <div class="overflow-x-auto">
+      <table id="agentPerformanceTable" class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-700/50">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">#</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Agent Name</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Count</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Avg</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Min</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Max</th>
+          </tr>
+        </thead>
+        <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Agent Error Rates Table -->
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6">
+    <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">A2A Agent Error Rates</h3>
+    <div class="overflow-x-auto">
+      <table id="agentErrorsTable" class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-700/50">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">#</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Agent Name</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Total Count</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Error Count</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Error Rate</th>
+          </tr>
+        </thead>
+        <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700"></tbody>
+      </table>
+    </div>
+  </div>
+</div>

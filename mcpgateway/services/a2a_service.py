@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session, get_for_update
-from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, TopPerformer
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
@@ -506,6 +506,7 @@ class A2AAgentService(BaseService):
                 from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
                 metrics_cache.invalidate("a2a")
+                metrics_cache.invalidate_prefix("top_a2a_agents:")
             except Exception as cache_error:
                 logger.warning(f"Cache invalidation failed after agent commit: {cache_error}")
 
@@ -836,6 +837,50 @@ class A2AAgentService(BaseService):
                 # Continue with remaining agents instead of failing completely
 
         return result
+
+    async def get_top_a2a_agents(self, db: Session, limit: Optional[int] = 5, include_deleted: bool = False) -> List[TopPerformer]:
+        """Get top performing A2A agents ranked by total executions, with response time and success rate.
+
+        Uses the unified metrics query service to efficiently compute agent metrics from either
+        raw metrics or hourly rollups, depending on data availability and recency.
+
+        Args:
+            db: Database session.
+            limit: Maximum number of agents to return (None = all agents).
+            include_deleted: Whether to include inactive/disabled agents.
+
+        Returns:
+            List of TopPerformer objects with agent metrics, ordered by total executions DESC.
+        """
+        # First-Party
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.metrics_query_service import get_top_performers_combined  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.metrics_common import build_top_performers  # pylint: disable=import-outside-toplevel
+
+        effective_limit = limit or 5
+        cache_key = f"top_a2a_agents:{effective_limit}:include_deleted={include_deleted}"
+
+        # Check cache first
+        if is_cache_enabled():
+            cached = metrics_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
+        # Query database using unified metrics service
+        results = get_top_performers_combined(
+            db=db,
+            metric_type="a2a_agent",
+            entity_model=DbA2AAgent,
+            limit=effective_limit,
+            include_deleted=include_deleted,
+        )
+        top_performers = build_top_performers(results)
+
+        # Cache the results
+        if is_cache_enabled():
+            metrics_cache.set(cache_key, top_performers)
+
+        return top_performers
 
     async def get_agent(
         self,
@@ -1171,8 +1216,10 @@ class A2AAgentService(BaseService):
             # Also invalidate tags cache since agent tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+            from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
+            metrics_cache.invalidate_prefix("top_a2a_agents:")
 
             # Update the associated tool if it exists
             # Wrap in try/except to handle tool sync failures gracefully - the agent
@@ -1253,6 +1300,10 @@ class A2AAgentService(BaseService):
         a2a_stats_cache.invalidate()
         cache = _get_registry_cache()
         await cache.invalidate_agents()
+        # First-Party
+        from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+        metrics_cache.invalidate_prefix("top_a2a_agents:")
 
         status = "activated" if activate else "deactivated"
         logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
@@ -1325,8 +1376,10 @@ class A2AAgentService(BaseService):
             # Also invalidate tags cache since agent tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+            from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
+            metrics_cache.invalidate_prefix("top_a2a_agents:")
 
             logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
 
@@ -1653,6 +1706,102 @@ class A2AAgentService(BaseService):
             agent.auth_value = encode_auth(agent.auth_value)
         return agent
 
+    def compute_agent_metrics(self, db_agent: DbA2AAgent, db: Session) -> Dict[str, Any]:
+        """Compute aggregated metrics for an A2A agent.
+
+        Performs efficient single-pass aggregation when metrics are loaded,
+        otherwise uses a single SQL query with aggregation.
+
+        Args:
+            db_agent: The A2A agent instance
+            db: Database session for SQL queries
+
+        Returns:
+            Dict containing:
+                - total_executions, successful_executions, failed_executions
+                - failure_rate (fraction 0-1), min/max/avg_response_time, last_execution_time
+        """
+        # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+
+        # Check if metrics relationship is loaded
+        metrics_loaded = hasattr(db_agent, "_sa_instance_state") and "metrics" in db_agent._sa_instance_state.committed_state
+
+        # If metrics are loaded, compute everything in a single pass (efficient)
+        if metrics_loaded and db_agent.metrics:
+            total = 0
+            successful = 0
+            min_rt: Optional[float] = None
+            max_rt: Optional[float] = None
+            sum_rt = 0.0
+            last_time: Optional[datetime] = None
+
+            for m in db_agent.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+                rt = m.response_time
+                if min_rt is None or rt < min_rt:
+                    min_rt = rt
+                if max_rt is None or rt > max_rt:
+                    max_rt = rt
+                sum_rt += rt
+                if last_time is None or m.timestamp > last_time:
+                    last_time = m.timestamp
+
+            failed = total - successful
+            return {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failed / total if total > 0 else 0.0,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": sum_rt / total if total > 0 else None,
+                "last_execution_time": last_time,
+            }
+        elif metrics_loaded and not db_agent.metrics:
+            # Metrics loaded but empty
+            return {
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            }
+
+        # Use single SQL query with full aggregation (efficient)
+        result = (
+            db.query(
+                func.count(DbA2AAgentMetric.id),  # pylint: disable=not-callable
+                func.sum(case((DbA2AAgentMetric.is_success.is_(True), 1), else_=0)),
+                func.min(DbA2AAgentMetric.response_time),  # pylint: disable=not-callable
+                func.max(DbA2AAgentMetric.response_time),  # pylint: disable=not-callable
+                func.avg(DbA2AAgentMetric.response_time),  # pylint: disable=not-callable
+                func.max(DbA2AAgentMetric.timestamp),  # pylint: disable=not-callable
+            )
+            .filter(DbA2AAgentMetric.a2a_agent_id == db_agent.id)
+            .one()
+        )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        failed = total - successful
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": result[2],
+            "max_response_time": result[3],
+            "avg_response_time": float(result[4]) if result[4] is not None else None,
+            "last_execution_time": result[5],
+        }
+
     def convert_agent_to_read(self, db_agent: DbA2AAgent, include_metrics: bool = False, db: Optional[Session] = None, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
         """Convert database model to schema.
 
@@ -1690,29 +1839,19 @@ class A2AAgentService(BaseService):
 
         # Compute metrics only if requested (avoids N+1 queries in list operations)
         if include_metrics:
-            total_executions = len(db_agent.metrics)
-            successful_executions = sum(1 for m in db_agent.metrics if m.is_success)
-            failed_executions = total_executions - successful_executions
-            failure_rate = (failed_executions / total_executions * 100) if total_executions > 0 else 0.0
-
-            min_response_time = max_response_time = avg_response_time = last_execution_time = None
-            if db_agent.metrics:
-                response_times = [m.response_time for m in db_agent.metrics if m.response_time is not None]
-                if response_times:
-                    min_response_time = min(response_times)
-                    max_response_time = max(response_times)
-                    avg_response_time = sum(response_times) / len(response_times)
-                last_execution_time = max((m.timestamp for m in db_agent.metrics), default=None)
-
+            if db is None:
+                raise ValueError("db parameter is required when include_metrics=True")
+            # Use service method for efficient single-pass aggregation
+            metrics_dict = self.compute_agent_metrics(db_agent, db)
             metrics = A2AAgentMetrics(
-                total_executions=total_executions,
-                successful_executions=successful_executions,
-                failed_executions=failed_executions,
-                failure_rate=failure_rate,
-                min_response_time=min_response_time,
-                max_response_time=max_response_time,
-                avg_response_time=avg_response_time,
-                last_execution_time=last_execution_time,
+                total_executions=metrics_dict["total_executions"],
+                successful_executions=metrics_dict["successful_executions"],
+                failed_executions=metrics_dict["failed_executions"],
+                failure_rate=metrics_dict["failure_rate"],
+                min_response_time=metrics_dict["min_response_time"],
+                max_response_time=metrics_dict["max_response_time"],
+                avg_response_time=metrics_dict["avg_response_time"],
+                last_execution_time=metrics_dict["last_execution_time"],
             )
         else:
             metrics = None

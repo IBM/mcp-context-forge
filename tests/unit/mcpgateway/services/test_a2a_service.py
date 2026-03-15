@@ -10,7 +10,7 @@ Tests for A2A Agent Service functionality.
 # Standard
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import uuid
 
 # Third-Party
@@ -2451,17 +2451,29 @@ class TestConvertAgentToRead:
         agent.auth_value = None
         agent.auth_query_params = None
         agent.metrics = [m1, m2]
+        mock_db = MagicMock()
 
-        mock_validated = MagicMock()
-        mock_validated.masked.return_value = mock_validated
-        with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated) as mock_mv:
-            result = service.convert_agent_to_read(agent, include_metrics=True)
+        # Mock compute_agent_metrics method to return expected values
+        with patch.object(service, "compute_agent_metrics", return_value={
+            "total_executions": 2,
+            "successful_executions": 1,
+            "failed_executions": 1,
+            "failure_rate": 0.5,
+            "min_response_time": 1.0,
+            "max_response_time": 3.0,
+            "avg_response_time": 2.0,
+            "last_execution_time": datetime(2025, 1, 2, tzinfo=timezone.utc),
+        }):
+            mock_validated = MagicMock()
+            mock_validated.masked.return_value = mock_validated
+            with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated) as mock_mv:
+                result = service.convert_agent_to_read(agent, include_metrics=True, db=mock_db)
 
-            # Verify model_validate was called with metrics included
-            call_data = mock_mv.call_args[0][0]
-            assert call_data["metrics"] is not None
-            assert call_data["metrics"].total_executions == 2
-            assert call_data["metrics"].successful_executions == 1
+                # Verify model_validate was called with metrics included
+                call_data = mock_mv.call_args[0][0]
+                assert call_data["metrics"] is not None
+                assert call_data["metrics"].total_executions == 2
+                assert call_data["metrics"].successful_executions == 1
 
     def test_with_metrics_empty_list(self, service):
         """include_metrics=True with no metrics avoids response-time calculations."""
@@ -2471,14 +2483,26 @@ class TestConvertAgentToRead:
         agent.auth_value = None
         agent.auth_query_params = None
         agent.metrics = []
+        mock_db = MagicMock()
 
-        mock_validated = MagicMock()
-        mock_validated.masked.return_value = mock_validated
-        with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated) as mock_mv:
-            service.convert_agent_to_read(agent, include_metrics=True)
-            call_data = mock_mv.call_args[0][0]
-            assert call_data["metrics"] is not None
-            assert call_data["metrics"].total_executions == 0
+        # Mock compute_agent_metrics method to return zeros/None for empty metrics
+        with patch.object(service, "compute_agent_metrics", return_value={
+            "total_executions": 0,
+            "successful_executions": 0,
+            "failed_executions": 0,
+            "failure_rate": 0.0,
+            "min_response_time": None,
+            "max_response_time": None,
+            "avg_response_time": None,
+            "last_execution_time": None,
+        }):
+            mock_validated = MagicMock()
+            mock_validated.masked.return_value = mock_validated
+            with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated) as mock_mv:
+                service.convert_agent_to_read(agent, include_metrics=True, db=mock_db)
+                call_data = mock_mv.call_args[0][0]
+                assert call_data["metrics"] is not None
+                assert call_data["metrics"].total_executions == 0
 
     def test_with_metrics_response_times_missing(self, service):
         """Metrics branch handles metrics without response_time values."""
@@ -2489,13 +2513,25 @@ class TestConvertAgentToRead:
         agent.auth_value = None
         agent.auth_query_params = None
         agent.metrics = [m1]
+        mock_db = MagicMock()
 
-        mock_validated = MagicMock()
-        mock_validated.masked.return_value = mock_validated
-        with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated) as mock_mv:
-            service.convert_agent_to_read(agent, include_metrics=True)
-            call_data = mock_mv.call_args[0][0]
-            assert call_data["metrics"].min_response_time is None
+        # Mock compute_agent_metrics method to handle None response_time
+        with patch.object(service, "compute_agent_metrics", return_value={
+            "total_executions": 1,
+            "successful_executions": 1,
+            "failed_executions": 0,
+            "failure_rate": 0.0,
+            "min_response_time": None,
+            "max_response_time": None,
+            "avg_response_time": None,
+            "last_execution_time": datetime(2025, 1, 1, tzinfo=timezone.utc),
+        }):
+            mock_validated = MagicMock()
+            mock_validated.masked.return_value = mock_validated
+            with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated) as mock_mv:
+                service.convert_agent_to_read(agent, include_metrics=True, db=mock_db)
+                call_data = mock_mv.call_args[0][0]
+                assert call_data["metrics"].min_response_time is None
 
     def test_no_team_no_db(self, service):
         """No team_map, no db → team_name stays None."""

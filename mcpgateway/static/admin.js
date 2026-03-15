@@ -2074,6 +2074,15 @@ function displayMetrics(data, retryCount = 0) {
                 metricsContainer.appendChild(serversCard);
             }
 
+            // A2A Agents metrics
+            if (data.a2a_agents) {
+                const a2aAgentsCard = createMetricsCard(
+                    "A2A Agents",
+                    data.a2a_agents,
+                );
+                metricsContainer.appendChild(a2aAgentsCard);
+            }
+
             // Performance metrics
             if (data.performance) {
                 const performanceCard = createPerformanceCard(data.performance);

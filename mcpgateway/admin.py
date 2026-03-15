@@ -72,6 +72,7 @@ from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import A2AAgentMetric
 from mcpgateway.db import EmailApiToken, EmailTeam, extract_json_field
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
@@ -12874,16 +12875,39 @@ async def get_aggregated_metrics(
             - 'topPerformers': A nested dictionary with all tools, resources, prompts,
               and servers with their metrics.
     """
+    # Get A2A agent metrics and transform field names to match Tools/Resources/Prompts/Servers
+    a2a_metrics_raw = await a2a_service.aggregate_metrics(db)
+    a2a_metrics_dict = a2a_metrics_raw.model_dump()
+
+    # Transform A2A metrics to use consistent field names with other entity types
+    # Note: A2A uses success_rate (percentage 0-100), Tool uses failure_rate (fraction 0-1)
+    success_rate_pct = a2a_metrics_dict.get("success_rate", 0.0)
+    failure_rate_fraction = (100.0 - success_rate_pct) / 100.0  # Convert to fraction
+
+    a2a_metrics_transformed = {
+        "totalExecutions": a2a_metrics_dict.get("total_interactions", 0),
+        "successfulExecutions": a2a_metrics_dict.get("successful_interactions", 0),
+        "failedExecutions": a2a_metrics_dict.get("failed_interactions", 0),
+        "failureRate": failure_rate_fraction,
+        "avgResponseTime": a2a_metrics_dict.get("avg_response_time", 0.0),
+        "lastExecutionTime": None,  # A2AAgentAggregateMetrics doesn't track last_execution, use None
+        # Additional A2A-specific fields
+        "totalAgents": a2a_metrics_dict.get("total_agents", 0),
+        "activeAgents": a2a_metrics_dict.get("active_agents", 0),
+    }
+
     metrics = {
         "tools": await tool_service.aggregate_metrics(db),
         "resources": await resource_service.aggregate_metrics(db),
         "prompts": await prompt_service.aggregate_metrics(db),
         "servers": await server_service.aggregate_metrics(db),
+        "a2a_agents": a2a_metrics_transformed,
         "topPerformers": {
             "tools": await tool_service.get_top_tools(db, limit=10),
             "resources": await resource_service.get_top_resources(db, limit=10),
             "prompts": await prompt_service.get_top_prompts(db, limit=10),
             "servers": await server_service.get_top_servers(db, limit=10),
+            "a2a_agents": await a2a_service.get_top_a2a_agents(db, limit=10),
         },
     }
     return metrics
@@ -12921,7 +12945,7 @@ async def admin_metrics_partial_html(
     LOGGER.debug(f"User {get_user_email(user)} requested metrics partial (entity_type={entity_type}, page={page}, per_page={per_page})")
 
     # Validate entity type
-    valid_types = ["tools", "resources", "prompts", "servers"]
+    valid_types = ["tools", "resources", "prompts", "servers", "a2a-agents"]
     if entity_type not in valid_types:
         raise HTTPException(status_code=400, detail=f"Invalid entity_type. Must be one of: {', '.join(valid_types)}")
 
@@ -12936,6 +12960,8 @@ async def admin_metrics_partial_html(
         all_items = await resource_service.get_top_resources(db, limit=None)
     elif entity_type == "prompts":
         all_items = await prompt_service.get_top_prompts(db, limit=None)
+    elif entity_type == "a2a-agents":
+        all_items = await a2a_service.get_top_a2a_agents(db, limit=None)
     else:  # servers
         all_items = await server_service.get_top_servers(db, limit=None)
 
@@ -18520,6 +18546,244 @@ async def get_resources_partial(
     return request.app.state.templates.TemplateResponse(
         request,
         "observability_resources.html",
+        {
+            "request": request,
+            "root_path": root_path,
+        },
+    )
+
+
+# ==============================================================================
+# A2A Agents Observability Endpoints
+# ==============================================================================
+
+
+@admin_router.get("/observability/a2a-agents/usage", response_model=dict)
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def get_a2a_agent_usage(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of agents to return"),
+    _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+):
+    """Get A2A agent usage frequency statistics.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of agents to return (5-100)
+        _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
+
+    Returns:
+        dict: A2A agent usage statistics with counts and percentages
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Query A2A agent interactions from metrics table
+        agent_usage = (
+            db.query(
+                DbA2AAgent.name.label("agent_name"),
+                DbA2AAgent.id.label("agent_id"),
+                func.count(A2AAgentMetric.id).label("count"),  # pylint: disable=not-callable
+            )
+            .join(A2AAgentMetric, DbA2AAgent.id == A2AAgentMetric.a2a_agent_id)
+            .filter(A2AAgentMetric.timestamp >= cutoff_time)
+            .group_by(DbA2AAgent.id, DbA2AAgent.name)
+            .order_by(func.count(A2AAgentMetric.id).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        total_invocations = sum(row.count for row in agent_usage)
+
+        agents = [
+            {
+                "agent_name": row.agent_name,
+                "agent_id": row.agent_id,
+                "count": row.count,
+                "percentage": round((row.count / total_invocations * 100) if total_invocations > 0 else 0, 2),
+            }
+            for row in agent_usage
+        ]
+
+        return {"agents": agents, "total_invocations": total_invocations, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get A2A agent usage statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
+
+
+@admin_router.get("/observability/a2a-agents/performance", response_model=dict)
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def get_a2a_agent_performance(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of agents to return"),
+    _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+):
+    """Get A2A agent performance metrics (avg, min, max duration).
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of agents to return (5-100)
+        _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
+
+    Returns:
+        dict: A2A agent performance metrics
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Query A2A agent performance metrics
+        agent_performance = (
+            db.query(
+                DbA2AAgent.name.label("agent_name"),
+                DbA2AAgent.id.label("agent_id"),
+                func.count(A2AAgentMetric.id).label("count"),  # pylint: disable=not-callable
+                func.avg(A2AAgentMetric.response_time).label("avg_duration"),  # pylint: disable=not-callable
+                func.min(A2AAgentMetric.response_time).label("min_duration"),  # pylint: disable=not-callable
+                func.max(A2AAgentMetric.response_time).label("max_duration"),  # pylint: disable=not-callable
+            )
+            .join(A2AAgentMetric, DbA2AAgent.id == A2AAgentMetric.a2a_agent_id)
+            .filter(A2AAgentMetric.timestamp >= cutoff_time, A2AAgentMetric.response_time.isnot(None))
+            .group_by(DbA2AAgent.id, DbA2AAgent.name)
+            .order_by(func.avg(A2AAgentMetric.response_time).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        agents = [
+            {
+                "agent_name": row.agent_name,
+                "agent_id": row.agent_id,
+                "count": row.count,
+                "avg_duration": round(float(row.avg_duration), 3) if row.avg_duration else 0,
+                "min_duration": round(float(row.min_duration), 3) if row.min_duration else 0,
+                "max_duration": round(float(row.max_duration), 3) if row.max_duration else 0,
+            }
+            for row in agent_performance
+        ]
+
+        return {"agents": agents, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get A2A agent performance metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
+
+
+@admin_router.get("/observability/a2a-agents/errors", response_model=dict)
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def get_a2a_agent_errors(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of agents to return"),
+    _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+):
+    """Get A2A agent error rates and statistics.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of agents to return (5-100)
+        _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
+
+    Returns:
+        dict: A2A agent error statistics
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Query A2A agent error rates
+        agent_errors = (
+            db.query(
+                DbA2AAgent.name.label("agent_name"),
+                DbA2AAgent.id.label("agent_id"),
+                func.count(A2AAgentMetric.id).label("total_count"),  # pylint: disable=not-callable
+                func.sum(case((A2AAgentMetric.is_success.is_(False), 1), else_=0)).label("error_count"),  # pylint: disable=not-callable
+            )
+            .join(A2AAgentMetric, DbA2AAgent.id == A2AAgentMetric.a2a_agent_id)
+            .filter(A2AAgentMetric.timestamp >= cutoff_time)
+            .group_by(DbA2AAgent.id, DbA2AAgent.name)
+            .order_by(func.sum(case((A2AAgentMetric.is_success.is_(False), 1), else_=0)).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        agents = [
+            {
+                "agent_name": row.agent_name,
+                "agent_id": row.agent_id,
+                "total_count": row.total_count,
+                "error_count": row.error_count,
+                "error_rate": round((row.error_count / row.total_count * 100) if row.total_count > 0 else 0, 2),
+            }
+            for row in agent_errors
+            if row.error_count > 0
+        ]
+
+        return {"agents": agents, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get A2A agent error statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
+
+
+@admin_router.get("/observability/a2a-agents/partial", response_class=HTMLResponse)
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def get_a2a_agents_partial(
+    request: Request,
+    _user=Depends(get_current_user_with_permissions),
+    _db: Session = Depends(get_db),
+):
+    """Render the A2A agent interaction metrics dashboard HTML partial.
+
+    Args:
+        request: FastAPI request object
+        _user: Authenticated user (required by dependency)
+        _db: Database session for permission checks.
+
+    Returns:
+        HTMLResponse: Rendered A2A agent metrics dashboard partial
+    """
+    root_path = _resolve_root_path(request)
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "observability_a2a_agents.html",
         {
             "request": request,
             "root_path": root_path,

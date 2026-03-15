@@ -8042,6 +8042,13 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               >
                 Servers
               </button>
+              <button
+                onclick="switchTopPerformersTab('a2a-agents')"
+                id="top-performers-tab-a2a-agents"
+                class="top-performers-tab border-b-2 border-transparent py-2 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
+              >
+                A2A Agents
+              </button>
             </nav>
           </div>
 
@@ -8108,6 +8115,22 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </div>
             <div id="top-servers-loading-visible" class="htmx-indicator hidden">Loading...</div>
             <div id="top-servers-pagination-controls-visible"></div>
+          </div>
+
+          <div id="top-performers-panel-a2a-agents" class="top-performers-panel hidden">
+            <div class="overflow-x-auto">
+              <div id="top-a2a-agents-content-visible"
+                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=a2a-agents&page=1&per_page=10"
+                   hx-trigger="load"
+                   hx-swap="outerHTML"
+                   hx-indicator="#top-a2a-agents-loading-visible">
+                <div class="text-center py-8 text-gray-500 dark:text-gray-400">
+                  Loading top A2A agents...
+                </div>
+              </div>
+            </div>
+            <div id="top-a2a-agents-loading-visible" class="htmx-indicator hidden">Loading...</div>
+            <div id="top-a2a-agents-pagination-controls-visible"></div>
           </div>
 
           <!-- Individual Metrics Grid (inside Top Performers section) -->
