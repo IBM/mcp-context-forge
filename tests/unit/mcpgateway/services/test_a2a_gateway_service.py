@@ -384,6 +384,200 @@ class TestA2AGatewayService:
         card = service.generate_agent_card(agent, "https://gw.com")
         assert card["url"] == f"https://gw.com/{prefix}/agent-prefix-1"
 
+    def test_generate_agent_card_with_original_card(self, service):
+        """Lines 307-324: When original_card is provided, use it as base and override url."""
+        agent = SimpleNamespace(
+            name="Echo Agent",
+            description="Custom description from DB",
+            id="agent-xyz",
+            slug="echo",
+            protocol_version="2.0",
+            capabilities={},
+            config={},
+            tags=None,
+        )
+
+        # Original card from downstream agent
+        original_card = {
+            "name": "Original Echo",
+            "description": "Original description",
+            "url": "https://downstream.example.com/echo",
+            "version": "1.0",
+            "protocolVersion": "1.0",
+            "capabilities": {"streaming": True},
+            "defaultInputModes": ["text", "audio"],
+            "defaultOutputModes": ["text", "image"],
+            "skills": [{"id": "skill1", "name": "Skill 1"}],
+            "provider": {"organization": "DownstreamOrg"},
+        }
+
+        card = service.generate_agent_card(agent, "https://gw.com", original_card=original_card)
+
+        # URL should be overridden to point to gateway (line 308)
+        assert "https://gw.com" in card["url"]
+        assert "agent-xyz" in card["url"]
+
+        # DB description should override original card description (lines 311-312)
+        assert card["description"] == "Custom description from DB"
+
+        # Other fields from original card should be preserved
+        assert card["capabilities"]["streaming"] is True
+        assert card["defaultInputModes"] == ["text", "audio"]
+        assert card["defaultOutputModes"] == ["text", "image"]
+        assert card["skills"] == [{"id": "skill1", "name": "Skill 1"}]
+        assert card["provider"] == {"organization": "DownstreamOrg"}
+
+        # Required fields should be set (lines 315-322)
+        assert "name" in card
+        assert "protocolVersion" in card
+
+    def test_generate_agent_card_with_original_card_empty_description(self, service):
+        """Lines 311-312: Empty DB description doesn't override original card description."""
+        agent = SimpleNamespace(
+            name="Test Agent",
+            description="",  # Empty description
+            id="agent-123",
+            slug="test",
+            protocol_version="1.0",
+            capabilities={},
+            config={},
+            tags=None,
+        )
+
+        original_card = {
+            "name": "Original Agent",
+            "description": "Keep this description",
+            "url": "https://downstream.example.com/",
+        }
+
+        card = service.generate_agent_card(agent, "https://gw.com", original_card=original_card)
+
+        # Empty description should not override
+        assert card["description"] == "Keep this description"
+
+    # --- fetch_downstream_agent_card ---
+
+    @pytest.mark.asyncio
+    async def test_fetch_agent_card_cache_hit(self):
+        """Lines 127-129: Return cached card if not expired."""
+        # First-Party
+        from mcpgateway.services.a2a_gateway_service import _agent_card_cache, fetch_downstream_agent_card
+
+        # Manually populate cache
+        cached_card = {"name": "Cached Agent", "url": "https://cached.example.com"}
+        import time
+
+        _agent_card_cache["agent-cached"] = (cached_card, time.monotonic())
+
+        # Fetch should return cached data without making HTTP request
+        result = await fetch_downstream_agent_card(
+            agent_id="agent-cached", endpoint_url="https://agent.example.com/a2a", auth_headers={}, cache_ttl=60
+        )
+
+        assert result == cached_card
+
+        # Clean up cache
+        del _agent_card_cache["agent-cached"]
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.a2a_gateway_service._agent_card_cache", {})
+    async def test_fetch_agent_card_successful_fetch(self):
+        """Lines 158-162: Successfully fetch and cache agent card from downstream."""
+        # First-Party
+        from mcpgateway.services.a2a_gateway_service import _agent_card_cache, fetch_downstream_agent_card
+
+        # Standard
+        from unittest.mock import AsyncMock
+
+        card_data = {"name": "Downstream Agent", "url": "https://downstream.example.com", "capabilities": {}}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = card_data
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        # Patch at import location
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+            result = await fetch_downstream_agent_card(
+                agent_id="agent-fetch", endpoint_url="https://agent.example.com/a2a", auth_headers={"Authorization": "Bearer token"}, cache_ttl=60
+            )
+
+        # Should return the fetched card
+        assert result == card_data
+
+        # Should be cached (line 161)
+        assert "agent-fetch" in _agent_card_cache
+        cached_data, _ = _agent_card_cache["agent-fetch"]
+        assert cached_data == card_data
+
+        # Clean up
+        del _agent_card_cache["agent-fetch"]
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.a2a_gateway_service._agent_card_cache", {})
+    async def test_fetch_agent_card_retries_on_url_failures(self):
+        """Lines 163-164: Exception during individual URL fetch triggers continue to next URL."""
+        # First-Party
+        from mcpgateway.services.a2a_gateway_service import _agent_card_cache, fetch_downstream_agent_card
+
+        # Standard
+        from unittest.mock import AsyncMock
+
+        card_data = {"name": "Downstream Agent", "url": "https://downstream.example.com", "capabilities": {}}
+
+        # First request fails, second request succeeds
+        call_count = 0
+
+        async def mock_get(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First attempt fails (lines 163-164: exception caught, continue to next URL)
+                raise ConnectionError("First URL failed")
+            else:
+                # Second attempt succeeds
+                mock_response = MagicMock()
+                mock_response.status_code = 200
+                mock_response.json.return_value = card_data
+                return mock_response
+
+        mock_client = MagicMock()
+        mock_client.get = mock_get
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+            result = await fetch_downstream_agent_card(
+                agent_id="agent-retry", endpoint_url="https://agent.example.com/a2a", auth_headers={}, cache_ttl=60
+            )
+
+        # Should eventually succeed with the second URL
+        assert result == card_data
+        # First URL failed, second succeeded
+        assert call_count >= 2
+
+        # Clean up
+        del _agent_card_cache["agent-retry"]
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.a2a_gateway_service._agent_card_cache", {})
+    async def test_fetch_agent_card_generic_exception(self):
+        """Lines 166-167: Generic exception during fetch returns None."""
+        # First-Party
+        from mcpgateway.services.a2a_gateway_service import fetch_downstream_agent_card
+
+        # Standard
+        from unittest.mock import AsyncMock
+
+        # Simulate an exception during HTTP client setup
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, side_effect=ConnectionError("Network error")):
+            result = await fetch_downstream_agent_card(
+                agent_id="agent-error", endpoint_url="https://agent.example.com/a2a", auth_headers={}, cache_ttl=60
+            )
+
+        # Should return None on exception (line 169)
+        assert result is None
+
 
 class TestConstants:
     """Verify protocol constants match A2A spec."""
