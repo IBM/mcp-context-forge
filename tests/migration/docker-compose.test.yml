@@ -1,0 +1,55 @@
+
+version: "3.9"
+
+networks:
+  migration_test:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    labels:
+      migration-test: "true"
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      - POSTGRES_USER=test_user
+      - POSTGRES_PASSWORD=test_migration_password_123
+      - POSTGRES_DB=mcp_test
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [migration_test]
+    labels:
+      migration-test: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d mcp_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  gateway:
+    image: ${IMAGE_LOCAL:-ghcr.io/ibm/mcp-context-forge:latest}
+    environment:
+      - DATABASE_URL=postgresql://test_user:test_migration_password_123@postgres:5432/mcp_test
+      - REDIS_URL=redis://redis:6379/0
+      - MCPGATEWAY_UI_ENABLED=false
+      - MCPGATEWAY_ADMIN_API_ENABLED=true
+      - AUTH_REQUIRED=false
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "0:4444"  # Random host port
+    networks: [migration_test]
+    labels:
+      migration-test: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis:
+    image: redis:latest
+    networks: [migration_test]
+    labels:
+      migration-test: "true"

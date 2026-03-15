@@ -482,7 +482,7 @@ async def test_call_tool_no_content(monkeypatch, caplog):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
 
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
         result = await call_tool("mytool", {"foo": "bar"})
         assert result == []
         assert "No content returned by tool: mytool" in caplog.text

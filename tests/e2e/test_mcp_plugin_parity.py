@@ -24,7 +24,7 @@ import pytest
 
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
-from tests.e2e.mcp_test_helpers import BASE_URL, JWT_SECRET, skip_no_gateway
+from tests.e2e.mcp_test_helpers import BASE_URL, skip_no_gateway
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway]
 
@@ -34,6 +34,10 @@ RESOURCE_LICENSE_PREFIX = "# SPDX-License-Identifier: Apache-2.0"
 TOOL_OUTPUT_SENTINEL = "[TOOL-POST-INVOKE-SENTINEL]"
 PROMPT_OUTPUT_SENTINEL = "[PROMPT-POST-FETCH-SENTINEL]"
 EXPECTED_RUNTIME = os.getenv("MCP_PLUGIN_PARITY_EXPECTED_RUNTIME")
+# This suite targets the standard compose-backed test stack, which uses the
+# fixed local JWT secret below. Do not source this from mutable process env,
+# because broad-suite tests may patch JWT_SECRET_KEY before this module loads.
+COMPOSE_TEST_JWT_SECRET = "my-test-key"
 
 
 def _make_admin_jwt() -> str:
@@ -46,7 +50,7 @@ def _make_admin_jwt() -> str:
         {"sub": "admin@example.com"},
         user_data={"email": "admin@example.com", "is_admin": True, "auth_provider": "local"},
         teams=None,
-        secret=JWT_SECRET,
+        secret=COMPOSE_TEST_JWT_SECRET,
     )
 
 
@@ -210,7 +214,9 @@ def admin_client() -> Generator[httpx.Client, None, None]:
         Authenticated admin HTTP client.
     """
     token = _make_admin_jwt()
-    with httpx.Client(base_url=BASE_URL, headers=_api_headers(token), timeout=20.0) as client:
+    # This suite only talks to the local plain-HTTP test stack. Passing
+    # verify=False avoids unrelated TLS env leakage from other tests.
+    with httpx.Client(base_url=BASE_URL, headers=_api_headers(token), timeout=20.0, verify=False) as client:
         yield client
 
 
@@ -278,7 +284,7 @@ class TestMcpPluginParity:
         Args:
             plugin_parity_server: Provisioned server fixture.
         """
-        with httpx.Client(base_url=BASE_URL, timeout=20.0) as client:
+        with httpx.Client(base_url=BASE_URL, timeout=20.0, verify=False) as client:
             session_id = _initialize_session(client, server_id=plugin_parity_server["server_id"], token=plugin_parity_server["token"])
             result = _extract_result(
                 _mcp_post(
@@ -307,7 +313,7 @@ class TestMcpPluginParity:
         Args:
             plugin_parity_server: Provisioned server fixture.
         """
-        with httpx.Client(base_url=BASE_URL, timeout=20.0) as client:
+        with httpx.Client(base_url=BASE_URL, timeout=20.0, verify=False) as client:
             session_id = _initialize_session(client, server_id=plugin_parity_server["server_id"], token=plugin_parity_server["token"])
             result = _extract_result(
                 _mcp_post(
@@ -336,7 +342,7 @@ class TestMcpPluginParity:
         Args:
             plugin_parity_server: Provisioned server fixture.
         """
-        with httpx.Client(base_url=BASE_URL, timeout=20.0) as client:
+        with httpx.Client(base_url=BASE_URL, timeout=20.0, verify=False) as client:
             session_id = _initialize_session(client, server_id=plugin_parity_server["server_id"], token=plugin_parity_server["token"])
             result = _extract_result(
                 _mcp_post(

@@ -4826,9 +4826,7 @@ async fn direct_server_prompts_get(
         return response;
     }
 
-    debug!(
-        "Rust MCP direct prompts/get delegated to Python dispatcher for prompt '{name}'"
-    );
+    debug!("Rust MCP direct prompts/get delegated to Python dispatcher for prompt '{name}'");
     forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await
 }
 

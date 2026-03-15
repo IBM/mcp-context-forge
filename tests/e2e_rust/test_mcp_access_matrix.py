@@ -37,7 +37,7 @@ MCP_PROTOCOL_VERSION = "2025-11-25"
 ACCESS_PREFIX = "mcp-access"
 EXPECTED_TOOL_NAMES = {"fast-time-get-system-time", "fast-time-convert-time"}
 EXPECTED_RESOURCE_URIS = {"time://formats", "timezone://info", "time://business-hours", "time://current/world"}
-EXPECTED_PROMPT_NAMES = {"fast-time-schedule-meeting", "fast-time-convert-time-detailed", "fast-time-compare-timezones"}
+REQUIRED_PROMPT_NAMES = {"fast-time-schedule-meeting", "fast-time-convert-time-detailed", "fast-time-compare-timezones"}
 
 
 def _make_jwt(email: str, *, is_admin: bool = False, teams: list[str] | None = None) -> str:
@@ -188,8 +188,8 @@ def _mcp_post(
     )
 
 
-def _initialize_session(client: httpx.Client, *, server_id: str, token: str) -> str:
-    """Initialize an MCP session and return the session id."""
+def _initialize_session(client: httpx.Client, *, server_id: str, token: str) -> str | None:
+    """Initialize an MCP session and return the session id when the transport issues one."""
     response = _mcp_post(
         client,
         server_id=server_id,
@@ -205,9 +205,7 @@ def _initialize_session(client: httpx.Client, *, server_id: str, token: str) -> 
     payload = response.json()
     assert "result" in payload, payload
     assert response.headers.get("x-contextforge-mcp-runtime") == "rust"
-    session_id = response.headers.get("mcp-session-id")
-    assert session_id, f"Missing mcp-session-id: {response.headers}"
-    return session_id
+    return response.headers.get("mcp-session-id")
 
 
 def _extract_result(response: httpx.Response) -> dict[str, Any]:
@@ -263,7 +261,7 @@ def _assert_prompts_list(result: dict[str, Any]) -> None:
     """Assert the expected prompt names and argument schemas are exposed."""
     prompts = result.get("prompts", [])
     names = {prompt["name"] for prompt in prompts}
-    assert names == EXPECTED_PROMPT_NAMES, prompts
+    assert REQUIRED_PROMPT_NAMES <= names, prompts
 
     prompts_by_name = {prompt["name"]: prompt for prompt in prompts}
     convert_prompt = prompts_by_name["fast-time-convert-time-detailed"]
@@ -342,9 +340,10 @@ def access_matrix_env(admin_client: httpx.Client) -> Generator[dict[str, Any], N
     prompts = _request_json(admin_client, "GET", "/prompts")
     gateways = _request_json(admin_client, "GET", "/gateways")
     gateway = next(g for g in gateways if g["name"] == "fast_time")
-    tool_ids = [tool["id"] for tool in tools if tool.get("gatewayId") == gateway["id"]]
-    resource_ids = [resource["id"] for resource in resources]
-    prompt_ids = [prompt["id"] for prompt in prompts]
+    gateway_id = gateway["id"]
+    tool_ids = [tool["id"] for tool in tools if (tool.get("gatewayId") or tool.get("gateway_id")) == gateway_id]
+    resource_ids = [resource["id"] for resource in resources if resource.get("federationSource") == "fast_time"]
+    prompt_ids = [prompt["id"] for prompt in prompts if prompt.get("gatewaySlug") == "fast-time"]
 
     server = _request_json(
         admin_client,

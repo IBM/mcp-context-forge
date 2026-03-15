@@ -298,6 +298,7 @@ TODO.md
 FIXMEs
 
 # Upgrade validation outputs
+artifacts/
 artifacts/upgrade-validation*/
 
 # Debug & profiling artifacts

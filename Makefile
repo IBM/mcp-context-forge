@@ -5993,7 +5993,7 @@ MINIKUBE_ADDONS  ?= ingress ingress-dns metrics-server dashboard registry regist
 #   mcpgateway/mcpgateway:latest.  Override with IMAGE=<repo:tag> to use a
 #   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.9.0).
 TAG              ?= latest         # override with TAG=<ver>
-IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TAG)
+IMAGE            ?= $(IMAGE_LOCAL) # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TAG)
 
 # -----------------------------------------------------------------------------
 # 🆘  HELP TARGETS (parsed by `make help`)
@@ -6084,7 +6084,7 @@ minikube-dashboard:
 .PHONY: minikube-context
 minikube-context:
 	@echo "🎯 Switching kubectl context to Minikube ..."
-	kubectl config use-context minikube
+	kubectl config use-context $(MINIKUBE_PROFILE)
 
 .PHONY: minikube-ssh
 minikube-ssh:
@@ -7960,7 +7960,7 @@ migration-test-all: migration-setup        ## Run comprehensive migration test s
 	@echo "📋 Testing PostgreSQL migrations..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
-		-v --tb=short --maxfail=3 -m 'not slow' \
+		-v --tb=short --maxfail=3 \
 		--log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'"
 	@echo ""
 	@echo "📊 Generating migration test report..."
@@ -7982,7 +7982,7 @@ migration-test-postgres:                   ## Run PostgreSQL compose migration t
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
-		-v --tb=short --log-cli-level=INFO -m 'not slow'"
+		-v --tb=short --log-cli-level=INFO"
 	@echo "✅ PostgreSQL migration tests complete!"
 
 migration-test-performance:               ## Run migration performance benchmarking
