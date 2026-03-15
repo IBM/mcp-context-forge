@@ -224,13 +224,16 @@ design tradeoffs.
 - runtime session counting in Redis now uses `SCAN` instead of `KEYS`
 - the direct public Rust listener now returns a minimal public health payload
   instead of the detailed internal runtime view
+- runtime/proxy transport failures now log full exception details server-side
+  while returning redacted client-visible error data
 
 ### Still open / follow-up
 
-- error detail leakage still needs hardening so backend/transport exceptions are
-  logged server-side but not echoed to clients
 - `session_id` query-parameter compatibility still exists in both Rust and
   Python and should be either retired or explicitly documented as an exception
+- Rust runtime PostgreSQL connections still use `NoTls`, so encrypted
+  PostgreSQL transport support remains a follow-up if the runtime is to be used
+  against deployments that require DB TLS
 - catch-all `sampling/`, `completion/`, `logging/`, and `elicitation/` methods
   still return an empty success object; that appears to be existing project
   behavior, but it should be documented or revisited

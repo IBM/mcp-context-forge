@@ -203,6 +203,8 @@ struct PublicHealthResponse {
     runtime: &'static str,
 }
 
+const CLIENT_ERROR_DETAIL: &str = "See server logs";
+
 #[derive(Debug, Clone, Copy, Default)]
 struct TrustedPeerAddr(Option<SocketAddr>);
 
@@ -2396,19 +2398,21 @@ fn can_reuse_session_auth(
 #[allow(clippy::result_large_err)]
 fn encode_internal_auth_context_header(auth_context: &Value) -> Result<HeaderValue, Response> {
     let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(auth_context).map_err(|err| {
+        error!("internal MCP auth context serialization failed: {err}");
         json_response(
             StatusCode::BAD_GATEWAY,
             json!({
-                "detail": format!("Internal MCP auth context serialization failed: {err}"),
+                "detail": "Internal MCP auth context serialization failed",
             }),
         )
     })?);
 
     HeaderValue::from_str(&encoded).map_err(|err| {
+        error!("internal MCP auth context header encoding failed: {err}");
         json_response(
             StatusCode::BAD_GATEWAY,
             json!({
-                "detail": format!("Internal MCP auth context header encoding failed: {err}"),
+                "detail": "Internal MCP auth context header encoding failed",
             }),
         )
     })
@@ -2446,10 +2450,11 @@ async fn authenticate_public_request_if_needed(
             can_reuse_session_auth(state, &record, &incoming_headers, server_id)
     {
         let encoded_auth_context = HeaderValue::from_str(&encoded_auth_context).map_err(|err| {
+            error!("stored MCP auth context header encoding failed: {err}");
             json_response(
                 StatusCode::BAD_GATEWAY,
                 json!({
-                    "detail": format!("Stored MCP auth context header encoding failed: {err}"),
+                    "detail": "Stored MCP auth context header encoding failed",
                 }),
             )
         })?;
@@ -3103,10 +3108,11 @@ async fn forward_transport_request_via_affinity_owner(
         timestamp: current_unix_timestamp_seconds(),
     };
     let payload_json = serde_json::to_vec(&payload).map_err(|err| {
+        error!("Rust MCP affinity payload serialization failed: {err}");
         json_response(
             StatusCode::BAD_GATEWAY,
             json!({
-                "detail": format!("Rust MCP affinity payload serialization failed: {err}"),
+                "detail": "Rust MCP affinity payload serialization failed",
             }),
         )
     })?;
@@ -3126,7 +3132,7 @@ async fn forward_transport_request_via_affinity_owner(
             json_response(
                 StatusCode::BAD_GATEWAY,
                 json!({
-                    "detail": format!("Timed out waiting for owner worker response on {response_channel}"),
+                    "detail": "Timed out waiting for owner worker response",
                 }),
             )
         })?
@@ -3223,7 +3229,7 @@ where
     json_response(
         StatusCode::BAD_GATEWAY,
         json!({
-            "detail": format!("{message}: {err}"),
+            "detail": message,
         }),
     )
 }
@@ -3382,7 +3388,7 @@ async fn store_event_in_rust_event_store(
             error!("Rust event store write failed: {err}");
             json_response(
                 StatusCode::BAD_GATEWAY,
-                json!({"detail": format!("Rust event store write failed: {err}")}),
+                json!({"detail": "Rust event store write failed"}),
             )
         })?;
 
@@ -3412,7 +3418,7 @@ async fn replay_events_from_rust_event_store(
             error!("Rust event store replay lookup failed: {err}");
             json_response(
                 StatusCode::BAD_GATEWAY,
-                json!({"detail": format!("Rust event store replay lookup failed: {err}")}),
+                json!({"detail": "Rust event store replay lookup failed"}),
             )
         })?
     else {
@@ -3423,9 +3429,10 @@ async fn replay_events_from_rust_event_store(
     };
 
     let index_record: EventIndexRecord = serde_json::from_str(&index_payload).map_err(|err| {
+        error!("Rust event store index decode failed: {err}");
         json_response(
             StatusCode::BAD_GATEWAY,
-            json!({"detail": format!("Rust event store index decode failed: {err}")}),
+            json!({"detail": "Rust event store index decode failed"}),
         )
     })?;
     let meta_key = format!("{key_prefix}:{}:meta", index_record.stream_id);
@@ -3436,9 +3443,10 @@ async fn replay_events_from_rust_event_store(
         .hget::<_, _, Option<i64>>(&meta_key, "start_seq")
         .await
         .map_err(|err| {
+            error!("Rust event store meta lookup failed: {err}");
             json_response(
                 StatusCode::BAD_GATEWAY,
-                json!({"detail": format!("Rust event store meta lookup failed: {err}")}),
+                json!({"detail": "Rust event store meta lookup failed"}),
             )
         })?
         && index_record.seq_num < start_seq
@@ -3456,9 +3464,10 @@ async fn replay_events_from_rust_event_store(
         .query_async::<Vec<String>>(&mut redis)
         .await
         .map_err(|err| {
+            error!("Rust event store replay scan failed: {err}");
             json_response(
                 StatusCode::BAD_GATEWAY,
-                json!({"detail": format!("Rust event store replay scan failed: {err}")}),
+                json!({"detail": "Rust event store replay scan failed"}),
             )
         })?;
 
@@ -3468,9 +3477,10 @@ async fn replay_events_from_rust_event_store(
             .hget::<_, _, Option<String>>(&messages_key, &event_id)
             .await
             .map_err(|err| {
+                error!("Rust event store replay fetch failed: {err}");
                 json_response(
                     StatusCode::BAD_GATEWAY,
-                    json!({"detail": format!("Rust event store replay fetch failed: {err}")}),
+                    json!({"detail": "Rust event store replay fetch failed"}),
                 )
             })?
         else {
@@ -7577,12 +7587,32 @@ fn should_forward_header(name: &HeaderName) -> bool {
 }
 
 fn json_response(status: StatusCode, payload: Value) -> Response {
+    let payload = if status.is_server_error() {
+        redact_server_error_payload(payload)
+    } else {
+        payload
+    };
     let mut response = (status, Json(payload)).into_response();
     response.headers_mut().insert(
         HeaderName::from_static(RUNTIME_HEADER),
         HeaderValue::from_static(RUNTIME_NAME),
     );
     response
+}
+
+fn redact_server_error_payload(mut payload: Value) -> Value {
+    if let Some(error_value) = payload.get_mut("error") {
+        if error_value.is_string() {
+            *error_value = Value::String(CLIENT_ERROR_DETAIL.to_string());
+        } else if let Some(error_object) = error_value.as_object_mut()
+            && let Some(data_value) = error_object.get_mut("data")
+            && data_value.is_string()
+        {
+            *data_value = Value::String(CLIENT_ERROR_DETAIL.to_string());
+        }
+    }
+
+    payload
 }
 
 fn empty_response(status: StatusCode) -> Response {
@@ -7600,18 +7630,19 @@ mod unit_tests {
     use base64::Engine;
 
     use super::{
-        AffinityForwardResponse, AppState, Bytes, EventStoreReplayRequest, EventStoreStoreRequest,
-        InternalAuthContext, InternalAuthenticateRequest, JsonRpcRequest, RuntimeConfig,
-        RuntimeError, RuntimeSessionRecord, TrustedPeerAddr, URL_SAFE_NO_PAD, accepts_sse,
-        active_runtime_session_count, affinity_forward_error_response, auth_binding_fingerprint,
-        authenticate_public_request_if_needed, batch_rejected_response, build_public_router,
-        can_reuse_session_auth, can_use_direct_prompts_get, can_use_direct_resources_read,
-        decode_request, derive_backend_authenticate_url, derive_backend_completion_complete_url,
-        derive_backend_initialize_url, derive_backend_logging_set_level_url,
-        derive_backend_notifications_cancelled_url, derive_backend_notifications_initialized_url,
-        derive_backend_notifications_message_url, derive_backend_prompts_get_authz_url,
-        derive_backend_prompts_get_url, derive_backend_prompts_list_authz_url,
-        derive_backend_prompts_list_url, derive_backend_resource_templates_list_authz_url,
+        AffinityForwardResponse, AppState, Bytes, CLIENT_ERROR_DETAIL, EventStoreReplayRequest,
+        EventStoreStoreRequest, InternalAuthContext, InternalAuthenticateRequest, JsonRpcRequest,
+        RuntimeConfig, RuntimeError, RuntimeSessionRecord, TrustedPeerAddr, URL_SAFE_NO_PAD,
+        accepts_sse, active_runtime_session_count, affinity_forward_error_response,
+        auth_binding_fingerprint, authenticate_public_request_if_needed, batch_rejected_response,
+        build_public_router, can_reuse_session_auth, can_use_direct_prompts_get,
+        can_use_direct_resources_read, decode_request, derive_backend_authenticate_url,
+        derive_backend_completion_complete_url, derive_backend_initialize_url,
+        derive_backend_logging_set_level_url, derive_backend_notifications_cancelled_url,
+        derive_backend_notifications_initialized_url, derive_backend_notifications_message_url,
+        derive_backend_prompts_get_authz_url, derive_backend_prompts_get_url,
+        derive_backend_prompts_list_authz_url, derive_backend_prompts_list_url,
+        derive_backend_resource_templates_list_authz_url,
         derive_backend_resource_templates_list_url, derive_backend_resources_list_authz_url,
         derive_backend_resources_list_url, derive_backend_resources_read_authz_url,
         derive_backend_resources_read_url, derive_backend_resources_subscribe_url,
@@ -7635,6 +7666,7 @@ mod unit_tests {
     };
     use axum::{
         Json, Router,
+        body::to_bytes,
         extract::{Path as AxumPath, State},
         http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
         routing::{get, post},
@@ -8242,6 +8274,14 @@ mod unit_tests {
         .await
         .expect_err("unreachable backend should fail");
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let payload: Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("body"),
+        )
+        .expect("json body");
+        assert_eq!(payload["detail"], "Backend MCP authenticate failed");
+        assert_eq!(payload["error"], CLIENT_ERROR_DETAIL);
 
         let backend = Router::new().route(
             "/_internal/mcp/authenticate",
@@ -8265,6 +8305,14 @@ mod unit_tests {
         .await
         .expect_err("invalid backend payload should fail");
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let payload: Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("body"),
+        )
+        .expect("json body");
+        assert_eq!(payload["detail"], "Backend MCP authenticate decode failed");
+        assert_eq!(payload["error"], CLIENT_ERROR_DETAIL);
     }
 
     #[tokio::test]

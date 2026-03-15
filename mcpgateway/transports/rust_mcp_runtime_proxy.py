@@ -36,6 +36,7 @@ _SERVER_ID_RE = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp/?$")
 _CONTEXTFORGE_SERVER_ID_HEADER = "x-contextforge-server-id"
 _CONTEXTFORGE_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
 _CONTEXTFORGE_AFFINITY_FORWARDED_HEADER = "x-contextforge-affinity-forwarded"
+_CLIENT_ERROR_DETAIL = "See server logs"
 _REQUEST_HOP_BY_HOP_HEADERS = frozenset({"host", "content-length", "connection", "transfer-encoding", "keep-alive"})
 _FORWARDED_CHAIN_HEADERS = frozenset({"forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto"})
 _INTERNAL_ONLY_REQUEST_HEADERS = frozenset(
@@ -117,7 +118,7 @@ class RustMCPRuntimeProxy:
                     "error": {
                         "code": -32000,
                         "message": "Experimental Rust MCP runtime unavailable",
-                        "data": str(exc),
+                        "data": _CLIENT_ERROR_DETAIL,
                     },
                 },
             )

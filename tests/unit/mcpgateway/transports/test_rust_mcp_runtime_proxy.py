@@ -634,3 +634,4 @@ async def test_runtime_failure_returns_jsonrpc_bad_gateway(monkeypatch):
     body = json.loads(events[1]["body"].decode())
     assert body["error"]["code"] == -32000
     assert body["error"]["message"] == "Experimental Rust MCP runtime unavailable"
+    assert body["error"]["data"] == "See server logs"
