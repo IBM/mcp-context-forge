@@ -20,6 +20,7 @@ from mcpgateway.routers.a2a_gateway import get_db, router
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.services.a2a_gateway_service import (
     A2AGatewayAgentDisabledError,
+    A2AGatewayAgentIncompatibleError,
     A2AGatewayAgentNotFoundError,
     A2AGatewayError,
 )
@@ -343,3 +344,54 @@ class TestDenyPaths:
         data = response.json()
         assert "error" in data
         assert "disabled" in data["error"]["message"].lower()
+
+
+class TestAgentTypeCompatibility:
+    """Tests for agent type validation — A2A gateway only works with JSON-RPC agents."""
+
+    def test_incompatible_agent_card_returns_400(self, client, mock_services):
+        """Agent card for non-JSON-RPC agent type returns 400."""
+        mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentIncompatibleError(
+            "Agent 'OpenAI Bot' (type: openai) is not compatible with the A2A protocol gateway."
+        )
+
+        response = client.get(f"{_PREFIX}/openai-agent/.well-known/agent-card.json")
+        assert response.status_code == 400
+        assert "not compatible" in response.json()["detail"].lower()
+
+    def test_incompatible_agent_jsonrpc_returns_error(self, client, mock_services):
+        """JSON-RPC to non-JSON-RPC agent returns JSON-RPC error with clear message."""
+        mock_services["gateway_service"].validate_jsonrpc_request.return_value = None
+        mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentIncompatibleError(
+            "Agent 'Anthropic Bot' (type: anthropic) is not compatible with the A2A protocol gateway. "
+            "Only 'generic' or 'jsonrpc' agent types support JSON-RPC 2.0. "
+            "Use MCP tool wrapping to interact with this agent."
+        )
+
+        response = client.post(
+            f"{_PREFIX}/anthropic-agent",
+            json={"jsonrpc": "2.0", "method": "message/send", "params": {}, "id": 1},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "error" in data
+        assert data["error"]["code"] == -32603
+        assert "not compatible" in data["error"]["message"].lower()
+        assert "mcp tool wrapping" in data["error"]["message"].lower()
+
+    def test_incompatible_custom_agent_returns_error(self, client, mock_services):
+        """Custom agent type returns incompatible error."""
+        mock_services["gateway_service"].validate_jsonrpc_request.return_value = None
+        mock_services["gateway_service"].resolve_agent.side_effect = A2AGatewayAgentIncompatibleError(
+            "Agent 'Custom API' (type: custom) is not compatible"
+        )
+
+        response = client.post(
+            f"{_PREFIX}/custom-agent",
+            json={"jsonrpc": "2.0", "method": "tasks/get", "params": {}, "id": 2},
+        )
+
+        assert response.status_code == 200
+        assert "error" in response.json()
+        assert "not compatible" in response.json()["error"]["message"].lower()

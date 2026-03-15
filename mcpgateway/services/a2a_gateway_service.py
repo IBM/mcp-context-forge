@@ -78,6 +78,22 @@ class A2AGatewayAgentDisabledError(A2AGatewayError):
     pass
 
 
+class A2AGatewayAgentIncompatibleError(A2AGatewayError):
+    """Raised when the agent type is not compatible with the A2A protocol gateway.
+
+    The A2A gateway only supports agents that speak JSON-RPC 2.0 (agent_type
+    'generic' or 'jsonrpc', or endpoint URLs ending with '/').  Other agent
+    types (openai, anthropic, custom) use proprietary request formats and must
+    be accessed through MCP tool wrapping instead.
+    """
+
+    pass
+
+
+# Agent types that speak JSON-RPC 2.0 and are compatible with the A2A gateway
+A2A_COMPATIBLE_AGENT_TYPES = frozenset({"generic", "jsonrpc"})
+
+
 def make_jsonrpc_error(code: int, message: str, request_id: Any = None, data: Any = None) -> Dict[str, Any]:
     """Build a JSON-RPC 2.0 error response.
 
@@ -188,6 +204,7 @@ class A2AGatewayService:
         Raises:
             A2AGatewayAgentNotFoundError: If agent not found or user lacks access.
             A2AGatewayAgentDisabledError: If agent is disabled.
+            A2AGatewayAgentIncompatibleError: If agent type is not JSON-RPC compatible.
         """
         agent = get_for_update(db, DbA2AAgent, agent_id)
         if not agent:
@@ -199,6 +216,17 @@ class A2AGatewayService:
 
         if not agent.enabled:
             raise A2AGatewayAgentDisabledError(f"A2A agent '{agent_id}' is disabled")
+
+        # Validate agent type is compatible with A2A JSON-RPC gateway.
+        # Only 'generic'/'jsonrpc' agents (or URLs ending with '/') speak JSON-RPC.
+        # Other types (openai, anthropic, custom) use proprietary formats and
+        # must be accessed through MCP tool wrapping instead.
+        if agent.agent_type not in A2A_COMPATIBLE_AGENT_TYPES and not agent.endpoint_url.endswith("/"):
+            raise A2AGatewayAgentIncompatibleError(
+                f"Agent '{agent.name}' (type: {agent.agent_type}) is not compatible with the A2A protocol gateway. "
+                f"Only 'generic' or 'jsonrpc' agent types support JSON-RPC 2.0. "
+                f"Use MCP tool wrapping to interact with this agent."
+            )
 
         # Decrypt auth credentials
         auth_headers = self._prepare_auth_headers(agent)

@@ -4050,8 +4050,13 @@ async function viewAgent(agentId) {
                 container.appendChild(p);
             });
 
-            // Gateway Endpoint (only shown when A2A gateway is enabled)
-            if (window.A2A_GATEWAY_ENABLED) {
+            // Gateway Endpoint (only shown when A2A gateway is enabled AND agent speaks JSON-RPC)
+            // Only 'generic'/'jsonrpc' agents (or URLs ending with '/') are A2A protocol compatible.
+            // Other types (openai, anthropic, custom) use proprietary formats and must be
+            // accessed through MCP tool wrapping instead.
+            const a2aCompatibleTypes = ["generic", "jsonrpc"];
+            const isA2ACompatible = a2aCompatibleTypes.includes(agent.agentType) || (agent.endpointUrl && agent.endpointUrl.endsWith("/"));
+            if (window.A2A_GATEWAY_ENABLED && isA2ACompatible) {
                 const gwPrefix = window.A2A_GATEWAY_ROUTE_PREFIX || "a2a/agent";
                 const baseUrl = window.location.origin + (window.ROOT_PATH || "");
                 const gwJsonrpcUrl = `${baseUrl}/${gwPrefix}/${agent.id}`;

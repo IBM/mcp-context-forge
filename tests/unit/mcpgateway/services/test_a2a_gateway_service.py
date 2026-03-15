@@ -16,9 +16,11 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.services.a2a_gateway_service import (
+    A2A_COMPATIBLE_AGENT_TYPES,
     A2A_JSONRPC_METHODS,
     A2A_STREAMING_METHODS,
     A2AGatewayAgentDisabledError,
+    A2AGatewayAgentIncompatibleError,
     A2AGatewayAgentNotFoundError,
     A2AGatewayError,
     A2AGatewayService,
@@ -199,6 +201,7 @@ class TestA2AGatewayService:
             auth_type="bearer",
             auth_value="encrypted-token",
             auth_query_params=None,
+            agent_type="generic",
         )
         mock_get_for_update.return_value = agent
         mock_decode_auth.return_value = {"Authorization": "Bearer test-token"}
@@ -209,6 +212,103 @@ class TestA2AGatewayService:
         assert auth_headers == {"Authorization": "Bearer test-token"}
         mock_db.commit.assert_called_once()
         mock_db.close.assert_called_once()
+
+    # --- resolve_agent: agent type compatibility ---
+
+    @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
+    def test_resolve_agent_openai_type_rejected(self, mock_get_for_update, service, mock_db):
+        """OpenAI agent type should be rejected by the A2A gateway."""
+        agent = MagicMock(
+            visibility="public", enabled=True, id="agent-openai",
+            agent_type="openai", endpoint_url="https://api.openai.com/v1/chat/completions",
+            name="OpenAI Bot",
+        )
+        mock_get_for_update.return_value = agent
+
+        with pytest.raises(A2AGatewayAgentIncompatibleError, match="not compatible"):
+            service.resolve_agent(mock_db, "agent-openai", "user@test.com", [])
+
+    @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
+    def test_resolve_agent_anthropic_type_rejected(self, mock_get_for_update, service, mock_db):
+        """Anthropic agent type should be rejected by the A2A gateway."""
+        agent = MagicMock(
+            visibility="public", enabled=True, id="agent-anthropic",
+            agent_type="anthropic", endpoint_url="https://api.anthropic.com/v1/messages",
+            name="Claude Bot",
+        )
+        mock_get_for_update.return_value = agent
+
+        with pytest.raises(A2AGatewayAgentIncompatibleError, match="not compatible"):
+            service.resolve_agent(mock_db, "agent-anthropic", "user@test.com", [])
+
+    @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
+    def test_resolve_agent_custom_type_rejected(self, mock_get_for_update, service, mock_db):
+        """Custom agent type should be rejected by the A2A gateway."""
+        agent = MagicMock(
+            visibility="public", enabled=True, id="agent-custom",
+            agent_type="custom", endpoint_url="https://my-api.example.com/api",
+            name="Custom API",
+        )
+        mock_get_for_update.return_value = agent
+
+        with pytest.raises(A2AGatewayAgentIncompatibleError, match="not compatible"):
+            service.resolve_agent(mock_db, "agent-custom", "user@test.com", [])
+
+    @patch("mcpgateway.services.a2a_gateway_service.decode_auth")
+    @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
+    def test_resolve_agent_jsonrpc_type_accepted(self, mock_get_for_update, mock_decode_auth, service, mock_db):
+        """jsonrpc agent type should be accepted by the A2A gateway."""
+        agent = MagicMock(
+            visibility="public", enabled=True, id="agent-jsonrpc",
+            agent_type="jsonrpc", endpoint_url="https://a2a-agent.example.com/",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            name="A2A Agent",
+        )
+        mock_get_for_update.return_value = agent
+        mock_decode_auth.return_value = {}
+
+        resolved_agent, _ = service.resolve_agent(mock_db, "agent-jsonrpc", "user@test.com", [])
+        assert resolved_agent == agent
+
+    @patch("mcpgateway.services.a2a_gateway_service.decode_auth")
+    @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
+    def test_resolve_agent_generic_type_accepted(self, mock_get_for_update, mock_decode_auth, service, mock_db):
+        """generic agent type should be accepted by the A2A gateway."""
+        agent = MagicMock(
+            visibility="public", enabled=True, id="agent-generic",
+            agent_type="generic", endpoint_url="https://a2a-agent.example.com/",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            name="Generic Agent",
+        )
+        mock_get_for_update.return_value = agent
+        mock_decode_auth.return_value = {}
+
+        resolved_agent, _ = service.resolve_agent(mock_db, "agent-generic", "user@test.com", [])
+        assert resolved_agent == agent
+
+    @patch("mcpgateway.services.a2a_gateway_service.decode_auth")
+    @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
+    def test_resolve_agent_custom_type_with_trailing_slash_accepted(self, mock_get_for_update, mock_decode_auth, service, mock_db):
+        """Custom agent type with URL ending in '/' should be accepted (URL-based JSON-RPC hint)."""
+        agent = MagicMock(
+            visibility="public", enabled=True, id="agent-custom-slash",
+            agent_type="custom", endpoint_url="https://a2a-agent.example.com/a2a/",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            name="Custom But JSON-RPC",
+        )
+        mock_get_for_update.return_value = agent
+        mock_decode_auth.return_value = {}
+
+        resolved_agent, _ = service.resolve_agent(mock_db, "agent-custom-slash", "user@test.com", [])
+        assert resolved_agent == agent
+
+    def test_compatible_agent_types_constant(self, service):
+        """Verify A2A_COMPATIBLE_AGENT_TYPES includes the expected types."""
+        assert "generic" in A2A_COMPATIBLE_AGENT_TYPES
+        assert "jsonrpc" in A2A_COMPATIBLE_AGENT_TYPES
+        assert "openai" not in A2A_COMPATIBLE_AGENT_TYPES
+        assert "anthropic" not in A2A_COMPATIBLE_AGENT_TYPES
+        assert "custom" not in A2A_COMPATIBLE_AGENT_TYPES
 
     # --- generate_agent_card ---
 

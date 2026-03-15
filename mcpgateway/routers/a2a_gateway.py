@@ -31,6 +31,7 @@ from mcpgateway.db import Permissions
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.a2a_gateway_service import (
     A2AGatewayAgentDisabledError,
+    A2AGatewayAgentIncompatibleError,
     A2AGatewayAgentNotFoundError,
     A2AGatewayError,
     A2AGatewayService,
@@ -195,6 +196,8 @@ async def get_agent_card(
         raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
     except A2AGatewayAgentDisabledError:
         raise HTTPException(status_code=400, detail=f"Agent is disabled: {agent_id}")
+    except A2AGatewayAgentIncompatibleError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error generating agent card for {agent_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -273,6 +276,11 @@ async def jsonrpc_endpoint(
     except A2AGatewayAgentDisabledError:
         return JSONResponse(
             content=make_jsonrpc_error(JSONRPC_INTERNAL_ERROR, f"Agent is disabled: {agent_id}", request_id),
+            status_code=200,
+        )
+    except A2AGatewayAgentIncompatibleError as e:
+        return JSONResponse(
+            content=make_jsonrpc_error(JSONRPC_INTERNAL_ERROR, str(e), request_id),
             status_code=200,
         )
     except A2AGatewayError as e:
