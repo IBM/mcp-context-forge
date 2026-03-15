@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.services.a2a_service import check_agent_visibility_access
 from mcpgateway.services.a2a_gateway_service import (
     A2A_COMPATIBLE_AGENT_TYPES,
     A2A_JSONRPC_METHODS,
@@ -128,41 +129,41 @@ class TestA2AGatewayService:
         assert service.is_streaming_method("tasks/get") is False
         assert service.is_streaming_method("tasks/cancel") is False
 
-    # --- _check_agent_access ---
+    # --- check_agent_visibility_access (shared function) ---
 
     def test_access_public_agent(self, service):
         agent = MagicMock(visibility="public")
-        assert service._check_agent_access(agent, None, []) is True
+        assert check_agent_visibility_access(agent, None, []) is True
 
     def test_access_admin_bypass(self, service):
         agent = MagicMock(visibility="private", owner_email="admin@test.com")
         # token_teams=None and user_email=None → admin bypass
-        assert service._check_agent_access(agent, None, None) is True
+        assert check_agent_visibility_access(agent, None, None) is True
 
     def test_access_team_agent_with_matching_team(self, service):
         agent = MagicMock(visibility="team", team_id="team-alpha")
-        assert service._check_agent_access(agent, "user@test.com", ["team-alpha"]) is True
+        assert check_agent_visibility_access(agent, "user@test.com", ["team-alpha"]) is True
 
     def test_access_team_agent_with_wrong_team(self, service):
         agent = MagicMock(visibility="team", team_id="team-alpha")
-        assert service._check_agent_access(agent, "user@test.com", ["team-beta"]) is False
+        assert check_agent_visibility_access(agent, "user@test.com", ["team-beta"]) is False
 
     def test_access_private_agent_owner_match(self, service):
         agent = MagicMock(visibility="private", owner_email="owner@test.com")
-        assert service._check_agent_access(agent, "owner@test.com", ["team-1"]) is True
+        assert check_agent_visibility_access(agent, "owner@test.com", ["team-1"]) is True
 
     def test_access_private_agent_non_owner(self, service):
         agent = MagicMock(visibility="private", owner_email="owner@test.com")
-        assert service._check_agent_access(agent, "other@test.com", ["team-1"]) is False
+        assert check_agent_visibility_access(agent, "other@test.com", ["team-1"]) is False
 
     def test_access_public_only_token_denies_non_public(self, service):
         agent = MagicMock(visibility="team", team_id="team-1")
         # Empty token_teams = public-only token
-        assert service._check_agent_access(agent, "user@test.com", []) is False
+        assert check_agent_visibility_access(agent, "user@test.com", []) is False
 
     def test_access_no_user_email_denies_non_public(self, service):
         agent = MagicMock(visibility="team", team_id="team-1")
-        assert service._check_agent_access(agent, None, ["team-1"]) is False
+        assert check_agent_visibility_access(agent, None, ["team-1"]) is False
 
     # --- resolve_agent ---
 
@@ -189,7 +190,7 @@ class TestA2AGatewayService:
         with pytest.raises(A2AGatewayAgentNotFoundError):
             service.resolve_agent(mock_db, "agent-456", "attacker@test.com", ["some-team"])
 
-    @patch("mcpgateway.services.a2a_gateway_service.decode_auth")
+    @patch("mcpgateway.services.a2a_service.decode_auth")
     @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
     def test_resolve_agent_success(self, mock_get_for_update, mock_decode_auth, service, mock_db):
         agent = MagicMock(
@@ -254,7 +255,7 @@ class TestA2AGatewayService:
         with pytest.raises(A2AGatewayAgentIncompatibleError, match="not compatible"):
             service.resolve_agent(mock_db, "agent-custom", "user@test.com", [])
 
-    @patch("mcpgateway.services.a2a_gateway_service.decode_auth")
+    @patch("mcpgateway.services.a2a_service.decode_auth")
     @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
     def test_resolve_agent_jsonrpc_type_accepted(self, mock_get_for_update, mock_decode_auth, service, mock_db):
         """jsonrpc agent type should be accepted by the A2A gateway."""
@@ -270,7 +271,7 @@ class TestA2AGatewayService:
         resolved_agent, _ = service.resolve_agent(mock_db, "agent-jsonrpc", "user@test.com", [])
         assert resolved_agent == agent
 
-    @patch("mcpgateway.services.a2a_gateway_service.decode_auth")
+    @patch("mcpgateway.services.a2a_service.decode_auth")
     @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
     def test_resolve_agent_generic_type_accepted(self, mock_get_for_update, mock_decode_auth, service, mock_db):
         """generic agent type should be accepted by the A2A gateway."""
@@ -286,7 +287,7 @@ class TestA2AGatewayService:
         resolved_agent, _ = service.resolve_agent(mock_db, "agent-generic", "user@test.com", [])
         assert resolved_agent == agent
 
-    @patch("mcpgateway.services.a2a_gateway_service.decode_auth")
+    @patch("mcpgateway.services.a2a_service.decode_auth")
     @patch("mcpgateway.services.a2a_gateway_service.get_for_update")
     def test_resolve_agent_custom_type_with_trailing_slash_accepted(self, mock_get_for_update, mock_decode_auth, service, mock_db):
         """Custom agent type with URL ending in '/' should be accepted (URL-based JSON-RPC hint)."""

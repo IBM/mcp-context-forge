@@ -20,8 +20,8 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import get_for_update
+from mcpgateway.services.a2a_service import check_agent_visibility_access, prepare_agent_auth
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.utils.services_auth import decode_auth
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -132,49 +132,6 @@ class A2AGatewayService:
     JSON-RPC request validation, and forwarding requests to downstream A2A agents.
     """
 
-    def _check_agent_access(
-        self,
-        agent: DbA2AAgent,
-        user_email: Optional[str],
-        token_teams: Optional[List[str]],
-    ) -> bool:
-        """Check if user has access to agent based on visibility rules.
-
-        Mirrors the access check in A2AAgentService._check_agent_access.
-
-        Args:
-            agent: The A2A agent to check access for.
-            user_email: User's email for owner matching.
-            token_teams: Teams from JWT. None = admin bypass, [] = public-only.
-
-        Returns:
-            True if access is allowed.
-        """
-        if agent.visibility == "public":
-            return True
-
-        if token_teams is None and user_email is None:
-            return True
-
-        if not user_email:
-            return False
-
-        is_public_only_token = token_teams is not None and len(token_teams) == 0
-        if is_public_only_token:
-            return False
-
-        if agent.visibility == "team" and agent.team_id:
-            if token_teams is not None:
-                return agent.team_id in token_teams
-            return False
-
-        if agent.visibility == "private":
-            if token_teams is not None and len(token_teams) > 0:
-                return agent.owner_email == user_email
-            return False
-
-        return False
-
     def resolve_agent(
         self,
         db: Session,
@@ -187,9 +144,9 @@ class A2AGatewayService:
         Follows the same lock-read-release pattern as a2a_service.invoke_agent:
         1. Lookup agent by ID
         2. Lock the row for read consistency
-        3. Check visibility/team access
+        3. Check visibility/team access (shared check_agent_visibility_access)
         4. Verify agent is enabled
-        5. Decrypt auth credentials
+        5. Decrypt auth credentials (shared prepare_agent_auth)
         6. Release DB connection before HTTP calls
 
         Args:
@@ -211,7 +168,7 @@ class A2AGatewayService:
             raise A2AGatewayAgentNotFoundError(f"A2A agent not found: {agent_id}")
 
         # Return 404 (not 403) to avoid leaking existence of private agents
-        if not self._check_agent_access(agent, user_email, token_teams):
+        if not check_agent_visibility_access(agent, user_email, token_teams):
             raise A2AGatewayAgentNotFoundError(f"A2A agent not found: {agent_id}")
 
         if not agent.enabled:
@@ -228,24 +185,8 @@ class A2AGatewayService:
                 f"Use MCP tool wrapping to interact with this agent."
             )
 
-        # Decrypt auth credentials
-        auth_headers = self._prepare_auth_headers(agent)
-
-        # Extract endpoint URL (may include query param auth)
-        endpoint_url = agent.endpoint_url
-        if agent.auth_type == "query_param" and agent.auth_query_params:
-            from mcpgateway.utils.url_auth import apply_query_param_auth
-
-            auth_query_params_decrypted: Dict[str, str] = {}
-            for param_key, encrypted_value in agent.auth_query_params.items():
-                if encrypted_value:
-                    try:
-                        decrypted = decode_auth(encrypted_value)
-                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
-                    except Exception:
-                        logger.debug(f"Failed to decrypt query param '{param_key}' for A2A gateway")
-            if auth_query_params_decrypted:
-                endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params_decrypted)
+        # Decrypt auth credentials and prepare endpoint URL using shared function
+        auth_headers, endpoint_url, _ = prepare_agent_auth(agent, error_class=A2AGatewayError)
 
         # Store endpoint URL on agent object for later use (avoids re-reading from DB)
         agent._gateway_endpoint_url = endpoint_url  # type: ignore[attr-defined]
@@ -258,26 +199,6 @@ class A2AGatewayService:
         db.close()
 
         return agent, auth_headers
-
-    def _prepare_auth_headers(self, agent: DbA2AAgent) -> Dict[str, str]:
-        """Decrypt and prepare auth headers for downstream agent requests.
-
-        Args:
-            agent: The A2A agent with auth configuration.
-
-        Returns:
-            Dict of HTTP headers for authentication.
-        """
-        auth_headers: Dict[str, str] = {}
-        if agent.auth_type in ("basic", "bearer", "authheaders") and agent.auth_value:
-            if isinstance(agent.auth_value, str):
-                try:
-                    auth_headers = decode_auth(agent.auth_value)
-                except Exception as e:
-                    raise A2AGatewayError(f"Failed to decrypt authentication for agent '{agent.slug}': {e}")
-            elif isinstance(agent.auth_value, dict):
-                auth_headers = {str(k): str(v) for k, v in agent.auth_value.items()}
-        return auth_headers
 
     def generate_agent_card(self, agent: DbA2AAgent, base_url: str) -> Dict[str, Any]:
         """Generate an A2A-spec compliant Agent Card for a registered agent.

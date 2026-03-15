@@ -147,6 +147,112 @@ class A2AAgentNameConflictError(A2AAgentError):
         super().__init__(message)
 
 
+def check_agent_visibility_access(
+    agent: DbA2AAgent,
+    user_email: Optional[str],
+    token_teams: Optional[List[str]],
+) -> bool:
+    """Check if user has access to an A2A agent based on visibility rules.
+
+    Shared access control logic used by both A2AAgentService (MCP tool wrapper)
+    and A2AGatewayService (native A2A protocol gateway).
+
+    Access rules (matching tools/resources/prompts):
+    - public visibility: Always allowed
+    - token_teams is None AND user_email is None: Admin bypass (unrestricted access)
+    - No user context (but not admin): Deny access to non-public agents
+    - team visibility: Allowed if agent.team_id in token_teams
+    - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
+
+    Args:
+        agent: The agent to check access for.
+        user_email: User's email for owner matching.
+        token_teams: Teams from JWT. None = admin bypass, [] = public-only (no owner access).
+
+    Returns:
+        True if access allowed, False otherwise.
+    """
+    if agent.visibility == "public":
+        return True
+
+    # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
+    if token_teams is None and user_email is None:
+        return True
+
+    if not user_email:
+        return False
+
+    # Public-only tokens (empty teams array) can ONLY access public agents
+    is_public_only_token = token_teams is not None and len(token_teams) == 0
+    if is_public_only_token:
+        return False
+
+    # Owner can access their own private agents
+    if agent.visibility == "private" and agent.owner_email and agent.owner_email == user_email:
+        return True
+
+    # Team agents: check team membership
+    if agent.visibility == "team":
+        return agent.team_id in token_teams
+
+    return False
+
+
+def prepare_agent_auth(
+    agent: DbA2AAgent,
+    error_class: type = A2AAgentError,
+) -> tuple:
+    """Decrypt and prepare authentication for a downstream A2A agent.
+
+    Shared auth preparation logic used by both A2AAgentService.invoke_agent
+    (MCP tool wrapper) and A2AGatewayService.resolve_agent (native A2A gateway).
+
+    Handles both header-based auth (basic, bearer, authheaders) and
+    query-param auth (decrypts and applies params to the endpoint URL).
+
+    Args:
+        agent: The A2A agent with auth configuration.
+        error_class: Exception class to raise on decryption failures.
+
+    Returns:
+        Tuple of (auth_headers, endpoint_url, auth_query_params_decrypted).
+        - auth_headers: Dict of HTTP headers for authentication.
+        - endpoint_url: The agent's endpoint URL (with query params applied if applicable).
+        - auth_query_params_decrypted: Decrypted query params dict (for URL sanitization), or None.
+    """
+    endpoint_url = agent.endpoint_url
+    auth_query_params_decrypted: Optional[Dict[str, str]] = None
+
+    # Handle query_param auth - decrypt and apply to URL
+    if agent.auth_type == "query_param" and agent.auth_query_params:
+        from mcpgateway.utils.url_auth import apply_query_param_auth  # pylint: disable=import-outside-toplevel
+
+        auth_query_params_decrypted = {}
+        for param_key, encrypted_value in agent.auth_query_params.items():
+            if encrypted_value:
+                try:
+                    decrypted = decode_auth(encrypted_value)
+                    auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
+                except Exception:
+                    logger.debug(f"Failed to decrypt query param '{param_key}' for A2A agent auth")
+        if auth_query_params_decrypted:
+            endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params_decrypted)
+
+    # Decode auth_value for supported auth types
+    auth_headers: Dict[str, str] = {}
+    if agent.auth_type in ("basic", "bearer", "authheaders") and agent.auth_value:
+        if isinstance(agent.auth_value, str):
+            try:
+                auth_headers = decode_auth(agent.auth_value)
+            except Exception as e:
+                agent_label = getattr(agent, "slug", None) or getattr(agent, "name", agent.id)
+                raise error_class(f"Failed to decrypt authentication for agent '{agent_label}': {e}")
+        elif isinstance(agent.auth_value, dict):
+            auth_headers = {str(k): str(v) for k, v in agent.auth_value.items()}
+
+    return auth_headers, endpoint_url, auth_query_params_decrypted
+
+
 class A2AAgentService(BaseService):
     """Service for managing A2A agents in the gateway.
 
@@ -219,50 +325,17 @@ class A2AAgentService(BaseService):
     ) -> bool:
         """Check if user has access to agent based on visibility rules.
 
-        Access rules (matching tools/resources/prompts):
-        - public visibility: Always allowed
-        - token_teams is None AND user_email is None: Admin bypass (unrestricted access)
-        - No user context (but not admin): Deny access to non-public agents
-        - team visibility: Allowed if agent.team_id in token_teams
-        - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
+        Delegates to the shared module-level check_agent_visibility_access().
 
         Args:
-            agent: The agent to check access for
-            user_email: User's email for owner matching
-            token_teams: Teams from JWT. None = admin bypass, [] = public-only (no owner access)
+            agent: The agent to check access for.
+            user_email: User's email for owner matching.
+            token_teams: Teams from JWT. None = admin bypass, [] = public-only (no owner access).
 
         Returns:
             True if access allowed, False otherwise.
         """
-        # Public agents are accessible by everyone
-        if agent.visibility == "public":
-            return True
-
-        # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
-        # This happens when is_admin=True and no team scoping in token
-        if token_teams is None and user_email is None:
-            return True
-
-        # No user context (but not admin) = deny access to non-public agents
-        if not user_email:
-            return False
-
-        # Public-only tokens (empty teams array) can ONLY access public agents
-        is_public_only_token = token_teams is not None and len(token_teams) == 0
-        if is_public_only_token:
-            return False  # Already checked public above
-
-        # Owner can access their own private agents
-        if agent.visibility == "private" and agent.owner_email and agent.owner_email == user_email:
-            return True
-
-        # Team agents: check team membership
-        # At this point token_teams is guaranteed to be a non-empty list
-        # (None handled by admin bypass, [] by public-only check)
-        if agent.visibility == "team":
-            return agent.team_id in token_teams
-
-        return False
+        return check_agent_visibility_access(agent, user_email, token_teams)
 
     async def register_agent(
         self,
@@ -1332,41 +1405,11 @@ class A2AAgentService(BaseService):
 
         # Extract all needed data to local variables before releasing DB connection
         agent_id = agent.id
-        agent_endpoint_url = agent.endpoint_url
         agent_type = agent.agent_type
         agent_protocol_version = agent.protocol_version
-        agent_auth_type = agent.auth_type
-        agent_auth_value = agent.auth_value
-        agent_auth_query_params = agent.auth_query_params
 
-        # Handle query_param auth - decrypt and apply to URL
-        auth_query_params_decrypted: Optional[Dict[str, str]] = None
-        if agent_auth_type == "query_param" and agent_auth_query_params:
-            # First-Party
-            from mcpgateway.utils.url_auth import apply_query_param_auth  # pylint: disable=import-outside-toplevel
-
-            auth_query_params_decrypted = {}
-            for param_key, encrypted_value in agent_auth_query_params.items():
-                if encrypted_value:
-                    try:
-                        decrypted = decode_auth(encrypted_value)
-                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
-                    except Exception:
-                        logger.debug(f"Failed to decrypt query param '{param_key}' for A2A agent invocation")
-            if auth_query_params_decrypted:
-                agent_endpoint_url = apply_query_param_auth(agent_endpoint_url, auth_query_params_decrypted)
-
-        # Decode auth_value for supported auth types (before closing session)
-        auth_headers = {}
-        if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
-            # Decrypt auth_value and extract headers (follows gateway_service pattern)
-            if isinstance(agent_auth_value, str):
-                try:
-                    auth_headers = decode_auth(agent_auth_value)
-                except Exception as e:
-                    raise A2AAgentError(f"Failed to decrypt authentication for agent '{agent_name}': {e}")
-            elif isinstance(agent_auth_value, dict):
-                auth_headers = {str(k): str(v) for k, v in agent_auth_value.items()}
+        # Decrypt auth and prepare endpoint URL using shared function
+        auth_headers, agent_endpoint_url, auth_query_params_decrypted = prepare_agent_auth(agent, error_class=A2AAgentError)
 
         # ═══════════════════════════════════════════════════════════════════════════
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls

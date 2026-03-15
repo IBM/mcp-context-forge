@@ -180,9 +180,9 @@ async def get_agent_card(
     try:
         user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
 
-        # Admin bypass for token_teams
+        # Admin bypass: set user_email=None so check_agent_visibility_access grants unrestricted access
         if is_admin and token_teams is None:
-            pass  # Unrestricted
+            user_email = None
         elif token_teams is None:
             token_teams = []  # Non-admin without teams = public-only
 
@@ -261,8 +261,9 @@ async def jsonrpc_endpoint(
     try:
         user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
 
+        # Admin bypass: set user_email=None so check_agent_visibility_access grants unrestricted access
         if is_admin and token_teams is None:
-            pass
+            user_email = None
         elif token_teams is None:
             token_teams = []
 
@@ -384,8 +385,9 @@ async def _handle_get_authenticated_card(
     try:
         user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
 
+        # Admin bypass: set user_email=None so check_agent_visibility_access grants unrestricted access
         if is_admin and token_teams is None:
-            pass
+            user_email = None
         elif token_teams is None:
             token_teams = []
 
