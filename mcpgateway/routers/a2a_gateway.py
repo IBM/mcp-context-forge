@@ -39,7 +39,6 @@ from mcpgateway.services.a2a_gateway_service import (
     A2AGatewayService,
     fetch_downstream_agent_card,
     JSONRPC_INTERNAL_ERROR,
-    JSONRPC_INVALID_REQUEST,
     JSONRPC_PARSE_ERROR,
     make_jsonrpc_error,
 )
@@ -61,7 +60,14 @@ _stream_semaphore = asyncio.Semaphore(settings.a2a_gateway_max_concurrent_stream
 
 
 def get_db():
-    """Database session dependency for A2A gateway router."""
+    """Database session dependency for A2A gateway router.
+
+    Yields:
+        Session: SQLAlchemy database session.
+
+    Raises:
+        Exception: Any database connection or session errors.
+    """
     # First-Party
     from mcpgateway.db import SessionLocal
 
@@ -588,7 +594,15 @@ async def _run_pre_invoke_hook(
     user_email: Optional[str],
     user_id: Optional[str],
 ) -> None:
-    """Run A2A gateway pre-invoke plugin hook if plugins are enabled."""
+    """Run A2A gateway pre-invoke plugin hook if plugins are enabled.
+
+    Args:
+        agent_id: A2A agent identifier.
+        method: JSON-RPC method name.
+        params: Method parameters.
+        user_email: Email of the requesting user.
+        user_id: User identifier.
+    """
     try:
         # First-Party
         from mcpgateway.plugins.framework import get_plugin_manager
@@ -622,7 +636,15 @@ async def _run_post_invoke_hook(
     duration_ms: float,
     is_error: bool,
 ) -> None:
-    """Run A2A gateway post-invoke plugin hook if plugins are enabled."""
+    """Run A2A gateway post-invoke plugin hook if plugins are enabled.
+
+    Args:
+        agent_id: A2A agent identifier.
+        method: JSON-RPC method name.
+        result: Method result or error response.
+        duration_ms: Request duration in milliseconds.
+        is_error: Whether the result represents an error.
+    """
     try:
         # First-Party
         from mcpgateway.plugins.framework import get_plugin_manager

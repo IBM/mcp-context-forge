@@ -70,19 +70,13 @@ A2A_UNSUPPORTED_OPERATION = -32004
 class A2AGatewayError(Exception):
     """Base exception for A2A gateway errors."""
 
-    pass
-
 
 class A2AGatewayAgentNotFoundError(A2AGatewayError):
     """Raised when the requested agent is not found or inaccessible."""
 
-    pass
-
 
 class A2AGatewayAgentDisabledError(A2AGatewayError):
     """Raised when the requested agent is disabled."""
-
-    pass
 
 
 class A2AGatewayAgentIncompatibleError(A2AGatewayError):
@@ -93,8 +87,6 @@ class A2AGatewayAgentIncompatibleError(A2AGatewayError):
     types (openai, anthropic, custom) use proprietary request formats and must
     be accessed through MCP tool wrapping instead.
     """
-
-    pass
 
 
 # Agent types that speak JSON-RPC 2.0 and are compatible with the A2A gateway
@@ -272,7 +264,7 @@ class A2AGatewayService:
         auth_headers, endpoint_url, auth_query_params_decrypted = prepare_agent_auth(agent, error_class=A2AGatewayError)
 
         # Store endpoint URL on agent object for later use (avoids re-reading from DB)
-        agent._gateway_endpoint_url = endpoint_url  # type: ignore[attr-defined]
+        agent._gateway_endpoint_url = endpoint_url  # type: ignore[attr-defined]  # pylint: disable=protected-access
 
         # Detach agent from session so attributes remain accessible after close
         db.expunge(agent)

@@ -19,7 +19,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 from pydantic import ValidationError
-from sqlalchemy import and_, case, delete, desc, func, or_, select
+from sqlalchemy import and_, case, delete, desc, func, or_, select  # noqa: F401
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -219,6 +219,9 @@ def prepare_agent_auth(
         - auth_headers: Dict of HTTP headers for authentication.
         - endpoint_url: The agent's endpoint URL (with query params applied if applicable).
         - auth_query_params_decrypted: Decrypted query params dict (for URL sanitization), or None.
+
+    Raises:
+        error_class: If authentication credential decryption fails.
     """
     endpoint_url = agent.endpoint_url
     auth_query_params_decrypted: Optional[Dict[str, str]] = None
@@ -1707,102 +1710,6 @@ class A2AAgentService(BaseService):
             agent.auth_value = encode_auth(agent.auth_value)
         return agent
 
-    def compute_agent_metrics(self, db_agent: DbA2AAgent, db: Session) -> Dict[str, Any]:
-        """Compute aggregated metrics for an A2A agent.
-
-        Performs efficient single-pass aggregation when metrics are loaded,
-        otherwise uses a single SQL query with aggregation.
-
-        Args:
-            db_agent: The A2A agent instance
-            db: Database session for SQL queries
-
-        Returns:
-            Dict containing:
-                - total_executions, successful_executions, failed_executions
-                - failure_rate (fraction 0-1), min/max/avg_response_time, last_execution_time
-        """
-        # Third-Party
-        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
-
-        # Check if metrics relationship is loaded
-        metrics_loaded = hasattr(db_agent, "_sa_instance_state") and "metrics" in db_agent._sa_instance_state.committed_state
-
-        # If metrics are loaded, compute everything in a single pass (efficient)
-        if metrics_loaded and db_agent.metrics:
-            total = 0
-            successful = 0
-            min_rt: Optional[float] = None
-            max_rt: Optional[float] = None
-            sum_rt = 0.0
-            last_time: Optional[datetime] = None
-
-            for m in db_agent.metrics:
-                total += 1
-                if m.is_success:
-                    successful += 1
-                rt = m.response_time
-                if min_rt is None or rt < min_rt:
-                    min_rt = rt
-                if max_rt is None or rt > max_rt:
-                    max_rt = rt
-                sum_rt += rt
-                if last_time is None or m.timestamp > last_time:
-                    last_time = m.timestamp
-
-            failed = total - successful
-            return {
-                "total_executions": total,
-                "successful_executions": successful,
-                "failed_executions": failed,
-                "failure_rate": failed / total if total > 0 else 0.0,
-                "min_response_time": min_rt,
-                "max_response_time": max_rt,
-                "avg_response_time": sum_rt / total if total > 0 else None,
-                "last_execution_time": last_time,
-            }
-        elif metrics_loaded and not db_agent.metrics:
-            # Metrics loaded but empty
-            return {
-                "total_executions": 0,
-                "successful_executions": 0,
-                "failed_executions": 0,
-                "failure_rate": 0.0,
-                "min_response_time": None,
-                "max_response_time": None,
-                "avg_response_time": None,
-                "last_execution_time": None,
-            }
-
-        # Use single SQL query with full aggregation (efficient)
-        result = (
-            db.query(
-                func.count(A2AAgentMetric.id),  # pylint: disable=not-callable
-                func.sum(case((A2AAgentMetric.is_success.is_(True), 1), else_=0)),
-                func.min(A2AAgentMetric.response_time),  # pylint: disable=not-callable
-                func.max(A2AAgentMetric.response_time),  # pylint: disable=not-callable
-                func.avg(A2AAgentMetric.response_time),  # pylint: disable=not-callable
-                func.max(A2AAgentMetric.timestamp),  # pylint: disable=not-callable
-            )
-            .filter(A2AAgentMetric.a2a_agent_id == db_agent.id)
-            .one()
-        )
-
-        total = result[0] or 0
-        successful = result[1] or 0
-        failed = total - successful
-
-        return {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failed / total if total > 0 else 0.0,
-            "min_response_time": result[2],
-            "max_response_time": result[3],
-            "avg_response_time": float(result[4]) if result[4] is not None else None,
-            "last_execution_time": result[5],
-        }
-
     def convert_agent_to_read(self, db_agent: DbA2AAgent, include_metrics: bool = False, db: Optional[Session] = None, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
         """Convert database model to schema.
 
@@ -1820,6 +1727,7 @@ class A2AAgentService(BaseService):
 
         Raises:
             A2AAgentNotFoundError: If the provided agent is not found or invalid.
+            ValueError: If db parameter is None when include_metrics is True.
 
         """
 
@@ -1840,10 +1748,8 @@ class A2AAgentService(BaseService):
 
         # Compute metrics only if requested (avoids N+1 queries in list operations)
         if include_metrics:
-            if db is None:
-                raise ValueError("db parameter is required when include_metrics=True")
-            # Use service method for efficient single-pass aggregation
-            metrics_dict = self.compute_agent_metrics(db_agent, db)
+            # Use ORM property for efficient single-pass aggregation
+            metrics_dict = db_agent.metrics_summary
             metrics = A2AAgentMetrics(
                 total_executions=metrics_dict["total_executions"],
                 successful_executions=metrics_dict["successful_executions"],

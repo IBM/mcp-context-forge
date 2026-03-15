@@ -131,41 +131,41 @@ class A2AClientService:
                     },
                 )
                 return result
-            else:
-                raw_error = f"HTTP {response.status_code}: {response.text}"
-                error_message = sanitize_exception_message(raw_error, auth_query_params_decrypted)
 
-                structured_logger.log(
-                    level="ERROR",
-                    message=f"A2A client request failed: {method} to {agent_id}",
-                    component="a2a_client_service",
-                    user_id=user_id,
-                    user_email=user_email,
-                    correlation_id=correlation_id,
-                    duration_ms=duration_ms,
-                    error_details={"error_type": "A2AClientHTTPError", "error_message": error_message},
-                    metadata={
-                        "event": "a2a_client_request_failed",
-                        "agent_id": agent_id,
-                        "method": method,
-                        "status_code": response.status_code,
-                    },
-                )
+            raw_error = f"HTTP {response.status_code}: {response.text}"
+            error_message = sanitize_exception_message(raw_error, auth_query_params_decrypted)
 
-                # Try to preserve the downstream's JSON-RPC error structure if present.
-                # Some agents return non-200 HTTP with a valid JSON-RPC error body.
-                try:
-                    downstream_body = response.json()
-                    if isinstance(downstream_body, dict) and "error" in downstream_body and "jsonrpc" in downstream_body:
-                        return downstream_body
-                except Exception:
-                    pass
+            structured_logger.log(
+                level="ERROR",
+                message=f"A2A client request failed: {method} to {agent_id}",
+                component="a2a_client_service",
+                user_id=user_id,
+                user_email=user_email,
+                correlation_id=correlation_id,
+                duration_ms=duration_ms,
+                error_details={"error_type": "A2AClientHTTPError", "error_message": error_message},
+                metadata={
+                    "event": "a2a_client_request_failed",
+                    "agent_id": agent_id,
+                    "method": method,
+                    "status_code": response.status_code,
+                },
+            )
 
-                return make_jsonrpc_error(
-                    JSONRPC_INTERNAL_ERROR,
-                    f"Downstream agent error: {error_message}",
-                    body.get("id"),
-                )
+            # Try to preserve the downstream's JSON-RPC error structure if present.
+            # Some agents return non-200 HTTP with a valid JSON-RPC error body.
+            try:
+                downstream_body = response.json()
+                if isinstance(downstream_body, dict) and "error" in downstream_body and "jsonrpc" in downstream_body:
+                    return downstream_body
+            except Exception:
+                pass
+
+            return make_jsonrpc_error(
+                JSONRPC_INTERNAL_ERROR,
+                f"Downstream agent error: {error_message}",
+                body.get("id"),
+            )
 
         except httpx.TimeoutException:
             duration_ms = (datetime.now(timezone.utc) - call_start).total_seconds() * 1000
@@ -213,7 +213,7 @@ class A2AClientService:
         endpoint_url: str,
         auth_headers: Dict[str, str],
         body: Dict[str, Any],
-        *,
+        *,  # noqa: DAR101,DAR301
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         agent_id: Optional[str] = None,
