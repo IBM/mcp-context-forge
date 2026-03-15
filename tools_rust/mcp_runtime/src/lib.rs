@@ -7984,9 +7984,10 @@ mod unit_tests {
         RuntimeConfig, RuntimeError, RuntimeSessionRecord, SessionAuthReuseMissReason,
         TrustedPeerAddr, URL_SAFE_NO_PAD, accepts_sse, active_runtime_session_count,
         affinity_forward_error_response, auth_binding_fingerprint,
-        authenticate_public_request_if_needed, batch_rejected_response, build_public_router,
-        can_reuse_session_auth, can_use_direct_prompts_get, can_use_direct_resources_read,
-        decode_request, derive_backend_authenticate_url, derive_backend_completion_complete_url,
+        authenticate_public_request_if_needed, authorize_server_method_via_backend,
+        batch_rejected_response, build_public_router, can_reuse_session_auth,
+        can_use_direct_prompts_get, can_use_direct_resources_read, decode_request,
+        derive_backend_authenticate_url, derive_backend_completion_complete_url,
         derive_backend_initialize_url, derive_backend_logging_set_level_url,
         derive_backend_notifications_cancelled_url, derive_backend_notifications_initialized_url,
         derive_backend_notifications_message_url, derive_backend_prompts_get_authz_url,
@@ -7999,26 +8000,30 @@ mod unit_tests {
         derive_backend_sampling_create_message_url, derive_backend_session_delete_url,
         derive_backend_tools_call_resolve_url, derive_backend_tools_call_url,
         derive_backend_tools_list_authz_url, derive_backend_tools_list_url,
-        derive_backend_transport_url, encode_internal_auth_context_header, event_store_key_prefix,
+        derive_backend_transport_url, direct_server_prompts_get, direct_server_prompts_list,
+        direct_server_resource_templates_list, direct_server_resources_list,
+        direct_server_resources_read, encode_internal_auth_context_header, event_store_key_prefix,
         extract_client_capabilities, forward_initialize_to_backend, forward_to_backend,
-        get_runtime_session, handle_initialize_with_session_core, has_server_scope, hex_decode,
-        hex_encode, inject_server_id_header, inject_session_header, invalid_request_response,
+        forward_transport_request, get_runtime_session, handle_initialize_with_session_core,
+        handle_resume_transport_request, has_server_scope, hex_decode, hex_encode,
+        inject_server_id_header, inject_session_header, invalid_request_response,
         is_affinity_forwarded_request, maybe_bind_session_auth_context,
         maybe_upsert_runtime_session_from_transport_response, normalize_postgres_database_url,
-        parse_error_response, pool_owner_key, public_client_ip, query_param,
-        remove_runtime_session, replay_events_endpoint, requested_initialize_session_id,
-        requested_protocol_version, response_from_affinity_forward_response, run,
-        runtime_session_access_outcome, runtime_session_id_from_request, runtime_session_key,
-        send_tools_list_to_backend, send_transport_to_backend, serve_http, serve_uds,
-        store_event_endpoint, transport_delete_server_scoped, transport_get_server_scoped,
-        upsert_runtime_session, validate_initialize_params, validate_protocol_version,
-        validate_runtime_session_request,
+        parse_error_response, pool_owner_key, prompt_arguments_from_schema, public_client_ip,
+        query_param, remove_runtime_session, replay_events_endpoint,
+        requested_initialize_session_id, requested_protocol_version,
+        response_from_affinity_forward_response, run, runtime_session_access_outcome,
+        runtime_session_id_from_request, runtime_session_key, send_tools_list_to_backend,
+        send_transport_to_backend, serve_http, serve_uds, store_event_endpoint,
+        transport_delete_server_scoped, transport_get_server_scoped, upsert_runtime_session,
+        validate_initialize_params, validate_protocol_version, validate_runtime_session_request,
     };
     use axum::{
         Json, Router,
         body::to_bytes,
         extract::{Path as AxumPath, State},
         http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
+        response::Response,
         routing::{get, post},
     };
     use reqwest::Url;
@@ -8050,6 +8055,41 @@ mod unit_tests {
                 .expect("serve test router");
         });
         format!("http://{addr}")
+    }
+
+    fn trusted_auth_context_json() -> Value {
+        json!({
+            "email": "owner@example.com",
+            "teams": ["team-1"],
+            "is_authenticated": true
+        })
+    }
+
+    fn trusted_server_headers(server_id: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer alpha"),
+        );
+        headers.insert(
+            HeaderName::from_static("x-contextforge-auth-context"),
+            encode_internal_auth_context_header(&trusted_auth_context_json())
+                .expect("encode auth context"),
+        );
+        headers.insert(
+            HeaderName::from_static("x-contextforge-server-id"),
+            HeaderValue::from_str(server_id).expect("valid server id"),
+        );
+        headers
+    }
+
+    async fn response_json(response: Response) -> Value {
+        serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("body"),
+        )
+        .expect("json body")
     }
 
     fn test_config() -> RuntimeConfig {
@@ -10067,6 +10107,750 @@ mod unit_tests {
 
         let error = affinity_forward_error_response("publish failed", "boom");
         assert_eq!(error.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn direct_server_list_methods_fall_back_without_trusted_context() {
+        let backend = Router::new()
+            .route(
+                "/_internal/mcp/resources/list",
+                post(|| async { Json(json!({"marker": "resources-list"})) }),
+            )
+            .route(
+                "/_internal/mcp/resources/templates/list",
+                post(|| async { Json(json!({"marker": "resource-templates-list"})) }),
+            )
+            .route(
+                "/_internal/mcp/prompts/list",
+                post(|| async { Json(json!({"marker": "prompts-list"})) }),
+            );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        let state = AppState::new(&config).expect("state");
+
+        let resources_response =
+            direct_server_resources_list(&state, HeaderMap::new(), Some(json!(1))).await;
+        assert_eq!(resources_response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(resources_response).await["result"]["marker"],
+            "resources-list"
+        );
+
+        let templates_response =
+            direct_server_resource_templates_list(&state, HeaderMap::new(), Some(json!(2))).await;
+        assert_eq!(templates_response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(templates_response).await["result"]["marker"],
+            "resource-templates-list"
+        );
+
+        let prompts_response =
+            direct_server_prompts_list(&state, HeaderMap::new(), Some(json!(3))).await;
+        assert_eq!(prompts_response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(prompts_response).await["result"]["marker"],
+            "prompts-list"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_server_read_methods_fall_back_for_missing_required_params() {
+        let backend = Router::new()
+            .route(
+                "/_internal/mcp/resources/read",
+                post(|| async { Json(json!({"marker": "resources-read"})) }),
+            )
+            .route(
+                "/_internal/mcp/prompts/get",
+                post(|| async { Json(json!({"marker": "prompts-get"})) }),
+            );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        let state = AppState::new(&config).expect("state");
+        let trusted_headers = trusted_server_headers("server-1");
+
+        let resources_request = JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            method: "resources/read".to_string(),
+            params: json!({}),
+            id: Some(json!(11)),
+        };
+        let resources_response = direct_server_resources_read(
+            &state,
+            trusted_headers.clone(),
+            Some(json!(11)),
+            &resources_request,
+            Bytes::from_static(
+                br#"{"jsonrpc":"2.0","id":11,"method":"resources/read","params":{}}"#,
+            ),
+        )
+        .await;
+        assert_eq!(resources_response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(resources_response).await["result"]["marker"],
+            "resources-read"
+        );
+
+        let prompts_request = JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            method: "prompts/get".to_string(),
+            params: json!({}),
+            id: Some(json!(12)),
+        };
+        let prompts_response = direct_server_prompts_get(
+            &state,
+            trusted_headers,
+            Some(json!(12)),
+            &prompts_request,
+            Bytes::from_static(br#"{"jsonrpc":"2.0","id":12,"method":"prompts/get","params":{}}"#),
+        )
+        .await;
+        assert_eq!(prompts_response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(prompts_response).await["result"]["marker"],
+            "prompts-get"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_server_methods_fall_back_after_authz_success_without_db_pool() {
+        let backend = Router::new()
+            .route(
+                "/_internal/mcp/resources/list/authz",
+                post(|| async { StatusCode::OK }),
+            )
+            .route(
+                "/_internal/mcp/resources/templates/list/authz",
+                post(|| async { StatusCode::OK }),
+            )
+            .route(
+                "/_internal/mcp/prompts/list/authz",
+                post(|| async { StatusCode::OK }),
+            )
+            .route(
+                "/_internal/mcp/resources/read/authz",
+                post(|| async { StatusCode::OK }),
+            )
+            .route(
+                "/_internal/mcp/prompts/get/authz",
+                post(|| async { StatusCode::OK }),
+            )
+            .route(
+                "/_internal/mcp/resources/list",
+                post(|| async { Json(json!({"marker": "resources-list-db-fallback"})) }),
+            )
+            .route(
+                "/_internal/mcp/resources/templates/list",
+                post(|| async { Json(json!({"marker": "resource-templates-db-fallback"})) }),
+            )
+            .route(
+                "/_internal/mcp/prompts/list",
+                post(|| async { Json(json!({"marker": "prompts-list-db-fallback"})) }),
+            )
+            .route(
+                "/_internal/mcp/resources/read",
+                post(|| async { Json(json!({"marker": "resources-read-db-fallback"})) }),
+            )
+            .route(
+                "/_internal/mcp/prompts/get",
+                post(|| async { Json(json!({"marker": "prompts-get-db-fallback"})) }),
+            );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        let state = AppState::new(&config).expect("state");
+        let trusted_headers = trusted_server_headers("server-1");
+
+        let resources_list =
+            direct_server_resources_list(&state, trusted_headers.clone(), Some(json!(21))).await;
+        assert_eq!(resources_list.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(resources_list).await["result"]["marker"],
+            "resources-list-db-fallback"
+        );
+
+        let templates_list =
+            direct_server_resource_templates_list(&state, trusted_headers.clone(), Some(json!(22)))
+                .await;
+        assert_eq!(templates_list.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(templates_list).await["result"]["marker"],
+            "resource-templates-db-fallback"
+        );
+
+        let prompts_list =
+            direct_server_prompts_list(&state, trusted_headers.clone(), Some(json!(23))).await;
+        assert_eq!(prompts_list.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(prompts_list).await["result"]["marker"],
+            "prompts-list-db-fallback"
+        );
+
+        let resources_request = JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            method: "resources/read".to_string(),
+            params: json!({"uri": "time://formats"}),
+            id: Some(json!(24)),
+        };
+        let resources_read = direct_server_resources_read(
+            &state,
+            trusted_headers.clone(),
+            Some(json!(24)),
+            &resources_request,
+            Bytes::from_static(
+                br#"{"jsonrpc":"2.0","id":24,"method":"resources/read","params":{"uri":"time://formats"}}"#,
+            ),
+        )
+        .await;
+        assert_eq!(resources_read.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(resources_read).await["result"]["marker"],
+            "resources-read-db-fallback"
+        );
+
+        let prompts_request = JsonRpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            method: "prompts/get".to_string(),
+            params: json!({"name": "hello"}),
+            id: Some(json!(25)),
+        };
+        let prompts_get = direct_server_prompts_get(
+            &state,
+            trusted_headers,
+            Some(json!(25)),
+            &prompts_request,
+            Bytes::from_static(
+                br#"{"jsonrpc":"2.0","id":25,"method":"prompts/get","params":{"name":"hello"}}"#,
+            ),
+        )
+        .await;
+        assert_eq!(prompts_get.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(prompts_get).await["result"]["marker"],
+            "prompts-get-db-fallback"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_server_methods_return_authz_denials_before_db_fallback() {
+        let backend = Router::new()
+            .route(
+                "/_internal/mcp/resources/list/authz",
+                post(|| async {
+                    (
+                        StatusCode::FORBIDDEN,
+                        Json(json!({"detail": "resources/list denied"})),
+                    )
+                }),
+            )
+            .route(
+                "/_internal/mcp/resources/templates/list/authz",
+                post(|| async {
+                    (
+                        StatusCode::FORBIDDEN,
+                        Json(json!({"detail": "templates denied"})),
+                    )
+                }),
+            )
+            .route(
+                "/_internal/mcp/prompts/list/authz",
+                post(|| async {
+                    (
+                        StatusCode::FORBIDDEN,
+                        Json(json!({"detail": "prompts/list denied"})),
+                    )
+                }),
+            )
+            .route(
+                "/_internal/mcp/resources/read/authz",
+                post(|| async {
+                    (
+                        StatusCode::FORBIDDEN,
+                        Json(json!({"detail": "resources/read denied"})),
+                    )
+                }),
+            )
+            .route(
+                "/_internal/mcp/prompts/get/authz",
+                post(|| async {
+                    (
+                        StatusCode::FORBIDDEN,
+                        Json(json!({"detail": "prompts/get denied"})),
+                    )
+                }),
+            );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        let state = AppState::new(&config).expect("state");
+        let trusted_headers = trusted_server_headers("server-1");
+
+        let resources_list =
+            direct_server_resources_list(&state, trusted_headers.clone(), Some(json!(26))).await;
+        assert_eq!(resources_list.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            response_json(resources_list).await["error"]["detail"],
+            "resources/list denied"
+        );
+
+        let templates_list =
+            direct_server_resource_templates_list(&state, trusted_headers.clone(), Some(json!(27)))
+                .await;
+        assert_eq!(templates_list.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            response_json(templates_list).await["error"]["detail"],
+            "templates denied"
+        );
+
+        let prompts_list =
+            direct_server_prompts_list(&state, trusted_headers.clone(), Some(json!(28))).await;
+        assert_eq!(prompts_list.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            response_json(prompts_list).await["error"]["detail"],
+            "prompts/list denied"
+        );
+
+        let resources_read = direct_server_resources_read(
+            &state,
+            trusted_headers.clone(),
+            Some(json!(29)),
+            &JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                method: "resources/read".to_string(),
+                params: json!({"uri": "time://formats"}),
+                id: Some(json!(29)),
+            },
+            Bytes::from_static(
+                br#"{"jsonrpc":"2.0","id":29,"method":"resources/read","params":{"uri":"time://formats"}}"#,
+            ),
+        )
+        .await;
+        assert_eq!(resources_read.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            response_json(resources_read).await["error"]["detail"],
+            "resources/read denied"
+        );
+
+        let prompts_get = direct_server_prompts_get(
+            &state,
+            trusted_headers,
+            Some(json!(30)),
+            &JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                method: "prompts/get".to_string(),
+                params: json!({"name": "time_prompt"}),
+                id: Some(json!(30)),
+            },
+            Bytes::from_static(
+                br#"{"jsonrpc":"2.0","id":30,"method":"prompts/get","params":{"name":"time_prompt"}}"#,
+            ),
+        )
+        .await;
+        assert_eq!(prompts_get.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            response_json(prompts_get).await["error"]["detail"],
+            "prompts/get denied"
+        );
+    }
+
+    #[tokio::test]
+    async fn authorize_server_method_via_backend_covers_success_denial_and_decode_failure() {
+        let backend = Router::new()
+            .route("/authz-ok", post(|| async { StatusCode::OK }))
+            .route(
+                "/authz-deny",
+                post(|| async {
+                    (
+                        StatusCode::FORBIDDEN,
+                        Json(json!({"code": "denied", "detail": "nope"})),
+                    )
+                }),
+            )
+            .route(
+                "/authz-bad-json",
+                post(|| async { (StatusCode::FORBIDDEN, "not-json") }),
+            );
+        let backend_url = spawn_router(backend).await;
+        let state = AppState::new(&{
+            let mut config = test_config();
+            config.backend_rpc_url = format!("{backend_url}/rpc");
+            config
+        })
+        .expect("state");
+
+        authorize_server_method_via_backend(
+            &state,
+            &trusted_server_headers("server-1"),
+            Some(json!(31)),
+            &format!("{backend_url}/authz-ok"),
+            "resources/list",
+        )
+        .await
+        .expect("success should pass through");
+
+        let denied = authorize_server_method_via_backend(
+            &state,
+            &trusted_server_headers("server-1"),
+            Some(json!(32)),
+            &format!("{backend_url}/authz-deny"),
+            "resources/list",
+        )
+        .await
+        .expect_err("deny should return response");
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response_json(denied).await["error"]["code"], "denied");
+
+        let bad_json = authorize_server_method_via_backend(
+            &state,
+            &trusted_server_headers("server-1"),
+            Some(json!(33)),
+            &format!("{backend_url}/authz-bad-json"),
+            "resources/list",
+        )
+        .await
+        .expect_err("invalid deny payload should return response");
+        assert_eq!(bad_json.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            response_json(bad_json).await["error"]["data"],
+            CLIENT_ERROR_DETAIL
+        );
+    }
+
+    #[test]
+    fn prompt_arguments_from_schema_covers_edge_cases() {
+        assert!(prompt_arguments_from_schema(None).is_empty());
+        assert!(prompt_arguments_from_schema(Some(json!("bad"))).is_empty());
+        assert!(prompt_arguments_from_schema(Some(json!({"type": "object"}))).is_empty());
+
+        let arguments = prompt_arguments_from_schema(Some(json!({
+            "type": "object",
+            "properties": {
+                "name": {"description": "Person name"},
+                "age": {}
+            },
+            "required": ["name", 123]
+        })));
+        assert_eq!(arguments.len(), 2);
+        assert!(arguments.iter().any(|value| {
+            value["name"] == "name"
+                && value["description"] == "Person name"
+                && value["required"] == true
+        }));
+        assert!(arguments.iter().any(|value| {
+            value["name"] == "age" && value["description"] == "" && value["required"] == false
+        }));
+    }
+
+    #[tokio::test]
+    async fn forward_transport_request_delete_removes_runtime_session_and_sets_core_headers() {
+        let backend = Router::new().route(
+            "/_internal/mcp/session",
+            axum::routing::delete(|| async { StatusCode::NO_CONTENT }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        let state = AppState::new(&config).expect("state");
+
+        upsert_runtime_session(
+            &state,
+            "delete-me".to_string(),
+            RuntimeSessionRecord {
+                owner_email: Some("owner@example.com".to_string()),
+                server_id: Some("server-1".to_string()),
+                protocol_version: None,
+                client_capabilities: None,
+                encoded_auth_context: Some("cached".to_string()),
+                auth_binding_fingerprint: Some(
+                    auth_binding_fingerprint(&trusted_server_headers("server-1"))
+                        .expect("fingerprint"),
+                ),
+                auth_context_expires_at_epoch_ms: None,
+                created_at: std::time::Instant::now(),
+                last_used: std::time::Instant::now(),
+            },
+        )
+        .await;
+
+        let mut headers = trusted_server_headers("server-1");
+        headers.insert(
+            HeaderName::from_static("mcp-session-id"),
+            HeaderValue::from_static("delete-me"),
+        );
+        let response = forward_transport_request(
+            &state,
+            reqwest::Method::DELETE,
+            headers,
+            "/mcp".to_string(),
+            "/mcp".parse::<Uri>().expect("uri"),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            response
+                .headers()
+                .get("x-contextforge-mcp-session-core")
+                .and_then(|value| value.to_str().ok()),
+            Some("rust")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-contextforge-mcp-event-store")
+                .and_then(|value| value.to_str().ok()),
+            Some("rust")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-contextforge-mcp-resume-core")
+                .and_then(|value| value.to_str().ok()),
+            Some("rust")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-contextforge-mcp-live-stream-core")
+                .and_then(|value| value.to_str().ok()),
+            Some("rust")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-contextforge-mcp-affinity-core")
+                .and_then(|value| value.to_str().ok()),
+            Some("rust")
+        );
+        assert!(get_runtime_session(&state, "delete-me").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn forward_transport_request_get_forwards_to_backend_and_sets_session_hint_headers() {
+        let backend = Router::new().route(
+            "/_internal/mcp/transport",
+            axum::routing::get(|| async { Json(json!({"ok": true, "path": "transport"})) }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        config.live_stream_core_enabled = false;
+        config.affinity_core_enabled = false;
+        let state = AppState::new(&config).expect("state");
+
+        upsert_runtime_session(
+            &state,
+            "read-session".to_string(),
+            RuntimeSessionRecord {
+                owner_email: None,
+                server_id: Some("server-1".to_string()),
+                protocol_version: None,
+                client_capabilities: None,
+                encoded_auth_context: None,
+                auth_binding_fingerprint: None,
+                auth_context_expires_at_epoch_ms: None,
+                created_at: std::time::Instant::now(),
+                last_used: std::time::Instant::now(),
+            },
+        )
+        .await;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("mcp-session-id"),
+            HeaderValue::from_static("read-session"),
+        );
+        let response = forward_transport_request(
+            &state,
+            reqwest::Method::GET,
+            headers,
+            "/mcp".to_string(),
+            "/mcp?session_id=ignored".parse::<Uri>().expect("uri"),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("mcp-session-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("read-session")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-contextforge-mcp-session-core")
+                .and_then(|value| value.to_str().ok()),
+            Some("rust")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-contextforge-mcp-event-store")
+                .and_then(|value| value.to_str().ok()),
+            Some("rust")
+        );
+        assert_eq!(response_json(response).await["ok"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn forward_transport_request_delete_backend_failure_keeps_runtime_session() {
+        let backend = Router::new().route(
+            "/_internal/mcp/session",
+            axum::routing::delete(|| async {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({"detail": "backend delete failed"})),
+                )
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        let state = AppState::new(&config).expect("state");
+
+        upsert_runtime_session(
+            &state,
+            "delete-error".to_string(),
+            RuntimeSessionRecord {
+                owner_email: None,
+                server_id: Some("server-1".to_string()),
+                protocol_version: None,
+                client_capabilities: None,
+                encoded_auth_context: None,
+                auth_binding_fingerprint: None,
+                auth_context_expires_at_epoch_ms: None,
+                created_at: std::time::Instant::now(),
+                last_used: std::time::Instant::now(),
+            },
+        )
+        .await;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("mcp-session-id"),
+            HeaderValue::from_static("delete-error"),
+        );
+        let response = forward_transport_request(
+            &state,
+            reqwest::Method::DELETE,
+            headers,
+            "/mcp".to_string(),
+            "/mcp".parse::<Uri>().expect("uri"),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            response_json(response).await["detail"],
+            json!("backend delete failed")
+        );
+        assert!(get_runtime_session(&state, "delete-error").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn handle_resume_transport_request_requires_last_event_id_header() {
+        let state = AppState::new(&test_config()).expect("state");
+        let response = handle_resume_transport_request(
+            &state,
+            HeaderMap::new(),
+            "/mcp".parse::<Uri>().expect("uri"),
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(response).await["detail"],
+            "Last-Event-ID header is required for resumable GET /mcp"
+        );
+    }
+
+    #[tokio::test]
+    async fn forward_transport_request_resumable_get_requires_session_id() {
+        let state = AppState::new(&test_config()).expect("state");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("accept"),
+            HeaderValue::from_static("text/event-stream"),
+        );
+        headers.insert(
+            HeaderName::from_static("last-event-id"),
+            HeaderValue::from_static("event-1"),
+        );
+
+        let response = forward_transport_request(
+            &state,
+            reqwest::Method::GET,
+            headers,
+            "/mcp".to_string(),
+            "/mcp".parse::<Uri>().expect("uri"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(response).await["detail"],
+            "mcp-session-id header or session_id query parameter is required for resumable GET /mcp"
+        );
+    }
+
+    #[tokio::test]
+    async fn forward_transport_request_resumable_get_reports_unavailable_event_store_without_redis()
+    {
+        let state = AppState::new(&test_config()).expect("state");
+        upsert_runtime_session(
+            &state,
+            "resume-session".to_string(),
+            RuntimeSessionRecord {
+                owner_email: None,
+                server_id: None,
+                protocol_version: None,
+                client_capabilities: None,
+                encoded_auth_context: None,
+                auth_binding_fingerprint: None,
+                auth_context_expires_at_epoch_ms: None,
+                created_at: std::time::Instant::now(),
+                last_used: std::time::Instant::now(),
+            },
+        )
+        .await;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("accept"),
+            HeaderValue::from_static("text/event-stream"),
+        );
+        headers.insert(
+            HeaderName::from_static("last-event-id"),
+            HeaderValue::from_static("event-1"),
+        );
+        headers.insert(
+            HeaderName::from_static("mcp-session-id"),
+            HeaderValue::from_static("resume-session"),
+        );
+
+        let response = forward_transport_request(
+            &state,
+            reqwest::Method::GET,
+            headers,
+            "/mcp".to_string(),
+            "/mcp".parse::<Uri>().expect("uri"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response_json(response).await["detail"],
+            "Rust Redis event store is unavailable"
+        );
     }
 
     #[tokio::test]
