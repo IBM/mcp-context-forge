@@ -7257,6 +7257,15 @@ async def handle_internal_mcp_resources_read(request: Request):
                 "data": {"uri": uri} if uri else None,
             },
         )
+    except ResourceError as exc:
+        return ORJSONResponse(
+            status_code=400,
+            content={
+                "code": -32602,
+                "message": str(exc),
+                "data": {"uri": uri} if uri else None,
+            },
+        )
     except JSONRPCError as exc:
         status_code = 403 if exc.code == -32003 else 400
         return ORJSONResponse(status_code=status_code, content=exc.to_dict()["error"])

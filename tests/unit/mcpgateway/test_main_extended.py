@@ -6956,6 +6956,34 @@ class TestRpcHandling:
         assert response.status_code == 500
         mock_db.invalidate.assert_called_once()
 
+    async def test_handle_internal_mcp_resources_read_returns_resource_error_payload(self):
+        from mcpgateway.services.resource_service import ResourceError
+
+        request = self._make_request({"jsonrpc": "2.0", "id": "res-read-ambiguous", "method": "resources/read", "params": {"uri": "resource://dup"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = MagicMock()
+        mock_db = MagicMock()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch(
+                "mcpgateway.main.resource_service.read_resource",
+                new=AsyncMock(side_effect=ResourceError("Resource URI 'resource://dup' is ambiguous across multiple servers; use /servers/{id}/mcp.")),
+            ),
+        ):
+            response = await handle_internal_mcp_resources_read(request)
+
+        assert response.status_code == 400
+        payload = json.loads(response.body.decode())
+        assert payload["code"] == -32602
+        assert payload["data"] == {"uri": "resource://dup"}
+
     async def test_handle_internal_mcp_prompts_list_server_scope_public_only_when_token_teams_missing(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "prompts-list", "method": "prompts/list", "params": {}})
         request.headers = {

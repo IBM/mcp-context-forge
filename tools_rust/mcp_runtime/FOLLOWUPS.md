@@ -57,7 +57,35 @@ Recommended next step:
   explicit warnings/telemetry, and retire it in a separate compatibility
   cleanup.
 
-### 3. Playwright admin JWT login instability
+### 3. Python aggregated `/mcp` resource-read ambiguity
+
+Status:
+- Needs a Python/product behavior follow-up
+
+Observed behavior:
+- Server-scoped MCP resource reads now behave correctly for duplicate resource
+  URIs because the lookup is scoped by `server_id`.
+- On the plain Python aggregated `/mcp/` path, `resources/read` for a duplicate
+  URI can still succeed with an empty payload instead of returning an explicit
+  ambiguity error.
+- On the Rust path, the same ambiguous generic `/mcp/` request now returns a
+  clean client error instructing the caller to use `/servers/{id}/mcp`.
+
+Why this matters:
+- The benchmark and server-scoped MCP path are fixed, but Python and Rust still
+  differ on how the generic aggregated endpoint handles ambiguous resource URIs.
+- This is a product-behavior mismatch, not a core Rust MCP transport failure.
+
+Likely area:
+- `mcpgateway/services/resource_service.py`
+- generic aggregated `/mcp/` `resources/read` behavior in the Python path
+
+Recommended next step:
+- Decide whether the generic aggregated Python `/mcp/` endpoint should match
+  the Rust behavior by returning an explicit ambiguity error whenever multiple
+  resources share the same URI across servers.
+
+### 4. Playwright admin JWT login instability
 
 Status:
 - Needs investigation
@@ -78,7 +106,7 @@ Likely area:
 Recommended next step:
 - Add targeted instrumentation around `_ensure_admin_logged_in(...)` and capture redirect/response traces when JWT-cookie login falls back to `/admin/login`.
 
-### 4. Circuit breaker unit test timing flake
+### 5. Circuit breaker unit test timing flake
 
 Status:
 - Likely brittle test
@@ -95,7 +123,7 @@ Likely cause:
 Recommended next step:
 - Rewrite the test to poll until reset rather than relying on a fixed sleep margin.
 
-### 5. Gateway delete Playwright assertion is too strict
+### 6. Gateway delete Playwright assertion is too strict
 
 Status:
 - Likely brittle test
@@ -110,7 +138,7 @@ Why this matters:
 Recommended next step:
 - Verify deletion by name or empty-state handling instead of requiring at least one remaining row.
 
-### 6. Gateway edit modal file-scope instability
+### 7. Gateway edit modal file-scope instability
 
 Status:
 - Needs investigation
@@ -124,7 +152,7 @@ Why this matters:
 Recommended next step:
 - Reproduce on a fresh stack with focused instrumentation around modal open requests and Alpine/HTMX state changes.
 
-### 7. Prompt/admin page file-scope login failures
+### 8. Prompt/admin page file-scope login failures
 
 Status:
 - Needs investigation
@@ -138,7 +166,7 @@ Why this matters:
 Recommended next step:
 - Treat as part of the admin login fixture investigation rather than fixing prompt-specific tests first.
 
-### 8. `register_fast_time_sse` sync quirk
+### 9. `register_fast_time_sse` sync quirk
 
 Status:
 - Needs investigation
