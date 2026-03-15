@@ -1539,7 +1539,7 @@ class TestServerEndpointCoverage:
         db = MagicMock()
         tool = SimpleNamespace(to_dict=lambda **_kwargs: {"id": "tool-1"})
 
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", [], False))
         monkeypatch.setattr(main_mod, "get_user_team_roles", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=tool))
 
@@ -1601,7 +1601,7 @@ class TestServerEndpointCoverage:
         tool = MagicMock()
         tool.model_dump.return_value = {"id": "tool-1"}
 
-        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", None, True))
         list_tools = AsyncMock(return_value=[tool])
         monkeypatch.setattr("mcpgateway.main.tool_service.list_server_tools", list_tools)
 
@@ -1617,7 +1617,7 @@ class TestServerEndpointCoverage:
         resource = MagicMock()
         resource.model_dump.return_value = {"id": "res-1"}
 
-        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, False))
+        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", None, False))
         list_resources = AsyncMock(return_value=[resource])
         monkeypatch.setattr("mcpgateway.main.resource_service.list_server_resources", list_resources)
 
@@ -1633,7 +1633,7 @@ class TestServerEndpointCoverage:
         prompt = MagicMock()
         prompt.model_dump.return_value = {"id": "prompt-1"}
 
-        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, False))
+        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", None, False))
         list_prompts = AsyncMock(return_value=[prompt])
         monkeypatch.setattr("mcpgateway.main.prompt_service.list_server_prompts", list_prompts)
 
@@ -1646,7 +1646,7 @@ class TestServerEndpointCoverage:
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id="team-1")
 
-        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, _user: ("user@example.com", ["team-1"], False))
+        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", ["team-1"], False))
 
         response = await list_resources(
             request,
@@ -1664,7 +1664,7 @@ class TestServerEndpointCoverage:
         resource = MagicMock()
         resource.model_dump.return_value = {"id": "res-1"}
 
-        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", None, True))
         monkeypatch.setattr(
             "mcpgateway.main.resource_service.list_resources",
             AsyncMock(return_value=([resource], "next-cursor")),
@@ -1688,7 +1688,7 @@ class TestServerEndpointCoverage:
         resource = MagicMock()
         resource.model_dump.return_value = {"id": "res-1"}
 
-        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", None, True))
         monkeypatch.setattr(
             "mcpgateway.main.resource_service.list_resources",
             AsyncMock(return_value=([resource], None)),
@@ -1709,7 +1709,7 @@ class TestServerEndpointCoverage:
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
 
-        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, False))
+        monkeypatch.setattr("mcpgateway.main._get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", None, False))
         monkeypatch.setattr(
             "mcpgateway.main.resource_service.list_resources",
             AsyncMock(return_value=([], None)),
@@ -2336,7 +2336,7 @@ class TestSecurityHealthEndpoint:
     """Cover /health/security endpoint branches in main.py.
 
     The endpoint now requires admin auth via ``require_admin_auth`` dependency.
-    Tests call the handler directly with ``_user`` kwarg to simulate DI.
+    Tests call the handler directly with ``current_user_ctx`` kwarg to simulate DI.
     """
 
     @pytest.mark.asyncio
@@ -2359,7 +2359,7 @@ class TestSecurityHealthEndpoint:
             },
         )
 
-        result = await main_mod.security_health(request, _user="admin@example.com")
+        result = await main_mod.security_health(request, current_user_ctx="admin@example.com")
         assert result["status"] == "healthy"
         assert result["score"] == 80
         assert "warnings" not in result
@@ -2384,7 +2384,7 @@ class TestSecurityHealthEndpoint:
             },
         )
 
-        result = await main_mod.security_health(request, _user="admin@example.com")
+        result = await main_mod.security_health(request, current_user_ctx="admin@example.com")
         assert result["status"] == "healthy"
         assert result["warnings"] == ["w1"]
 
@@ -2408,7 +2408,7 @@ class TestSecurityHealthEndpoint:
             },
         )
 
-        result = await main_mod.security_health(request, _user="admin@example.com")
+        result = await main_mod.security_health(request, current_user_ctx="admin@example.com")
         assert result["status"] == "unhealthy"
         assert result["warnings"] == ["w1", "w2"]
 
@@ -2506,7 +2506,7 @@ class TestToolListEndpointCoverage:
         tool.model_dump.return_value = {"id": "tool-1"}
         list_tools_mock = AsyncMock(return_value=([tool], "next"))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", list_tools_mock)
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", ["team-1"], False))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", ["team-1"], False))
 
         result = await main_mod.list_tools(
             request,
@@ -2537,7 +2537,7 @@ class TestToolListEndpointCoverage:
         list_tools_mock = AsyncMock(return_value=([], None))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", list_tools_mock)
 
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", None, True))
         await main_mod.list_tools(
             request,
             cursor=None,
@@ -2555,7 +2555,7 @@ class TestToolListEndpointCoverage:
         assert list_tools_mock.await_args.kwargs["user_email"] is None
         assert list_tools_mock.await_args.kwargs["token_teams"] is None
 
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, False))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", None, False))
         await main_mod.list_tools(
             request,
             cursor=None,
@@ -2580,7 +2580,7 @@ class TestToolListEndpointCoverage:
         request.state = SimpleNamespace(team_id="team-1")
         db = MagicMock()
 
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", ["team-1"], False))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", ["team-1"], False))
         response = await main_mod.list_tools(
             request,
             cursor=None,
@@ -2613,7 +2613,7 @@ class TestPromptListEndpointCoverage:
         prompt.model_dump.return_value = {"id": "prompt-1"}
         list_prompts_mock = AsyncMock(return_value=([prompt], "next"))
         monkeypatch.setattr(main_mod.prompt_service, "list_prompts", list_prompts_mock)
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", ["team-1"], False))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", ["team-1"], False))
 
         result = await main_mod.list_prompts(
             request,
@@ -2639,7 +2639,7 @@ class TestPromptListEndpointCoverage:
         request.state = SimpleNamespace(team_id="team-1")
         db = MagicMock()
 
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", ["team-1"], False))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", ["team-1"], False))
         response = await main_mod.list_prompts(
             request,
             cursor=None,
@@ -3979,7 +3979,7 @@ class TestA2ABranchCoverage:
         svc = MagicMock()
         svc.invoke_agent = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr(main_mod, "a2a_service", svc)
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, False))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", None, False))
         result = await main_mod.invoke_a2a_agent("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user={"email": "user@example.com"})
         assert result["ok"] is True
         assert svc.invoke_agent.await_args.kwargs["token_teams"] == []
@@ -3995,7 +3995,7 @@ class TestA2ABranchCoverage:
         assert excinfo.value.status_code == 400
 
         # Cover user_id=str(user) branch by bypassing RBAC wrapper.
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", None, True))
         svc.invoke_agent = AsyncMock(return_value={"ok": True})
         result = await main_mod.invoke_a2a_agent.__wrapped__("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user="basic-user")
         assert result["ok"] is True
@@ -4032,7 +4032,7 @@ class TestA2ABranchCoverage:
         svc.list_agents = AsyncMock(return_value=([agent], "next"))
         svc.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("missing"))
         monkeypatch.setattr(main_mod, "a2a_service", svc)
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", None, True))
 
         result = await main_mod.list_a2a_agents(
             request,
@@ -5834,7 +5834,7 @@ class TestRemainingCoverageGaps:
 
         tool = MagicMock()
         tool.to_dict.return_value = {"id": "t1"}
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("user@example.com", [], False))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
         monkeypatch.setattr(main_mod, "jsonpath_modifier", MagicMock(return_value={"filtered": True}))
 
@@ -5930,11 +5930,11 @@ class TestRemainingCoverageGaps:
 
         monkeypatch.setattr(main_mod.resource_service, "list_resource_templates", AsyncMock(return_value=[]))
 
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", None, True))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("u", None, True))
         result = await main_mod.list_resource_templates.__wrapped__(request, db=MagicMock(), include_inactive=False, tags="a, b", visibility=None, user={"email": "u"})
         assert result.resource_templates == []
 
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", None, False))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("u", None, False))
         result = await main_mod.list_resource_templates.__wrapped__(request, db=MagicMock(), include_inactive=False, tags=None, visibility=None, user={"email": "u"})
         assert result.resource_templates == []
 
@@ -5947,7 +5947,7 @@ class TestRemainingCoverageGaps:
         list_prompts = AsyncMock(return_value=([], None))
         monkeypatch.setattr(main_mod.prompt_service, "list_prompts", list_prompts)
 
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", None, True))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("u", None, True))
         await main_mod.list_prompts.__wrapped__(
             request,
             cursor=None,
@@ -5963,7 +5963,7 @@ class TestRemainingCoverageGaps:
         assert list_prompts.call_args.kwargs["user_email"] is None
         assert list_prompts.call_args.kwargs["token_teams"] is None
 
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", None, False))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("u", None, False))
         await main_mod.list_prompts.__wrapped__(
             request,
             cursor=None,
@@ -5992,7 +5992,7 @@ class TestRemainingCoverageGaps:
         prompt.model_dump.return_value = {"id": "p1"}
         monkeypatch.setattr(main_mod.prompt_service, "list_server_prompts", AsyncMock(return_value=[prompt]))
 
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", None, True))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("u", None, True))
         result = await main_mod.server_get_resources.__wrapped__(request, "srv", include_inactive=False, db=MagicMock(), user={"email": "u"})
         assert result == [{"id": "r1"}]
 
@@ -6136,7 +6136,7 @@ class TestRemainingCoverageGaps:
         tool = MagicMock()
         tool.model_dump.return_value = {"id": "t1"}
 
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", None, False))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("u", None, False))
         monkeypatch.setattr(main_mod.tool_service, "list_server_tools", AsyncMock(return_value=[tool]))
 
         result = await main_mod.server_get_tools.__wrapped__(request, "srv", include_inactive=False, include_metrics=False, db=MagicMock(), user={"email": "u"})
@@ -6146,7 +6146,7 @@ class TestRemainingCoverageGaps:
         import mcpgateway.main as main_mod
 
         request = _make_request("/tags")
-        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _request, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _request, current_user_ctx: ("u", [], False))
 
         monkeypatch.setattr(main_mod.tag_service, "get_all_tags", AsyncMock(return_value=[]))
         _ = await main_mod.list_tags.__wrapped__(request, "Tools, Servers", include_entities=False, db=MagicMock(), user={"email": "u"})
@@ -6731,7 +6731,7 @@ async def test_protocol_completion_endpoint_direct_admin_null_teams_preserves_by
     db = object()
 
     monkeypatch.setattr(main_mod, "_read_request_json", AsyncMock(return_value=payload))
-    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("admin@example.com", None, True))
+    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("admin@example.com", None, True))
     completion_mock = AsyncMock(return_value={"result": "ok"})
     monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
 
@@ -6753,7 +6753,7 @@ async def test_protocol_completion_endpoint_direct_non_admin_none_teams_becomes_
     db = object()
 
     monkeypatch.setattr(main_mod, "_read_request_json", AsyncMock(return_value=payload))
-    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("viewer@example.com", None, False))
+    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("viewer@example.com", None, False))
     completion_mock = AsyncMock(return_value={"result": "ok"})
     monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
 
@@ -6779,7 +6779,7 @@ async def test_handle_rpc_completion_direct_admin_null_teams_preserves_bypass(mo
     db = MagicMock()
 
     monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
-    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("admin@example.com", None, True))
+    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("admin@example.com", None, True))
     completion_mock = AsyncMock(return_value={"done": True})
     monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
 
@@ -6805,7 +6805,7 @@ async def test_handle_rpc_completion_direct_non_admin_none_teams_becomes_public_
     db = MagicMock()
 
     monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
-    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("viewer@example.com", None, False))
+    monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, current_user_ctx: ("viewer@example.com", None, False))
     completion_mock = AsyncMock(return_value={"done": True})
     monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
 

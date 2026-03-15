@@ -169,7 +169,7 @@ async def test_cancel_run_broadcasts_notifications(allow_permission, monkeypatch
     monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", MagicMock(cancel_run=AsyncMock(return_value=True)))
 
     payload = CancelRequest(requestId="req-1", reason="test")
-    result = await cancel_run(payload, _user={"email": "user@example.com"})
+    result = await cancel_run(payload, current_user_ctx={"email": "user@example.com"})
 
     assert result.status == "cancelled"
     assert mock_registry.broadcast.await_count == 2
@@ -188,7 +188,7 @@ async def test_cancel_run_handles_session_errors(allow_permission, monkeypatch):
     monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", MagicMock(cancel_run=AsyncMock(return_value=False)))
 
     payload = CancelRequest(requestId="req-2", reason=None)
-    result = await cancel_run(payload, _user={"email": "user@example.com"})
+    result = await cancel_run(payload, current_user_ctx={"email": "user@example.com"})
 
     assert result.status == "queued"
 
@@ -207,7 +207,7 @@ async def test_cancel_run_handles_per_session_broadcast_errors(allow_permission,
     monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", MagicMock(cancel_run=AsyncMock(return_value=True)))
 
     payload = CancelRequest(requestId="req-err", reason="test")
-    result = await cancel_run(payload, _user={"email": "user@example.com"})
+    result = await cancel_run(payload, current_user_ctx={"email": "user@example.com"})
 
     assert result.status == "cancelled"
     assert mock_registry.broadcast.await_count == 2
@@ -225,7 +225,7 @@ async def test_get_status_not_found(allow_permission, monkeypatch):
     monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", mock_service)
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_status("missing", _user={"email": "user@example.com"})
+        await get_status("missing", current_user_ctx={"email": "user@example.com"})
 
     assert "Run not found" in str(exc_info.value)
 
@@ -247,7 +247,7 @@ async def test_get_status_filters_cancel_callback(allow_permission, monkeypatch)
     )
     monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", mock_service)
 
-    result = await get_status("req-3", _user={"email": "user@example.com"})
+    result = await get_status("req-3", current_user_ctx={"email": "user@example.com"})
 
     assert "cancel_callback" not in result
 
@@ -264,6 +264,6 @@ async def test_get_status_not_found_when_status_is_none(allow_permission, monkey
     monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", mock_service)
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_status("req-none", _user={"email": "user@example.com"})
+        await get_status("req-none", current_user_ctx={"email": "user@example.com"})
 
     assert exc_info.value.status_code == 404
