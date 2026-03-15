@@ -213,6 +213,50 @@ Why this matters:
 Recommended next step:
 - Inspect server sync timing and transport filtering on the SSE registration path separately from the `register_fast_time` auth/startup race that was already fixed.
 
+### 11. `rpc_inner()` dispatch-table refactor
+
+Status:
+- Deferred maintainability refactor
+
+Observed behavior:
+- `rpc_inner()` still carries most of the runtime's method-selection complexity.
+- Adding or changing a method still requires coordinated edits across boolean flag calculation, logging mode selection, and dispatch branches.
+
+Why this matters:
+- This is the largest remaining Rust-specific cognitive-complexity hotspot.
+
+Recommended next step:
+- Replace the current three-phase method dispatch with a single dispatch table or a more structured `match`-based handler map.
+
+### 12. Generic `send_*_to_backend()` / `forward_*_to_backend()` consolidation
+
+Status:
+- Deferred maintainability refactor
+
+Observed behavior:
+- The runtime still has many nearly identical `send_*_to_backend()` and JSON-RPC-wrapping `forward_*_to_backend()` helpers.
+- This PR reduced some duplication elsewhere, but did not collapse these method families.
+
+Why this matters:
+- The repetition increases change surface and makes response-shaping fixes harder to apply uniformly.
+
+Recommended next step:
+- Introduce generic backend send/forward helpers and migrate the method-specific wrappers onto them.
+
+### 13. DB visibility/query preamble extraction
+
+Status:
+- Deferred maintainability refactor
+
+Observed behavior:
+- The direct DB query helpers still repeat the same pool acquisition, admin bypass, and team-scope preamble before table-specific SQL.
+
+Why this matters:
+- The logic is correct, but repetitive and easy to drift when visibility rules change.
+
+Recommended next step:
+- Extract the shared DB visibility/query setup into a reusable helper and keep only the table-specific SQL in each query function.
+
 ## Validated Remaining-Items Review
 
 These notes capture the current status of the Rust-specific items from

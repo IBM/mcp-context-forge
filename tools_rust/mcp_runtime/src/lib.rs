@@ -1903,517 +1903,101 @@ async fn rpc_inner(
     forward_to_backend(&state, effective_headers, body).await
 }
 
+const BACKEND_RPC_SUFFIXES: &[&str] =
+    &["/_internal/mcp/rpc", "/_internal/mcp/rpc/", "/rpc", "/rpc/"];
+
+fn derive_backend_url(backend_rpc_url: &str, path: &str) -> String {
+    for suffix in BACKEND_RPC_SUFFIXES {
+        if let Some(prefix) = backend_rpc_url.strip_suffix(suffix) {
+            return format!("{prefix}/_internal/mcp/{path}");
+        }
+    }
+    format!(
+        "{}/_internal/mcp/{path}",
+        backend_rpc_url.trim_end_matches('/')
+    )
+}
+
 fn derive_backend_tools_list_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/tools/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/tools/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/tools/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/tools/list");
-    }
-    format!(
-        "{}/_internal/mcp/tools/list",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "tools/list")
 }
-
 fn derive_backend_resources_list_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/list");
-    }
-    format!(
-        "{}/_internal/mcp/resources/list",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "resources/list")
 }
-
 fn derive_backend_resources_read_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/read");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/read");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/read");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/read");
-    }
-    format!(
-        "{}/_internal/mcp/resources/read",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "resources/read")
 }
-
 fn derive_backend_resources_subscribe_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/subscribe");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/subscribe");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/subscribe");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/subscribe");
-    }
-    format!(
-        "{}/_internal/mcp/resources/subscribe",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "resources/subscribe")
 }
-
 fn derive_backend_resources_unsubscribe_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/unsubscribe");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/unsubscribe");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/unsubscribe");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/unsubscribe");
-    }
-    format!(
-        "{}/_internal/mcp/resources/unsubscribe",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "resources/unsubscribe")
 }
-
 fn derive_backend_resource_templates_list_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/templates/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/templates/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/templates/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/templates/list");
-    }
-    format!(
-        "{}/_internal/mcp/resources/templates/list",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "resources/templates/list")
 }
-
 fn derive_backend_prompts_list_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/prompts/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/prompts/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/prompts/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/prompts/list");
-    }
-    format!(
-        "{}/_internal/mcp/prompts/list",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "prompts/list")
 }
-
 fn derive_backend_prompts_get_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/prompts/get");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/prompts/get");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/prompts/get");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/prompts/get");
-    }
-    format!(
-        "{}/_internal/mcp/prompts/get",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "prompts/get")
 }
-
 fn derive_backend_roots_list_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/roots/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/roots/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/roots/list");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/roots/list");
-    }
-    format!(
-        "{}/_internal/mcp/roots/list",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "roots/list")
 }
-
 fn derive_backend_completion_complete_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/completion/complete");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/completion/complete");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/completion/complete");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/completion/complete");
-    }
-    format!(
-        "{}/_internal/mcp/completion/complete",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "completion/complete")
 }
-
 fn derive_backend_sampling_create_message_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/sampling/createMessage");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/sampling/createMessage");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/sampling/createMessage");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/sampling/createMessage");
-    }
-    format!(
-        "{}/_internal/mcp/sampling/createMessage",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "sampling/createMessage")
 }
-
 fn derive_backend_logging_set_level_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/logging/setLevel");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/logging/setLevel");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/logging/setLevel");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/logging/setLevel");
-    }
-    format!(
-        "{}/_internal/mcp/logging/setLevel",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "logging/setLevel")
 }
-
 fn derive_backend_initialize_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/initialize");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/initialize");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/initialize");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/initialize");
-    }
-    format!(
-        "{}/_internal/mcp/initialize",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "initialize")
 }
-
 fn derive_backend_transport_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/transport");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/transport");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/transport");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/transport");
-    }
-    format!(
-        "{}/_internal/mcp/transport",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "transport")
 }
-
 fn derive_backend_session_delete_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/session");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/session");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/session");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/session");
-    }
-    format!(
-        "{}/_internal/mcp/session",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "session")
 }
-
 fn derive_backend_notifications_initialized_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/notifications/initialized");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/notifications/initialized");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/notifications/initialized");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/notifications/initialized");
-    }
-    format!(
-        "{}/_internal/mcp/notifications/initialized",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "notifications/initialized")
 }
-
 fn derive_backend_notifications_message_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/notifications/message");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/notifications/message");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/notifications/message");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/notifications/message");
-    }
-    format!(
-        "{}/_internal/mcp/notifications/message",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "notifications/message")
 }
-
 fn derive_backend_notifications_cancelled_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/notifications/cancelled");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/notifications/cancelled");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/notifications/cancelled");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/notifications/cancelled");
-    }
-    format!(
-        "{}/_internal/mcp/notifications/cancelled",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "notifications/cancelled")
 }
-
 fn derive_backend_tools_list_authz_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/tools/list/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/tools/list/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/tools/list/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/tools/list/authz");
-    }
-    format!(
-        "{}/_internal/mcp/tools/list/authz",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "tools/list/authz")
 }
-
 fn derive_backend_resources_list_authz_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/list/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/list/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/list/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/list/authz");
-    }
-    format!(
-        "{}/_internal/mcp/resources/list/authz",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "resources/list/authz")
 }
-
 fn derive_backend_resources_read_authz_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/read/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/read/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/read/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/read/authz");
-    }
-    format!(
-        "{}/_internal/mcp/resources/read/authz",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "resources/read/authz")
 }
-
 fn derive_backend_resource_templates_list_authz_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/templates/list/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/templates/list/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/resources/templates/list/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/resources/templates/list/authz");
-    }
-    format!(
-        "{}/_internal/mcp/resources/templates/list/authz",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "resources/templates/list/authz")
 }
-
 fn derive_backend_prompts_list_authz_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/prompts/list/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/prompts/list/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/prompts/list/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/prompts/list/authz");
-    }
-    format!(
-        "{}/_internal/mcp/prompts/list/authz",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "prompts/list/authz")
 }
-
 fn derive_backend_prompts_get_authz_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/prompts/get/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/prompts/get/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/prompts/get/authz");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/prompts/get/authz");
-    }
-    format!(
-        "{}/_internal/mcp/prompts/get/authz",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "prompts/get/authz")
 }
-
 fn derive_backend_tools_call_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/tools/call");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/tools/call");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/tools/call");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/tools/call");
-    }
-    format!(
-        "{}/_internal/mcp/tools/call",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "tools/call")
 }
-
 fn derive_backend_tools_call_resolve_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/tools/call/resolve");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/tools/call/resolve");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/tools/call/resolve");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/tools/call/resolve");
-    }
-    format!(
-        "{}/_internal/mcp/tools/call/resolve",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "tools/call/resolve")
 }
-
 fn derive_backend_authenticate_url(backend_rpc_url: &str) -> String {
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc") {
-        return format!("{prefix}/_internal/mcp/authenticate");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/_internal/mcp/rpc/") {
-        return format!("{prefix}/_internal/mcp/authenticate");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc") {
-        return format!("{prefix}/_internal/mcp/authenticate");
-    }
-    if let Some(prefix) = backend_rpc_url.strip_suffix("/rpc/") {
-        return format!("{prefix}/_internal/mcp/authenticate");
-    }
-    format!(
-        "{}/_internal/mcp/authenticate",
-        backend_rpc_url.trim_end_matches('/')
-    )
+    derive_backend_url(backend_rpc_url, "authenticate")
 }
 
 fn build_db_pool(config: &RuntimeConfig) -> Result<Option<Pool>, RuntimeError> {
@@ -3143,42 +2727,18 @@ async fn handle_initialize_with_session_core(
         backend_response,
         Some(response_session_id.as_str()),
     );
-    if let Ok(value) = HeaderValue::from_str(if state.session_core_enabled() {
-        "rust"
-    } else {
-        "python"
-    }) {
-        response
-            .headers_mut()
-            .insert(HeaderName::from_static(SESSION_CORE_HEADER), value);
-    }
-    if let Ok(value) = HeaderValue::from_str(if state.event_store_enabled() {
-        "rust"
-    } else {
-        "python"
-    }) {
-        response
-            .headers_mut()
-            .insert(HeaderName::from_static(EVENT_STORE_HEADER), value);
-    }
-    if let Ok(value) = HeaderValue::from_str(if state.session_auth_reuse_enabled() {
-        "rust"
-    } else {
-        "python"
-    }) {
-        response
-            .headers_mut()
-            .insert(HeaderName::from_static(SESSION_AUTH_REUSE_HEADER), value);
-    }
-    if let Ok(value) = HeaderValue::from_str(if state.resume_core_enabled() {
-        "rust"
-    } else {
-        "python"
-    }) {
-        response
-            .headers_mut()
-            .insert(HeaderName::from_static(RESUME_CORE_HEADER), value);
-    }
+    inject_runtime_capability_headers(
+        &mut response,
+        &[
+            (SESSION_CORE_HEADER, state.session_core_enabled()),
+            (EVENT_STORE_HEADER, state.event_store_enabled()),
+            (
+                SESSION_AUTH_REUSE_HEADER,
+                state.session_auth_reuse_enabled(),
+            ),
+            (RESUME_CORE_HEADER, state.resume_core_enabled()),
+        ],
+    );
     response
 }
 
@@ -4340,35 +3900,18 @@ async fn handle_resume_transport_request(
         HeaderName::from_static(RUNTIME_HEADER),
         HeaderValue::from_static(RUNTIME_NAME),
     );
-    response.headers_mut().insert(
-        HeaderName::from_static(SESSION_CORE_HEADER),
-        HeaderValue::from_static("rust"),
-    );
-    response.headers_mut().insert(
-        HeaderName::from_static(EVENT_STORE_HEADER),
-        HeaderValue::from_static("rust"),
-    );
-    response.headers_mut().insert(
-        HeaderName::from_static(RESUME_CORE_HEADER),
-        HeaderValue::from_static("rust"),
-    );
-    response.headers_mut().insert(
-        HeaderName::from_static(SESSION_AUTH_REUSE_HEADER),
-        HeaderValue::from_str(if state.session_auth_reuse_enabled() {
-            "rust"
-        } else {
-            "python"
-        })
-        .unwrap_or_else(|_| HeaderValue::from_static("python")),
-    );
-    response.headers_mut().insert(
-        HeaderName::from_static(LIVE_STREAM_CORE_HEADER),
-        HeaderValue::from_str(if state.live_stream_core_enabled() {
-            "rust"
-        } else {
-            "python"
-        })
-        .unwrap_or_else(|_| HeaderValue::from_static("python")),
+    inject_runtime_capability_headers(
+        &mut response,
+        &[
+            (SESSION_CORE_HEADER, true),
+            (EVENT_STORE_HEADER, true),
+            (RESUME_CORE_HEADER, true),
+            (
+                SESSION_AUTH_REUSE_HEADER,
+                state.session_auth_reuse_enabled(),
+            ),
+            (LIVE_STREAM_CORE_HEADER, state.live_stream_core_enabled()),
+        ],
     );
     if let Some(session_id_value) = session_id.as_deref()
         && let Ok(value) = HeaderValue::from_str(session_id_value)
@@ -4508,45 +4051,18 @@ fn handle_live_stream_transport_request(
         HeaderName::from_static(RUNTIME_HEADER),
         HeaderValue::from_static(RUNTIME_NAME),
     );
-    response.headers_mut().insert(
-        HeaderName::from_static(LIVE_STREAM_CORE_HEADER),
-        HeaderValue::from_static("rust"),
-    );
-    response.headers_mut().insert(
-        HeaderName::from_static(SESSION_CORE_HEADER),
-        HeaderValue::from_str(if state.session_core_enabled() {
-            "rust"
-        } else {
-            "python"
-        })
-        .unwrap_or_else(|_| HeaderValue::from_static("python")),
-    );
-    response.headers_mut().insert(
-        HeaderName::from_static(EVENT_STORE_HEADER),
-        HeaderValue::from_str(if state.event_store_enabled() {
-            "rust"
-        } else {
-            "python"
-        })
-        .unwrap_or_else(|_| HeaderValue::from_static("python")),
-    );
-    response.headers_mut().insert(
-        HeaderName::from_static(RESUME_CORE_HEADER),
-        HeaderValue::from_str(if state.resume_core_enabled() {
-            "rust"
-        } else {
-            "python"
-        })
-        .unwrap_or_else(|_| HeaderValue::from_static("python")),
-    );
-    response.headers_mut().insert(
-        HeaderName::from_static(SESSION_AUTH_REUSE_HEADER),
-        HeaderValue::from_str(if state.session_auth_reuse_enabled() {
-            "rust"
-        } else {
-            "python"
-        })
-        .unwrap_or_else(|_| HeaderValue::from_static("python")),
+    inject_runtime_capability_headers(
+        &mut response,
+        &[
+            (LIVE_STREAM_CORE_HEADER, true),
+            (SESSION_CORE_HEADER, state.session_core_enabled()),
+            (EVENT_STORE_HEADER, state.event_store_enabled()),
+            (RESUME_CORE_HEADER, state.resume_core_enabled()),
+            (
+                SESSION_AUTH_REUSE_HEADER,
+                state.session_auth_reuse_enabled(),
+            ),
+        ],
     );
     if let Some(session_id_value) = response_session_id.as_deref()
         && let Ok(value) = HeaderValue::from_str(session_id_value)
@@ -4700,15 +4216,10 @@ async fn forward_transport_request(
             Err(response) => return response,
         };
         if let Some(mut response) = affinity_response {
-            if let Ok(value) = HeaderValue::from_str(if state.affinity_core_enabled() {
-                "rust"
-            } else {
-                "python"
-            }) {
-                response
-                    .headers_mut()
-                    .insert(HeaderName::from_static(AFFINITY_CORE_HEADER), value);
-            }
+            inject_runtime_capability_headers(
+                &mut response,
+                &[(AFFINITY_CORE_HEADER, state.affinity_core_enabled())],
+            );
             return response;
         }
     }
@@ -4742,51 +4253,16 @@ async fn forward_transport_request(
 
         let mut response =
             response_from_backend_with_session_hint(backend_response, session_id.as_deref());
-        if let Ok(value) = HeaderValue::from_str(if state.session_core_enabled() {
-            "rust"
-        } else {
-            "python"
-        }) {
-            response
-                .headers_mut()
-                .insert(HeaderName::from_static(SESSION_CORE_HEADER), value);
-        }
-        if let Ok(value) = HeaderValue::from_str(if state.event_store_enabled() {
-            "rust"
-        } else {
-            "python"
-        }) {
-            response
-                .headers_mut()
-                .insert(HeaderName::from_static(EVENT_STORE_HEADER), value);
-        }
-        if let Ok(value) = HeaderValue::from_str(if state.resume_core_enabled() {
-            "rust"
-        } else {
-            "python"
-        }) {
-            response
-                .headers_mut()
-                .insert(HeaderName::from_static(RESUME_CORE_HEADER), value);
-        }
-        if let Ok(value) = HeaderValue::from_str(if state.live_stream_core_enabled() {
-            "rust"
-        } else {
-            "python"
-        }) {
-            response
-                .headers_mut()
-                .insert(HeaderName::from_static(LIVE_STREAM_CORE_HEADER), value);
-        }
-        if let Ok(value) = HeaderValue::from_str(if state.affinity_core_enabled() {
-            "rust"
-        } else {
-            "python"
-        }) {
-            response
-                .headers_mut()
-                .insert(HeaderName::from_static(AFFINITY_CORE_HEADER), value);
-        }
+        inject_runtime_capability_headers(
+            &mut response,
+            &[
+                (SESSION_CORE_HEADER, state.session_core_enabled()),
+                (EVENT_STORE_HEADER, state.event_store_enabled()),
+                (RESUME_CORE_HEADER, state.resume_core_enabled()),
+                (LIVE_STREAM_CORE_HEADER, state.live_stream_core_enabled()),
+                (AFFINITY_CORE_HEADER, state.affinity_core_enabled()),
+            ],
+        );
         return response;
     }
 
@@ -4814,51 +4290,16 @@ async fn forward_transport_request(
 
     let mut response =
         response_from_backend_with_session_hint(backend_response, session_id.as_deref());
-    if let Ok(value) = HeaderValue::from_str(if state.session_core_enabled() {
-        "rust"
-    } else {
-        "python"
-    }) {
-        response
-            .headers_mut()
-            .insert(HeaderName::from_static(SESSION_CORE_HEADER), value);
-    }
-    if let Ok(value) = HeaderValue::from_str(if state.event_store_enabled() {
-        "rust"
-    } else {
-        "python"
-    }) {
-        response
-            .headers_mut()
-            .insert(HeaderName::from_static(EVENT_STORE_HEADER), value);
-    }
-    if let Ok(value) = HeaderValue::from_str(if state.resume_core_enabled() {
-        "rust"
-    } else {
-        "python"
-    }) {
-        response
-            .headers_mut()
-            .insert(HeaderName::from_static(RESUME_CORE_HEADER), value);
-    }
-    if let Ok(value) = HeaderValue::from_str(if state.live_stream_core_enabled() {
-        "rust"
-    } else {
-        "python"
-    }) {
-        response
-            .headers_mut()
-            .insert(HeaderName::from_static(LIVE_STREAM_CORE_HEADER), value);
-    }
-    if let Ok(value) = HeaderValue::from_str(if state.affinity_core_enabled() {
-        "rust"
-    } else {
-        "python"
-    }) {
-        response
-            .headers_mut()
-            .insert(HeaderName::from_static(AFFINITY_CORE_HEADER), value);
-    }
+    inject_runtime_capability_headers(
+        &mut response,
+        &[
+            (SESSION_CORE_HEADER, state.session_core_enabled()),
+            (EVENT_STORE_HEADER, state.event_store_enabled()),
+            (RESUME_CORE_HEADER, state.resume_core_enabled()),
+            (LIVE_STREAM_CORE_HEADER, state.live_stream_core_enabled()),
+            (AFFINITY_CORE_HEADER, state.affinity_core_enabled()),
+        ],
+    );
     response
 }
 
@@ -4920,8 +4361,14 @@ async fn direct_server_tools_list(
         return forward_server_tools_list_to_backend(state, incoming_headers, request_id).await;
     };
 
-    if let Err(response) =
-        authorize_server_tools_list_via_backend(state, &incoming_headers, request_id.clone()).await
+    if let Err(response) = authorize_server_method_via_backend(
+        state,
+        &incoming_headers,
+        request_id.clone(),
+        state.backend_tools_list_authz_url(),
+        "tools/list",
+    )
+    .await
     {
         return response;
     }
@@ -4944,53 +4391,6 @@ async fn direct_server_tools_list(
             forward_server_tools_list_to_backend(state, incoming_headers, request_id).await
         }
     }
-}
-
-async fn authorize_server_tools_list_via_backend(
-    state: &AppState,
-    incoming_headers: &HeaderMap,
-    request_id: Option<Value>,
-) -> Result<(), Response> {
-    let backend_response = state
-        .client
-        .post(state.backend_tools_list_authz_url())
-        .headers(build_forwarded_headers(incoming_headers))
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP tools/list authz failed: {err}");
-            backend_jsonrpc_error_response(
-                request_id.clone(),
-                "Backend MCP tools/list authz failed",
-            )
-        })?;
-
-    if backend_response.status().is_success() {
-        return Ok(());
-    }
-
-    let status = backend_response.status();
-    let backend_headers = backend_response.headers().clone();
-    let payload: Value = match backend_response.json().await {
-        Ok(payload) => payload,
-        Err(err) => {
-            error!("backend MCP tools/list authz response decode failed: {err}");
-            return Err(backend_jsonrpc_error_response(
-                request_id,
-                "Backend MCP tools/list authz decode failed",
-            ));
-        }
-    };
-
-    Err(response_from_json_with_headers(
-        status,
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "error": payload,
-        }),
-        &backend_headers,
-    ))
 }
 
 async fn query_server_tools_list_from_db(
@@ -7886,6 +7286,16 @@ fn response_from_json_with_headers(
     }
 
     response
+}
+
+fn inject_runtime_capability_headers(response: &mut Response, headers: &[(&'static str, bool)]) {
+    let response_headers = response.headers_mut();
+    for (header_name, rust_owned) in headers {
+        let value = if *rust_owned { "rust" } else { "python" };
+        if let Ok(value) = HeaderValue::from_str(value) {
+            response_headers.insert(HeaderName::from_static(header_name), value);
+        }
+    }
 }
 
 fn should_forward_header(name: &HeaderName) -> bool {
