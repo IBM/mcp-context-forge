@@ -151,7 +151,7 @@ Observed behavior:
 - Manual spot checks with temporary plugin enablement showed:
   - `resource_post_fetch` parity for `resources/read` using `LicenseHeaderInjector`
   - `prompt_pre_fetch` is reached on Rust full mode using `DenyListPlugin`
-- So the broad “Rust bypasses plugins” concern is not supported by current evidence.
+- So the broad "Rust bypasses plugins" concern is not supported by current evidence.
 - Python service implementations invoke plugin hooks for:
   - `tool_pre_invoke` / `tool_post_invoke`
   - `prompt_pre_fetch` / `prompt_post_fetch`

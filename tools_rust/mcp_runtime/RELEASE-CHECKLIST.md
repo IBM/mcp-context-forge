@@ -149,6 +149,52 @@ support beyond local non-TLS compose testing.
 - [ ] Confirm Version Info reflects mounted transport/core modes correctly
 - [ ] Confirm runtime mode badges match `/health`
 
+## 10a. Optional Embedded UI Validation
+
+- [ ] `make embedded-up`
+- [ ] `make embedded-status`
+- [ ] Confirm the embedded stack comes up cleanly with the iframe-safe UI mode
+- [ ] Open the embedded/admin surface and confirm MCP Runtime indicators still render correctly
+- [ ] `make embedded-down`
+- [ ] `make embedded-clean`
+
+## 10b. Optional Minikube / Helm Validation
+
+- [ ] `make helm-lint`
+- [ ] `make helm-package`
+- [ ] `make minikube-start`
+- [ ] `make minikube-context`
+- [ ] `make minikube-image-load`
+- [ ] `VALUES=charts/mcp-stack/values-minikube.yaml NAMESPACE=mcp-private RELEASE_NAME=mcp-stack make helm-deploy`
+- [ ] `make minikube-status`
+- [ ] `kubectl get all -n mcp-private`
+- [ ] `helm status mcp-stack -n mcp-private --show-desc`
+- [ ] `make minikube-port-forward`
+- [ ] Confirm `/health` is reachable through the Minikube deployment
+- [ ] Confirm the admin UI loads through the Minikube deployment
+- [ ] Run at least one MCP protocol check against the Minikube deployment (`make test-mcp-cli` with the base URL pointed at the forwarded service)
+- [ ] If re-install validation is required, run the explicit cleanup/reinstall flow:
+  `helm list -A | grep mcp-stack`
+- [ ] `helm uninstall mcp-stack -n mcp-private`
+- [ ] `kubectl delete pvc --all -n mcp-private` when data reset is acceptable
+- [ ] `kubectl delete namespace mcp-private` when namespace reset is acceptable
+- [ ] `kubectl create namespace mcp-private`
+- [ ] `helm upgrade --install mcp-stack charts/mcp-stack --namespace mcp-private -f charts/mcp-stack/values-minikube.yaml --wait --timeout 15m --debug`
+- [ ] `kubectl get all -n mcp-private`
+- [ ] `helm status mcp-stack -n mcp-private --show-desc`
+- [ ] `RELEASE_NAME=mcp-stack NAMESPACE=mcp-private make helm-delete`
+
+## 10c. Upgrade / Migration Validation
+
+- [ ] `make upgrade-validate`
+- [ ] Confirm the default upgrade base image is still `ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2`
+- [ ] `make migration-test-postgres`
+- [ ] `make migration-test-sqlite`
+- [ ] Review upgrade logs for Alembic failures, startup regressions, or post-upgrade data loss
+- [ ] If validating a Helm release originally installed from `1.0.0-BETA-2`, apply the documented one-time MinIO selector workaround when needed:
+  `kubectl delete deployment -n mcp-private mcp-stack-minio`
+- [ ] Re-run the Helm upgrade after the BETA-2 MinIO workaround and confirm success
+
 ## 11. Benchmarking
 
 - [ ] `make benchmark-mcp-mixed`
