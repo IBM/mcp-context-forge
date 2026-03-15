@@ -2,6 +2,7 @@
 """Location: ./mcpgateway/plugins/framework/hooks/a2a_gateway.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Keval Mahajan 
 
 Pydantic models for A2A gateway plugin hooks.
 Implements hook types and payloads for the native A2A protocol gateway.

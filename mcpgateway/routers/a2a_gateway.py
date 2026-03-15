@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=import-outside-toplevel
 """Location: ./mcpgateway/routers/a2a_gateway.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Keval Mahajan 
 
 A2A Gateway Router
 
