@@ -3181,49 +3181,66 @@ class TestAdminRootRoutes:
 class TestAdminMetricsRoutes:
     """Test admin routes for metrics management with enhanced coverage."""
 
-    @patch.object(ToolService, "aggregate_metrics", new_callable=AsyncMock)
-    @patch.object(ResourceService, "aggregate_metrics", new_callable=AsyncMock)
-    @patch.object(ServerService, "aggregate_metrics", new_callable=AsyncMock)
-    @patch.object(PromptService, "aggregate_metrics", new_callable=AsyncMock)
-    @patch.object(ToolService, "get_top_tools", new_callable=AsyncMock)
-    @patch.object(ResourceService, "get_top_resources", new_callable=AsyncMock)
-    @patch.object(ServerService, "get_top_servers", new_callable=AsyncMock)
-    @patch.object(PromptService, "get_top_prompts", new_callable=AsyncMock)
-    async def test_admin_get_metrics_with_nulls(
-        self, mock_prompt_top, mock_server_top, mock_resource_top, mock_tool_top, mock_prompt_metrics, mock_server_metrics, mock_resource_metrics, mock_tool_metrics, mock_db
-    ):
+    @patch("mcpgateway.admin.a2a_service")
+    @patch("mcpgateway.admin.tool_service")
+    @patch("mcpgateway.admin.resource_service")
+    @patch("mcpgateway.admin.server_service")
+    @patch("mcpgateway.admin.prompt_service")
+    async def test_admin_get_metrics_with_nulls(self, mock_prompt_service, mock_server_service, mock_resource_service, mock_tool_service, mock_a2a_service, mock_db):
         """Test getting metrics with null values."""
         # Some services return metrics with null values
-        mock_tool_metrics.return_value = ToolMetrics(
-            total_executions=0,
-            successful_executions=0,
-            failed_executions=0,
-            failure_rate=0.0,
-            min_response_time=None,  # No executions yet
-            max_response_time=None,
-            avg_response_time=None,
-            last_execution_time=None,
+        mock_tool_service.aggregate_metrics = AsyncMock(
+            return_value=ToolMetrics(
+                total_executions=0,
+                successful_executions=0,
+                failed_executions=0,
+                failure_rate=0.0,
+                min_response_time=None,  # No executions yet
+                max_response_time=None,
+                avg_response_time=None,
+                last_execution_time=None,
+            )
         )
 
-        mock_resource_metrics.return_value = ResourceMetrics(
-            total_executions=100,
-            successful_executions=100,
-            failed_executions=0,
-            failure_rate=0.0,
-            min_response_time=0.1,
-            max_response_time=1.0,
-            avg_response_time=0.5,
-            last_execution_time=datetime.now(timezone.utc),
+        mock_resource_service.aggregate_metrics = AsyncMock(
+            return_value=ResourceMetrics(
+                total_executions=100,
+                successful_executions=100,
+                failed_executions=0,
+                failure_rate=0.0,
+                min_response_time=0.1,
+                max_response_time=1.0,
+                avg_response_time=0.5,
+                last_execution_time=datetime.now(timezone.utc),
+            )
         )
 
-        mock_server_metrics.return_value = None  # No metrics available
-        mock_prompt_metrics.return_value = None
+        mock_server_service.aggregate_metrics = AsyncMock(return_value=None)  # No metrics available
+        mock_prompt_service.aggregate_metrics = AsyncMock(return_value=None)
+
+        # Mock A2A service metrics
+        from mcpgateway.schemas import A2AAgentAggregateMetrics
+
+        mock_a2a_service.aggregate_metrics = AsyncMock(
+            return_value=A2AAgentAggregateMetrics(
+                total_agents=0,
+                active_agents=0,
+                total_interactions=0,
+                successful_interactions=0,
+                failed_interactions=0,
+                success_rate=0.0,
+                avg_response_time=0.0,
+                min_response_time=0.0,
+                max_response_time=0.0,
+            )
+        )
 
         # Mock top performers to return empty lists
-        mock_tool_top.return_value = []
-        mock_resource_top.return_value = []
-        mock_server_top.return_value = []
-        mock_prompt_top.return_value = []
+        mock_tool_service.get_top_tools = AsyncMock(return_value=[])
+        mock_resource_service.get_top_resources = AsyncMock(return_value=[])
+        mock_server_service.get_top_servers = AsyncMock(return_value=[])
+        mock_prompt_service.get_top_prompts = AsyncMock(return_value=[])
+        mock_a2a_service.get_top_a2a_agents = AsyncMock(return_value=[])
 
         result = await get_aggregated_metrics(mock_db, _user={"email": "test-user@example.com", "db": mock_db})
 
@@ -10356,7 +10373,7 @@ async def test_admin_get_all_tool_ids_team_scoped_includes_public(monkeypatch, m
     # OR alternative — not wrapped inside `team_id = '...' AND visibility IN (...)`.
     # This is what makes platform-public tools visible to team-scoped queries.
     assert re.search(r"tools\.visibility\s*=\s*'public'", sql), (
-        "Expected a standalone visibility='public' condition in team-scoped tool IDs query. " "Platform-public tools must be accessible when associating with team-owned virtual servers."
+        "Expected a standalone visibility='public' condition in team-scoped tool IDs query. Platform-public tools must be accessible when associating with team-owned virtual servers."
     )
 
 
@@ -10386,7 +10403,7 @@ async def test_admin_get_all_prompt_ids_team_scoped_includes_public(monkeypatch,
     sql = str(executed_query.compile(dialect=sqlite_dialect.dialect(), compile_kwargs={"literal_binds": True}))
 
     assert re.search(r"prompts\.visibility\s*=\s*'public'", sql), (
-        "Expected a standalone visibility='public' condition in team-scoped prompt IDs query. " "Platform-public prompts must be accessible when associating with team-owned virtual servers."
+        "Expected a standalone visibility='public' condition in team-scoped prompt IDs query. Platform-public prompts must be accessible when associating with team-owned virtual servers."
     )
 
 
@@ -10416,7 +10433,7 @@ async def test_admin_get_all_resource_ids_team_scoped_includes_public(monkeypatc
     sql = str(executed_query.compile(dialect=sqlite_dialect.dialect(), compile_kwargs={"literal_binds": True}))
 
     assert re.search(r"resources\.visibility\s*=\s*'public'", sql), (
-        "Expected a standalone visibility='public' condition in team-scoped resource IDs query. " "Platform-public resources must be accessible when associating with team-owned virtual servers."
+        "Expected a standalone visibility='public' condition in team-scoped resource IDs query. Platform-public resources must be accessible when associating with team-owned virtual servers."
     )
 
 
@@ -16826,6 +16843,7 @@ class TestMaintenanceMisc:
         assert isinstance(result, StreamingResponse)
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(10)  # Force timeout if cleanup fails
     async def test_admin_events_streams_event_and_cleans_up(self, monkeypatch, allow_permission, mock_db):
         """Execute the SSE generator to cover stream_to_queue happy path and cancellation."""
         # Standard
@@ -16837,7 +16855,11 @@ class TestMaintenanceMisc:
         async def gw_events():
             yield {"type": "gateway", "data": {"a": 1}}
             # Block so the background task gets cancelled in the generator cleanup.
-            await asyncio.sleep(3600)
+            # Use 5s timeout (not 1 hour!) with explicit cancellation check
+            try:
+                await asyncio.sleep(5.0)
+            except asyncio.CancelledError:
+                pass  # Expected - cleanup cancelled the task
 
         async def tool_events():
             if False:  # pragma: no cover
@@ -21033,7 +21055,6 @@ class TestAdminTeamVisibilitySecurity:
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
             patch("mcpgateway.admin._resolve_root_path", return_value=""),
         ):
-
             await admin_teams_partial_html(
                 request=mock_request,
                 page=1,
@@ -21072,7 +21093,6 @@ class TestAdminTeamVisibilitySecurity:
             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service),
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
         ):
-
             await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
 
             # Verify get_all_team_ids was called with include_personal=False and personal_owner_email
@@ -21101,7 +21121,6 @@ class TestAdminTeamVisibilitySecurity:
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
             patch("mcpgateway.admin._normalize_search_query", return_value="test"),
         ):
-
             await admin_search_teams(q="test", include_inactive=False, limit=50, visibility=None, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
 
             # Verify list_teams was called with include_personal=False and personal_owner_email
@@ -21137,7 +21156,6 @@ class TestAdminTeamVisibilitySecurity:
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
             patch("mcpgateway.admin._resolve_root_path", return_value=""),
         ):
-
             await admin_list_teams(request=mock_request, page=1, per_page=50, q=None, db=mock_db, user={"email": "admin@example.com", "db": mock_db}, unified=False)
 
             # Verify list_teams was called with include_personal=False and personal_owner_email
@@ -21173,7 +21191,6 @@ class TestAdminTeamVisibilitySecurity:
             patch("mcpgateway.admin.get_user_email", return_value="user@example.com"),
             patch("mcpgateway.admin._resolve_root_path", return_value=""),
         ):
-
             await admin_teams_partial_html(
                 request=mock_request,
                 page=1,
@@ -21235,7 +21252,6 @@ class TestAdminTeamVisibilitySecurity:
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
             patch("mcpgateway.admin._resolve_root_path", return_value=""),
         ):
-
             await admin_teams_partial_html(
                 request=mock_request,
                 page=1,
@@ -21293,7 +21309,6 @@ class TestAdminTeamVisibilitySecurity:
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
             patch("mcpgateway.admin._resolve_root_path", return_value=""),
         ):
-
             await admin_teams_partial_html(
                 request=mock_request,
                 page=1,
@@ -21365,7 +21380,6 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service),
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
         ):
-
             result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
 
             # Verify service was called with personal_owner_email
@@ -21392,7 +21406,6 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service),
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
         ):
-
             await admin_get_all_team_ids(include_inactive=True, visibility="public", q="search", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
 
             call_kwargs = mock_team_service.get_all_team_ids.call_args[1]
@@ -21419,7 +21432,6 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
             patch("mcpgateway.admin._normalize_search_query", return_value="admin"),
         ):
-
             await admin_search_teams(q="admin", include_inactive=False, limit=50, visibility=None, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
 
             call_kwargs = mock_team_service.list_teams.call_args[1]
@@ -21443,7 +21455,6 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
             patch("mcpgateway.admin._normalize_search_query", return_value="test"),
         ):
-
             await admin_search_teams(q="test", include_inactive=True, limit=25, visibility="public", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
 
             call_kwargs = mock_team_service.list_teams.call_args[1]
@@ -21479,7 +21490,6 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
             patch("mcpgateway.admin._get_user_team_roles", return_value={}),
         ):
-
             result = await admin_teams_partial_html(
                 request=mock_request, page=1, per_page=50, include_inactive=False, visibility=None, relationship=None, q=None, db=mock_db, user={"email": "admin@example.com", "db": mock_db}
             )
@@ -21513,7 +21523,6 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
             patch("mcpgateway.admin._get_user_team_roles", return_value={}),
         ):
-
             await admin_teams_partial_html(
                 request=mock_request, page=2, per_page=10, include_inactive=True, visibility="public", relationship=None, q="search", db=mock_db, user={"email": "admin@example.com", "db": mock_db}
             )
@@ -21550,7 +21559,6 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
             patch("mcpgateway.admin._resolve_root_path", return_value=""),
         ):
-
             await admin_list_teams(request=mock_request, page=1, per_page=50, q=None, db=mock_db, user={"email": "admin@example.com", "db": mock_db}, unified=False)
 
             call_kwargs = mock_team_service.list_teams.call_args[1]
@@ -21579,7 +21587,6 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
             patch("mcpgateway.admin._resolve_root_path", return_value=""),
         ):
-
             result = await admin_list_teams(request=mock_request, page=1, per_page=50, q="nomatch", db=mock_db, user={"email": "admin@example.com", "db": mock_db}, unified=False)
 
             assert isinstance(result, HTMLResponse)

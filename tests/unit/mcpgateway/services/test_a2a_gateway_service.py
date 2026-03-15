@@ -393,6 +393,7 @@ class TestConstants:
             "message/send",
             "message/stream",
             "tasks/get",
+            "tasks/list",
             "tasks/cancel",
             "tasks/resubscribe",
             "tasks/pushNotificationConfig/set",
