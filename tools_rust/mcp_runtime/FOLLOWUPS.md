@@ -213,6 +213,227 @@ Why this matters:
 Recommended next step:
 - Inspect server sync timing and transport filtering on the SSE registration path separately from the `register_fast_time` auth/startup race that was already fixed.
 
+## Validated Remaining-Items Review
+
+These notes capture the current status of the Rust-specific items from
+`todo/remaining.md` after revalidation on the current branch.
+
+### Already mitigated or not worth tracking further here
+
+- Rust client-visible transport/dispatch/decode errors are already redacted through
+  `backend_detail_error_response(...)`, `backend_jsonrpc_error_response(...)`,
+  and targeted `CLIENT_ERROR_DETAIL` response shaping in
+  `tools_rust/mcp_runtime/src/lib.rs`.
+- Affinity-forwarded responses already flow through the same
+  `should_forward_response_header(...)` allowlist used for other backend
+  responses, so sensitive response headers like `set-cookie` and
+  `authorization` are not reflected to clients.
+- The protocol-version review finding is stale: the runtime currently checks
+  for exact membership in `supported_protocol_versions()` rather than doing a
+  lexicographic version comparison.
+- The runtime crate now declares `rust-version = "1.85"` in
+  `tools_rust/mcp_runtime/Cargo.toml`.
+
+### Deferred Rust-specific follow-ups
+
+#### 11. Redis affinity pub/sub trust model
+
+Status:
+- Deferred by design
+
+Observed behavior:
+- Affinity forwarding publishes request payloads to Redis channels and accepts
+  the first response on the generated response channel without per-message
+  authentication or signatures.
+
+Why this matters:
+- The current design assumes Redis stays on a trusted private network.
+- If Redis trust assumptions change, the affinity control plane will need
+  authentication or message signing.
+
+Likely area:
+- `tools_rust/mcp_runtime/src/lib.rs`
+- `forward_transport_request_via_affinity_owner(...)`
+
+Recommended next step:
+- Keep the current trusted-network assumption for now, but document it in any
+  deployment guidance that places Redis outside a tightly controlled network.
+
+#### 12. Explicit Rust request body size limit
+
+Status:
+- Deferred hardening
+
+Observed behavior:
+- The Rust runtime does not currently install an explicit body-size limit layer.
+
+Why this matters:
+- The runtime relies on default extractor behavior instead of a clear,
+  centrally documented request-size ceiling.
+
+Likely area:
+- `tools_rust/mcp_runtime/src/lib.rs`
+- router construction for public and internal listeners
+
+Recommended next step:
+- Decide on a runtime-specific request-size limit and apply it explicitly at
+  the Axum router layer.
+
+#### 13. Session existence is distinguishable from session denial
+
+Status:
+- Deferred product/security tradeoff
+
+Observed behavior:
+- Missing sessions return `404 Session not found`.
+- Existing sessions owned by another principal return `403 Session access denied`.
+
+Why this matters:
+- This can leak whether a guessed session id exists, even though the ids are
+  high-entropy UUIDs and not realistically enumerable by brute force.
+
+Likely area:
+- `tools_rust/mcp_runtime/src/lib.rs`
+- `validate_runtime_session_request(...)`
+
+Recommended next step:
+- Decide whether parity with the current behavior is sufficient, or whether all
+  deny paths should collapse to a single public error.
+
+#### 14. Direct DB list/read pagination parity
+
+Status:
+- Deferred feature-parity work
+
+Observed behavior:
+- The Rust direct DB paths optimize common discovery/read flows, but they do
+  not yet implement broader MCP pagination semantics the way a fully proxied
+  backend path could.
+
+Why this matters:
+- This is a feature-parity/documentation gap rather than a correctness failure
+  for the currently optimized hot paths.
+
+Likely area:
+- `tools_rust/mcp_runtime/src/lib.rs`
+- direct DB query helpers for tools/resources/prompts
+
+Recommended next step:
+- Either document the current pagination limitations clearly or extend the Rust
+  direct DB paths to support paginated list results.
+
+#### 15. Header helper cleanup and silent header insertion failures
+
+Status:
+- Deferred maintainability cleanup
+
+Observed behavior:
+- Header insertion and response decoration patterns still appear in many places.
+- Some header insertions are best-effort and intentionally skip malformed
+  values without logging.
+
+Why this matters:
+- The behavior is safe today, but the duplication makes future changes easier
+  to get wrong and harder to audit.
+
+Likely area:
+- `tools_rust/mcp_runtime/src/lib.rs`
+
+Recommended next step:
+- Extract small helper functions for repeated response-header decoration and
+  decide where malformed-header skips should log warnings instead of silently
+  continuing.
+
+#### 16. Resume-path duplicate validation
+
+Status:
+- Deferred cleanup
+
+Observed behavior:
+- Resumable GET handling still re-derives some session/access validation that
+  overlaps with the general transport validation flow.
+
+Why this matters:
+- This is mostly duplicated logic rather than a proven correctness bug.
+
+Likely area:
+- `tools_rust/mcp_runtime/src/lib.rs`
+- resumable GET `/mcp` flow
+
+Recommended next step:
+- Thread the validated session record through the resume path instead of
+  reloading and rechecking it.
+
+#### 17. Runtime modularization and low-priority Rust cleanup
+
+Status:
+- Deferred refactor
+
+Observed behavior:
+- `lib.rs` remains large and contains repeated URL derivation, backend bridge,
+  and helper patterns.
+- `query_param(...)` still returns raw values without percent-decoding.
+- Some in-process cache keys still use `DefaultHasher`.
+- Fingerprint comparisons are not constant-time.
+
+Why this matters:
+- These are maintainability and polish issues, not active correctness
+  regressions in the Rust MCP path.
+
+Likely area:
+- `tools_rust/mcp_runtime/src/lib.rs`
+
+Recommended next step:
+- Split transport/session/direct-execution code into modules, then clean up the
+  lower-risk helper issues as part of that refactor.
+
+#### 18. Shutdown cleanup
+
+Status:
+- Deferred lifecycle cleanup
+
+Observed behavior:
+- The Rust runtime does not currently do much explicit shutdown cleanup for its
+  in-memory/runtime-owned resources.
+- The Python proxy still caches a UDS `httpx.AsyncClient` without an explicit
+  close hook.
+
+Why this matters:
+- This is mostly a lifecycle hygiene issue during process shutdown and restart,
+  not a live-request correctness problem.
+
+Likely area:
+- `tools_rust/mcp_runtime/src/lib.rs`
+- `mcpgateway/transports/rust_mcp_runtime_proxy.py`
+
+Recommended next step:
+- Add explicit shutdown cleanup on the Rust side and a `close()`/shutdown hook
+  for the Python proxy's cached UDS client in a separate follow-up.
+
+#### 19. Session-auth reuse still trades freshness for fewer auth round-trips
+
+Status:
+- Deferred Rust-specific design follow-up
+
+Observed behavior:
+- The Rust runtime now has explicit revocation/membership/role-change coverage,
+  but the implementation still relies on a bounded reuse TTL rather than
+  immediate revocation signals.
+
+Why this matters:
+- This is the remaining architectural tradeoff in the fast auth-reuse path:
+  fewer Rust -> Python auth round-trips versus immediate freshness after
+  revocation.
+
+Likely area:
+- `tools_rust/mcp_runtime/src/lib.rs`
+- session-auth reuse cache invalidation design
+
+Recommended next step:
+- Decide whether the current bounded TTL contract is enough, or whether Rust
+  should consume a revocation/invalidation signal from Python to drop cached
+  auth state immediately.
+
 ## Not In Scope Here
 
 These items are not currently believed to be blocking the main Rust MCP runtime work:

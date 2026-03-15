@@ -2843,13 +2843,7 @@ async fn authenticate_public_request_if_needed(
         .await
         .map_err(|err| {
             error!("backend MCP authenticate failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "detail": "Backend MCP authenticate failed",
-                    "error": err.to_string(),
-                }),
-            )
+            backend_detail_error_response("Backend MCP authenticate failed")
         })?;
 
     if !backend_response.status().is_success() {
@@ -2859,13 +2853,7 @@ async fn authenticate_public_request_if_needed(
     let response_body: InternalAuthenticateResponse =
         backend_response.json().await.map_err(|err| {
             error!("backend MCP authenticate decode failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "detail": "Backend MCP authenticate decode failed",
-                    "error": err.to_string(),
-                }),
-            )
+            backend_detail_error_response("Backend MCP authenticate decode failed")
         })?;
 
     let encoded_auth_context = encode_internal_auth_context_header(&response_body.auth_context)?;
@@ -3554,10 +3542,7 @@ fn response_from_affinity_forward_response(
     let mut has_session_id = false;
     for (name, value) in payload.headers {
         let lower = name.to_ascii_lowercase();
-        if matches!(
-            lower.as_str(),
-            "connection" | "transfer-encoding" | "keep-alive" | "content-length"
-        ) {
+        if !should_forward_response_header(lower.as_str()) {
             continue;
         }
         if lower == "content-type" {
@@ -3617,7 +3602,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(input: &[u8]) -> Option<Vec<u8>> {
-    if !input.len().is_multiple_of(2) {
+    if input.len() % 2 != 0 {
         return None;
     }
 
@@ -4289,6 +4274,8 @@ async fn handle_resume_transport_request(
         }
 
         if let Some(stream_id_value) = stream_id {
+            // Protocol versions are ISO dates (`YYYY-MM-DD`), so lexical
+            // ordering matches chronological ordering for this gate.
             if protocol_version.as_str() >= "2025-11-25"
                 && let Ok(priming_event_id) = store_event_in_rust_event_store(
                     &state_cloned,
@@ -4605,18 +4592,7 @@ async fn send_to_backend_url(
         .await
         .map_err(|err| {
             error!("backend MCP dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": Value::Null,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP dispatch failed",
-                        "data": err.to_string(),
-                    }
-                }),
-            )
+            backend_jsonrpc_error_response(None, "Backend MCP dispatch failed")
         })
 }
 
@@ -4902,17 +4878,9 @@ async fn forward_server_tools_list_to_backend(
         Ok(payload) => payload,
         Err(err) => {
             error!("backend MCP tools/list response decode failed: {err}");
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id.clone(),
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP tools/list decode failed",
-                        "data": err.to_string(),
-                    }
-                }),
+            return backend_jsonrpc_error_response(
+                request_id.clone(),
+                "Backend MCP tools/list decode failed",
             );
         }
     };
@@ -4991,17 +4959,9 @@ async fn authorize_server_tools_list_via_backend(
         .await
         .map_err(|err| {
             error!("backend MCP tools/list authz failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP tools/list authz failed",
-                        "data": err.to_string(),
-                    }
-                }),
+            backend_jsonrpc_error_response(
+                request_id.clone(),
+                "Backend MCP tools/list authz failed",
             )
         })?;
 
@@ -5015,17 +4975,9 @@ async fn authorize_server_tools_list_via_backend(
         Ok(payload) => payload,
         Err(err) => {
             error!("backend MCP tools/list authz response decode failed: {err}");
-            return Err(json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP tools/list authz decode failed",
-                        "data": err.to_string(),
-                    }
-                }),
+            return Err(backend_jsonrpc_error_response(
+                request_id,
+                "Backend MCP tools/list authz decode failed",
             ));
         }
     };
@@ -5897,7 +5849,7 @@ async fn authorize_server_method_via_backend(
                     "error": {
                         "code": -32000,
                         "message": format!("Backend MCP {method_label} authz failed"),
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -5921,7 +5873,7 @@ async fn authorize_server_method_via_backend(
                     "error": {
                         "code": -32000,
                         "message": format!("Backend MCP {method_label} authz decode failed"),
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             ));
@@ -6053,7 +6005,7 @@ async fn forward_resources_list_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP resources/list decode failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             );
@@ -6103,7 +6055,7 @@ async fn forward_resources_read_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP resources/read decode failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             );
@@ -6153,7 +6105,7 @@ async fn forward_resources_subscribe_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP resources/subscribe decode failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             );
@@ -6203,7 +6155,7 @@ async fn forward_resources_unsubscribe_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP resources/unsubscribe decode failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             );
@@ -6253,7 +6205,7 @@ async fn forward_resource_templates_list_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP resources/templates/list decode failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             );
@@ -6302,7 +6254,7 @@ async fn forward_roots_list_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP roots/list decode failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             );
@@ -6351,7 +6303,7 @@ async fn forward_prompts_list_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP prompts/list decode failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             );
@@ -6400,7 +6352,7 @@ async fn forward_prompts_get_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP prompts/get decode failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             );
@@ -6450,7 +6402,7 @@ async fn forward_completion_complete_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP completion/complete decode failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             );
@@ -6500,7 +6452,7 @@ async fn forward_sampling_create_message_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP sampling/createMessage decode failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             );
@@ -6550,7 +6502,7 @@ async fn forward_logging_set_level_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP logging/setLevel decode failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             );
@@ -6623,7 +6575,7 @@ async fn send_transport_to_backend(
             json!({
                 "error": "Bad Gateway",
                 "message": "Backend MCP transport dispatch failed",
-                "data": err.to_string(),
+                "data": CLIENT_ERROR_DETAIL,
             }),
         )
     })
@@ -6649,7 +6601,7 @@ async fn send_session_delete_to_backend(
                 StatusCode::BAD_GATEWAY,
                 json!({
                     "detail": "Backend MCP session delete dispatch failed",
-                    "data": err.to_string(),
+                    "data": CLIENT_ERROR_DETAIL,
                 }),
             )
         })
@@ -6678,7 +6630,7 @@ async fn send_tools_list_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP tools/list dispatch failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -6707,7 +6659,7 @@ async fn send_resources_list_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP resources/list dispatch failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -6736,7 +6688,7 @@ async fn send_resources_read_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP resources/read dispatch failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -6765,7 +6717,7 @@ async fn send_resources_subscribe_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP resources/subscribe dispatch failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -6794,7 +6746,7 @@ async fn send_resources_unsubscribe_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP resources/unsubscribe dispatch failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -6823,7 +6775,7 @@ async fn send_resource_templates_list_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP resources/templates/list dispatch failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -6852,7 +6804,7 @@ async fn send_roots_list_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP roots/list dispatch failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -6881,7 +6833,7 @@ async fn send_completion_complete_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP completion/complete dispatch failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -6910,7 +6862,7 @@ async fn send_sampling_create_message_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP sampling/createMessage dispatch failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -6939,7 +6891,7 @@ async fn send_logging_set_level_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP logging/setLevel dispatch failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -6968,7 +6920,7 @@ async fn send_prompts_list_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP prompts/list dispatch failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -6997,7 +6949,7 @@ async fn send_prompts_get_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP prompts/get dispatch failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -7158,7 +7110,7 @@ async fn send_tools_call_to_backend(
                     "error": {
                         "code": -32000,
                         "message": "Backend MCP tools/call dispatch failed",
-                        "data": err.to_string(),
+                        "data": CLIENT_ERROR_DETAIL,
                     }
                 }),
             )
@@ -7865,6 +7817,18 @@ fn build_backend_transport_url(base_url: &str, uri: &axum::http::Uri) -> String 
     }
 }
 
+fn should_forward_response_header(name: &str) -> bool {
+    matches!(
+        name,
+        "content-type"
+            | "mcp-session-id"
+            | "x-mcp-session-id"
+            | "www-authenticate"
+            | "x-request-id"
+            | "x-correlation-id"
+    )
+}
+
 fn response_from_backend(backend_response: reqwest::Response) -> Response {
     response_from_backend_with_session_hint(backend_response, None)
 }
@@ -7883,20 +7847,15 @@ fn response_from_backend_with_session_hint(
     let mut builder = Response::builder().status(status);
     builder = builder.header(RUNTIME_HEADER, RUNTIME_NAME);
 
-    if let Some(value) = headers.get(CONTENT_TYPE) {
-        builder = builder.header(CONTENT_TYPE, value.clone());
-    } else {
+    if !headers
+        .keys()
+        .any(|name| should_forward_response_header(name.as_str()) && name == CONTENT_TYPE)
+    {
         builder = builder.header(CONTENT_TYPE, "application/json");
     }
 
-    for header_name in [
-        "mcp-session-id",
-        "x-mcp-session-id",
-        "www-authenticate",
-        "x-request-id",
-        "x-correlation-id",
-    ] {
-        if let Some(value) = headers.get(header_name) {
+    for (header_name, value) in &headers {
+        if should_forward_response_header(header_name.as_str()) {
             builder = builder.header(header_name, value.clone());
         }
     }
@@ -7920,21 +7879,9 @@ fn response_from_json_with_headers(
     let mut response = json_response(status, payload);
     let response_headers = response.headers_mut();
 
-    if let Some(value) = headers.get(CONTENT_TYPE) {
-        response_headers.insert(CONTENT_TYPE, value.clone());
-    }
-
-    for header_name in [
-        "mcp-session-id",
-        "x-mcp-session-id",
-        "www-authenticate",
-        "x-request-id",
-        "x-correlation-id",
-    ] {
-        if let Some(value) = headers.get(header_name)
-            && let Ok(name) = HeaderName::from_bytes(header_name.as_bytes())
-        {
-            response_headers.insert(name, value.clone());
+    for (header_name, value) in headers {
+        if should_forward_response_header(header_name.as_str()) {
+            response_headers.insert(header_name.clone(), value.clone());
         }
     }
 
@@ -7976,11 +7923,37 @@ fn json_response(status: StatusCode, payload: Value) -> Response {
     response
 }
 
+fn backend_detail_error_response(detail: &str) -> Response {
+    json_response(
+        StatusCode::BAD_GATEWAY,
+        json!({
+            "detail": detail,
+            "error": CLIENT_ERROR_DETAIL,
+        }),
+    )
+}
+
+fn backend_jsonrpc_error_response(
+    request_id: Option<Value>,
+    message: impl Into<String>,
+) -> Response {
+    json_response(
+        StatusCode::BAD_GATEWAY,
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id.unwrap_or(Value::Null),
+            "error": {
+                "code": -32000,
+                "message": message.into(),
+                "data": CLIENT_ERROR_DETAIL,
+            }
+        }),
+    )
+}
+
 fn redact_server_error_payload(mut payload: Value) -> Value {
     if let Some(error_value) = payload.get_mut("error") {
-        if error_value.is_string() {
-            *error_value = Value::String(CLIENT_ERROR_DETAIL.to_string());
-        } else if let Some(error_object) = error_value.as_object_mut()
+        if let Some(error_object) = error_value.as_object_mut()
             && let Some(data_value) = error_object.get_mut("data")
             && data_value.is_string()
         {
@@ -8036,9 +8009,10 @@ mod unit_tests {
         remove_runtime_session, replay_events_endpoint, requested_initialize_session_id,
         requested_protocol_version, response_from_affinity_forward_response, run,
         runtime_session_access_outcome, runtime_session_id_from_request, runtime_session_key,
-        serve_http, serve_uds, store_event_endpoint, transport_delete_server_scoped,
-        transport_get_server_scoped, upsert_runtime_session, validate_initialize_params,
-        validate_protocol_version, validate_runtime_session_request,
+        send_tools_list_to_backend, send_transport_to_backend, serve_http, serve_uds,
+        store_event_endpoint, transport_delete_server_scoped, transport_get_server_scoped,
+        upsert_runtime_session, validate_initialize_params, validate_protocol_version,
+        validate_runtime_session_request,
     };
     use axum::{
         Json, Router,
@@ -8992,6 +8966,47 @@ mod unit_tests {
     }
 
     #[tokio::test]
+    async fn backend_dispatch_error_helpers_redact_client_visible_details() {
+        let mut config = test_config();
+        config.backend_rpc_url = "http://127.0.0.1:1/rpc".to_string();
+        let state = AppState::new(&config).expect("state");
+        let uri = "/mcp".parse::<Uri>().expect("uri");
+
+        let transport_error = send_transport_to_backend(
+            &state,
+            reqwest::Method::POST,
+            &HeaderMap::new(),
+            &uri,
+            Some(Bytes::from_static(
+                br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#,
+            )),
+            false,
+        )
+        .await
+        .expect_err("unreachable backend should fail");
+        assert_eq!(transport_error.status(), StatusCode::BAD_GATEWAY);
+        let transport_payload: Value = serde_json::from_slice(
+            &to_bytes(transport_error.into_body(), usize::MAX)
+                .await
+                .expect("body"),
+        )
+        .expect("json body");
+        assert_eq!(transport_payload["data"], CLIENT_ERROR_DETAIL);
+
+        let tools_list_error = send_tools_list_to_backend(&state, HeaderMap::new())
+            .await
+            .expect_err("unreachable backend should fail");
+        assert_eq!(tools_list_error.status(), StatusCode::BAD_GATEWAY);
+        let tools_list_payload: Value = serde_json::from_slice(
+            &to_bytes(tools_list_error.into_body(), usize::MAX)
+                .await
+                .expect("body"),
+        )
+        .expect("json body");
+        assert_eq!(tools_list_payload["error"]["data"], CLIENT_ERROR_DETAIL);
+    }
+
+    #[tokio::test]
     async fn serve_http_without_shutdown_can_be_aborted_after_serving_requests() {
         let addr: SocketAddr = free_tcp_addr().parse().expect("socket addr");
         let app = Router::new().route("/health", get(|| async { "ok" }));
@@ -9656,13 +9671,7 @@ mod unit_tests {
                 .and_then(|value| value.to_str().ok()),
             Some("session-hint")
         );
-        assert_eq!(
-            response
-                .headers()
-                .get("x-custom")
-                .and_then(|value| value.to_str().ok()),
-            Some("present")
-        );
+        assert!(!response.headers().contains_key("x-custom"));
     }
 
     #[tokio::test]
@@ -10017,6 +10026,9 @@ mod unit_tests {
                 headers: [
                     ("content-type".to_string(), "text/plain".to_string()),
                     ("mcp-session-id".to_string(), "already-present".to_string()),
+                    ("x-request-id".to_string(), "request-123".to_string()),
+                    ("set-cookie".to_string(), "secret=1".to_string()),
+                    ("authorization".to_string(), "Bearer hidden".to_string()),
                     ("content-length".to_string(), "99".to_string()),
                     ("connection".to_string(), "keep-alive".to_string()),
                 ]
@@ -10041,6 +10053,15 @@ mod unit_tests {
                 .and_then(|value| value.to_str().ok()),
             Some("already-present")
         );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-request-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("request-123")
+        );
+        assert!(!response.headers().contains_key("set-cookie"));
+        assert!(!response.headers().contains_key("authorization"));
         assert!(!response.headers().contains_key("content-length"));
         assert!(!response.headers().contains_key("connection"));
 
