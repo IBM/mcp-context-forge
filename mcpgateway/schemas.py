@@ -4029,24 +4029,6 @@ class ServerCreate(BaseModel):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
 
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: str) -> str:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value
-
-        Raises:
-            ValueError: If visibility is invalid
-        """
-        if v not in ["private", "team", "public"]:
-            raise ValueError("Visibility must be one of: private, team, public")
-        return v
-
     @field_validator("team_id")
     @classmethod
     def validate_team_id(cls, v: Optional[str]) -> Optional[str]:
@@ -4546,24 +4528,6 @@ class A2AAgentCreate(BaseModel):
             dict: Value if validated as safe
         """
         SecurityValidator.validate_json_depth(v)
-        return v
-
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: str) -> str:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value
-
-        Raises:
-            ValueError: If visibility is invalid
-        """
-        if v not in ["private", "team", "public"]:
-            raise ValueError("Visibility must be one of: private, team, public")
         return v
 
     @field_validator("team_id")

@@ -610,8 +610,8 @@ def test_rpc_and_event_admin_and_server_validators(caplog):
     assert len(ServerUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert any("Description too long" in rec.message for rec in caplog.records)
 
-    with pytest.raises(ValueError):
-        ServerCreate.validate_visibility("invalid")
+    with pytest.raises(ValidationError):
+        ServerCreate(name="srv", visibility="invalid")
 
     assert ServerCreate.validate_team_id("550e8400-e29b-41d4-a716-446655440000")
 
@@ -1310,6 +1310,7 @@ def test_visibility_literal_enum_validation():
     for v in invalid_values:
         with pytest.raises(ValidationError):
             ServerCreate(name="srv", visibility=v)
+    assert ServerCreate(name="srv", visibility=None).visibility is None
 
     # ServerUpdate — all fields optional
     for v in valid_values:
@@ -1318,6 +1319,7 @@ def test_visibility_literal_enum_validation():
     for v in invalid_values:
         with pytest.raises(ValidationError):
             ServerUpdate(visibility=v)
+    assert ServerUpdate().visibility is None
 
     # A2AAgentCreate — required fields: name, endpoint_url
     for v in valid_values:
@@ -1326,6 +1328,7 @@ def test_visibility_literal_enum_validation():
     for v in invalid_values:
         with pytest.raises(ValidationError):
             A2AAgentCreate(name="agent", endpoint_url="http://localhost:8080", visibility=v)
+    assert A2AAgentCreate(name="agent", endpoint_url="http://localhost:8080", visibility=None).visibility is None
 
     # A2AAgentUpdate — all fields optional
     for v in valid_values:
@@ -1334,3 +1337,4 @@ def test_visibility_literal_enum_validation():
     for v in invalid_values:
         with pytest.raises(ValidationError):
             A2AAgentUpdate(visibility=v)
+    assert A2AAgentUpdate().visibility is None
