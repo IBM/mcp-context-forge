@@ -350,16 +350,39 @@ def _decode_internal_mcp_auth_context(header_value: str) -> Dict[str, Any]:
     return payload
 
 
-@lru_cache(maxsize=1)
-def _expected_internal_mcp_runtime_auth_header() -> str:
-    """Return the shared secret-derived trust header for Rust->Python MCP hops.
+def _auth_encryption_secret_value() -> str:
+    """Return the configured auth-encryption secret as a plain string.
 
     Returns:
-        Hex-encoded SHA-256 digest derived from the shared auth secret.
+        The auth-encryption secret, normalized to a regular string.
     """
-    secret = settings.auth_encryption_secret.get_secret_value()
+    secret = settings.auth_encryption_secret
+    if hasattr(secret, "get_secret_value"):
+        return secret.get_secret_value()
+    return str(secret)
+
+
+@lru_cache(maxsize=8)
+def _expected_internal_mcp_runtime_auth_header_for_secret(secret: str) -> str:
+    """Return the shared secret-derived trust header for Rust->Python MCP hops.
+
+    Args:
+        secret: Auth-encryption secret to derive the trust header from.
+
+    Returns:
+        Hex-encoded SHA-256 digest derived from the provided auth secret.
+    """
     material = f"{secret}:{_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT}".encode("utf-8")
     return hashlib.sha256(material).hexdigest()
+
+
+def _expected_internal_mcp_runtime_auth_header() -> str:
+    """Return the current shared secret-derived trust header for Rust->Python MCP hops.
+
+    Returns:
+        Hex-encoded SHA-256 digest derived from the current auth secret.
+    """
+    return _expected_internal_mcp_runtime_auth_header_for_secret(_auth_encryption_secret_value())
 
 
 def _has_valid_internal_mcp_runtime_auth_header(request: Request) -> bool:

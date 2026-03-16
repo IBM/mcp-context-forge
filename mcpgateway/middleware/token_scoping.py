@@ -1374,16 +1374,41 @@ class TokenScopingMiddleware:
         return client_host in ("127.0.0.1", "::1")
 
     @staticmethod
-    @lru_cache(maxsize=1)
+    def _auth_encryption_secret_value() -> str:
+        """Return the configured auth-encryption secret as a plain string.
+
+        Returns:
+            The auth-encryption secret, normalized to a regular string.
+        """
+        secret = settings.auth_encryption_secret
+        if hasattr(secret, "get_secret_value"):
+            return secret.get_secret_value()
+        return str(secret)
+
+    @staticmethod
+    @lru_cache(maxsize=8)
+    def _expected_internal_mcp_runtime_auth_header_for_secret(secret: str) -> str:
+        """Return the expected shared internal-auth header for a specific secret.
+
+        Args:
+            secret: Auth-encryption secret to derive the trust header from.
+
+        Returns:
+            Hex-encoded SHA-256 digest derived from the provided auth secret.
+        """
+        material = f"{secret}:{_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT}".encode("utf-8")
+        return hashlib.sha256(material).hexdigest()
+
+    @staticmethod
     def _expected_internal_mcp_runtime_auth_header() -> str:
         """Return the expected shared internal-auth header for Rust MCP hops.
 
         Returns:
             Shared secret-derived digest expected on trusted internal Rust MCP calls.
         """
-        secret = settings.auth_encryption_secret.get_secret_value()
-        material = f"{secret}:{_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT}".encode("utf-8")
-        return hashlib.sha256(material).hexdigest()
+        return TokenScopingMiddleware._expected_internal_mcp_runtime_auth_header_for_secret(
+            TokenScopingMiddleware._auth_encryption_secret_value()
+        )
 
 
 # Create middleware instance
