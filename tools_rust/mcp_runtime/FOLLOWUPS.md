@@ -856,6 +856,89 @@ Recommended next step:
   issue is in Helm invocation, namespace lifecycle timing, or local Minikube
   state.
 
+#### 25a. Rust-enabled Minikube / Helm direct gateway path emits Zstandard MCP responses that break current clients
+
+Status:
+- Deferred Kubernetes/Rust transport compatibility follow-up
+
+Observed behavior:
+- A dedicated Rust-enabled Helm deployment was validated on Minikube with:
+  - gateway image override:
+    - `mcpgateway/mcpgateway:latest`
+  - gateway config override:
+    - `RUST_MCP_MODE=full`
+  - release:
+    - `mcp-stack-rust` in namespace `mcp-private-rust`
+- The deployment itself came up healthy and `/health` reported:
+  - `mcp_runtime.mode = rust-managed`
+- Raw HTTP MCP calls worked when compression was not negotiated.
+- When the client advertised `Accept-Encoding: zstd`, the direct Minikube
+  gateway service returned `Content-Encoding: zstd` on Rust MCP responses:
+  - `/mcp/`
+  - `/servers/<id>/mcp/`
+- The same probe against the compose full-Rust stack behind nginx returned
+  plain JSON with no `Content-Encoding`.
+- Client-visible failures on the Rust-enabled Minikube path included:
+  - `make test-mcp-cli`:
+    - `14 failed`, `9 passed`, `4 rerun`
+  - `make test-mcp-access-matrix`:
+    - `2 failed`, `3 passed`
+  - wrapper `Invalid JSON response`
+  - `UnicodeDecodeError` in `response.json()`
+- A direct validation of the workaround succeeded:
+  - setting `COMPRESSION_ENABLED=false` on the Rust-enabled Helm release and
+    restarting the gateway removed `Content-Encoding: zstd` from `/mcp/`
+  - `make test-mcp-cli` then passed cleanly against the same Rust-enabled
+    Minikube endpoint:
+    - `23 passed`
+- The current Python compression middleware behavior explains the issue:
+  - app-level compression is enabled globally in `mcpgateway/main.py`
+  - `SSEAwareCompressMiddleware` only bypasses MCP compression when
+    `json_response_enabled=false` (SSE mode)
+  - in normal JSON MCP mode, `/mcp` and `/servers/*/mcp` responses are still
+    compressed like generic REST JSON responses
+- There is no corresponding compression feature gap inside the Rust runtime
+  binary itself; this is a gateway-layer response-compression policy issue.
+
+Why this matters:
+- The Helm deploy itself is healthy, but the direct k8s Rust public transport
+  is not yet compatible with the current wrapper / test clients when Zstandard
+  compression is negotiated.
+- This is a real gap in claiming Rust-enabled Kubernetes readiness, even though
+  the compose full-Rust path remains healthy behind nginx.
+
+Likely area:
+- Python gateway response compression middleware around the Rust public MCP
+  transport path (not missing compression support inside the Rust runtime
+  binary itself)
+- response compression middleware / `starlette-compress`
+- compression negotiation differences between:
+  - direct gateway service
+  - nginx-fronted compose deployment
+- client compatibility expectations in:
+  - `mcpgateway.wrapper`
+  - `tests/e2e/test_mcp_cli_protocol.py`
+  - `tests/e2e_rust/test_mcp_access_matrix.py`
+
+Recommended next step:
+- Change the Python gateway compression policy so MCP endpoints bypass
+  app-level compression entirely, not just in SSE mode:
+  - `/mcp`
+  - `/mcp/`
+  - `/servers/*/mcp`
+  - `/servers/*/mcp/`
+- Decide whether the direct Rust k8s gateway should:
+  - disable Zstandard on MCP JSON-RPC responses, or
+  - only enable encodings known to work with supported clients, or
+  - ensure the wrapper/test/client stack decodes Zstandard reliably
+- The strongest validated immediate mitigation is:
+  - disable app-level compression for the Rust-enabled direct k8s gateway
+    (`COMPRESSION_ENABLED=false`)
+- Re-run the Rust-enabled Minikube validation after that change:
+  - `/health`
+  - `make test-mcp-cli`
+  - `make test-mcp-access-matrix`
+
 #### 26. Optional `2025-11-25-report` surface is not release-clean
 
 Status:

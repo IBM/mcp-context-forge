@@ -184,6 +184,12 @@ support beyond local non-TLS compose testing.
 - [ ] `helm status mcp-stack -n mcp-private --show-desc`
 - [ ] `RELEASE_NAME=mcp-stack NAMESPACE=mcp-private make helm-delete`
 
+Note:
+- if validating a Rust-enabled direct Minikube/Helm gateway path (`RUST_MCP_MODE=edge|full`),
+  explicitly verify MCP responses are not app-level compressed with `zstd`
+  on the direct service path, or disable app-level compression for that lane
+  until MCP compression bypass is fixed
+
 ## 10c. Upgrade / Migration Validation
 
 - [ ] `make upgrade-validate`
