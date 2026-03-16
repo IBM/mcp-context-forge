@@ -1479,10 +1479,7 @@ class PromptService(BaseService):
 
         # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
         if include_metrics:
-            query = query.options(
-                selectinload(DbPrompt.metrics),
-                selectinload(DbPrompt.metrics_hourly)
-            )
+            query = query.options(selectinload(DbPrompt.metrics), selectinload(DbPrompt.metrics_hourly))
         if not include_inactive:
             query = query.where(DbPrompt.enabled)
 

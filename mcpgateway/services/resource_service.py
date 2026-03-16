@@ -1216,6 +1216,8 @@ class ResourceService(BaseService):
             server_id (str): Server ID
             include_inactive (bool): If True, include inactive resources in the result.
                 Defaults to False.
+            include_metrics (bool): If True, include metrics data in the result.
+                Defaults to False.
             user_email (Optional[str]): User email for visibility filtering. If None, no filtering applied.
             token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API
                 token access where the token scope should be respected.
@@ -1250,10 +1252,7 @@ class ResourceService(BaseService):
 
         # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
         if include_metrics:
-            query = query.options(
-                selectinload(DbResource.metrics),
-                selectinload(DbResource.metrics_hourly)
-            )
+            query = query.options(selectinload(DbResource.metrics), selectinload(DbResource.metrics_hourly))
         if not include_inactive:
             query = query.where(DbResource.enabled)
 

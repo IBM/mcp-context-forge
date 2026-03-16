@@ -830,10 +830,7 @@ class ServerService(BaseService):
 
         # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
         if include_metrics:
-            query = query.options(
-                selectinload(DbServer.metrics),
-                selectinload(DbServer.metrics_hourly)
-            )
+            query = query.options(selectinload(DbServer.metrics), selectinload(DbServer.metrics_hourly))
 
         # Apply active/inactive filter
         if not include_inactive:

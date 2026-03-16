@@ -19,22 +19,32 @@ Indexes added:
 
 Related to PR #3649 - Performance optimization for metrics aggregation.
 """
+
+# Standard
 from typing import Sequence, Union
 
+# Third-Party
 from alembic import op
-import sqlalchemy as sa
 from sqlalchemy import inspect
-from sqlalchemy.dialects import sqlite
 
 # revision identifiers, used by Alembic.
-revision: str = '20a0e0538ac5'
-down_revision: Union[str, Sequence[str], None] = 'a3c38b6c2437'
+revision: str = "20a0e0538ac5"
+down_revision: Union[str, Sequence[str], None] = "64acf94cb7f2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def _index_exists(table_name: str, index_name: str) -> bool:
-    """Check if an index exists on a table."""
+    """
+    Check if an index exists on a table.
+
+    Args:
+        table_name (str): Name of the table to check.
+        index_name (str): Name of the index to check.
+
+    Returns:
+        bool: True if the index exists, False otherwise.
+    """
     conn = op.get_bind()
     inspector = inspect(conn)
     try:
@@ -45,7 +55,15 @@ def _index_exists(table_name: str, index_name: str) -> bool:
 
 
 def _table_exists(table_name: str) -> bool:
-    """Check if a table exists."""
+    """
+    Check if a table exists.
+
+    Args:
+        table_name (str): Name of the table to check.
+
+    Returns:
+        bool: True if the table exists, False otherwise.
+    """
     conn = op.get_bind()
     inspector = inspect(conn)
     try:
@@ -64,39 +82,19 @@ def upgrade() -> None:
 
     # Tool metrics: (tool_id, timestamp)
     if _table_exists("tool_metrics") and not _index_exists("tool_metrics", "idx_tool_metrics_tool_id_timestamp"):
-        op.create_index(
-            "idx_tool_metrics_tool_id_timestamp",
-            "tool_metrics",
-            ["tool_id", "timestamp"],
-            unique=False
-        )
+        op.create_index("idx_tool_metrics_tool_id_timestamp", "tool_metrics", ["tool_id", "timestamp"], unique=False)
 
     # Resource metrics: (resource_id, timestamp)
     if _table_exists("resource_metrics") and not _index_exists("resource_metrics", "idx_resource_metrics_resource_id_timestamp"):
-        op.create_index(
-            "idx_resource_metrics_resource_id_timestamp",
-            "resource_metrics",
-            ["resource_id", "timestamp"],
-            unique=False
-        )
+        op.create_index("idx_resource_metrics_resource_id_timestamp", "resource_metrics", ["resource_id", "timestamp"], unique=False)
 
     # Prompt metrics: (prompt_id, timestamp)
     if _table_exists("prompt_metrics") and not _index_exists("prompt_metrics", "idx_prompt_metrics_prompt_id_timestamp"):
-        op.create_index(
-            "idx_prompt_metrics_prompt_id_timestamp",
-            "prompt_metrics",
-            ["prompt_id", "timestamp"],
-            unique=False
-        )
+        op.create_index("idx_prompt_metrics_prompt_id_timestamp", "prompt_metrics", ["prompt_id", "timestamp"], unique=False)
 
     # Server metrics: (server_id, timestamp)
     if _table_exists("server_metrics") and not _index_exists("server_metrics", "idx_server_metrics_server_id_timestamp"):
-        op.create_index(
-            "idx_server_metrics_server_id_timestamp",
-            "server_metrics",
-            ["server_id", "timestamp"],
-            unique=False
-        )
+        op.create_index("idx_server_metrics_server_id_timestamp", "server_metrics", ["server_id", "timestamp"], unique=False)
 
 
 def downgrade() -> None:
