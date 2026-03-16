@@ -50,6 +50,7 @@ from mcpgateway.main import (
     _run_internal_mcp_authentication,
     _serialize_mcp_tool_definition,
     _serialize_legacy_tool_payloads,
+    _parse_apijsonpath,
     app,
     create_prompt,
     create_resource,
@@ -1226,6 +1227,159 @@ class TestJsonPathHelpers:
             with pytest.raises(HTTPException) as excinfo:
                 transform_data_with_mappings([{"a": 1}], {"x": "$.a"})
         assert "Invalid mapping JSONPath" in excinfo.value.detail
+
+    def test_jsonpath_modifier_debug_logging_with_list(self, monkeypatch):
+        """Test jsonpath_modifier debug logging with list data (lines 789-790)."""
+        import logging
+
+        # Mock logger to ensure debug is enabled
+        mock_logger = MagicMock()
+        mock_logger.isEnabledFor.return_value = True
+        monkeypatch.setattr("mcpgateway.main.logger", mock_logger)
+
+        # Call jsonpath_modifier with list data to trigger the debug logging
+        data = [{"id": 1, "name": "test1"}, {"id": 2, "name": "test2"}]
+        result = jsonpath_modifier(data, "$.*.id", None)
+
+        # Verify debug logging was called
+        mock_logger.isEnabledFor.assert_called_with(logging.DEBUG)
+        mock_logger.debug.assert_called()
+        # Verify the debug message contains expected parts
+        debug_call_args = str(mock_logger.debug.call_args)
+        assert "jsonpath_modifier" in debug_call_args
+        assert "data_length=2" in debug_call_args or "data_type=list" in debug_call_args
+
+
+class TestParseApijsonpath:
+    """Test _parse_apijsonpath function for complete coverage."""
+
+    def test_parse_apijsonpath_none_input(self):
+        """Test that None input returns None (line 721)."""
+        result = _parse_apijsonpath(None)
+        assert result is None
+
+    def test_parse_apijsonpath_with_valid_string(self):
+        """Test successful parsing of valid JSON string (line 729)."""
+        from mcpgateway.schemas import JsonPathModifier
+
+        json_string = '{"jsonpath": "$.name", "mapping": null}'
+        result = _parse_apijsonpath(json_string)
+
+        assert result is not None
+        assert isinstance(result, JsonPathModifier)
+        assert result.jsonpath == "$.name"
+        assert result.mapping is None
+
+    def test_parse_apijsonpath_with_valid_string_and_mapping(self):
+        """Test successful parsing with mapping to ensure line 729 coverage."""
+        from mcpgateway.schemas import JsonPathModifier
+
+        json_string = '{"jsonpath": "$.items[*]", "mapping": {"id": "$.id", "name": "$.name"}}'
+        result = _parse_apijsonpath(json_string)
+
+        assert result is not None
+        assert isinstance(result, JsonPathModifier)
+        assert result.jsonpath == "$.items[*]"
+        assert result.mapping == {"id": "$.id", "name": "$.name"}
+
+    def test_parse_apijsonpath_empty_jsonpath_string(self):
+        """Test empty jsonpath in string raises error (lines 728, 732)."""
+        json_string = '{"jsonpath": "   ", "mapping": null}'
+
+        with pytest.raises(HTTPException) as excinfo:
+            _parse_apijsonpath(json_string)
+
+        assert excinfo.value.status_code == 400
+        assert "JSONPath expression cannot be empty" in excinfo.value.detail
+
+    def test_parse_apijsonpath_invalid_json_debug_mode(self, monkeypatch):
+        """Test invalid JSON in DEBUG mode (lines 733-736)."""
+        monkeypatch.setattr("mcpgateway.main.settings.log_level", "DEBUG")
+
+        with pytest.raises(HTTPException) as excinfo:
+            _parse_apijsonpath('{"invalid json}')
+
+        assert excinfo.value.status_code == 400
+        assert "Invalid apijsonpath JSON:" in excinfo.value.detail
+
+    def test_parse_apijsonpath_invalid_json_non_debug_mode(self, monkeypatch):
+        """Test invalid JSON in non-DEBUG mode (lines 733-736)."""
+        monkeypatch.setattr("mcpgateway.main.settings.log_level", "INFO")
+
+        with pytest.raises(HTTPException) as excinfo:
+            _parse_apijsonpath('{"invalid json}')
+
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail == "Invalid apijsonpath format"
+
+    def test_parse_apijsonpath_jsonpathmodifier_valid(self):
+        """Test valid JsonPathModifier instance (lines 745-749)."""
+        from mcpgateway.schemas import JsonPathModifier
+
+        modifier = JsonPathModifier(jsonpath="$.test", mapping=None)
+        result = _parse_apijsonpath(modifier)
+
+        assert result is modifier
+        assert result.jsonpath == "$.test"
+
+    def test_parse_apijsonpath_jsonpathmodifier_empty_jsonpath(self):
+        """Test JsonPathModifier with empty jsonpath (lines 747-748)."""
+        from mcpgateway.schemas import JsonPathModifier
+
+        modifier = JsonPathModifier(jsonpath="  ", mapping=None)
+
+        with pytest.raises(HTTPException) as excinfo:
+            _parse_apijsonpath(modifier)
+
+        assert excinfo.value.status_code == 400
+        assert "JSONPath expression cannot be empty" in excinfo.value.detail
+
+    def test_parse_apijsonpath_invalid_type_debug_mode(self, monkeypatch):
+        """Test invalid type in DEBUG mode (lines 753-754)."""
+        monkeypatch.setattr("mcpgateway.main.settings.log_level", "DEBUG")
+
+        with pytest.raises(HTTPException) as excinfo:
+            _parse_apijsonpath(12345)  # Invalid type (int)
+
+        assert excinfo.value.status_code == 400
+        assert "Invalid apijsonpath type: got int" in excinfo.value.detail
+
+    def test_parse_apijsonpath_invalid_type_non_debug_mode(self, monkeypatch):
+        """Test invalid type in non-DEBUG mode (lines 753-754)."""
+        monkeypatch.setattr("mcpgateway.main.settings.log_level", "INFO")
+
+        with pytest.raises(HTTPException) as excinfo:
+            _parse_apijsonpath(["list", "input"])  # Invalid type (list)
+
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail == "Invalid apijsonpath type"
+
+    def test_parse_apijsonpath_unexpected_exception_logging(self, monkeypatch):
+        """Test unexpected exception handling with logging (lines 741-744)."""
+        import logging
+
+        # Mock json.loads to raise an unexpected exception (not ValueError/ValidationError/HTTPException)
+        def mock_json_loads(s):
+            raise RuntimeError("Unexpected error during parsing")
+
+        # Capture log calls
+        log_calls = []
+
+        def mock_logger_error(msg, *args, **kwargs):
+            log_calls.append((msg, kwargs))
+
+        monkeypatch.setattr("mcpgateway.main.json.loads", mock_json_loads)
+        monkeypatch.setattr("mcpgateway.main.logger.error", mock_logger_error)
+
+        with pytest.raises(HTTPException) as excinfo:
+            _parse_apijsonpath('{"jsonpath": "$.test"}')
+
+        assert excinfo.value.status_code == 500
+        assert excinfo.value.detail == "Failed to parse apijsonpath"
+        # Verify logging was called
+        assert len(log_calls) > 0
+        assert "Unexpected error parsing apijsonpath" in log_calls[0][0]
+        assert log_calls[0][1].get("exc_info") is True
 
 
 class TestDocsAuthMiddleware:
