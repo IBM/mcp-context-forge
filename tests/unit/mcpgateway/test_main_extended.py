@@ -9739,7 +9739,8 @@ class TestRemainingCoverageGaps:
                 user={"email": "user@example.com"},
             )
         assert excinfo.value.status_code == 400
-        assert "Invalid apijsonpath JSON" in str(excinfo.value.detail)
+        # Generic error message in non-DEBUG mode (security improvement)
+        assert "Invalid apijsonpath" in str(excinfo.value.detail)
 
     async def test_list_tools_apijsonpath_none_with_pagination(self, monkeypatch):
         """Test list_tools with parsed_apijsonpath=None and include_pagination=True (lines 3674-3681)."""
@@ -9898,7 +9899,8 @@ class TestRemainingCoverageGaps:
             )
         # Should be 400 (not 404) for invalid apijsonpath JSON
         assert excinfo.value.status_code == 400
-        assert "Invalid apijsonpath JSON" in str(excinfo.value.detail)
+        # Generic error message in non-DEBUG mode (security improvement)
+        assert "Invalid apijsonpath" in str(excinfo.value.detail)
 
     async def test_get_tool_jsonpath_modifier_exception(self, monkeypatch):
         """Test get_tool jsonpath_modifier exception (lines 3841-3843)."""
@@ -10066,8 +10068,9 @@ class TestRemainingCoverageGaps:
                 user={"email": "user@example.com"},
             )
         assert excinfo.value.status_code == 400
+        # Generic error message in non-DEBUG mode (security improvement)
         assert "Invalid apijsonpath type" in str(excinfo.value.detail)
-        assert "int" in str(excinfo.value.detail)
+        # Type name not disclosed in production (non-DEBUG) mode
 
     async def test_get_tool_apijsonpath_invalid_type(self, monkeypatch):
         """Test get_tool with invalid apijsonpath type raises clear error."""
@@ -10093,8 +10096,9 @@ class TestRemainingCoverageGaps:
                 apijsonpath=["invalid", "type"]  # Invalid type
             )
         assert excinfo.value.status_code == 400
+        # Generic error message in non-DEBUG mode (security improvement)
         assert "Invalid apijsonpath type" in str(excinfo.value.detail)
-        assert "list" in str(excinfo.value.detail)
+        # Type name not disclosed in production (non-DEBUG) mode
 
     async def test_create_tool_endpoint_coverage(self, monkeypatch):
         """Test create_tool endpoint (lines 3695-3698)."""

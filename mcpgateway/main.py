@@ -36,6 +36,7 @@ import hashlib
 import hmac
 import html
 import json
+import logging
 import re
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
@@ -1336,13 +1337,25 @@ def _parse_apijsonpath(raw: Optional[Union[str, JsonPathModifier]]) -> Optional[
     if isinstance(raw, str):
         try:
             return JsonPathModifier.model_validate(json.loads(raw))
+        except (json.JSONDecodeError, ValueError) as ex:
+            # User error: malformed JSON or validation failure
+            detail = f"Invalid apijsonpath JSON: {ex}" if settings.log_level == "DEBUG" else "Invalid apijsonpath format"
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+        except ValidationError as ex:
+            # Pydantic validation error
+            detail = f"Invalid apijsonpath structure: {ex}" if settings.log_level == "DEBUG" else "Invalid apijsonpath structure"
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
         except Exception as ex:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid apijsonpath JSON: {ex}")
+            # Unexpected error - log it and return generic message
+            logger.error(f"Unexpected error parsing apijsonpath: {ex}", exc_info=True)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to parse apijsonpath")
     elif isinstance(raw, JsonPathModifier):
         return raw
 
     # Unexpected type - fail fast with clear error message
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid apijsonpath type: expected string or JsonPathModifier, got {type(raw).__name__}")
+    # Only show type name in debug mode to avoid information disclosure
+    type_info = f": got {type(raw).__name__}" if settings.log_level == "DEBUG" else ""
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid apijsonpath type{type_info}")
 
 
 def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict[str, str]] = None) -> Union[List, Dict]:
@@ -1375,9 +1388,10 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
     if not jsonpath:
         jsonpath = "$[*]"
 
-    # Log jsonpath_modifier invocation with structured data
-    data_length = len(data) if isinstance(data, list) else None
-    logger.debug(f"jsonpath_modifier: path='{jsonpath}', has_mappings={mappings is not None}, " f"data_type={type(data).__name__}, data_length={data_length}")
+    # Log jsonpath_modifier invocation with structured data (only if debug enabled)
+    if logger.isEnabledFor(logging.DEBUG):
+        data_length = len(data) if isinstance(data, list) else None
+        logger.debug(f"jsonpath_modifier: path='{jsonpath}', has_mappings={mappings is not None}, " f"data_type={type(data).__name__}, data_length={data_length}")
 
     try:
         main_expr: JSONPath = _parse_jsonpath(jsonpath)
