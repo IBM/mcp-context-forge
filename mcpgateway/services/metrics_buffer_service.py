@@ -151,7 +151,14 @@ class MetricsBufferService:
             logger.info("MetricsBufferService flush task started")
 
     def _flush_task_is_active_for_loop(self, loop: asyncio.AbstractEventLoop) -> bool:
-        """Return whether the current flush task is usable for the active loop."""
+        """Return whether the current flush task is usable for the active loop.
+
+        Args:
+            loop: The currently running event loop for this worker process.
+
+        Returns:
+            True when the cached flush task belongs to the current live loop.
+        """
         task = self._flush_task
         if task is None or task.done() or task.cancelled():
             return False
