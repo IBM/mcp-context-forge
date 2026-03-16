@@ -7726,6 +7726,12 @@ profile-compare:
 		--current $(PROFILE_DIR)/mcp_calls_profile.prof \
 		--output $(REPORTS_DIR)/profile-comparison.json
 
+# help: benchmark - Open the interactive benchmark launcher
+.PHONY: benchmark
+benchmark:
+	@echo "Starting benchmark console (first run may compile; wait for TUI)..."
+	cargo run --manifest-path tools_rust/benchmark_console/Cargo.toml --
+
 .PHONY: async-validate
 async-validate:
 	@echo "✅ Validating async code patterns..."

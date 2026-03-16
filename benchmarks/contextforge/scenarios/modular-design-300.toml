@@ -1,0 +1,182 @@
+[suite]
+name = "benchmark-gunicorn-mcp-compare"
+description = "Default Gunicorn benchmark suite comparing the local baseline branch against the Rust MCP runtime PR with the same MCP-heavy workload"
+output_root = "reports/benchmarks"
+continue_on_failure = false
+save_intermediate_artifacts = true
+flamegraph_enabled = false
+
+[defaults.setup]
+target_kind = "gateway"
+auth_mode = "jwt"
+plugins_enabled = false
+
+[defaults.build]
+rust_plugins = false
+profiling_image = false
+container_file = "benchmarks/contextforge/Containerfile"
+image_name = "mcpgateway/mcpgateway"
+image_tag = "benchmark-suite-core"
+rebuild_policy = "missing"
+
+[defaults.runtime]
+http_server = "gunicorn"
+host = "127.0.0.1"
+transport_type = "streamablehttp"
+
+[defaults.runtime.gunicorn]
+workers = 12
+timeout = 30
+graceful_timeout = 30
+keep_alive = 10
+max_requests = 0
+max_requests_jitter = 0
+backlog = 16384
+preload_app = true
+dev_mode = false
+
+[defaults.gateway]
+disable_access_log = true
+templates_auto_reload = false
+structured_logging_database_enabled = false
+sqlalchemy_echo = false
+log_level = "ERROR"
+
+# Optional per-scenario overrides:
+# [scenario.build]
+# repo_url = "https://github.com/IBM/mcp-context-forge"
+# git_ref = "modular-design"
+# git_commit = "abcdef1234567890"
+#
+# [scenario.build.args]
+# ENABLE_RUST_MCP_RMCP = "true"
+#
+# [scenario.gateway.environment]
+# RUST_MCP_MODE = "edge"
+#
+# [scenario.setup]
+# expected_mcp_runtime = "rust"
+# expected_mcp_runtime_mode = "rust-managed"
+
+[defaults.load]
+locustfile = "benchmarks/contextforge/locust/locustfile_benchmark_ab.py"
+user_class = ""
+headless = true
+only_summary = true
+html_report = false
+users = 300
+spawn_rate = 60
+run_time = "180s"
+target_service = "nginx"
+extra_args = ["--reset-stats"]
+
+[defaults.load.env]
+BENCH_MCP_SESSION_MODE = "reuse"
+
+[defaults.load.workload]
+fallback_endpoint = "/mcp tools/list"
+
+[defaults.load.workload.endpoints."/health"]
+enabled = false
+
+[defaults.load.workload.endpoints."/ready"]
+enabled = false
+
+[defaults.load.workload.endpoints."/admin/plugins"]
+enabled = false
+
+[defaults.load.workload.endpoints."/servers"]
+enabled = true
+weight = 2
+
+[defaults.load.workload.endpoints."/resources"]
+enabled = false
+
+[defaults.load.workload.endpoints."/prompts"]
+enabled = false
+
+[defaults.load.workload.endpoints."/mcp tools/list"]
+enabled = true
+weight = 6
+
+[defaults.load.workload.endpoints."/mcp tools/call fast-time-get-system-time"]
+enabled = true
+weight = 14
+
+[defaults.load.workload.endpoints."/mcp tools/call fast-time-convert-time"]
+enabled = true
+weight = 12
+
+[defaults.load.workload.endpoints."/mcp resources/list"]
+enabled = true
+weight = 4
+
+[defaults.load.workload.endpoints."/mcp resources/read timezone://info"]
+enabled = true
+weight = 8
+
+[defaults.load.workload.endpoints."/mcp resources/read time://current/world"]
+enabled = true
+weight = 6
+
+[defaults.load.workload.endpoints."/mcp prompts/list"]
+enabled = true
+weight = 4
+
+[defaults.load.workload.endpoints."/mcp prompts/get fast-time-schedule-meeting"]
+enabled = true
+weight = 7
+
+[defaults.load.workload.endpoints."/mcp prompts/get fast-time-compare-timezones"]
+enabled = true
+weight = 6
+
+[defaults.measurement]
+warmup_seconds = 30
+measure_seconds = 120
+profile_seconds = 0
+cooldown_seconds = 30
+
+[defaults.profiling]
+enabled = false
+tools = []
+py_spy = false
+duration_seconds = 0
+required = false
+
+[defaults.execution]
+retry_enabled = true
+max_attempts = 2
+capture_logs = true
+save_raw_results = true
+reuse_stack = true
+
+[[scenario]]
+name = "gunicorn-mcp-baseline"
+description = "Current branch baseline on Gunicorn with the shared MCP-heavy benchmark workload"
+scenario_type = "mcp_runtime_baseline"
+
+[[scenario]]
+name = "gunicorn-mcp-rust-pr3617"
+description = "PR 3617 Rust MCP runtime comparison on Gunicorn using the same MCP-heavy workload and edge-mode public /mcp routing"
+scenario_type = "mcp_runtime_compare"
+
+[scenario.setup]
+expected_mcp_runtime = "rust"
+expected_mcp_runtime_mode = "rust-managed"
+
+[scenario.build]
+repo_url = "https://github.com/IBM/mcp-context-forge"
+git_ref = "modular-design"
+git_commit = "46ef0806393d7aedc6d10974e567ec023aa254f4"
+rust_plugins = true
+image_tag = "benchmark-suite-rust-mcp-pr3617"
+
+[scenario.gateway.environment]
+EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED = "true"
+RUST_MCP_MODE = "edge"
+RUST_MCP_LOG = "warn"
+
+[scenario.execution]
+retry_enabled = false
+max_attempts = 1
