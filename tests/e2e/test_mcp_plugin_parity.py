@@ -26,14 +26,24 @@ from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 from tests.e2e.mcp_test_helpers import BASE_URL, skip_no_gateway
 
-pytestmark = [pytest.mark.e2e, skip_no_gateway]
-
 MCP_PROTOCOL_VERSION = "2025-11-25"
 PLUGIN_PARITY_PREFIX = "mcp-plugin-parity"
 RESOURCE_LICENSE_PREFIX = "# SPDX-License-Identifier: Apache-2.0"
 TOOL_OUTPUT_SENTINEL = "[TOOL-POST-INVOKE-SENTINEL]"
 PROMPT_OUTPUT_SENTINEL = "[PROMPT-POST-FETCH-SENTINEL]"
 EXPECTED_RUNTIME = os.getenv("MCP_PLUGIN_PARITY_EXPECTED_RUNTIME")
+pytestmark = [
+    pytest.mark.e2e,
+    skip_no_gateway,
+    pytest.mark.skipif(
+        not EXPECTED_RUNTIME,
+        reason=(
+            "requires the dedicated plugin parity stack; run via "
+            "MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=<python|rust> make test-mcp-plugin-parity"
+        ),
+    ),
+]
+
 # This suite targets the standard compose-backed test stack, which uses the
 # fixed local JWT secret below. Do not source this from mutable process env,
 # because broad-suite tests may patch JWT_SECRET_KEY before this module loads.
