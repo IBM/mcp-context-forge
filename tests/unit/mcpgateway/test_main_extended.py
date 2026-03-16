@@ -1381,6 +1381,63 @@ class TestParseApijsonpath:
         assert "Unexpected error parsing apijsonpath" in log_calls[0][0]
         assert log_calls[0][1].get("exc_info") is True
 
+    def test_parse_apijsonpath_invalid_jsonpath_syntax_string(self, monkeypatch):
+        """Test invalid JSONPath syntax in string input triggers early validation."""
+        monkeypatch.setattr("mcpgateway.main.settings.log_level", "DEBUG")
+
+        # Invalid JSONPath syntax
+        json_string = '{"jsonpath": "$..[**]", "mapping": null}'
+
+        with pytest.raises(HTTPException) as excinfo:
+            _parse_apijsonpath(json_string)
+
+        assert excinfo.value.status_code == 400
+        assert "Invalid JSONPath syntax:" in excinfo.value.detail
+
+    def test_parse_apijsonpath_invalid_jsonpath_syntax_string_non_debug(self, monkeypatch):
+        """Test invalid JSONPath syntax in string input (non-DEBUG mode)."""
+        monkeypatch.setattr("mcpgateway.main.settings.log_level", "INFO")
+
+        # Invalid JSONPath syntax
+        json_string = '{"jsonpath": "$..[**]", "mapping": null}'
+
+        with pytest.raises(HTTPException) as excinfo:
+            _parse_apijsonpath(json_string)
+
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail == "Invalid JSONPath expression"
+
+    def test_parse_apijsonpath_invalid_jsonpath_syntax_modifier(self, monkeypatch):
+        """Test invalid JSONPath syntax in JsonPathModifier instance."""
+        from mcpgateway.schemas import JsonPathModifier
+
+        monkeypatch.setattr("mcpgateway.main.settings.log_level", "DEBUG")
+
+        # Invalid JSONPath syntax
+        modifier = JsonPathModifier(jsonpath="$..[**]", mapping=None)
+
+        with pytest.raises(HTTPException) as excinfo:
+            _parse_apijsonpath(modifier)
+
+        assert excinfo.value.status_code == 400
+        assert "Invalid JSONPath syntax:" in excinfo.value.detail
+
+    def test_parse_apijsonpath_valid_jsonpath_syntax_validation(self):
+        """Test that valid JSONPath expressions pass early syntax validation."""
+        from mcpgateway.schemas import JsonPathModifier
+
+        # Valid JSONPath expressions that should pass validation
+        valid_paths = [
+            '{"jsonpath": "$.name", "mapping": null}',
+            '{"jsonpath": "$[*]", "mapping": null}',
+            '{"jsonpath": "$.items[0].id", "mapping": null}',
+        ]
+
+        for json_string in valid_paths:
+            result = _parse_apijsonpath(json_string)
+            assert result is not None
+            assert isinstance(result, JsonPathModifier)
+
 
 class TestDocsAuthMiddleware:
     """Cover DocsAuthMiddleware branches."""

@@ -39,7 +39,7 @@ import json
 import logging
 import re
 import sys
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
@@ -1161,6 +1161,7 @@ async def _authorize_run_cancellation(request: Request, user, request_id: str, *
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
 
 
+<<<<<<< HEAD
 def _rust_build_included() -> bool:
     """Return whether the current image includes Rust MCP artifacts.
 
@@ -1300,6 +1301,11 @@ def _apply_runtime_mode_headers(response: Response) -> None:
     response.headers["x-contextforge-mcp-live-stream-core-mode"] = _current_mcp_live_stream_core_mode()
     response.headers["x-contextforge-mcp-affinity-core-mode"] = _current_mcp_affinity_core_mode()
     response.headers["x-contextforge-mcp-session-auth-reuse-mode"] = _current_mcp_session_auth_reuse_mode()
+=======
+# Type aliases for improved readability
+ToolsResponse: TypeAlias = Union[List[ToolRead], CursorPaginatedToolsResponse, List[Dict[Any, Any]], Dict[Any, Any], ORJSONResponse]
+ToolResponse: TypeAlias = Union[ToolRead, Dict[Any, Any], ORJSONResponse]
+>>>>>>> e859a84ab (review)
 
 
 @lru_cache(maxsize=512)
@@ -1322,6 +1328,8 @@ def _parse_apijsonpath(raw: Optional[Union[str, JsonPathModifier]]) -> Optional[
     """
     Parse apijsonpath parameter from either a JSON string or a JsonPathModifier model.
 
+    Performs early validation of JSONPath syntax to fail fast and provide clear error messages.
+
     Args:
         raw: Either a JSON-encoded string or a JsonPathModifier instance
 
@@ -1330,7 +1338,7 @@ def _parse_apijsonpath(raw: Optional[Union[str, JsonPathModifier]]) -> Optional[
 
     Raises:
         HTTPException: If the JSON string is invalid, unexpected type provided,
-                      or jsonpath expression is empty (400 Bad Request)
+                      jsonpath expression is empty, or JSONPath syntax is invalid (400 Bad Request)
     """
     if raw is None:
         return None
@@ -1339,14 +1347,21 @@ def _parse_apijsonpath(raw: Optional[Union[str, JsonPathModifier]]) -> Optional[
         try:
             parsed = JsonPathModifier.model_validate(json.loads(raw))
             # Validate jsonpath is not empty if provided
-            if parsed.jsonpath is not None and not parsed.jsonpath.strip():
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JSONPath expression cannot be empty")
+            if parsed.jsonpath is not None:
+                if not parsed.jsonpath.strip():
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JSONPath expression cannot be empty")
+                # Early validation: ensure JSONPath syntax is valid
+                try:
+                    _parse_jsonpath(parsed.jsonpath)
+                except Exception as parse_ex:
+                    detail = f"Invalid JSONPath syntax: {parse_ex}" if settings.log_level == "DEBUG" else "Invalid JSONPath expression"
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
             return parsed
         except HTTPException:
-            # Re-raise HTTPException as-is (includes empty jsonpath validation)
+            # Re-raise HTTPException as-is (includes empty jsonpath and syntax validation)
             raise
-        except (json.JSONDecodeError, ValueError) as ex:
-            # User error: malformed JSON or validation failure
+        except json.JSONDecodeError as ex:
+            # User error: malformed JSON (JSONDecodeError is subclass of ValueError, so catch it specifically)
             detail = f"Invalid apijsonpath JSON: {ex}" if settings.log_level == "DEBUG" else "Invalid apijsonpath format"
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
         except ValidationError as ex:
@@ -1359,8 +1374,15 @@ def _parse_apijsonpath(raw: Optional[Union[str, JsonPathModifier]]) -> Optional[
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to parse apijsonpath")
     elif isinstance(raw, JsonPathModifier):
         # Validate jsonpath is not empty if provided
-        if raw.jsonpath is not None and not raw.jsonpath.strip():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JSONPath expression cannot be empty")
+        if raw.jsonpath is not None:
+            if not raw.jsonpath.strip():
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JSONPath expression cannot be empty")
+            # Early validation: ensure JSONPath syntax is valid
+            try:
+                _parse_jsonpath(raw.jsonpath)
+            except Exception as parse_ex:
+                detail = f"Invalid JSONPath syntax: {parse_ex}" if settings.log_level == "DEBUG" else "Invalid JSONPath expression"
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
         return raw
 
     # Unexpected type - fail fast with clear error message
@@ -4626,7 +4648,7 @@ async def list_tools(
     db: Session = Depends(get_db),
     apijsonpath: Optional[str] = Query(None, description="Optional JSONPath modifier as JSON string"),
     user=Depends(get_current_user_with_permissions),
-) -> Union[List[ToolRead], List[Dict], Dict, ORJSONResponse]:
+) -> ToolsResponse:
     """List all registered tools with team-based filtering and pagination support.
 
     Args:
@@ -4722,10 +4744,7 @@ async def list_tools(
 
         # If pagination is requested, wrap the result with cursor metadata
         if include_pagination:
-            paginated_result = {
-                "tools": result,
-                "next_cursor": next_cursor
-            }
+            paginated_result = {"tools": result, "next_cursor": next_cursor}
             return ORJSONResponse(content=paginated_result)
 
         # Return ORJSONResponse to bypass FastAPI's response_model validation
@@ -4841,7 +4860,7 @@ async def get_tool(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
     apijsonpath: Optional[str] = Query(None, description="Optional JSONPath modifier as JSON string"),
-) -> Union[ToolRead, Dict, ORJSONResponse]:
+) -> ToolResponse:
     """
     Retrieve a tool by ID, optionally applying a JSONPath post-filter.
 
