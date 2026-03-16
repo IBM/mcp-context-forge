@@ -9864,6 +9864,112 @@ class TestRemainingCoverageGaps:
         result = await main_mod.get_tool.__wrapped__("tool-1", request=request, db=MagicMock(), user={"email": "u"}, apijsonpath=apijsonpath)
         assert isinstance(result, ORJSONResponse)
         assert orjson.loads(result.body) == {"filtered": True}
+
+    async def test_list_tools_apijsonpath_with_pagination(self, monkeypatch):
+        """Test list_tools with apijsonpath and pagination returns cursor (lines 4100-4109)."""
+        import mcpgateway.main as main_mod
+        from mcpgateway.schemas import JsonPathModifier
+        from mcpgateway.utils.orjson_response import ORJSONResponse
+        import orjson
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        tool1 = MagicMock()
+        tool1.to_dict.return_value = {"id": "t1", "name": "Tool 1"}
+        tool2 = MagicMock()
+        tool2.to_dict.return_value = {"id": "t2", "name": "Tool 2"}
+
+        # Mock list_tools to return tools with a next_cursor
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool1, tool2], "cursor123")))
+
+        # Mock jsonpath_modifier to return transformed data
+        def mock_jsonpath_modifier(data, jsonpath, mapping):
+            # Simulate transformation: extract just id and name
+            return [{"toolId": d["id"], "toolName": d["name"]} for d in data]
+
+        monkeypatch.setattr(main_mod, "jsonpath_modifier", mock_jsonpath_modifier)
+
+        apijsonpath = JsonPathModifier(jsonpath="$[*]", mapping={"toolId": "$.id", "toolName": "$.name"})
+
+        # Test with pagination enabled
+        result = await main_mod.list_tools.__wrapped__(
+            request,
+            cursor=None,
+            include_pagination=True,
+            limit=2,
+            include_inactive=False,
+            tags=None,
+            team_id=None,
+            visibility=None,
+            gateway_id=None,
+            db=MagicMock(),
+            apijsonpath=apijsonpath,
+            user={"email": "user@example.com"},
+        )
+
+        assert isinstance(result, ORJSONResponse)
+        response_data = orjson.loads(result.body)
+
+        # Should have both tools and next_cursor
+        assert "tools" in response_data
+        assert "next_cursor" in response_data
+        assert response_data["next_cursor"] == "cursor123"
+        assert len(response_data["tools"]) == 2
+        assert response_data["tools"][0] == {"toolId": "t1", "toolName": "Tool 1"}
+        assert response_data["tools"][1] == {"toolId": "t2", "toolName": "Tool 2"}
+
+    async def test_list_tools_apijsonpath_pagination_last_page(self, monkeypatch):
+        """Test list_tools with apijsonpath on last page returns null cursor (lines 4100-4109)."""
+        import mcpgateway.main as main_mod
+        from mcpgateway.schemas import JsonPathModifier
+        from mcpgateway.utils.orjson_response import ORJSONResponse
+        import orjson
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        tool1 = MagicMock()
+        tool1.to_dict.return_value = {"id": "t1", "name": "Tool 1"}
+
+        # Mock list_tools to return tools with None as next_cursor (last page)
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool1], None)))
+
+        def mock_jsonpath_modifier(data, jsonpath, mapping):
+            return [{"toolId": d["id"], "toolName": d["name"]} for d in data]
+
+        monkeypatch.setattr(main_mod, "jsonpath_modifier", mock_jsonpath_modifier)
+
+        apijsonpath = JsonPathModifier(jsonpath="$[*]", mapping={"toolId": "$.id", "toolName": "$.name"})
+
+        # Test with pagination enabled on last page
+        result = await main_mod.list_tools.__wrapped__(
+            request,
+            cursor="somecursor",
+            include_pagination=True,
+            limit=2,
+            include_inactive=False,
+            tags=None,
+            team_id=None,
+            visibility=None,
+            gateway_id=None,
+            db=MagicMock(),
+            apijsonpath=apijsonpath,
+            user={"email": "user@example.com"},
+        )
+
+        assert isinstance(result, ORJSONResponse)
+        response_data = orjson.loads(result.body)
+
+        # Should have tools and next_cursor as null (last page)
+        assert "tools" in response_data
+        assert "next_cursor" in response_data
+        assert response_data["next_cursor"] is None
+        assert len(response_data["tools"]) == 1
+        assert response_data["tools"][0] == {"toolId": "t1", "toolName": "Tool 1"}
+
     async def test_list_tools_apijsonpath_string_parsing_error(self, monkeypatch):
         """Test list_tools with invalid apijsonpath string (lines 3668-3671)."""
         import mcpgateway.main as main_mod

@@ -1740,9 +1740,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # For plugin errors, exit cleanly without stack trace spam
         if "Plugin initialization failed" in str(e):
             # Suppress uvicorn error logging for clean exit
-            # Standard
-            import logging  # pylint: disable=import-outside-toplevel
-
             logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)
             raise SystemExit(1)
         raise
@@ -4722,6 +4719,15 @@ async def list_tools(
     tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
     try:
         result = jsonpath_modifier(tools_dict_list, parsed_apijsonpath.jsonpath, parsed_apijsonpath.mapping)
+
+        # If pagination is requested, wrap the result with cursor metadata
+        if include_pagination:
+            paginated_result = {
+                "tools": result,
+                "next_cursor": next_cursor
+            }
+            return ORJSONResponse(content=paginated_result)
+
         # Return ORJSONResponse to bypass FastAPI's response_model validation
         return ORJSONResponse(content=result)
     except HTTPException:
