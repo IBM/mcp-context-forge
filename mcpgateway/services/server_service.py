@@ -782,7 +782,7 @@ class ServerService(BaseService):
         is_public_only = token_teams is not None and len(token_teams) == 0
         use_cache = cursor is None and user_email is None and page is None and is_public_only
         if use_cache:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility)
             cached = await cache.get("servers", filters_hash)
             if cached is not None:
                 # Reconstruct ServerRead objects from cached dicts
