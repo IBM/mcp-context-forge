@@ -8788,6 +8788,72 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
             pass  # nosec B110 - Best effort cleanup on connection failure
 
 
+@utility_router.post("/_internal/mcp/tools/call/metric/")
+@utility_router.post("/_internal/mcp/tools/call/metric")
+async def handle_internal_mcp_tools_call_metric(request: Request):
+    """Record buffered tool/server metrics for a Rust-direct `tools/call`.
+
+    Args:
+        request: Trusted internal metrics writeback request.
+
+    Returns:
+        ORJSONResponse acknowledging the buffered metric writeback.
+    """
+    _build_internal_mcp_forwarded_user(request)
+    try:
+        body = orjson.loads(await request.body())
+    except orjson.JSONDecodeError:
+        return ORJSONResponse(status_code=400, content={"detail": "Invalid JSON body"})
+
+    if not isinstance(body, dict):
+        return ORJSONResponse(status_code=400, content={"detail": "Invalid metrics payload"})
+
+    tool_id = body.get("toolId")
+    duration_ms = body.get("durationMs")
+    success = body.get("success")
+    server_id = body.get("serverId")
+    error_message = body.get("errorMessage")
+
+    if not isinstance(tool_id, str) or not tool_id.strip():
+        return ORJSONResponse(status_code=400, content={"detail": "Missing toolId"})
+    if not isinstance(duration_ms, (int, float)) or duration_ms < 0:
+        return ORJSONResponse(status_code=400, content={"detail": "Invalid durationMs"})
+    if not isinstance(success, bool):
+        return ORJSONResponse(status_code=400, content={"detail": "Invalid success flag"})
+    if server_id is not None and (not isinstance(server_id, str) or not server_id.strip()):
+        return ORJSONResponse(status_code=400, content={"detail": "Invalid serverId"})
+    if error_message is not None and not isinstance(error_message, str):
+        return ORJSONResponse(status_code=400, content={"detail": "Invalid errorMessage"})
+
+    request_server_id = request.headers.get("x-contextforge-server-id")
+    if request_server_id:
+        _enforce_internal_mcp_server_scope(request, request_server_id)
+        if server_id and server_id != request_server_id:
+            return ORJSONResponse(status_code=400, content={"detail": "serverId does not match forwarded server scope"})
+        server_id = request_server_id
+
+    # First-Party
+    from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+
+    metrics_buffer = get_metrics_buffer_service()
+    response_time = float(duration_ms) / 1000.0
+    metrics_buffer.record_tool_metric_with_duration(
+        tool_id=tool_id,
+        response_time=response_time,
+        success=success,
+        error_message=error_message,
+    )
+    if server_id:
+        metrics_buffer.record_server_metric_with_duration(
+            server_id=server_id,
+            response_time=response_time,
+            success=success,
+            error_message=error_message,
+        )
+
+    return ORJSONResponse(content={"status": "ok"})
+
+
 async def _handle_rpc_authenticated(request: Request, db: Session, user):
     """Handle RPC requests.
 

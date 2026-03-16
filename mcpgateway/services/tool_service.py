@@ -3006,6 +3006,7 @@ class ToolService(BaseService):
             gateway = tool.gateway
 
         tool_name_original = tool_payload.get("original_name") or tool_payload.get("name") or name
+        tool_id = tool_payload.get("id")
         tool_gateway_id = tool_payload.get("gateway_id")
         tool_timeout_ms = tool_payload.get("timeout_ms")
         effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else settings.tool_timeout
@@ -3120,6 +3121,8 @@ class ToolService(BaseService):
             "timeoutMs": int(effective_timeout * 1000),
             "gatewayId": tool_gateway_id,
             "toolName": name,
+            "toolId": tool_id or None,
+            "serverId": server_id,
         }
 
     def _load_invocable_tools(self, db: Session, name: str, server_id: Optional[str] = None) -> List[DbTool]:

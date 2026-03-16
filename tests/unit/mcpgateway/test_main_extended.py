@@ -83,6 +83,7 @@ from mcpgateway.main import (
     handle_internal_mcp_resources_read_authz,
     handle_internal_mcp_sampling_create_message,
     handle_internal_mcp_tools_call,
+    handle_internal_mcp_tools_call_metric,
     handle_internal_mcp_tools_call_resolve,
     handle_internal_mcp_tools_list_authz,
     handle_internal_mcp_tools_list,
@@ -933,6 +934,68 @@ class TestInternalMcpHelperCoverage:
         assert forwarded["is_admin"] is True
         assert request.state.token_teams == ["team-a"]
         assert getattr(request.state, "_mcp_internal_auth_context")["_rust_session_validated"] is True
+
+    @pytest.mark.asyncio
+    async def test_handle_internal_mcp_tools_call_metric_records_buffered_metrics(self):
+        """Trusted Rust metrics writeback should use the buffered Python metric recorder."""
+        request = MagicMock(spec=Request)
+        request.headers = _trusted_internal_mcp_headers(
+            {
+                "email": "user@example.com",
+                "teams": ["team-a"],
+                "is_authenticated": True,
+                "is_admin": False,
+            },
+            **{"x-contextforge-server-id": "server-1"},
+        )
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = SimpleNamespace()
+        request.body = AsyncMock(
+            return_value=orjson.dumps(
+                {
+                    "toolId": "tool-1",
+                    "serverId": "server-1",
+                    "durationMs": 250.0,
+                    "success": True,
+                }
+            )
+        )
+        metrics_buffer = MagicMock()
+
+        with patch(
+            "mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service",
+            return_value=metrics_buffer,
+        ):
+            response = await handle_internal_mcp_tools_call_metric(request)
+
+        assert response.status_code == 200
+        assert orjson.loads(response.body) == {"status": "ok"}
+        metrics_buffer.record_tool_metric_with_duration.assert_called_once_with(
+            tool_id="tool-1",
+            response_time=0.25,
+            success=True,
+            error_message=None,
+        )
+        metrics_buffer.record_server_metric_with_duration.assert_called_once_with(
+            server_id="server-1",
+            response_time=0.25,
+            success=True,
+            error_message=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_handle_internal_mcp_tools_call_metric_rejects_invalid_payload(self):
+        """Tool metric writeback should reject missing identifiers."""
+        request = MagicMock(spec=Request)
+        request.headers = _trusted_internal_mcp_headers({"email": "user@example.com"})
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = SimpleNamespace()
+        request.body = AsyncMock(return_value=orjson.dumps({"durationMs": 25, "success": True}))
+
+        response = await handle_internal_mcp_tools_call_metric(request)
+
+        assert response.status_code == 400
+        assert orjson.loads(response.body) == {"detail": "Missing toolId"}
 
     def test_enforce_internal_mcp_server_scope_returns_when_no_auth_context(self):
         """Missing forwarded auth context should skip server-scope enforcement."""

@@ -139,6 +139,7 @@ pub struct AppState {
     backend_prompts_get_authz_url: Arc<str>,
     backend_tools_call_url: Arc<str>,
     backend_tools_call_resolve_url: Arc<str>,
+    backend_tools_call_metric_url: Arc<str>,
     client: Client,
     // RMCP currently uses reqwest 0.13 while the direct gateway/runtime path
     // uses reqwest 0.12, so the runtime keeps a separate shared client for that
@@ -382,6 +383,10 @@ struct ResolvedMcpToolCallPlan {
     #[serde(default)]
     fallback_reason: Option<String>,
     #[serde(default)]
+    tool_id: Option<String>,
+    #[serde(default)]
+    server_id: Option<String>,
+    #[serde(default)]
     server_url: Option<String>,
     #[serde(default)]
     remote_tool_name: Option<String>,
@@ -437,6 +442,18 @@ struct CachedRmcpUpstreamClient {
 struct CachedResolvedToolCallPlan {
     plan: ResolvedMcpToolCallPlan,
     cached_at: Instant,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolsCallMetricRecordRequest {
+    tool_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_id: Option<String>,
+    duration_ms: f64,
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -690,6 +707,9 @@ impl AppState {
             backend_tools_call_resolve_url: Arc::from(derive_backend_tools_call_resolve_url(
                 &config.backend_rpc_url,
             )),
+            backend_tools_call_metric_url: Arc::from(derive_backend_tools_call_metric_url(
+                &config.backend_rpc_url,
+            )),
             client,
             #[cfg(feature = "rmcp-upstream-client")]
             rmcp_client,
@@ -860,6 +880,11 @@ impl AppState {
     #[must_use]
     pub fn backend_tools_call_resolve_url(&self) -> &str {
         &self.backend_tools_call_resolve_url
+    }
+
+    #[must_use]
+    pub fn backend_tools_call_metric_url(&self) -> &str {
+        &self.backend_tools_call_metric_url
     }
 
     #[must_use]
@@ -2005,6 +2030,9 @@ fn derive_backend_tools_call_url(backend_rpc_url: &str) -> String {
 }
 fn derive_backend_tools_call_resolve_url(backend_rpc_url: &str) -> String {
     derive_backend_url(backend_rpc_url, "tools/call/resolve")
+}
+fn derive_backend_tools_call_metric_url(backend_rpc_url: &str) -> String {
+    derive_backend_url(backend_rpc_url, "tools/call/metric")
 }
 fn derive_backend_authenticate_url(backend_rpc_url: &str) -> String {
     derive_backend_url(backend_rpc_url, "authenticate")
@@ -6566,19 +6594,100 @@ async fn send_tools_call_to_backend(
         })
 }
 
+async fn send_tools_call_metric_to_backend(
+    state: &AppState,
+    incoming_headers: &HeaderMap,
+    payload: &ToolsCallMetricRecordRequest,
+) -> Result<(), String> {
+    let response = state
+        .client
+        .post(state.backend_tools_call_metric_url())
+        .headers(build_forwarded_headers(incoming_headers))
+        .json(payload)
+        .send()
+        .await
+        .map_err(|err| format!("tools/call metric writeback failed: {err}"))?;
+
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "tools/call metric writeback returned status {}",
+            response.status()
+        ))
+    }
+}
+
+fn classify_tools_call_metric_outcome(
+    status: StatusCode,
+    payload: &Value,
+) -> (bool, Option<String>) {
+    if let Some(error) = payload.get("error") {
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| Some(error.to_string()));
+        return (false, message);
+    }
+
+    if !status.is_success() {
+        return (false, Some(format!("HTTP {}", status.as_u16())));
+    }
+
+    (true, None)
+}
+
+async fn record_tools_call_metric(
+    state: &AppState,
+    incoming_headers: &HeaderMap,
+    plan: &ResolvedMcpToolCallPlan,
+    duration_ms: f64,
+    success: bool,
+    error_message: Option<String>,
+) {
+    let Some(tool_id) = plan.tool_id.clone() else {
+        return;
+    };
+
+    let payload = ToolsCallMetricRecordRequest {
+        tool_id,
+        server_id: plan.server_id.clone(),
+        duration_ms,
+        success,
+        error_message,
+    };
+
+    if let Err(err) = send_tools_call_metric_to_backend(state, incoming_headers, &payload).await {
+        warn!("{err}");
+    }
+}
+
 async fn execute_tools_call_direct(
     state: &AppState,
     incoming_headers: &HeaderMap,
     request: &JsonRpcRequest,
     plan: &ResolvedMcpToolCallPlan,
 ) -> Result<Response, String> {
+    let request_started = Instant::now();
     // Direct execution mirrors the MCP client lifecycle explicitly:
     // initialize once, reuse the upstream session while it is healthy, and
     // retry once with a fresh upstream session if the cached session fails.
     if state.use_rmcp_upstream_client() {
         #[cfg(feature = "rmcp-upstream-client")]
         match execute_tools_call_via_rmcp(state, incoming_headers, request, plan).await {
-            Ok(response) => return Ok(response),
+            Ok((response, success, error_message)) => {
+                record_tools_call_metric(
+                    state,
+                    incoming_headers,
+                    plan,
+                    request_started.elapsed().as_secs_f64() * 1000.0,
+                    success,
+                    error_message,
+                )
+                .await;
+                return Ok(response);
+            }
             Err(err) => warn!("Rust MCP rmcp tools/call fallback: {err}"),
         }
     }
@@ -6655,6 +6764,16 @@ async fn execute_tools_call_direct(
     let payload = decode_upstream_json_payload(tool_response)
         .await
         .map_err(|err| format!("direct tools/call decode failed: {err}"))?;
+    let (success, error_message) = classify_tools_call_metric_outcome(status, &payload);
+    record_tools_call_metric(
+        state,
+        incoming_headers,
+        plan,
+        request_started.elapsed().as_secs_f64() * 1000.0,
+        success,
+        error_message,
+    )
+    .await;
 
     let mut response = json_response(status, payload);
     if let Some(session_id) = downstream_session_id
@@ -6677,7 +6796,7 @@ async fn execute_tools_call_via_rmcp(
     incoming_headers: &HeaderMap,
     request: &JsonRpcRequest,
     plan: &ResolvedMcpToolCallPlan,
-) -> Result<Response, String> {
+) -> Result<(Response, bool, Option<String>), String> {
     let remote_tool_name = plan
         .remote_tool_name
         .as_deref()
@@ -6696,24 +6815,27 @@ async fn execute_tools_call_via_rmcp(
     let rmcp_client =
         get_or_create_rmcp_upstream_client(state, plan, &session_key, &protocol_version).await?;
 
-    let response = match invoke_tools_call_via_rmcp(rmcp_client.as_ref(), request, remote_tool_name)
-        .await
-    {
-        Ok(response) => response,
-        Err(err) => {
-            state
-                .rmcp_upstream_clients()
-                .lock()
-                .await
-                .remove(&session_key);
-            let retried_client =
-                get_or_create_rmcp_upstream_client(state, plan, &session_key, &protocol_version)
-                    .await?;
-            invoke_tools_call_via_rmcp(retried_client.as_ref(), request, remote_tool_name)
-                .await
-                .map_err(|retry_err| format!("rmcp retry failed after {err}: {retry_err}"))?
-        }
-    };
+    let (response, success, error_message) =
+        match invoke_tools_call_via_rmcp(rmcp_client.as_ref(), request, remote_tool_name).await {
+            Ok(response) => response,
+            Err(err) => {
+                state
+                    .rmcp_upstream_clients()
+                    .lock()
+                    .await
+                    .remove(&session_key);
+                let retried_client = get_or_create_rmcp_upstream_client(
+                    state,
+                    plan,
+                    &session_key,
+                    &protocol_version,
+                )
+                .await?;
+                invoke_tools_call_via_rmcp(retried_client.as_ref(), request, remote_tool_name)
+                    .await
+                    .map_err(|retry_err| format!("rmcp retry failed after {err}: {retry_err}"))?
+            }
+        };
 
     let mut response = response;
     if let Some(session_id) = downstream_session_id
@@ -6727,7 +6849,7 @@ async fn execute_tools_call_via_rmcp(
         HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
         HeaderValue::from_static("rmcp"),
     );
-    Ok(response)
+    Ok((response, success, error_message))
 }
 
 async fn ensure_upstream_session(
@@ -7040,7 +7162,7 @@ async fn invoke_tools_call_via_rmcp(
     client: &RmcpRunningService<RmcpRoleClient, RmcpClientInfo>,
     request: &JsonRpcRequest,
     remote_tool_name: &str,
-) -> Result<Response, String> {
+) -> Result<(Response, bool, Option<String>), String> {
     let mut params = request.params.clone();
     let params_object = params
         .as_object_mut()
@@ -7058,24 +7180,35 @@ async fn invoke_tools_call_via_rmcp(
         .unwrap_or(Value::String("__contextforge_tools_call__".to_string()));
 
     match client.peer().call_tool(params).await {
-        Ok(result) => Ok(json_response(
-            StatusCode::OK,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": response_id,
-                "result": serde_json::to_value(result)
-                    .map_err(|err| format!("rmcp tools/call result encode failed: {err}"))?,
-            }),
+        Ok(result) => Ok((
+            json_response(
+                StatusCode::OK,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": response_id,
+                    "result": serde_json::to_value(result)
+                        .map_err(|err| format!("rmcp tools/call result encode failed: {err}"))?,
+                }),
+            ),
+            true,
+            None,
         )),
-        Err(RmcpServiceError::McpError(error)) => Ok(json_response(
-            StatusCode::OK,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": response_id,
-                "error": serde_json::to_value(error)
-                    .map_err(|err| format!("rmcp tools/call error encode failed: {err}"))?,
-            }),
-        )),
+        Err(RmcpServiceError::McpError(error)) => {
+            let error_message = error.message.to_string();
+            Ok((
+                json_response(
+                    StatusCode::OK,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": response_id,
+                        "error": serde_json::to_value(error)
+                            .map_err(|err| format!("rmcp tools/call error encode failed: {err}"))?,
+                    }),
+                ),
+                false,
+                Some(error_message),
+            ))
+        }
         Err(err) => Err(format!("rmcp direct tools/call failed: {err}")),
     }
 }
@@ -7444,9 +7577,10 @@ mod unit_tests {
 
     use super::{
         AffinityForwardResponse, AppState, Bytes, CLIENT_ERROR_DETAIL, EventStoreReplayRequest,
-        EventStoreStoreRequest, InternalAuthContext, InternalAuthenticateRequest, JsonRpcRequest,
-        RuntimeConfig, RuntimeError, RuntimeSessionRecord, SessionAuthReuseMissReason,
-        TrustedPeerAddr, URL_SAFE_NO_PAD, accepts_sse, active_runtime_session_count,
+        EventStoreStoreRequest, INTERNAL_RUNTIME_AUTH_HEADER, InternalAuthContext,
+        InternalAuthenticateRequest, JsonRpcRequest, RUNTIME_HEADER, RUNTIME_NAME, RuntimeConfig,
+        RuntimeError, RuntimeSessionRecord, SessionAuthReuseMissReason, TrustedPeerAddr,
+        URL_SAFE_NO_PAD, accepts_sse, active_runtime_session_count,
         affinity_forward_error_response, auth_binding_fingerprint,
         authenticate_public_request_if_needed, authorize_server_method_via_backend,
         batch_rejected_response, build_forwarded_sse_event, build_public_router,
@@ -7463,16 +7597,16 @@ mod unit_tests {
         derive_backend_resources_read_url, derive_backend_resources_subscribe_url,
         derive_backend_resources_unsubscribe_url, derive_backend_roots_list_url,
         derive_backend_sampling_create_message_url, derive_backend_session_delete_url,
-        derive_backend_tools_call_resolve_url, derive_backend_tools_call_url,
-        derive_backend_tools_list_authz_url, derive_backend_tools_list_url,
-        derive_backend_transport_url, direct_server_prompts_get, direct_server_prompts_list,
-        direct_server_resource_templates_list, direct_server_resources_list,
-        direct_server_resources_read, encode_internal_auth_context_header, event_store_key_prefix,
-        extract_client_capabilities, extract_first_sse_data_payload, finalize_sse_frame,
-        forward_initialize_to_backend, forward_to_backend, forward_transport_request,
-        get_runtime_session, handle_initialize_with_session_core, handle_resume_transport_request,
-        has_server_scope, hex_decode, hex_encode, inject_server_id_header, inject_session_header,
-        INTERNAL_RUNTIME_AUTH_HEADER, RUNTIME_HEADER, RUNTIME_NAME,
+        derive_backend_tools_call_metric_url, derive_backend_tools_call_resolve_url,
+        derive_backend_tools_call_url, derive_backend_tools_list_authz_url,
+        derive_backend_tools_list_url, derive_backend_transport_url, direct_server_prompts_get,
+        direct_server_prompts_list, direct_server_resource_templates_list,
+        direct_server_resources_list, direct_server_resources_read,
+        encode_internal_auth_context_header, event_store_key_prefix, extract_client_capabilities,
+        extract_first_sse_data_payload, finalize_sse_frame, forward_initialize_to_backend,
+        forward_to_backend, forward_transport_request, get_runtime_session,
+        handle_initialize_with_session_core, handle_resume_transport_request, has_server_scope,
+        hex_decode, hex_encode, inject_server_id_header, inject_session_header,
         invalid_request_response, is_affinity_forwarded_request, maybe_bind_session_auth_context,
         maybe_upsert_runtime_session_from_transport_response, normalize_postgres_database_url,
         parse_error_response, parse_sse_line, pool_owner_key, prompt_arguments_from_schema,
@@ -7494,8 +7628,8 @@ mod unit_tests {
     };
     use futures_util::stream;
     use reqwest::Url;
-    use std::collections::HashMap;
     use serde_json::{Value, json};
+    use std::collections::HashMap;
     use std::{
         convert::Infallible,
         net::{SocketAddr, TcpListener},
@@ -7711,6 +7845,10 @@ mod unit_tests {
         assert_eq!(
             state.backend_tools_call_resolve_url(),
             "http://127.0.0.1:4444/_internal/mcp/tools/call/resolve"
+        );
+        assert_eq!(
+            state.backend_tools_call_metric_url(),
+            "http://127.0.0.1:4444/_internal/mcp/tools/call/metric"
         );
         assert_eq!(state.protocol_version(), "2025-11-25");
         assert_eq!(state.server_name(), "ContextForge");
@@ -7974,7 +8112,7 @@ mod unit_tests {
             }
         }
 
-        let authz_derivations: [(&str, Deriver); 6] = [
+        let authz_derivations: [(&str, Deriver); 7] = [
             (
                 "_internal/mcp/resources/templates/list/authz",
                 derive_backend_resource_templates_list_authz_url,
@@ -7991,6 +8129,10 @@ mod unit_tests {
             (
                 "_internal/mcp/tools/call/resolve",
                 derive_backend_tools_call_resolve_url,
+            ),
+            (
+                "_internal/mcp/tools/call/metric",
+                derive_backend_tools_call_metric_url,
             ),
             (
                 "_internal/mcp/authenticate",
@@ -8127,32 +8269,34 @@ mod unit_tests {
         let captured_request_headers_auth = captured_request_headers.clone();
         let backend = Router::new().route(
             "/_internal/mcp/authenticate",
-            post(move |headers: HeaderMap, Json(request): Json<InternalAuthenticateRequest>| {
-                let captured_auth = captured_auth.clone();
-                let captured_request_headers_auth = captured_request_headers_auth.clone();
-                async move {
-                    *captured_auth.lock().expect("lock") = Some(request);
-                    *captured_request_headers_auth.lock().expect("lock") = Some(
-                        headers
-                            .iter()
-                            .filter_map(|(name, value)| {
-                                value
-                                    .to_str()
-                                    .ok()
-                                    .map(|value| (name.as_str().to_string(), value.to_string()))
-                            })
-                            .collect(),
-                    );
-                    Json(json!({
-                        "authContext": {
-                            "email": "trusted@example.com",
-                            "teams": ["team-a"],
-                            "is_authenticated": true,
-                            "is_admin": false
-                        }
-                    }))
-                }
-            }),
+            post(
+                move |headers: HeaderMap, Json(request): Json<InternalAuthenticateRequest>| {
+                    let captured_auth = captured_auth.clone();
+                    let captured_request_headers_auth = captured_request_headers_auth.clone();
+                    async move {
+                        *captured_auth.lock().expect("lock") = Some(request);
+                        *captured_request_headers_auth.lock().expect("lock") = Some(
+                            headers
+                                .iter()
+                                .filter_map(|(name, value)| {
+                                    value
+                                        .to_str()
+                                        .ok()
+                                        .map(|value| (name.as_str().to_string(), value.to_string()))
+                                })
+                                .collect(),
+                        );
+                        Json(json!({
+                            "authContext": {
+                                "email": "trusted@example.com",
+                                "teams": ["team-a"],
+                                "is_authenticated": true,
+                                "is_admin": false
+                            }
+                        }))
+                    }
+                },
+            ),
         );
         let backend_url = spawn_router(backend).await;
         config.backend_rpc_url = format!("{backend_url}/rpc");
@@ -8210,11 +8354,17 @@ mod unit_tests {
             .clone()
             .expect("captured request headers");
         assert!(!captured.headers.contains_key("x-contextforge-auth-context"));
-        assert!(!captured.headers.contains_key("x-contextforge-mcp-runtime-auth"));
+        assert!(
+            !captured
+                .headers
+                .contains_key("x-contextforge-mcp-runtime-auth")
+        );
         assert!(!captured.headers.contains_key("x-contextforge-server-id"));
         assert_eq!(captured.client_ip.as_deref(), Some("198.51.100.9"));
         assert_eq!(
-            captured_request_headers.get(RUNTIME_HEADER).map(String::as_str),
+            captured_request_headers
+                .get(RUNTIME_HEADER)
+                .map(String::as_str),
             Some(RUNTIME_NAME)
         );
         assert!(captured_request_headers.contains_key(INTERNAL_RUNTIME_AUTH_HEADER));

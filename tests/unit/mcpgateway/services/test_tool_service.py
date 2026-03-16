@@ -7430,6 +7430,8 @@ class TestRustMcpExecutionPlan:
             "timeoutMs": 2500,
             "gatewayId": "gw-1",
             "toolName": "tool-one",
+            "toolId": "tool-1",
+            "serverId": None,
         }
 
 

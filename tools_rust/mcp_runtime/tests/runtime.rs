@@ -2172,7 +2172,10 @@ async fn rust_event_store_replay_fails_closed_on_corrupt_messages() {
         .expect("replay response");
     assert_eq!(replay.status(), StatusCode::BAD_GATEWAY);
     let replay_body: Value = replay.json().await.expect("replay json");
-    assert_eq!(replay_body, json!({"detail": "Rust event store replay decode failed"}));
+    assert_eq!(
+        replay_body,
+        json!({"detail": "Rust event store replay decode failed"})
+    );
 
     cleanup_redis_prefix(redis_url, &cache_prefix).await;
 }
@@ -4649,6 +4652,7 @@ async fn tools_call_uses_rust_direct_execution_and_reuses_upstream_session() {
     let upstream_tool_calls = Arc::new(Mutex::new(0usize));
     let backend_fallback_calls = Arc::new(Mutex::new(0usize));
     let backend_resolve_calls = Arc::new(Mutex::new(0usize));
+    let backend_metric_calls = Arc::new(Mutex::new(Vec::<Value>::new()));
 
     let upstream = {
         let upstream_initialize_calls = upstream_initialize_calls.clone();
@@ -4722,6 +4726,7 @@ async fn tools_call_uses_rust_direct_execution_and_reuses_upstream_session() {
 
     let backend = {
         let backend_fallback_calls = backend_fallback_calls.clone();
+        let backend_metric_calls = backend_metric_calls.clone();
         let backend_resolve_calls = backend_resolve_calls.clone();
         let upstream_url = upstream_url.clone();
         Router::new()
@@ -4742,6 +4747,8 @@ async fn tools_call_uses_rust_direct_execution_and_reuses_upstream_session() {
                         Json(json!({
                             "eligible": true,
                             "transport": "streamablehttp",
+                            "toolId": "tool-1",
+                            "serverId": "server-1",
                             "serverUrl": format!("{upstream_url}/mcp"),
                             "remoteToolName": "echo_remote",
                             "headers": {"x-upstream-auth": "rust-plan"},
@@ -4761,6 +4768,22 @@ async fn tools_call_uses_rust_direct_execution_and_reuses_upstream_session() {
                             "id": 1,
                             "result": {"unexpected": true}
                         }))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/tools/call/metric",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let backend_metric_calls = backend_metric_calls.clone();
+                    async move {
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-server-id")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("server-1")
+                        );
+                        backend_metric_calls.lock().expect("lock").push(body);
+                        Json(json!({"status": "ok"}))
                     }
                 }),
             )
@@ -4823,6 +4846,15 @@ async fn tools_call_uses_rust_direct_execution_and_reuses_upstream_session() {
     assert_eq!(*backend_fallback_calls.lock().expect("lock"), 0);
     assert_eq!(*upstream_initialize_calls.lock().expect("lock"), 1);
     assert_eq!(*upstream_tool_calls.lock().expect("lock"), 2);
+    let metric_calls = backend_metric_calls.lock().expect("lock");
+    assert_eq!(metric_calls.len(), 2);
+    for metric in metric_calls.iter() {
+        assert_eq!(metric["toolId"], "tool-1");
+        assert_eq!(metric["serverId"], "server-1");
+        assert_eq!(metric["success"], true);
+        assert!(metric["durationMs"].as_f64().unwrap_or_default() >= 0.0);
+        assert!(metric.get("errorMessage").is_none());
+    }
 }
 
 #[tokio::test]
@@ -5237,6 +5269,7 @@ async fn tools_call_can_use_rmcp_upstream_client() {
     let upstream_tool_calls = Arc::new(Mutex::new(0usize));
     let backend_fallback_calls = Arc::new(Mutex::new(0usize));
     let backend_resolve_calls = Arc::new(Mutex::new(0usize));
+    let metric_records: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
 
     let upstream = {
         let upstream_initialize_calls = upstream_initialize_calls.clone();
@@ -5296,6 +5329,7 @@ async fn tools_call_can_use_rmcp_upstream_client() {
     let backend = {
         let backend_fallback_calls = backend_fallback_calls.clone();
         let backend_resolve_calls = backend_resolve_calls.clone();
+        let metric_records = metric_records.clone();
         let upstream_url = upstream_url.clone();
         Router::new()
             .route(
@@ -5308,12 +5342,30 @@ async fn tools_call_can_use_rmcp_upstream_client() {
                         assert_eq!(body["params"]["name"], "echo");
                         Json(json!({
                             "eligible": true,
+                            "toolId": "tool-1",
+                            "serverId": "server-1",
                             "transport": "streamablehttp",
                             "serverUrl": format!("{upstream_url}/mcp"),
                             "remoteToolName": "echo_remote",
                             "headers": {"x-upstream-auth": "rust-plan"},
                             "timeoutMs": 30000
                         }))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/tools/call/metric",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let metric_records = metric_records.clone();
+                    async move {
+                        assert_eq!(
+                            headers
+                                .get("x-contextforge-mcp-runtime")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("rust")
+                        );
+                        metric_records.lock().expect("lock").push(body);
+                        Json(json!({"status": "ok"}))
                     }
                 }),
             )
@@ -5379,6 +5431,15 @@ async fn tools_call_can_use_rmcp_upstream_client() {
     assert_eq!(*backend_fallback_calls.lock().expect("lock"), 0);
     assert_eq!(*upstream_initialize_calls.lock().expect("lock"), 1);
     assert_eq!(*upstream_tool_calls.lock().expect("lock"), 2);
+    let metric_records = metric_records.lock().expect("lock");
+    assert_eq!(metric_records.len(), 2);
+    for body in metric_records.iter() {
+        assert_eq!(body["toolId"], "tool-1");
+        assert_eq!(body["serverId"], "server-1");
+        assert_eq!(body["success"], true);
+        assert!(body["durationMs"].as_f64().unwrap_or_default() >= 0.0);
+        assert!(body.get("errorMessage").is_none());
+    }
 }
 
 #[tokio::test]
