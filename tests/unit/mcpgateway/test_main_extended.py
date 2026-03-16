@@ -10100,6 +10100,64 @@ class TestRemainingCoverageGaps:
         assert "Invalid apijsonpath type" in str(excinfo.value.detail)
         # Type name not disclosed in production (non-DEBUG) mode
 
+    async def test_list_tools_empty_jsonpath_string(self, monkeypatch):
+        """Test list_tools rejects empty jsonpath string."""
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        tool = MagicMock()
+        tool.to_dict.return_value = {"id": "t1"}
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
+
+        # Empty jsonpath string - should raise 400
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.list_tools.__wrapped__(
+                request,
+                cursor=None,
+                include_pagination=False,
+                limit=None,
+                include_inactive=False,
+                tags=None,
+                team_id=None,
+                visibility=None,
+                gateway_id=None,
+                db=MagicMock(),
+                apijsonpath='{"jsonpath":"  ","mapping":null}',  # Empty/whitespace jsonpath
+                user={"email": "user@example.com"},
+            )
+        assert excinfo.value.status_code == 400
+        assert "JSONPath expression cannot be empty" in str(excinfo.value.detail)
+
+    async def test_get_tool_empty_jsonpath_model(self, monkeypatch):
+        """Test get_tool rejects JsonPathModifier with empty jsonpath."""
+        import mcpgateway.main as main_mod
+        from mcpgateway.schemas import JsonPathModifier
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        data = MagicMock()
+        data.to_dict.return_value = {"id": "t1"}
+
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
+        monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
+
+        # JsonPathModifier with empty jsonpath
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.get_tool.__wrapped__(
+                "tool-1",
+                request=request,
+                db=MagicMock(),
+                user={"email": "u"},
+                apijsonpath=JsonPathModifier(jsonpath="", mapping=None)
+            )
+        assert excinfo.value.status_code == 400
+        assert "JSONPath expression cannot be empty" in str(excinfo.value.detail)
+
     async def test_create_tool_endpoint_coverage(self, monkeypatch):
         """Test create_tool endpoint (lines 3695-3698)."""
         import mcpgateway.main as main_mod

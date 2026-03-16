@@ -1329,14 +1329,22 @@ def _parse_apijsonpath(raw: Optional[Union[str, JsonPathModifier]]) -> Optional[
         Parsed JsonPathModifier or None if raw is None
 
     Raises:
-        HTTPException: If the JSON string is invalid or unexpected type provided (400 Bad Request)
+        HTTPException: If the JSON string is invalid, unexpected type provided,
+                      or jsonpath expression is empty (400 Bad Request)
     """
     if raw is None:
         return None
 
     if isinstance(raw, str):
         try:
-            return JsonPathModifier.model_validate(json.loads(raw))
+            parsed = JsonPathModifier.model_validate(json.loads(raw))
+            # Validate jsonpath is not empty if provided
+            if parsed.jsonpath is not None and not parsed.jsonpath.strip():
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JSONPath expression cannot be empty")
+            return parsed
+        except HTTPException:
+            # Re-raise HTTPException as-is (includes empty jsonpath validation)
+            raise
         except (json.JSONDecodeError, ValueError) as ex:
             # User error: malformed JSON or validation failure
             detail = f"Invalid apijsonpath JSON: {ex}" if settings.log_level == "DEBUG" else "Invalid apijsonpath format"
@@ -1350,6 +1358,9 @@ def _parse_apijsonpath(raw: Optional[Union[str, JsonPathModifier]]) -> Optional[
             logger.error(f"Unexpected error parsing apijsonpath: {ex}", exc_info=True)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to parse apijsonpath")
     elif isinstance(raw, JsonPathModifier):
+        # Validate jsonpath is not empty if provided
+        if raw.jsonpath is not None and not raw.jsonpath.strip():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JSONPath expression cannot be empty")
         return raw
 
     # Unexpected type - fail fast with clear error message
