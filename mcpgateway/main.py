@@ -4633,7 +4633,10 @@ async def list_tools(
         visibility: Optional visibility filter (private, team, public)
         gateway_id: Optional gateway ID to filter tools by specific gateway
         db: Database session
-        apijsonpath: JSON path modifier to filter or transform the response
+        apijsonpath: Optional JSON-Path modifier supplied as URL-encoded query parameter.
+                     Example: ?apijsonpath=%7B%22jsonpath%22%3A%22%24.name%22%7D
+                     (decoded: {"jsonpath":"$.name"})
+                     Use to filter or transform the response via JSONPath expressions.
         user: Authenticated user with permissions
 
     Returns:
@@ -4830,7 +4833,10 @@ async def get_tool(
         request: The incoming HTTP request.
         db:     Active SQLAlchemy session (dependency).
         user:   Authenticated username (dependency).
-        apijsonpath: Optional JSON-Path modifier supplied as query parameter
+        apijsonpath: Optional JSON-Path modifier supplied as URL-encoded query parameter.
+                     Example: ?apijsonpath=%7B%22jsonpath%22%3A%22%24.name%22%7D
+                     (decoded: {"jsonpath":"$.name","mapping":null})
+                     Use to filter or transform the response via JSONPath expressions.
 
     Returns:
         The raw ``ToolRead`` model **or** a JSON-transformed ``dict`` if
