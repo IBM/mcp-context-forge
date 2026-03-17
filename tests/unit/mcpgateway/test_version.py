@@ -120,6 +120,9 @@ def test_version_json_ok(client: TestClient) -> None:
     assert "mcp_runtime" in payload
     assert "mode" in payload["mcp_runtime"]
     assert "mounted" in payload["mcp_runtime"]
+    assert "llm_gateway" in payload
+    assert "mode" in payload["llm_gateway"]
+    assert "proxy_mode" in payload["llm_gateway"]
 
 
 def test_version_html_query_param(client: TestClient) -> None:
@@ -138,7 +141,7 @@ def test_version_html_accept_header(client: TestClient) -> None:
 
 def test_version_html_all_sections(client: TestClient) -> None:
     html = client.get("/version?fmt=html").text
-    for sec in ["App", "Platform", "Database", "Redis", "Settings", "MCP Runtime", "System", "Environment"]:
+    for sec in ["App", "Platform", "Database", "Redis", "Settings", "MCP Runtime", "LLM Gateway", "System", "Environment"]:
         assert re.search(rf"<h2[^>]*>{sec}</h2>", html)
 
 
