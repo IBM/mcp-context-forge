@@ -7551,7 +7551,6 @@ class TestRustMcpExecutionPlan:
         assert "modifiedArgs" not in plan
 
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
     async def test_prepare_rust_mcp_pre_invoke_passes_runtime_headers_not_request_headers(self, tool_service):
         """Pre-invoke hook should receive outbound runtime headers, not inbound request headers."""
         from mcpgateway.plugins.framework.models import PluginResult
