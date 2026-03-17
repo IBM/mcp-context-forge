@@ -41,7 +41,7 @@ from mcp.client.streamable_http import streamablehttp_client
 import parse
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError, MultipleResultsFound, OperationalError
 from sqlalchemy.orm import joinedload, Session
 
 # First-Party
@@ -2121,10 +2121,27 @@ class ResourceService(BaseService):
                     # Matches uri (modified value from pluggins if applicable)
                     # with uri from resource DB
                     # if uri is of type resource template then resource is retreived from DB
-                    query = select(DbResource).where(DbResource.uri == str(uri)).where(DbResource.enabled)
+                    query = select(DbResource)
+                    if server_id:
+                        query = query.join(
+                            server_resource_association,
+                            server_resource_association.c.resource_id == DbResource.id,
+                        ).where(server_resource_association.c.server_id == server_id)
+                    query = query.where(DbResource.uri == str(uri)).where(DbResource.enabled)
                     if include_inactive:
-                        query = select(DbResource).where(DbResource.uri == str(uri))
-                    resource_db = db.execute(query).scalar_one_or_none()
+                        query = select(DbResource)
+                        if server_id:
+                            query = query.join(
+                                server_resource_association,
+                                server_resource_association.c.resource_id == DbResource.id,
+                            ).where(server_resource_association.c.server_id == server_id)
+                        query = query.where(DbResource.uri == str(uri))
+                    try:
+                        resource_db = db.execute(query).scalar_one_or_none()
+                    except MultipleResultsFound as exc:
+                        if server_id:
+                            raise ResourceError(f"Multiple resources matched URI '{uri}' for server '{server_id}'.") from exc
+                        raise ResourceError(f"Resource URI '{uri}' is ambiguous across multiple servers; use /servers/{{id}}/mcp.") from exc
 
                     # Check for direct_proxy mode
                     if resource_db and resource_db.gateway and getattr(resource_db.gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
@@ -2180,8 +2197,23 @@ class ResourceService(BaseService):
                         # Normal cache mode - resource found in DB
                         content = resource_db.content
                     else:
-                        # Check the inactivity first
-                        check_inactivity = db.execute(select(DbResource).where(DbResource.uri == str(resource_uri)).where(not_(DbResource.enabled))).scalar_one_or_none()
+                        # Check the inactivity first using the same server scope that
+                        # governed the active lookup. Without this, duplicate URIs
+                        # across different virtual servers/gateways can produce
+                        # ambiguous results even though the current request is
+                        # already scoped to a single server.
+                        inactive_query = select(DbResource)
+                        if server_id:
+                            inactive_query = inactive_query.join(
+                                server_resource_association,
+                                server_resource_association.c.resource_id == DbResource.id,
+                            ).where(server_resource_association.c.server_id == server_id)
+                        try:
+                            check_inactivity = db.execute(inactive_query.where(DbResource.uri == str(resource_uri)).where(not_(DbResource.enabled))).scalar_one_or_none()
+                        except MultipleResultsFound as exc:
+                            if server_id:
+                                raise ResourceError(f"Multiple inactive resources matched URI '{resource_uri}' for server '{server_id}'.") from exc
+                            raise ResourceError(f"Resource URI '{resource_uri}' is ambiguous across multiple servers; use /servers/{{id}}/mcp.") from exc
                         if check_inactivity:
                             raise ResourceNotFoundError(f"Resource '{resource_uri}' exists but is inactive")
 

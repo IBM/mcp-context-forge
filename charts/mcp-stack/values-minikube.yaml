@@ -58,6 +58,12 @@ mcpContextForge:
     PASSWORD_REQUIRE_SPECIAL: "false"
     REQUIRE_STRONG_SECRETS: "false"
 
+migration:
+  image:
+    repository: ghcr.io/ibm/mcp-context-forge
+    tag: "1.0.0-RC-2"
+    pullPolicy: Never
+
 # Disable TLS on fast-time-server ingress for minikube
 mcpFastTimeServer:
   ingress:

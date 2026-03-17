@@ -235,6 +235,48 @@ class Settings(BaseSettings):
 
     # Protocol
     protocol_version: str = "2025-11-25"
+    experimental_rust_mcp_runtime_enabled: bool = Field(
+        default=False,
+        description="Proxy POST /mcp traffic through the experimental Rust MCP runtime sidecar.",
+    )
+    experimental_rust_mcp_runtime_url: str = Field(
+        default="http://127.0.0.1:8787",
+        description="Base URL for the experimental Rust MCP runtime sidecar.",
+    )
+    experimental_rust_mcp_runtime_uds: Optional[str] = Field(
+        default=None,
+        description="Optional Unix domain socket path for the experimental Rust MCP runtime sidecar.",
+    )
+    experimental_rust_mcp_runtime_timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=300,
+        description="Timeout in seconds for Python-to-Rust MCP runtime proxy requests.",
+    )
+    experimental_rust_mcp_session_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned MCP session metadata core while keeping Python as the fallback transport backend.",
+    )
+    experimental_rust_mcp_event_store_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned resumable MCP event-store backend for Streamable HTTP sessions.",
+    )
+    experimental_rust_mcp_resume_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned public MCP replay/resume path for GET /mcp with Last-Event-ID while keeping Python fallback available.",
+    )
+    experimental_rust_mcp_live_stream_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned public MCP live GET /mcp SSE path while keeping Python as the fallback upstream stream source.",
+    )
+    experimental_rust_mcp_affinity_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned MCP session-affinity forwarding path while keeping Python worker forwarding as the fallback.",
+    )
+    experimental_rust_mcp_session_auth_reuse_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
+    )
 
     # Authentication
     basic_auth_user: str = "admin"
@@ -1829,6 +1871,30 @@ Disallow: /
         if info.data and "well_known_security_txt" in info.data:
             return bool(info.data["well_known_security_txt"].strip())
         return bool(v)
+
+    @field_validator("experimental_rust_mcp_runtime_uds", mode="after")
+    @classmethod
+    def _validate_experimental_rust_mcp_runtime_uds(cls, value: Optional[str]) -> Optional[str]:
+        """Validate the optional UDS path used for the Rust MCP runtime sidecar.
+
+        Args:
+            value: Candidate UDS path from configuration.
+
+        Returns:
+            The normalized absolute UDS path, or ``None`` when unset.
+
+        Raises:
+            ValueError: If the path is not absolute or its parent directory is missing.
+        """
+        if value in (None, ""):
+            return None
+
+        uds_path = Path(value).expanduser()
+        if not uds_path.is_absolute():
+            raise ValueError("experimental_rust_mcp_runtime_uds must be an absolute path")
+        if not uds_path.parent.exists():
+            raise ValueError(f"experimental_rust_mcp_runtime_uds parent directory does not exist: {uds_path.parent}")
+        return str(uds_path)
 
     # -------------------------------
     # Flexible list parsing for envs

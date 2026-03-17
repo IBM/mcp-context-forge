@@ -44,6 +44,7 @@ SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
 import logging
@@ -52,14 +53,12 @@ from pathlib import Path
 import random
 from typing import Any
 import uuid
+import warnings
 
 # Third-Party
 from locust import between, constant_throughput, events, tag, task
 from locust.contrib.fasthttp import FastHttpUser
 from locust.runners import MasterRunner, WorkerRunner
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Configuration
@@ -106,14 +105,58 @@ BEARER_TOKEN = _cfg("MCPGATEWAY_BEARER_TOKEN", "")
 
 # MCP target
 MCP_SERVER_ID = _cfg("MCP_SERVER_ID", "")
+MCP_SERVER_IDS_STR = _cfg("MCP_SERVER_IDS", "")
 MCP_TOOL_NAMES_STR = _cfg("MCP_TOOL_NAMES", "")
+LOCUST_LOG_LEVEL = os.environ.get("LOCUST_LOG_LEVEL", _ENV.get("LOCUST_LOG_LEVEL", "INFO")).upper()
+
+logging.basicConfig(level=getattr(logging, LOCUST_LOG_LEVEL, logging.INFO))
+logger = logging.getLogger(__name__)
+logger.setLevel(getattr(logging, LOCUST_LOG_LEVEL, logging.INFO))
+
+
+def _configure_log_levels() -> None:
+    """Reduce benchmark log noise across Locust and common client libraries."""
+    level = getattr(logging, LOCUST_LOG_LEVEL, logging.INFO)
+    logger.setLevel(level)
+    for logger_name in (
+        "locust",
+        "locust.main",
+        "locust.runners",
+        "locust.stats_logger",
+        "urllib3",
+        "requests",
+        "gevent",
+    ):
+        logging.getLogger(logger_name).setLevel(level)
+    if level >= logging.ERROR:
+        warnings.filterwarnings(
+            "ignore",
+            message=r"The HMAC key is .* below the minimum recommended length of 32 bytes for SHA256\.",
+        )
+
+
+@dataclass(frozen=True)
+class ServerTarget:
+    server_id: str
+    server_name: str
+    tool_names: list[str]
+    resource_uris: list[str]
+    prompt_targets: list["PromptTarget"]
+
+
+@dataclass(frozen=True)
+class PromptTarget:
+    name: str
+    required_arguments: dict[str, str]
 
 # Shared state (populated on test_start)
 _server_id: str = ""
 _tool_names: list[str] = []
 _resource_uris: list[str] = []
-_prompt_names: list[str] = []
+_prompt_targets: list[PromptTarget] = []
+_server_targets: list[ServerTarget] = []
 _jwt_token: str | None = None
+_server_target_index = 0
 
 # Timezones for realistic args
 TIMEZONES = [
@@ -130,6 +173,36 @@ TIMEZONES = [
     "Europe/Berlin",
     "Asia/Singapore",
 ]
+
+
+def _default_prompt_argument_value(prompt_name: str, argument_name: str) -> str:
+    """Return a deterministic benchmark-friendly value for a required prompt arg."""
+    name = argument_name.lower()
+    prompt = prompt_name.lower()
+
+    if "timezones" in name:
+        return "America/New_York,Europe/Dublin"
+    if "timezone_b" in name or "secondary_timezone" in name:
+        return "America/New_York"
+    if "timezone_a" in name or "primary_timezone" in name or "from_timezone" in name or "source_timezone" in name:
+        return "UTC"
+    if "target_timezone" in name or (name == "timezone" and "compare" not in prompt):
+        return "Europe/Dublin"
+    if "timezone" in name:
+        return "UTC"
+    if "include_" in name or name.startswith("with_") or name.endswith("_enabled") or name.endswith("_flag"):
+        return "true"
+    if "duration" in name:
+        return "30"
+    if "time" in name or "date" in name:
+        return "2025-01-15T12:00:00Z"
+    if "location" in name or "city" in name:
+        return "Dublin"
+    if "email" in name:
+        return "loadtest@example.com"
+    if "name" in name or "title" in name or "subject" in name:
+        return "load-test"
+    return "load-test"
 
 
 # =============================================================================
@@ -182,19 +255,21 @@ def _get_token() -> str:
 
 
 def _auto_detect(host: str) -> None:
-    """Discover server_id and tool_names from the gateway REST API."""
-    global _server_id, _tool_names, _resource_uris, _prompt_names  # pylint: disable=global-statement
+    """Discover MCP server targets and per-target inventories from the gateway REST API."""
+    global _server_id, _tool_names, _resource_uris, _prompt_targets, _server_targets  # pylint: disable=global-statement
 
     # Third-Party
     import requests  # pylint: disable=import-outside-toplevel
 
     token = _get_token()
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    requested_server_ids = [server_id.strip() for server_id in MCP_SERVER_IDS_STR.split(",") if server_id.strip()]
 
-    # --- Server ID (prefer server with the most associated tools) ---
+    # --- Server ID selection (prefer explicit multi-server list, then single server, else best auto-detect) ---
     if MCP_SERVER_ID:
-        _server_id = MCP_SERVER_ID
-    else:
+        requested_server_ids = [MCP_SERVER_ID]
+
+    if not requested_server_ids:
         try:
             resp = requests.get(f"{host}/servers", headers=headers, timeout=10)
             resp.raise_for_status()
@@ -206,82 +281,112 @@ def _auto_detect(host: str) -> None:
                 enabled = [s for s in servers if s.get("enabled", True)]
                 if enabled:
                     best = max(enabled, key=lambda s: len(s.get("associatedTools", [])))
-                    _server_id = best.get("id", "")
-                    logger.info(
-                        "Selected server %r (%s) with %d tools",
-                        best.get("name"),
-                        _server_id,
-                        len(best.get("associatedTools", [])),
-                    )
+                    requested_server_ids = [best.get("id", "")]
                 else:
-                    _server_id = servers[0].get("id", "")
+                    requested_server_ids = [servers[0].get("id", "")]
         except Exception as e:
             logger.warning("Failed to auto-detect server_id: %s", e)
 
-    if not _server_id:
-        logger.error("No MCP_SERVER_ID set and auto-detection failed. Set MCP_SERVER_ID env var.")
+    requested_server_ids = [server_id for server_id in requested_server_ids if server_id]
+    if not requested_server_ids:
+        logger.error("No MCP_SERVER_ID/MCP_SERVER_IDS set and auto-detection failed.")
         return
 
-    logger.info("Using server_id: %s", _server_id)
+    discovered_targets: list[ServerTarget] = []
 
-    # --- Discover tools/resources/prompts via MCP protocol ---
-    mcp_url = f"{host}/servers/{_server_id}/mcp"
-    mcp_headers = {**headers, "Content-Type": "application/json"}
-    session_id = None
+    for server_id in requested_server_ids:
+        mcp_url = f"{host}/servers/{server_id}/mcp"
+        mcp_headers = {**headers, "Content-Type": "application/json"}
+        session_id = None
+        server_name = server_id
 
-    def _mcp_call(method: str, params: dict | None = None) -> dict | None:
-        nonlocal session_id
-        payload = {"jsonrpc": "2.0", "id": str(uuid.uuid4()), "method": method}
-        if params:
-            payload["params"] = params
-        hdrs = dict(mcp_headers)
-        if session_id:
-            hdrs["Mcp-Session-Id"] = session_id
-        try:
-            resp = requests.post(mcp_url, json=payload, headers=hdrs, timeout=15)
-            if "Mcp-Session-Id" in resp.headers:
-                session_id = resp.headers["Mcp-Session-Id"]
-            resp.raise_for_status()
-            data = resp.json()
-            if "error" in data:
-                logger.warning("MCP error for %s: %s", method, data["error"])
+        def _mcp_call(method: str, params: dict | None = None) -> dict | None:
+            nonlocal session_id
+            payload = {"jsonrpc": "2.0", "id": str(uuid.uuid4()), "method": method}
+            if params:
+                payload["params"] = params
+            hdrs = dict(mcp_headers)
+            if session_id:
+                hdrs["Mcp-Session-Id"] = session_id
+            try:
+                resp = requests.post(mcp_url, json=payload, headers=hdrs, timeout=15)
+                if "Mcp-Session-Id" in resp.headers:
+                    session_id = resp.headers["Mcp-Session-Id"]
+                resp.raise_for_status()
+                data = resp.json()
+                if "error" in data:
+                    logger.warning("MCP error for server %s method %s: %s", server_id, method, data["error"])
+                    return None
+                return data.get("result")
+            except Exception as e:
+                logger.warning("MCP %s failed for server %s: %s", method, server_id, e)
                 return None
-            return data.get("result")
-        except Exception as e:
-            logger.warning("MCP %s failed: %s", method, e)
-            return None
 
-    # Initialize session
-    _mcp_call(
-        "initialize",
-        {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "locust-mcp-discovery", "version": "1.0"},
-        },
-    )
+        init_result = _mcp_call(
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "locust-mcp-discovery", "version": "1.0"},
+            },
+        )
+        if init_result:
+            server_name = init_result.get("serverInfo", {}).get("name") or server_name
 
-    # Tool names
-    if MCP_TOOL_NAMES_STR:
-        _tool_names = [t.strip() for t in MCP_TOOL_NAMES_STR.split(",") if t.strip()]
-    else:
-        result = _mcp_call("tools/list")
+        if MCP_TOOL_NAMES_STR:
+            tool_names = [t.strip() for t in MCP_TOOL_NAMES_STR.split(",") if t.strip()]
+        else:
+            result = _mcp_call("tools/list")
+            tool_names = [t["name"] for t in result.get("tools", []) if "name" in t] if result else []
+
+        result = _mcp_call("resources/list")
+        resource_uris = [r["uri"] for r in result.get("resources", []) if "uri" in r] if result else []
+
+        result = _mcp_call("prompts/list")
+        prompt_targets = []
         if result:
-            _tool_names = [t["name"] for t in result.get("tools", []) if "name" in t]
+            for prompt in result.get("prompts", []):
+                prompt_name = prompt.get("name")
+                if not isinstance(prompt_name, str) or not prompt_name:
+                    continue
+                required_arguments = {}
+                for argument in prompt.get("arguments", []) or []:
+                    arg_name = argument.get("name")
+                    if argument.get("required") and isinstance(arg_name, str) and arg_name:
+                        required_arguments[arg_name] = _default_prompt_argument_value(prompt_name, arg_name)
+                prompt_targets.append(PromptTarget(name=prompt_name, required_arguments=required_arguments))
 
-    # Resources
-    result = _mcp_call("resources/list")
-    if result:
-        _resource_uris = [r["uri"] for r in result.get("resources", []) if "uri" in r]
+        discovered_targets.append(
+            ServerTarget(
+                server_id=server_id,
+                server_name=server_name,
+                tool_names=tool_names,
+                resource_uris=resource_uris,
+                prompt_targets=prompt_targets,
+            )
+        )
 
-    # Prompts
-    result = _mcp_call("prompts/list")
-    if result:
-        _prompt_names = [p["name"] for p in result.get("prompts", []) if "name" in p]
+    _server_targets = discovered_targets
+    if not _server_targets:
+        logger.error("No MCP server targets could be initialized.")
+        return
 
-    logger.info("Discovered %d tools, %d resources, %d prompts", len(_tool_names), len(_resource_uris), len(_prompt_names))
-    if _tool_names:
-        logger.info("Tools: %s", ", ".join(_tool_names[:20]))
+    primary = _server_targets[0]
+    _server_id = primary.server_id
+    _tool_names = primary.tool_names
+    _resource_uris = primary.resource_uris
+    _prompt_targets = primary.prompt_targets
+
+    logger.info("Using %d MCP server target(s)", len(_server_targets))
+    for target in _server_targets:
+        logger.info(
+            "  server=%s name=%r tools=%d resources=%d prompts=%d",
+            target.server_id,
+            target.server_name,
+            len(target.tool_names),
+            len(target.resource_uris),
+            len(target.prompt_targets),
+        )
 
 
 # =============================================================================
@@ -306,6 +411,12 @@ def set_defaults(parser):
     parser.set_defaults(users=150, spawn_rate=30, run_time="120s")
 
 
+@events.init.add_listener
+def on_locust_init(environment, **kwargs):
+    del environment, kwargs
+    _configure_log_levels()
+
+
 @events.test_start.add_listener
 def on_test_start(environment, **kwargs):
     host = environment.host or "http://localhost:4444"
@@ -318,15 +429,24 @@ def on_test_start(environment, **kwargs):
         logger.info("MCP STREAMABLE HTTP PROTOCOL LOAD TEST")
         logger.info("=" * 70)
         logger.info("  Host: %s", host)
-        if _server_id:
+        if _server_targets:
+            for target in _server_targets[:5]:
+                logger.info(
+                    "  MCP endpoint: %s/servers/%s/mcp (%s, tools=%d)",
+                    host,
+                    target.server_id,
+                    target.server_name,
+                    len(target.tool_names),
+                )
+        elif _server_id:
             logger.info("  MCP endpoint: %s/servers/%s/mcp", host, _server_id)
-        logger.info("  Tools: %s", ", ".join(_tool_names[:10]) if _tool_names else "(none)")
+            logger.info("  Tools: %s", ", ".join(_tool_names[:10]) if _tool_names else "(none)")
         logger.info("=" * 70)
 
 
 @events.test_stop.add_listener
 def on_test_stop(environment, **kwargs):
-    if isinstance(environment.runner, MasterRunner):
+    if isinstance(environment.runner, WorkerRunner):
         return
     stats = environment.stats
     total = stats.total.num_requests
@@ -398,9 +518,14 @@ class BaseMCPUser(FastHttpUser):
         self._mcp_session_id: str | None = None
         self._initialized = False
         self._token = _get_token()
+        self._server_id = ""
+        self._server_name = ""
+        self._tool_names: list[str] = []
+        self._resource_uris: list[str] = []
+        self._prompt_targets: list[PromptTarget] = []
 
     def _mcp_path(self) -> str:
-        return f"/servers/{_server_id}/mcp"
+        return f"/servers/{self._server_id}/mcp"
 
     def _mcp_headers(self) -> dict[str, str]:
         headers = {
@@ -418,47 +543,68 @@ class BaseMCPUser(FastHttpUser):
         Returns the 'result' field on success, None on error.
         """
         payload = _jsonrpc(method, params)
-        with self.client.post(
-            self._mcp_path(),
-            data=json.dumps(payload),
-            headers=self._mcp_headers(),
-            name=name,
-            catch_response=True,
-        ) as response:
-            # Capture session ID
-            sid = response.headers.get("Mcp-Session-Id")
-            if sid:
-                self._mcp_session_id = sid
+        try:
+            with self.client.post(
+                self._mcp_path(),
+                data=json.dumps(payload),
+                headers=self._mcp_headers(),
+                name=name,
+                catch_response=True,
+            ) as response:
+                if response is None:
+                    return None
 
-            if response.status_code in (502, 503, 504):
-                response.failure(f"Infrastructure error: {response.status_code}")
-                return None
+                # Capture session ID
+                sid = response.headers.get("Mcp-Session-Id") if response.headers else None
+                if sid:
+                    self._mcp_session_id = sid
 
-            if response.status_code != 200:
-                response.failure(f"HTTP {response.status_code}")
-                return None
+                if response.status_code in (502, 503, 504):
+                    response.failure(f"Infrastructure error: {response.status_code}")
+                    return None
 
-            try:
-                data = response.json()
-            except Exception as e:
-                response.failure(f"Invalid JSON: {e}")
-                return None
+                if response.status_code != 200:
+                    response.failure(f"HTTP {response.status_code}")
+                    return None
 
-            if data is None:
-                response.failure("Null JSON response")
-                return None
+                try:
+                    data = response.json()
+                except Exception as e:
+                    response.failure(f"Invalid JSON: {e}")
+                    return None
 
-            if "error" in data:
-                err = data["error"]
-                response.failure(f"JSON-RPC error {err.get('code', '?')}: {err.get('message', '?')}")
-                return None
+                if data is None:
+                    response.failure("Null JSON response")
+                    return None
 
-            response.success()
-            return data.get("result")
+                if "error" in data:
+                    err = data["error"]
+                    response.failure(f"JSON-RPC error {err.get('code', '?')}: {err.get('message', '?')}")
+                    return None
+
+                response.success()
+                return data.get("result")
+        except Exception as e:  # pragma: no cover - network client can fail before a response exists
+            logger.warning("MCP request failed before response for %s: %s", name, e)
+            return None
+
+    def _assign_target(self):
+        global _server_target_index  # pylint: disable=global-statement
+        if not _server_targets:
+            return
+        target = _server_targets[_server_target_index % len(_server_targets)]
+        _server_target_index += 1
+        self._server_id = target.server_id
+        self._server_name = target.server_name
+        self._tool_names = list(target.tool_names)
+        self._resource_uris = list(target.resource_uris)
+        self._prompt_targets = list(target.prompt_targets)
 
     def _ensure_initialized(self):
         """Initialize the MCP session (once per user lifecycle)."""
         if self._initialized:
+            return
+        if not self._server_id:
             return
         result = self._mcp_request(
             "initialize",
@@ -473,6 +619,7 @@ class BaseMCPUser(FastHttpUser):
             self._initialized = True
 
     def on_start(self):
+        self._assign_target()
         self._ensure_initialized()
 
 
@@ -498,7 +645,7 @@ class MCPAgentUser(BaseMCPUser):
 
     def _pick_tools(self, n: int = 1) -> list[str]:
         """Pick n random tools from the discovered set (cap at 6 like the customer)."""
-        pool = _tool_names[:6] if len(_tool_names) > 6 else _tool_names
+        pool = self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names
         if not pool:
             return []
         return random.sample(pool, min(n, len(pool)))
@@ -559,17 +706,17 @@ class MCPAgentUser(BaseMCPUser):
     @tag("agent", "resources")
     def agent_read_resource(self):
         """Agent reads a resource."""
-        if _resource_uris:
-            uri = random.choice(_resource_uris)
+        if self._resource_uris:
+            uri = random.choice(self._resource_uris)
             self._mcp_request("resources/read", {"uri": uri}, "MCP resources/read")
 
     @task(1)
     @tag("agent", "prompts")
     def agent_get_prompt(self):
         """Agent gets a prompt."""
-        if _prompt_names:
-            name = random.choice(_prompt_names)
-            self._mcp_request("prompts/get", {"name": name}, "MCP prompts/get")
+        if self._prompt_targets:
+            prompt = random.choice(self._prompt_targets)
+            self._mcp_request("prompts/get", {"name": prompt.name, "arguments": dict(prompt.required_arguments)}, "MCP prompts/get")
 
     @task(1)
     @tag("agent", "ping")
@@ -596,9 +743,9 @@ class MCPToolCallerUser(BaseMCPUser):
     @tag("toolcall", "call")
     def call_tool(self):
         """Call a random tool rapidly."""
-        if not _tool_names:
+        if not self._tool_names:
             return
-        tool = random.choice(_tool_names[:6] if len(_tool_names) > 6 else _tool_names)
+        tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
         name_lower = tool.lower()
         if "time" in name_lower:
             args = {"timezone": random.choice(TIMEZONES)}
@@ -654,16 +801,16 @@ class MCPDiscoveryUser(BaseMCPUser):
     @task(3)
     @tag("discovery", "resources")
     def read_resource(self):
-        if _resource_uris:
-            uri = random.choice(_resource_uris)
+        if self._resource_uris:
+            uri = random.choice(self._resource_uris)
             self._mcp_request("resources/read", {"uri": uri}, "MCP resources/read")
 
     @task(3)
     @tag("discovery", "prompts")
     def get_prompt(self):
-        if _prompt_names:
-            name = random.choice(_prompt_names)
-            self._mcp_request("prompts/get", {"name": name}, "MCP prompts/get")
+        if self._prompt_targets:
+            prompt = random.choice(self._prompt_targets)
+            self._mcp_request("prompts/get", {"name": prompt.name, "arguments": dict(prompt.required_arguments)}, "MCP prompts/get")
 
 
 # =============================================================================
@@ -710,8 +857,8 @@ class MCPSessionChurnUser(BaseMCPUser):
         self._mcp_request("tools/list", {}, "MCP tools/list [churn]")
 
         # Call a tool
-        if _tool_names:
-            tool = random.choice(_tool_names[:6] if len(_tool_names) > 6 else _tool_names)
+        if self._tool_names:
+            tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
             name_lower = tool.lower()
             if "time" in name_lower:
                 args = {"timezone": random.choice(TIMEZONES)}
@@ -741,9 +888,9 @@ class MCPStressUser(BaseMCPUser):
     @task(10)
     @tag("stress", "call")
     def stress_call_tool(self):
-        if not _tool_names:
+        if not self._tool_names:
             return
-        tool = random.choice(_tool_names[:6] if len(_tool_names) > 6 else _tool_names)
+        tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
         name_lower = tool.lower()
         if "time" in name_lower:
             args = {"timezone": "UTC"}

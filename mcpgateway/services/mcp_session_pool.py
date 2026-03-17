@@ -1266,6 +1266,17 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # Cleanup failure is non-fatal
             logger.debug(f"Failed to cleanup pool session owner in Redis: {e}")
 
+    async def cleanup_streamable_http_session_owner(self, mcp_session_id: str) -> None:
+        """Public wrapper for cleaning up Streamable HTTP session ownership.
+
+        This is used by trusted internal MCP session teardown paths that need to
+        remove affinity ownership without reaching into private helpers.
+        """
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            logger.debug("Invalid mcp_session_id for owner cleanup, skipping")
+            return
+        await self._cleanup_pool_session_owner(mcp_session_id)
+
     async def close_all(self) -> None:
         """
         Gracefully close all pooled and active sessions.

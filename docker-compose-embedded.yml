@@ -45,7 +45,7 @@ services:
       - ./infra/iframe-test/nginx-embedded.conf:/etc/nginx/nginx.conf:ro
 
   gateway:
-    image: ghcr.io/ibm/mcp-context-forge:1ba8130f7fb82e6f393435be8d064879f234ace1
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
     environment:
       # ── Embedded UI ──
       - MCPGATEWAY_UI_EMBEDDED=true
@@ -147,7 +147,7 @@ services:
   # Benchmark services: inherited from base compose (profiles: ["benchmark"])
   # Activated via --profile benchmark in Makefile targets
   register_benchmark:
-    image: ghcr.io/ibm/mcp-context-forge:1ba8130f7fb82e6f393435be8d064879f234ace1
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
     environment:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key}
       - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}

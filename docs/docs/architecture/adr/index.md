@@ -40,10 +40,15 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0033  | Tool Lookup Cache for invoke_tool | Accepted | Performance | 2025-01-20 |
 | 0035  | Query Parameter Authentication for Gateways | Accepted | Security | 2026-01-19 |
 | 0037  | External Plugin STDIO Launch with Command/Env Overrides | Accepted | Extensibility | 2026-01-28 |
-| 0038  | Experimental Rust Transport Backend (Streamable HTTP) | Proposed | Performance | 2025-12-26 |
+| 0038  | Experimental Rust Transport Backend (Streamable HTTP) | Superseded | Performance | 2025-12-26 |
 | 0039  | Adopt Fully Independent Plugin Crates Architecture | Accepted | Architecture | 2026-02-13 |
 | 0040  | Flexible Admin UI Section Visibility | Accepted | User Interface | 2026-02-16 |
 | 0041  | Top-Level Rust Workspace (Cargo.toml at Repository Root) | Accepted | Architecture | 2026-02-26 |
 | 0042  | Enforce Rust in the Build Process                    | Proposed | Build         | 2026-02-26 |
+| 0043  | Rust MCP Runtime Sidecar with Mode-Based Rollout     | Accepted | Architecture  | 2026-03-14 |
+| 0044  | Module Communication Protocol (gRPC over UDS)        | Proposed | Architecture  | 2026-03-15 |
+| 0045  | Authentication and Authorization Remain in Core      | Proposed | Security      | 2026-03-15 |
+| 0046  | Shared-Nothing Between Protocol Modules              | Proposed | Architecture  | 2026-03-15 |
+| 0047  | Incremental Migration Over Rewrite                   | Proposed | Architecture  | 2026-03-15 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

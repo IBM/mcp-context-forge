@@ -1,0 +1,12 @@
+title: Modular Runtime Specification
+nav:
+  - Overview: index.md
+  - Core SPI: core-spi.md
+  - Module Descriptor: module-descriptor.md
+  - Module Lifecycle: module-lifecycle.md
+  - Error Model: error-model.md
+  - Conformance: conformance.md
+  - MCP Module Profile: mcp-module.md
+  - A2A Module Profile: a2a-module.md
+  - LLM Module Profile: llm-module.md
+  - REST-gRPC Module Profile: rest-grpc-module.md

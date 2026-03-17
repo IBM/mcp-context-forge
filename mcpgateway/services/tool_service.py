@@ -2152,6 +2152,79 @@ class ToolService(BaseService):
 
         return result
 
+    async def list_server_mcp_tool_definitions(
+        self,
+        db: Session,
+        server_id: str,
+        *,
+        include_inactive: bool = False,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return server-scoped MCP tool definitions without building full ToolRead models.
+
+        This is a hot-path helper for the internal Rust -> Python seam. It keeps
+        auth and visibility semantics aligned with ``list_server_tools`` while
+        avoiding the heavier ``ToolRead`` conversion that is only needed for the
+        admin/API surfaces.
+
+        Args:
+            db: Active database session.
+            server_id: Virtual server identifier used to scope the tool listing.
+            include_inactive: Whether disabled tools should be included.
+            user_email: Requester email for owner-scoped visibility checks.
+            token_teams: Normalized team scope from the caller token.
+
+        Returns:
+            A list of MCP-compatible tool definition dictionaries.
+        """
+        name_column = DbTool.__table__.c.name
+        query = (
+            select(
+                name_column.label("name"),
+                DbTool.description.label("description"),
+                DbTool.input_schema.label("input_schema"),
+                DbTool.output_schema.label("output_schema"),
+                DbTool.annotations.label("annotations"),
+                DbTool.owner_email.label("owner_email"),
+                DbTool.team_id.label("team_id"),
+                DbTool.visibility.label("visibility"),
+            )
+            .join(server_tool_association, DbTool.id == server_tool_association.c.tool_id)
+            .where(server_tool_association.c.server_id == server_id)
+        )
+
+        if not include_inactive:
+            query = query.where(DbTool.enabled)
+
+        if user_email is not None or token_teams is not None:
+            team_ids = token_teams if token_teams is not None else []
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
+
+            access_conditions = [DbTool.visibility == "public"]
+            if not is_public_only_token and user_email:
+                access_conditions.append(DbTool.owner_email == user_email)
+            if team_ids:
+                access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+            query = query.where(or_(*access_conditions))
+
+        rows = db.execute(query).mappings().all()
+        db.commit()
+
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            payload: Dict[str, Any] = {
+                "name": row["name"],
+                "description": row["description"],
+                "inputSchema": row["input_schema"] or {"type": "object", "properties": {}},
+                "annotations": row["annotations"] or {},
+            }
+            if row["output_schema"] is not None:
+                payload["outputSchema"] = row["output_schema"]
+            result.append(payload)
+
+        return result
+
     async def list_tools_for_user(
         self,
         db: Session,
@@ -2755,6 +2828,319 @@ class ToolService(BaseService):
             logger.exception(f"Direct proxy tool invocation failed for {name}: {e}")
             raise ToolInvocationError(f"Direct proxy tool invocation failed: {str(e)}")
 
+    async def prepare_rust_mcp_tool_execution(
+        self,
+        db: Session,
+        name: str,
+        request_headers: Optional[Dict[str, str]] = None,
+        app_user_email: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        server_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Build a narrow MCP execution plan for the Rust runtime hot path.
+
+        This reuses Python's existing auth, scoping, and secret-handling logic,
+        but stops before the actual upstream MCP call. The Rust runtime can then
+        execute the call directly for the simple streamable HTTP MCP cases that
+        dominate load tests, while Python remains the authority for policy.
+
+        Args:
+            db: Active database session.
+            name: Tool name requested by the caller.
+            request_headers: Incoming request headers used for passthrough/auth decisions.
+            app_user_email: OAuth application user email, when present.
+            user_email: Effective requester email after auth normalization.
+            token_teams: Normalized team scope from the caller token.
+            server_id: Optional virtual server identifier restricting tool access.
+
+        Returns:
+            A Rust execution plan dictionary, or a fallback descriptor when direct
+            Rust execution is not eligible.
+
+        Raises:
+            ToolNotFoundError: If the requested tool is not visible or invocable.
+            ToolInvocationError: If gateway auth preparation fails or the tool name is ambiguous.
+        """
+        if self._plugin_manager and (self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) or self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)):
+            return {"eligible": False, "fallbackReason": "plugin-hooks-configured"}
+
+        if current_trace_id.get():
+            return {"eligible": False, "fallbackReason": "observability-trace-active"}
+
+        gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
+        is_direct_proxy = False
+        tool = None
+        gateway = None
+        tool_selected_from_server_scope = False
+        tool_payload: Dict[str, Any] = {}
+        gateway_payload: Optional[Dict[str, Any]] = None
+        if gateway_id_from_header:
+            gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
+            if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                if not await check_gateway_access(db, gateway, user_email, token_teams):
+                    raise ToolNotFoundError(f"Tool not found: {name}")
+                is_direct_proxy = True
+                gateway_payload = {
+                    "id": str(gateway.id),
+                    "name": gateway.name,
+                    "url": gateway.url,
+                    "auth_type": gateway.auth_type,
+                    "auth_value": encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
+                    "auth_query_params": gateway.auth_query_params,
+                    "oauth_config": gateway.oauth_config,
+                    "ca_certificate": gateway.ca_certificate,
+                    "ca_certificate_sig": gateway.ca_certificate_sig,
+                    "passthrough_headers": gateway.passthrough_headers,
+                    "gateway_mode": gateway.gateway_mode,
+                }
+                tool_payload = {
+                    "id": None,
+                    "name": name,
+                    "original_name": name,
+                    "enabled": True,
+                    "reachable": True,
+                    "integration_type": "MCP",
+                    "request_type": "streamablehttp",
+                    "gateway_id": str(gateway.id),
+                }
+
+        if not is_direct_proxy:
+            tool_lookup_cache = _get_tool_lookup_cache()
+            cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled else None
+
+            if cached_payload:
+                status = cached_payload.get("status", "active")
+                if status == "missing":
+                    raise ToolNotFoundError(f"Tool not found: {name}")
+                if status == "inactive":
+                    raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
+                if status == "offline":
+                    raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
+                tool_payload = cached_payload.get("tool") or {}
+                gateway_payload = cached_payload.get("gateway")
+
+        if not tool_payload:
+            tools = self._load_invocable_tools(db, name, server_id=server_id)
+            tool_selected_from_server_scope = bool(server_id)
+
+            if not tools:
+                raise ToolNotFoundError(f"Tool not found: {name}")
+
+            multiple_found = len(tools) > 1
+            if not multiple_found:
+                tool = tools[0]
+            else:
+                visibility_priority = {"team": 0, "private": 1, "public": 2}
+                accessible_tools: list[tuple[int, Any]] = []
+                for candidate in tools:
+                    tool_dict = {"visibility": candidate.visibility, "team_id": candidate.team_id, "owner_email": candidate.owner_email}
+                    if await self._check_tool_access(db, tool_dict, user_email, token_teams):
+                        priority = visibility_priority.get(candidate.visibility, 99)
+                        accessible_tools.append((priority, candidate))
+
+                if not accessible_tools:
+                    raise ToolNotFoundError(f"Tool not found: {name}")
+
+                accessible_tools.sort(key=lambda item: item[0])
+                best_priority = accessible_tools[0][0]
+                best_tools = [candidate for priority, candidate in accessible_tools if priority == best_priority]
+                if len(best_tools) > 1:
+                    raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
+                tool = best_tools[0]
+
+            if not tool.enabled:
+                raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
+
+            if not tool.reachable:
+                await tool_lookup_cache.set_negative(name, "offline")
+                raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
+
+            gateway = tool.gateway
+            cache_payload = self._build_tool_cache_payload(tool, gateway)
+            tool_payload = cache_payload.get("tool") or {}
+            gateway_payload = cache_payload.get("gateway")
+            if not multiple_found:
+                await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
+
+        if tool_payload.get("enabled") is False:
+            raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
+        if tool_payload.get("reachable") is False:
+            raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
+
+        if is_direct_proxy:
+            return {"eligible": False, "fallbackReason": "direct-proxy"}
+
+        if not await self._check_tool_access(db, tool_payload, user_email, token_teams):
+            raise ToolNotFoundError(f"Tool not found: {name}")
+
+        if server_id and not tool_selected_from_server_scope:
+            tool_id_for_check = tool_payload.get("id")
+            if not tool_id_for_check:
+                raise ToolNotFoundError(f"Tool not found: {name}")
+            server_match = db.execute(
+                select(server_tool_association.c.tool_id).where(
+                    server_tool_association.c.server_id == server_id,
+                    server_tool_association.c.tool_id == tool_id_for_check,
+                )
+            ).first()
+            if not server_match:
+                raise ToolNotFoundError(f"Tool not found: {name}")
+
+        tool_integration_type = tool_payload.get("integration_type")
+        if tool_integration_type != "MCP":
+            return {"eligible": False, "fallbackReason": f"unsupported-integration:{tool_integration_type or 'unknown'}"}
+
+        tool_request_type = tool_payload.get("request_type")
+        transport = tool_request_type.lower() if tool_request_type else "sse"
+        if transport != "streamablehttp":
+            return {"eligible": False, "fallbackReason": f"unsupported-transport:{transport}"}
+
+        tool_jsonpath_filter = tool_payload.get("jsonpath_filter")
+        if tool_jsonpath_filter:
+            return {"eligible": False, "fallbackReason": "jsonpath-filter-configured"}
+
+        passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+
+        if tool is not None:
+            gateway = tool.gateway
+
+        tool_name_original = tool_payload.get("original_name") or tool_payload.get("name") or name
+        tool_id = tool_payload.get("id")
+        tool_gateway_id = tool_payload.get("gateway_id")
+        tool_timeout_ms = tool_payload.get("timeout_ms")
+        effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else settings.tool_timeout
+
+        has_gateway = gateway_payload is not None
+        gateway_url = gateway_payload.get("url") if has_gateway else None
+        gateway_name = gateway_payload.get("name") if has_gateway else None
+        gateway_auth_type = gateway_payload.get("auth_type") if has_gateway else None
+        gateway_auth_value = gateway_payload.get("auth_value") if has_gateway and isinstance(gateway_payload.get("auth_value"), str) else None
+        gateway_auth_query_params = gateway_payload.get("auth_query_params") if has_gateway and isinstance(gateway_payload.get("auth_query_params"), dict) else None
+        gateway_oauth_config = gateway_payload.get("oauth_config") if has_gateway and isinstance(gateway_payload.get("oauth_config"), dict) else None
+        if has_gateway and gateway is not None:
+            runtime_gateway_auth_value = getattr(gateway, "auth_value", None)
+            if isinstance(runtime_gateway_auth_value, dict):
+                gateway_auth_value = encode_auth(runtime_gateway_auth_value)
+            elif isinstance(runtime_gateway_auth_value, str):
+                gateway_auth_value = runtime_gateway_auth_value
+            runtime_gateway_query_params = getattr(gateway, "auth_query_params", None)
+            if isinstance(runtime_gateway_query_params, dict):
+                gateway_auth_query_params = runtime_gateway_query_params
+            runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
+            if isinstance(runtime_gateway_oauth_config, dict):
+                gateway_oauth_config = runtime_gateway_oauth_config
+        gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
+        gateway_id_str = gateway_payload.get("id") if has_gateway else None
+
+        if tool is None and has_gateway:
+            requires_gateway_auth_hydration = gateway_auth_type in {"basic", "bearer", "authheaders", "oauth", "query_param"}
+            if requires_gateway_auth_hydration:
+                tool_id_for_hydration = tool_payload.get("id")
+                if tool_id_for_hydration:
+                    tool_auth_row = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.id == tool_id_for_hydration)).scalar_one_or_none()
+                    if tool_auth_row and tool_auth_row.gateway:
+                        hydrated_gateway_auth_value = getattr(tool_auth_row.gateway, "auth_value", None)
+                        if isinstance(hydrated_gateway_auth_value, dict):
+                            gateway_auth_value = encode_auth(hydrated_gateway_auth_value)
+                        elif isinstance(hydrated_gateway_auth_value, str):
+                            gateway_auth_value = hydrated_gateway_auth_value
+                        hydrated_gateway_query_params = getattr(tool_auth_row.gateway, "auth_query_params", None)
+                        if isinstance(hydrated_gateway_query_params, dict):
+                            gateway_auth_query_params = hydrated_gateway_query_params
+                        hydrated_gateway_oauth_config = getattr(tool_auth_row.gateway, "oauth_config", None)
+                        if isinstance(hydrated_gateway_oauth_config, dict):
+                            gateway_oauth_config = hydrated_gateway_oauth_config
+
+        gateway_auth_query_params_decrypted: Optional[Dict[str, str]] = None
+        if gateway_auth_type == "query_param" and gateway_auth_query_params:
+            gateway_auth_query_params_decrypted = {}
+            for param_key, encrypted_value in gateway_auth_query_params.items():
+                if encrypted_value:
+                    try:
+                        decrypted = decode_auth(encrypted_value)
+                        gateway_auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
+                    except Exception:  # noqa: S110
+                        logger.debug(f"Failed to decrypt query param '{param_key}' for Rust MCP tool execution plan")
+            if gateway_auth_query_params_decrypted and gateway_url:
+                gateway_url = apply_query_param_auth(gateway_url, gateway_auth_query_params_decrypted)
+
+        if gateway_ca_cert:
+            return {"eligible": False, "fallbackReason": "custom-ca-certificate"}
+
+        if not gateway_url:
+            return {"eligible": False, "fallbackReason": "missing-gateway-url"}
+
+        if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
+            grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
+            if grant_type == "authorization_code":
+                try:
+                    # First-Party
+                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                    with fresh_db_session() as token_db:
+                        token_storage = TokenStorageService(token_db)
+                        if not app_user_email:
+                            raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
+                        access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
+
+                    if access_token:
+                        headers = {"Authorization": f"Bearer {access_token}"}
+                    else:
+                        raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
+                except Exception as e:
+                    logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
+                    raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
+            else:
+                try:
+                    access_token = await self.oauth_manager.get_access_token(gateway_oauth_config)
+                    headers = {"Authorization": f"Bearer {access_token}"}
+                except Exception as e:
+                    logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")
+                    raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
+        else:
+            headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+
+        if request_headers:
+            headers = compute_passthrough_headers_cached(
+                request_headers,
+                headers,
+                passthrough_allowed,
+                gateway_auth_type=gateway_auth_type,
+                gateway_passthrough_headers=gateway_payload.get("passthrough_headers") if has_gateway else None,
+            )
+
+        runtime_headers = {str(header_name): str(header_value) for header_name, header_value in headers.items() if header_name and header_value}
+
+        return {
+            "eligible": True,
+            "transport": transport,
+            "serverUrl": gateway_url,
+            "remoteToolName": tool_name_original,
+            "headers": runtime_headers,
+            "timeoutMs": int(effective_timeout * 1000),
+            "gatewayId": tool_gateway_id,
+            "toolName": name,
+            "toolId": tool_id or None,
+            "serverId": server_id,
+        }
+
+    def _load_invocable_tools(self, db: Session, name: str, server_id: Optional[str] = None) -> List[DbTool]:
+        """Load candidate tools for invocation, narrowing to a virtual server when possible.
+
+        Args:
+            db: Active database session.
+            name: Tool name to resolve.
+            server_id: Optional virtual server identifier used to constrain results.
+
+        Returns:
+            A list of candidate tool ORM rows matching the request.
+        """
+        query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)
+        if server_id:
+            query = query.join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
+        return db.execute(query).scalars().all()
+
     async def invoke_tool(
         self,
         db: Session,
@@ -2885,7 +3271,7 @@ class ToolService(BaseService):
             # Use a single query to avoid a race between separate enabled/inactive lookups.
             # Use scalars().all() instead of scalar_one_or_none() to handle duplicate
             # tool names across teams without crashing on MultipleResultsFound.
-            tools = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)).scalars().all()
+            tools = self._load_invocable_tools(db, name, server_id=server_id)
 
             if not tools:
                 raise ToolNotFoundError(f"Tool not found: {name}")

@@ -45,3 +45,8 @@ nav:
   - 40 Flexible Admin UI Section Visibility: 040-flexible-admin-ui-sections.md
   - 41 Top-Level Rust Workspace: 041-top-level-rust-workspace.md
   - 42 Enforce Rust in the Build Process: 042-enforce-rust-in-build-process.md
+  - 43 Rust MCP Runtime Sidecar and Mode Model: 043-rust-mcp-runtime-sidecar-mode-model.md
+  - 44 Module Communication Protocol: 044-module-communication-protocol.md
+  - 45 Auth Remains in Core: 045-auth-remains-in-core.md
+  - 46 Shared-Nothing Between Modules: 046-shared-nothing-between-modules.md
+  - 47 Incremental Migration Over Rewrite: 047-incremental-migration-over-rewrite.md

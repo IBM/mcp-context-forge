@@ -295,6 +295,14 @@ class MetricsResponse(BaseModelWithConfigDict):
 
     @model_serializer(mode="wrap")
     def _exclude_none_a2a(self, handler):
+        """Omit the A2A metrics field when that feature is disabled.
+
+        Args:
+            handler: Pydantic serializer callback for the wrapped model.
+
+        Returns:
+            Dict[str, Any]: Serialized metrics payload without empty A2A fields.
+        """
         result = handler(self)
         if self.a2a_agents is None:
             result.pop("a2aAgents", None)

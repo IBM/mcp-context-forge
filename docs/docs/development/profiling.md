@@ -16,6 +16,7 @@ This guide covers tools and techniques for profiling ContextForge performance un
 | **memray** | Python memory profiling | Find memory leaks and allocation hotspots |
 | **docker stats** | Resource monitoring | Track CPU/memory usage |
 | **Redis CLI** | Cache analysis | Check hit rates |
+| **perf / cargo flamegraph** | Rust CPU profiling | Inspect Rust MCP runtime hotspots |
 
 ---
 
@@ -234,6 +235,39 @@ py-spy record -o flamegraph.svg -- python -m mcpgateway
 - **Wide bars** = functions consuming the most CPU time
 - **Deep stacks** = many nested function calls
 - **Look for:** Template rendering, JSON serialization, database queries
+
+---
+
+## Rust MCP Runtime Profiling
+
+For Rust-local profiling of the MCP runtime crate:
+
+```bash
+make -C tools_rust/mcp_runtime setup-profiling
+make -C tools_rust/mcp_runtime flamegraph-test
+make -C tools_rust/mcp_runtime flamegraph-test-rmcp
+```
+
+These targets generate flamegraphs under:
+
+```text
+tools_rust/mcp_runtime/profiles/
+```
+
+Use them to inspect Rust-internal startup and hot-path behavior in the runtime
+crate itself.
+
+For live profiling of the compose-backed Rust runtime under load:
+
+```bash
+ps -eo pid,cmd | grep contextforge-mcp-runtime
+sudo perf record -F 99 -g -p <pid> -- sleep 20
+sudo perf report --stdio
+```
+
+Use live `perf` during a real benchmark when you want steady-state behavior.
+Use the crate-local flamegraph targets when you want in-process Rust visibility
+without the rest of the stack.
 
 ---
 
