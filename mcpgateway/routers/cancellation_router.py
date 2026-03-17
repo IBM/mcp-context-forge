@@ -67,13 +67,13 @@ class CancelResponse(BaseModel):
 
 @router.post("/cancel", response_model=CancelResponse)
 @require_permission("admin.system_config")
-async def cancel_run(payload: CancelRequest, _user=Depends(get_current_user_with_permissions)) -> CancelResponse:
+async def cancel_run(payload: CancelRequest, current_user_ctx=Depends(get_current_user_with_permissions)) -> CancelResponse:
     """
     Cancel a run by its request ID.
 
     Args:
         payload: The cancellation request payload.
-        _user: The current user (dependency injection).
+        current_user_ctx: The current user (dependency injection).
 
     Returns:
         CancelResponse: The cancellation response indicating whether the run was cancelled or queued.
@@ -105,13 +105,13 @@ async def cancel_run(payload: CancelRequest, _user=Depends(get_current_user_with
 
 @router.get("/status/{request_id}")
 @require_permission("admin.system_config")
-async def get_status(request_id: str, _user=Depends(get_current_user_with_permissions)):
+async def get_status(request_id: str, current_user_ctx=Depends(get_current_user_with_permissions)):
     """
     Get the status of a run by its request ID.
 
     Args:
         request_id: The ID of the request to get the status for.
-        _user: The current user (dependency injection).
+        current_user_ctx: The current user (dependency injection).
 
     Returns:
         dict: The status dictionary for the run (e.g. keys: 'name', 'registered_at', 'cancelled').

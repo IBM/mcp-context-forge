@@ -480,7 +480,7 @@ async def test_toolops_generate_testcases_success(monkeypatch):
         number_of_nl_variations=1,
         mode="generate",
         db=MagicMock(),
-        _user={"email": "user@example.com"},
+        current_user_ctx={"email": "user@example.com"},
     )
 
     assert result == [{"case": 1}]
@@ -507,7 +507,7 @@ async def test_toolops_generate_testcases_invalid_json(monkeypatch):
             number_of_nl_variations=1,
             mode="generate",
             db=MagicMock(),
-            _user={"email": "user@example.com"},
+            current_user_ctx={"email": "user@example.com"},
         )
 
     assert exc.value.status_code == 400
@@ -531,7 +531,7 @@ async def test_toolops_execute_nl_testcases_success(monkeypatch):
         monkeypatch,
         tool_nl_test_input=payload,
         db=MagicMock(),
-        _user={"email": "user@example.com"},
+        current_user_ctx={"email": "user@example.com"},
     )
 
     assert result == ["ok"]
@@ -558,7 +558,7 @@ async def test_toolops_enrich_tool_success(monkeypatch):
         monkeypatch,
         tool_id="tool1",
         db=MagicMock(),
-        _user={"email": "user@example.com"},
+        current_user_ctx={"email": "user@example.com"},
     )
 
     assert result["tool_id"] == "tool1"
@@ -583,7 +583,7 @@ async def test_toolops_enrich_tool_error(monkeypatch):
             monkeypatch,
             tool_id="tool1",
             db=MagicMock(),
-            _user={"email": "user@example.com"},
+            current_user_ctx={"email": "user@example.com"},
         )
 
     assert exc.value.status_code == 400

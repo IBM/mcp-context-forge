@@ -1282,7 +1282,7 @@ async def get_config(user_id: str, user=Depends(get_current_user_with_permission
 
 @llmchat_router.get("/gateway/models")
 @require_permission("llm.read")
-async def get_gateway_models(_user=Depends(get_current_user_with_permissions)):
+async def get_gateway_models(current_user_ctx=Depends(get_current_user_with_permissions)):
     """Get available models from configured LLM providers.
 
     Returns a list of enabled models from enabled providers configured
@@ -1319,7 +1319,7 @@ async def get_gateway_models(_user=Depends(get_current_user_with_permissions)):
         HTTPException: If there is an error retrieving gateway models.
 
     Args:
-        _user: Authenticated user context.
+        current_user_ctx: Authenticated user context.
     """
     # Import here to avoid circular dependency
     # First-Party

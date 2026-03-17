@@ -335,7 +335,7 @@ async def test_global_passthrough_headers_endpoints(monkeypatch):
     monkeypatch.setattr(admin.global_config_cache, "get_passthrough_headers", lambda *_args: ["X-Test"])
 
     get_func = _unwrap(admin.get_global_passthrough_headers)
-    result = await get_func(db, _user={"email": "user@example.com"})
+    result = await get_func(db, current_user_ctx={"email": "user@example.com"})
     assert result.passthrough_headers == ["X-Test"]
 
     invalidate_called = []
@@ -344,14 +344,14 @@ async def test_global_passthrough_headers_endpoints(monkeypatch):
     config_update = admin.GlobalConfigUpdate(passthrough_headers=["X-New"])
     update_func = _unwrap(admin.update_global_passthrough_headers)
     db.query.return_value.first.return_value = None
-    update_result = await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com"})
+    update_result = await update_func(MagicMock(), config_update, db, current_user_ctx={"email": "user@example.com"})
     assert update_result.passthrough_headers == ["X-New"]
     assert invalidate_called
 
     stats = {"hits": 1}
     monkeypatch.setattr(admin.global_config_cache, "stats", lambda: stats)
     invalidate_func = _unwrap(admin.invalidate_passthrough_headers_cache)
-    cache_result = await invalidate_func(_user={"email": "user@example.com"})
+    cache_result = await invalidate_func(current_user_ctx={"email": "user@example.com"})
     assert cache_result["status"] == "invalidated"
     assert cache_result["cache_stats"] == stats
 
@@ -369,7 +369,7 @@ async def test_update_global_passthrough_headers_errors(monkeypatch):
 
     db.commit.side_effect = IntegrityError("stmt", {}, None)
     with pytest.raises(admin.HTTPException) as excinfo:
-        await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com"})
+        await update_func(MagicMock(), config_update, db, current_user_ctx={"email": "user@example.com"})
     assert excinfo.value.status_code == 409
     db.rollback.assert_called()
 
@@ -379,13 +379,13 @@ async def test_update_global_passthrough_headers_errors(monkeypatch):
 
     db.commit.side_effect = ValidationError.from_exception_data("test", [InitErrorDetails(type="missing", loc=("passthrough_headers",), input={})])
     with pytest.raises(admin.HTTPException) as excinfo:
-        await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com"})
+        await update_func(MagicMock(), config_update, db, current_user_ctx={"email": "user@example.com"})
     assert excinfo.value.status_code == 422
     db.rollback.assert_called()
 
     db.commit.side_effect = PassthroughHeadersError("boom")
     with pytest.raises(admin.HTTPException) as excinfo:
-        await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com"})
+        await update_func(MagicMock(), config_update, db, current_user_ctx={"email": "user@example.com"})
     assert excinfo.value.status_code == 500
 
 
@@ -1421,10 +1421,10 @@ async def test_admin_get_all_team_ids_admin_and_user(monkeypatch):
 
     class _StubAuthService:
         def __init__(self, _db):
-            self._user = None
+            self.current_user_ctx = None
 
         async def get_user_by_email(self, _email):
-            return self._user
+            return self.current_user_ctx
 
     auth_service = _StubAuthService(mock_db)
     team_service = _StubTeamService()
@@ -1433,12 +1433,12 @@ async def test_admin_get_all_team_ids_admin_and_user(monkeypatch):
     monkeypatch.setattr(admin, "EmailAuthService", lambda db: auth_service)
     _allow_permissions(monkeypatch)
 
-    auth_service._user = SimpleNamespace(is_admin=True)
+    auth_service.current_user_ctx = SimpleNamespace(is_admin=True)
     result = await admin.admin_get_all_team_ids(include_inactive=True, visibility=None, q=None, db=mock_db, user={"email": "admin@example.com"})
     assert result["team_ids"] == ["team-1", "team-2"]
     assert result["count"] == 2
 
-    auth_service._user = SimpleNamespace(is_admin=False)
+    auth_service.current_user_ctx = SimpleNamespace(is_admin=False)
     result = await admin.admin_get_all_team_ids(include_inactive=False, visibility="public", q="alp", db=mock_db, user={"email": "user@example.com"})
     assert result["team_ids"] == ["team-3"]
     assert result["count"] == 1
@@ -1481,10 +1481,10 @@ async def test_admin_search_teams_admin_and_user(monkeypatch):
 
     class _StubAuthService:
         def __init__(self, _db):
-            self._user = None
+            self.current_user_ctx = None
 
         async def get_user_by_email(self, _email):
-            return self._user
+            return self.current_user_ctx
 
     auth_service = _StubAuthService(mock_db)
     team_service = _StubTeamService()
@@ -1493,13 +1493,13 @@ async def test_admin_search_teams_admin_and_user(monkeypatch):
     monkeypatch.setattr(admin, "EmailAuthService", lambda db: auth_service)
     _allow_permissions(monkeypatch)
 
-    auth_service._user = SimpleNamespace(is_admin=True)
+    auth_service.current_user_ctx = SimpleNamespace(is_admin=True)
     result = await admin.admin_search_teams(q="alp", include_inactive=False, limit=10, visibility=None, db=mock_db, user={"email": "admin@example.com"})
     assert result == [
         {"id": "t-1", "name": "Alpha", "slug": "alpha", "description": "desc", "visibility": "public", "is_active": True}
     ]
 
-    auth_service._user = SimpleNamespace(is_admin=False)
+    auth_service.current_user_ctx = SimpleNamespace(is_admin=False)
     result = await admin.admin_search_teams(q="be", include_inactive=False, limit=10, visibility="public", db=mock_db, user={"email": "user@example.com"})
     assert result == [
         {"id": "t-2", "name": "Beta", "slug": "beta", "description": "desc", "visibility": "public", "is_active": True}
