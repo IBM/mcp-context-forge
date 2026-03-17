@@ -152,6 +152,89 @@ x-contextforge-mcp-affinity-core-mode: python
 x-contextforge-mcp-session-auth-reuse-mode: python
 ```
 
+## Plugin Execution and tools/call Flow
+
+The Rust runtime does not execute plugin code directly. All plugin
+execution happens in Python, with results communicated to Rust over internal
+HTTP RPC endpoints.
+
+### Internal RPC Endpoints
+
+Rust derives internal endpoint URLs from its `--backend-rpc-url`
+configuration. The following endpoints exist on the Python side:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /_internal/mcp/authenticate` | JWT validation, token scoping, RBAC context |
+| `POST /_internal/mcp/tools/call/resolve` | Build execution plan; runs pre-invoke plugin hooks |
+| `POST /_internal/mcp/tools/call` | Full Python fallback execution with all plugins |
+| `POST /_internal/mcp/tools/call/metric` | Record tool execution timing and success/failure |
+
+These are trusted internal endpoints, not exposed to external clients.
+
+### tools/call Request Flow (edge and full modes)
+
+When a `tools/call` request arrives at the Rust runtime in `edge` or `full`
+mode, it follows a two-phase resolve-then-execute model:
+
+```text
+client
+  -> nginx
+  -> Rust public listener
+  -> Rust: POST /_internal/mcp/tools/call/resolve (Python)
+     -> Python: auth + RBAC + tool lookup
+     -> Python: pre-invoke plugin hooks (if registered)
+     -> Python: returns execution plan to Rust
+  -> Rust: eligible?
+     YES -> Rust applies modified args + headers from plan
+            -> Rust calls upstream MCP server directly
+            -> Rust: POST /_internal/mcp/tools/call/metric (Python)
+     NO  -> Rust: POST /_internal/mcp/tools/call (Python)
+            -> Python: full invoke_tool() with pre + post-invoke plugins
+            -> Python calls upstream MCP server
+```
+
+### Plugin Handling by Mode
+
+| Mode | Pre-invoke hooks | Post-invoke hooks | Tool execution |
+|------|-----------------|-------------------|----------------|
+| `off` | Python (normal path) | Python (normal path) | Python |
+| `shadow` | Python (normal path) | Python (normal path) | Python |
+| `edge` | Python (via `/resolve` RPC) | Python (fallback only) | Rust direct when eligible, Python fallback otherwise |
+| `full` | Python (via `/resolve` RPC) | Python (fallback only) | Rust direct when eligible, Python fallback otherwise |
+
+Key behaviors:
+
+- **Pre-invoke hooks** always run in Python. In `edge`/`full`, they execute
+  during the `/resolve` call. Their output — modified arguments and injected
+  headers — is returned in the execution plan for Rust to apply.
+- **Post-invoke hooks** cannot run after Rust direct execution, so their
+  presence forces an immediate fallback to the full Python path
+  (`eligible: false`, `fallbackReason: post-invoke-hooks-configured`).
+- **Plan caching** is disabled when pre-invoke hooks executed, because hook
+  results may depend on per-call context (e.g. connection IDs, rotated
+  credentials).
+
+### Direct Execution Eligibility
+
+A tool is eligible for Rust direct execution only when **all** of the
+following are true:
+
+- No post-invoke plugin hooks are registered
+- No active observability trace
+- Tool integration type is `MCP`
+- Transport is `streamablehttp`
+- No JSONPath filter configured on the tool
+- No custom CA certificate on the gateway
+- Gateway URL is present
+- Gateway is not in `direct_proxy` mode
+- OAuth grant type is not `authorization_code` (or token retrieval succeeds)
+- Tool resolves unambiguously to a single enabled, reachable tool
+
+When any condition fails, `prepare_rust_mcp_tool_execution()` returns
+`eligible: false` with a `fallbackReason` string, and Rust forwards the
+full request to the Python `/_internal/mcp/tools/call` endpoint.
+
 ## Validation and Benchmark Workflow
 
 Recommended stack-backed validation:
