@@ -168,7 +168,15 @@ RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
-    && /app/.venv/bin/uv pip install ".[redis,postgres,mysql,observability,granian]" \
+    && if [ "$(uname -m)" = "s390x" ]; then \
+        echo "📦 Installing dependencies for s390x architecture..."; \
+        dnf install -y libpq-devel 2>/dev/null || true; \
+        /app/.venv/bin/pip install --no-cache-dir ".[redis,mysql,observability,granian]" \
+        && (/app/.venv/bin/pip install --no-cache-dir "psycopg[c]>=3.3.3" \
+            || /app/.venv/bin/pip install --no-cache-dir "psycopg>=3.3.3"); \
+    else \
+        /app/.venv/bin/uv pip install ".[redis,postgres,mysql,observability,granian]"; \
+    fi \
     && if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing Rust plugins..."; \
         /app/.venv/bin/python3 -m pip install /tmp/rust-wheels/*.whl && \
