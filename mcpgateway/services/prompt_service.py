@@ -515,24 +515,17 @@ class PromptService(BaseService):
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
         if include_metrics:
-            total = len(db_prompt.metrics) if hasattr(db_prompt, "metrics") and db_prompt.metrics is not None else 0
-            successful = sum(1 for m in db_prompt.metrics if m.is_success) if total > 0 else 0
-            failed = sum(1 for m in db_prompt.metrics if not m.is_success) if total > 0 else 0
-            failure_rate = failed / total if total > 0 else 0.0
-            min_rt = min((m.response_time for m in db_prompt.metrics), default=None) if total > 0 else None
-            max_rt = max((m.response_time for m in db_prompt.metrics), default=None) if total > 0 else None
-            avg_rt = (sum(m.response_time for m in db_prompt.metrics) / total) if total > 0 else None
-            last_time = max((m.timestamp for m in db_prompt.metrics), default=None) if total > 0 else None
-
+            # Use metrics_summary which combines raw + hourly rollup data (matches tool_service pattern)
+            metrics = db_prompt.metrics_summary
             metrics_dict = {
-                "totalExecutions": total,
-                "successfulExecutions": successful,
-                "failedExecutions": failed,
-                "failureRate": failure_rate,
-                "minResponseTime": min_rt,
-                "maxResponseTime": max_rt,
-                "avgResponseTime": avg_rt,
-                "lastExecutionTime": last_time,
+                "totalExecutions": metrics["total_executions"],
+                "successfulExecutions": metrics["successful_executions"],
+                "failedExecutions": metrics["failed_executions"],
+                "failureRate": metrics["failure_rate"],
+                "minResponseTime": metrics["min_response_time"],
+                "maxResponseTime": metrics["max_response_time"],
+                "avgResponseTime": metrics["avg_response_time"],
+                "lastExecutionTime": metrics["last_execution_time"],
             }
         else:
             metrics_dict = None

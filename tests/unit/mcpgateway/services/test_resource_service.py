@@ -3925,6 +3925,17 @@ class TestConvertResourceToReadMetrics:
             created_by="user@test.com",
             modified_by="user@test.com",
             _sa_instance_state=MagicMock(),
+            # Mock metrics_summary property (matches new implementation)
+            metrics_summary={
+                "total_executions": 2,
+                "successful_executions": 1,
+                "failed_executions": 1,
+                "failure_rate": 0.5,
+                "min_response_time": 0.1,
+                "max_response_time": 0.3,
+                "avg_response_time": 0.2,
+                "last_execution_time": now,
+            },
         )
         result = resource_service.convert_resource_to_read(resource, include_metrics=True)
         assert result.metrics is not None
@@ -3958,6 +3969,17 @@ class TestConvertResourceToReadMetrics:
             created_by="user@test.com",
             modified_by="user@test.com",
             _sa_instance_state=MagicMock(),
+            # Mock metrics_summary property (matches new implementation)
+            metrics_summary={
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            },
         )
         result = resource_service.convert_resource_to_read(resource, include_metrics=True)
         assert result.metrics is not None

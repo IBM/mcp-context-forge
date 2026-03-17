@@ -306,24 +306,17 @@ class ResourceService(BaseService):
 
         # Compute aggregated metrics from the resource's metrics list (only if requested)
         if include_metrics:
-            total = len(resource.metrics) if hasattr(resource, "metrics") and resource.metrics is not None else 0
-            successful = sum(1 for m in resource.metrics if m.is_success) if total > 0 else 0
-            failed = sum(1 for m in resource.metrics if not m.is_success) if total > 0 else 0
-            failure_rate = (failed / total) if total > 0 else 0.0
-            min_rt = min((m.response_time for m in resource.metrics), default=None) if total > 0 else None
-            max_rt = max((m.response_time for m in resource.metrics), default=None) if total > 0 else None
-            avg_rt = (sum(m.response_time for m in resource.metrics) / total) if total > 0 else None
-            last_time = max((m.timestamp for m in resource.metrics), default=None) if total > 0 else None
-
+            # Use metrics_summary which combines raw + hourly rollup data (matches tool_service pattern)
+            metrics = resource.metrics_summary
             resource_dict["metrics"] = {
-                "total_executions": total,
-                "successful_executions": successful,
-                "failed_executions": failed,
-                "failure_rate": failure_rate,
-                "min_response_time": min_rt,
-                "max_response_time": max_rt,
-                "avg_response_time": avg_rt,
-                "last_execution_time": last_time,
+                "total_executions": metrics["total_executions"],
+                "successful_executions": metrics["successful_executions"],
+                "failed_executions": metrics["failed_executions"],
+                "failure_rate": metrics["failure_rate"],
+                "min_response_time": metrics["min_response_time"],
+                "max_response_time": metrics["max_response_time"],
+                "avg_response_time": metrics["avg_response_time"],
+                "last_execution_time": metrics["last_execution_time"],
             }
         else:
             resource_dict["metrics"] = None

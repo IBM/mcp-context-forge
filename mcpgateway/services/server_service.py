@@ -341,46 +341,17 @@ class ServerService(BaseService):
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
         if include_metrics:
-            total = 0
-            successful = 0
-            failed = 0
-            min_rt = None
-            max_rt = None
-            sum_rt = 0.0
-            last_time = None
-
-            if hasattr(server, "metrics") and server.metrics:
-                for m in server.metrics:
-                    total += 1
-                    if m.is_success:
-                        successful += 1
-                    else:
-                        failed += 1
-
-                    # Track min/max response times
-                    if min_rt is None or m.response_time < min_rt:
-                        min_rt = m.response_time
-                    if max_rt is None or m.response_time > max_rt:
-                        max_rt = m.response_time
-
-                    sum_rt += m.response_time
-
-                    # Track last execution time
-                    if last_time is None or m.timestamp > last_time:
-                        last_time = m.timestamp
-
-            failure_rate = (failed / total) if total > 0 else 0.0
-            avg_rt = (sum_rt / total) if total > 0 else None
-
+            # Use metrics_summary which combines raw + hourly rollup data (matches tool_service pattern)
+            metrics = server.metrics_summary
             server_dict["metrics"] = {
-                "total_executions": total,
-                "successful_executions": successful,
-                "failed_executions": failed,
-                "failure_rate": failure_rate,
-                "min_response_time": min_rt,
-                "max_response_time": max_rt,
-                "avg_response_time": avg_rt,
-                "last_execution_time": last_time,
+                "total_executions": metrics["total_executions"],
+                "successful_executions": metrics["successful_executions"],
+                "failed_executions": metrics["failed_executions"],
+                "failure_rate": metrics["failure_rate"],
+                "min_response_time": metrics["min_response_time"],
+                "max_response_time": metrics["max_response_time"],
+                "avg_response_time": metrics["avg_response_time"],
+                "last_execution_time": metrics["last_execution_time"],
             }
         else:
             server_dict["metrics"] = None

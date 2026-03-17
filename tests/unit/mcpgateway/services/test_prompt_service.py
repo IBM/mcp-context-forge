@@ -121,6 +121,41 @@ def _build_db_prompt(
     p.gateway_id = None
     p.gateway = None
     p.metrics = metrics or []
+
+    # Mock metrics_summary property to match the new implementation
+    # Calculate summary from provided metrics
+    if metrics:
+        total = len(metrics)
+        successful = sum(1 for m in metrics if m.is_success)
+        failed = total - successful
+        failure_rate = failed / total if total > 0 else 0.0
+        min_rt = min((m.response_time for m in metrics), default=None)
+        max_rt = max((m.response_time for m in metrics), default=None)
+        avg_rt = sum(m.response_time for m in metrics) / total if total > 0 else None
+        last_time = max((m.timestamp for m in metrics), default=None)
+
+        p.metrics_summary = {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failure_rate,
+            "min_response_time": min_rt,
+            "max_response_time": max_rt,
+            "avg_response_time": avg_rt,
+            "last_execution_time": last_time,
+        }
+    else:
+        p.metrics_summary = {
+            "total_executions": 0,
+            "successful_executions": 0,
+            "failed_executions": 0,
+            "failure_rate": 0.0,
+            "min_response_time": None,
+            "max_response_time": None,
+            "avg_response_time": None,
+            "last_execution_time": None,
+        }
+
     # validate_arguments: accept anything
     p.validate_arguments = Mock()
     return p

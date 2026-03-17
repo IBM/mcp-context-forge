@@ -2310,6 +2310,41 @@ class TestConvertServerToReadMetrics:
         # Standard
         from types import SimpleNamespace
 
+        metrics_list = metrics or []
+
+        # Calculate metrics_summary from provided metrics (matches new implementation)
+        if metrics_list:
+            total = len(metrics_list)
+            successful = sum(1 for m in metrics_list if m.is_success)
+            failed = total - successful
+            failure_rate = failed / total if total > 0 else 0.0
+            min_rt = min((m.response_time for m in metrics_list), default=None)
+            max_rt = max((m.response_time for m in metrics_list), default=None)
+            avg_rt = sum(m.response_time for m in metrics_list) / total if total > 0 else None
+            last_time = max((m.timestamp for m in metrics_list), default=None)
+
+            metrics_summary = {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failure_rate,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": avg_rt,
+                "last_execution_time": last_time,
+            }
+        else:
+            metrics_summary = {
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            }
+
         s = SimpleNamespace(
             id="srv-1",
             name="test",
@@ -2329,7 +2364,8 @@ class TestConvertServerToReadMetrics:
             resources=[],
             prompts=[],
             a2a_agents=[],
-            metrics=metrics or [],
+            metrics=metrics_list,
+            metrics_summary=metrics_summary,  # Add metrics_summary property
             oauth_enabled=False,
             oauth_config=None,
             created_from_ip=None,
