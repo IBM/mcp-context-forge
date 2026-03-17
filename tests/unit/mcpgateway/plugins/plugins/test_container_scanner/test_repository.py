@@ -81,7 +81,7 @@ class TestScanResultRepositoryEviction:
         assert len(repo) == 3
 
     def test_update_existing_does_not_evict(self):
-        repo = ScanResultRepository(max_entries=3)
+        repo = ScanResultRepository(max_entries=2)
         repo.save(make_result(DIGEST_V1))
         repo.save(make_result(DIGEST_V2))
         # Update existing — should not evict
