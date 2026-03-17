@@ -632,10 +632,10 @@
 
 /* Welcome Message Animations */
 #chat-welcome-message {
-    animation: fade-in 0.5s ease-in;
+    animation: fade-in-welcome 0.5s ease-in;
 }
 
-@keyframes fade-in {
+@keyframes fade-in-welcome {
     from {
         opacity: 0;
     }
