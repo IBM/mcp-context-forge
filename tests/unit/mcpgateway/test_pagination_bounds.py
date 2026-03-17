@@ -13,7 +13,7 @@ Related: GitHub issue #3469 (UI pagination 422 response).
 # Standard
 import inspect
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 from fastapi.params import Query as QueryInfo
@@ -27,6 +27,13 @@ def _get_query_le(func, param_name: str):
     """Extract the 'le' constraint from a FastAPI Query parameter default.
 
     Inspects the wrapped function if @require_permission was applied.
+
+    Args:
+        func: The endpoint function (possibly decorated).
+        param_name: Name of the Query parameter to inspect.
+
+    Returns:
+        The ``le`` value from the Query metadata, or ``None`` if not found.
     """
     target = getattr(func, "__wrapped__", func)
     sig = inspect.signature(target)
@@ -219,7 +226,6 @@ class TestPaginationBoundsFunction:
 
     @pytest.mark.asyncio
     async def test_admin_search_teams_limit_200(self, monkeypatch, allow_permission, mock_db):
-        """admin_search_teams should accept limit=200 (was rejected before fix)."""
         # First-Party
         from mcpgateway.admin import admin_search_teams
 
@@ -237,7 +243,6 @@ class TestPaginationBoundsFunction:
 
     @pytest.mark.asyncio
     async def test_get_top_slow_endpoints_limit_200(self, monkeypatch, mock_db):
-        """get_top_slow_endpoints should accept limit=200."""
         # First-Party
         from mcpgateway.admin import get_top_slow_endpoints
 
@@ -257,7 +262,6 @@ class TestPaginationBoundsFunction:
 
     @pytest.mark.asyncio
     async def test_get_tool_usage_limit_200(self, monkeypatch, allow_permission):
-        """get_tool_usage should accept limit=200."""
         # First-Party
         from mcpgateway.admin import get_tool_usage
 

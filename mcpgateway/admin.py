@@ -17536,7 +17536,7 @@ async def get_top_slow_endpoints(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Number of results to return (1-100)
+        limit: Number of results to return (1-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -17605,7 +17605,7 @@ async def get_top_volume_endpoints(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Number of results to return (1-100)
+        limit: Number of results to return (1-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -17672,7 +17672,7 @@ async def get_top_error_endpoints(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Number of results to return (1-100)
+        limit: Number of results to return (1-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -17791,7 +17791,7 @@ async def get_tool_usage(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of tools to return (5-100)
+        limit: Maximum number of tools to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -17864,7 +17864,7 @@ async def get_tool_performance(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of tools to return (5-100)
+        limit: Maximum number of tools to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -17916,7 +17916,7 @@ async def get_tool_errors(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of tools to return (5-100)
+        limit: Maximum number of tools to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -17988,7 +17988,7 @@ async def get_tool_chains(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of chains to return (5-100)
+        limit: Maximum number of chains to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -18101,7 +18101,7 @@ async def get_prompt_usage(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of prompts to return (5-100)
+        limit: Maximum number of prompts to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -18174,7 +18174,7 @@ async def get_prompt_performance(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of prompts to return (5-100)
+        limit: Maximum number of prompts to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -18323,7 +18323,7 @@ async def get_resource_usage(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of resources to return (5-100)
+        limit: Maximum number of resources to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -18396,7 +18396,7 @@ async def get_resource_performance(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of resources to return (5-100)
+        limit: Maximum number of resources to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
