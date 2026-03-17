@@ -261,7 +261,6 @@ class TestVirtualServerCRUD:
         admin_page.wait_for_timeout(1_000)
 
         # Step 2: Find delete button within catalog panel
-        server_rows = admin_page.locator('#servers-table-body [data-testid="server-item"]')
         delete_button = admin_page.locator('#catalog-panel button[type="submit"]:has-text("Delete"):visible').first
 
         try:
@@ -269,7 +268,15 @@ class TestVirtualServerCRUD:
         except PlaywrightTimeoutError:
             pytest.skip("No servers available to delete")
 
-        initial_count = server_rows.count()
+        # Capture the server ID from the first delete form so we can
+        # verify it disappears after deletion (row counts are unreliable
+        # with pagination when total items exceed per_page).
+        first_delete_form = admin_page.locator(
+            '#servers-table-body form[action*="/delete"]'
+        ).first
+        delete_action = first_delete_form.get_attribute("action") or ""
+        # Extract server ID from action URL like /admin/servers/<id>/delete
+        deleted_server_id = delete_action.rsplit("/delete", 1)[0].rsplit("/", 1)[-1]
 
         # Step 3 & 4: Accept native confirm() dialogs and click delete.
         # handleDeleteSubmit shows two native confirm() dialogs, then
@@ -291,7 +298,15 @@ class TestVirtualServerCRUD:
         servers_tab.click()
         admin_page.wait_for_selector("#servers-table-body", state="attached", timeout=10_000)
         admin_page.wait_for_timeout(1_000)
-        expect(server_rows).to_have_count(initial_count - 1, timeout=15_000)
+
+        # Verify the deleted server's ID no longer appears in any
+        # delete-form action URL.  This is pagination-safe unlike
+        # counting rows (the default per_page=10 may re-fill the
+        # page from subsequent pages after a deletion).
+        remaining_delete_forms = admin_page.locator(
+            f'#servers-table-body form[action*="{deleted_server_id}"]'
+        )
+        expect(remaining_delete_forms).to_have_count(0, timeout=15_000)
 
         # Step 6 & 7: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])

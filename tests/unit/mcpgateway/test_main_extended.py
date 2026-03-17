@@ -13,6 +13,7 @@ error handlers, and startup logic.
 # Standard
 import builtins
 import asyncio
+import base64
 import importlib.util
 import json
 from pathlib import Path
@@ -22,18 +23,33 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 # Third-Party
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response as FastAPIResponse
 from fastapi.testclient import TestClient
+import orjson
 import pytest
 import sqlalchemy as sa
 from starlette.responses import Response as StarletteResponse
 
 # First-Party
+from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.main import (
     AdminAuthMiddleware,
     DocsAuthMiddleware,
+    InternalTrustedMCPTransportBridge,
+    MCPRuntimeHeaderTransportWrapper,
     MCPPathRewriteMiddleware,
+    _expected_internal_mcp_runtime_auth_header,
+    _build_internal_mcp_auth_scope,
+    _build_internal_mcp_forwarded_user,
+    _decode_internal_mcp_auth_context,
+    _enforce_internal_mcp_server_scope,
+    _ensure_rpc_permission,
+    _extract_scoped_permissions,
+    _is_permission_admin_user,
+    _run_internal_mcp_authentication,
+    _serialize_mcp_tool_definition,
+    _serialize_legacy_tool_payloads,
     app,
     create_prompt,
     create_resource,
@@ -44,6 +60,34 @@ from mcpgateway.main import (
     export_configuration,
     export_selective_configuration,
     get_a2a_agent,
+    handle_internal_mcp_initialize,
+    handle_internal_mcp_completion_complete,
+    handle_internal_mcp_authenticate,
+    handle_internal_mcp_logging_set_level,
+    handle_internal_mcp_notifications_cancelled,
+    handle_internal_mcp_notifications_initialized,
+    handle_internal_mcp_notifications_message,
+    handle_internal_mcp_session_delete,
+    handle_internal_mcp_resources_list,
+    handle_internal_mcp_resources_read,
+    handle_internal_mcp_resources_subscribe,
+    handle_internal_mcp_resources_unsubscribe,
+    handle_internal_mcp_resource_templates_list,
+    handle_internal_mcp_roots_list,
+    handle_internal_mcp_prompts_get,
+    handle_internal_mcp_prompts_list,
+    handle_internal_mcp_prompts_get_authz,
+    handle_internal_mcp_prompts_list_authz,
+    handle_internal_mcp_resource_templates_list_authz,
+    handle_internal_mcp_resources_list_authz,
+    handle_internal_mcp_resources_read_authz,
+    handle_internal_mcp_sampling_create_message,
+    handle_internal_mcp_tools_call,
+    handle_internal_mcp_tools_call_metric,
+    handle_internal_mcp_tools_call_resolve,
+    handle_internal_mcp_tools_list_authz,
+    handle_internal_mcp_tools_list,
+    handle_internal_mcp_rpc,
     handle_rpc,
     import_configuration,
     jsonpath_modifier,
@@ -67,6 +111,9 @@ from mcpgateway.main import (
 import mcpgateway.db as db_mod
 from mcpgateway.plugins.framework import PluginError
 from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ToolCreate, ToolUpdate
+from mcpgateway.services.tool_service import ToolError, ToolNotFoundError
+from mcpgateway.transports.streamablehttp_transport import user_context_var
+from mcpgateway.validation.jsonrpc import JSONRPCError
 
 
 def _make_request(
@@ -86,6 +133,17 @@ def _make_request(
     request.cookies = cookies or {}
     request.query_params = query_params or {}
     return request
+
+
+def _trusted_internal_mcp_headers(auth_context: dict[str, object], **extra_headers: str) -> dict[str, str]:
+    """Build trusted Rust->Python internal MCP headers for unit tests."""
+    headers = {
+        "x-contextforge-mcp-runtime": "rust",
+        "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
+        "x-contextforge-auth-context": base64.urlsafe_b64encode(orjson.dumps(auth_context)).decode().rstrip("="),
+    }
+    headers.update(extra_headers)
+    return headers
 
 
 def _import_fresh_main_module(
@@ -167,6 +225,46 @@ def _import_fresh_main_module(
 class TestConditionalPaths:
     """Test conditional code paths to improve coverage."""
 
+    def test_import_uses_rust_mcp_proxy_when_enabled(self, monkeypatch):
+        """Module import should swap the mounted /mcp app to the Rust proxy when enabled."""
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": True,
+                "experimental_rust_mcp_session_auth_reuse_enabled": True,
+                "experimental_rust_mcp_runtime_url": "http://127.0.0.1:8787",
+            },
+        )
+
+        assert module.mcp_transport_app.__class__.__name__ == "RustMCPRuntimeProxy"
+
+    def test_import_keeps_python_transport_when_rust_runtime_lacks_session_auth_reuse(self, monkeypatch):
+        """Module import should keep public /mcp on Python when Rust session auth reuse is disabled."""
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": True,
+                "experimental_rust_mcp_session_auth_reuse_enabled": False,
+                "experimental_rust_mcp_runtime_url": "http://127.0.0.1:8787",
+            },
+        )
+
+        assert module.mcp_transport_app.__class__.__name__ == "MCPRuntimeHeaderTransportWrapper"
+
+    def test_import_warns_when_rust_artifacts_present_but_runtime_disabled(self, monkeypatch, caplog):
+        """A Rust-built image with the runtime flag disabled should warn loudly at import time."""
+        caplog.set_level("WARNING")
+        module = _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "experimental_rust_mcp_runtime_enabled": False,
+            },
+            env={"CONTEXTFORGE_ENABLE_RUST_BUILD": "true"},
+        )
+
+        assert module.mcp_transport_app.__class__.__name__ == "MCPRuntimeHeaderTransportWrapper"
+        assert any("python-rust-built-disabled" in rec.message for rec in caplog.records)
+
     def test_redis_initialization_path(self, test_client, auth_headers):
         """Test Redis initialization path by mocking settings."""
         # Test that the Redis path is covered indirectly through existing functionality
@@ -180,6 +278,760 @@ class TestConditionalPaths:
         # Test the functionality that exercises the loop path
         response = test_client.get("/health", headers=auth_headers)
         assert response.status_code == 200
+
+
+class TestInternalTrustedMcpTransportBridge:
+    """Test the trusted Rust -> Python MCP transport bridge."""
+
+    @pytest.mark.asyncio
+    async def test_python_transport_wrapper_sets_runtime_header(self):
+        sent = []
+
+        class FakeTransportApp:
+            async def handle_streamable_http(self, _scope, _receive, send):
+                await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+                await send({"type": "http.response.body", "body": b"{}", "more_body": False})
+
+        wrapper = MCPRuntimeHeaderTransportWrapper(FakeTransportApp(), runtime_name="python")
+
+        async def _receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def _send(message):
+            sent.append(message)
+
+        await wrapper.handle_streamable_http({"type": "http", "method": "POST"}, _receive, _send)
+
+        start = next(message for message in sent if message["type"] == "http.response.start")
+        assert (b"x-contextforge-mcp-runtime", b"python") in start["headers"]
+        assert (b"x-contextforge-mcp-session-core", b"python") in start["headers"]
+        assert (b"x-contextforge-mcp-resume-core", b"python") in start["headers"]
+        assert (b"x-contextforge-mcp-live-stream-core", b"python") in start["headers"]
+        assert (b"x-contextforge-mcp-affinity-core", b"python") in start["headers"]
+        assert (b"x-contextforge-mcp-session-auth-reuse", b"python") in start["headers"]
+
+    @pytest.mark.asyncio
+    async def test_python_transport_wrapper_preserves_existing_runtime_headers(self):
+        """Existing runtime headers should not be duplicated."""
+        sent = []
+
+        class FakeTransportApp:
+            async def handle_streamable_http(self, _scope, _receive, send):
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 200,
+                        "headers": [
+                            (b"x-contextforge-mcp-runtime", b"rust"),
+                            (b"x-contextforge-mcp-session-core", b"rust"),
+                            (b"x-contextforge-mcp-resume-core", b"rust"),
+                            (b"x-contextforge-mcp-live-stream-core", b"rust"),
+                            (b"x-contextforge-mcp-affinity-core", b"rust"),
+                            (b"x-contextforge-mcp-session-auth-reuse", b"rust"),
+                        ],
+                    }
+                )
+                await send({"type": "http.response.body", "body": b"{}", "more_body": False})
+
+        wrapper = MCPRuntimeHeaderTransportWrapper(FakeTransportApp(), runtime_name="python")
+
+        async def _receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def _send(message):
+            sent.append(message)
+
+        await wrapper.handle_streamable_http({"type": "http", "method": "POST"}, _receive, _send)
+
+        start = next(message for message in sent if message["type"] == "http.response.start")
+        header_names = [name for name, _value in start["headers"]]
+        assert header_names.count(b"x-contextforge-mcp-runtime") == 1
+        assert header_names.count(b"x-contextforge-mcp-session-core") == 1
+        assert header_names.count(b"x-contextforge-mcp-resume-core") == 1
+        assert header_names.count(b"x-contextforge-mcp-live-stream-core") == 1
+        assert header_names.count(b"x-contextforge-mcp-affinity-core") == 1
+        assert header_names.count(b"x-contextforge-mcp-session-auth-reuse") == 1
+
+    @pytest.mark.asyncio
+    async def test_bridge_sets_scope_and_forwarded_auth_context(self):
+        observed = {}
+
+        class FakeTransportApp:
+            async def handle_streamable_http(self, scope, receive, send):
+                observed["path"] = scope["path"]
+                observed["modified_path"] = scope["modified_path"]
+                observed["user_context"] = user_context_var.get()
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 204,
+                        "headers": [(b"x-contextforge-mcp-runtime", b"python")],
+                    }
+                )
+                await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+        bridge = InternalTrustedMCPTransportBridge(FakeTransportApp())
+        encoded_auth = (
+            base64.urlsafe_b64encode(
+                orjson.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "token_use": "session",
+                    }
+                )
+            )
+            .decode("ascii")
+            .rstrip("=")
+        )
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/_internal/mcp/transport",
+            "query_string": b"session_id=abc123",
+            "headers": [
+                (b"x-contextforge-mcp-runtime", b"rust"),
+                (b"x-contextforge-mcp-runtime-auth", _expected_internal_mcp_runtime_auth_header().encode("ascii")),
+                (b"x-contextforge-auth-context", encoded_auth.encode("ascii")),
+                (b"x-contextforge-server-id", b"server-1"),
+            ],
+            "client": ("127.0.0.1", 5000),
+        }
+
+        async def receive():
+            return {"type": "http.disconnect"}
+
+        events = []
+
+        async def send(message):
+            events.append(message)
+
+        await bridge.handle_streamable_http(scope, receive, send)
+
+        assert observed["path"] == "/mcp/"
+        assert observed["modified_path"] == "/servers/server-1/mcp"
+        assert observed["user_context"]["email"] == "user@example.com"
+        assert observed["user_context"]["teams"] == ["team-a"]
+        assert events[0]["status"] == 204
+
+    @pytest.mark.asyncio
+    async def test_bridge_marks_rust_validated_sessions_in_user_context(self):
+        observed = {}
+
+        class FakeTransportApp:
+            async def handle_streamable_http(self, _scope, _receive, send):
+                observed["user_context"] = user_context_var.get()
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 204,
+                        "headers": [(b"x-contextforge-mcp-runtime", b"python")],
+                    }
+                )
+                await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+        bridge = InternalTrustedMCPTransportBridge(FakeTransportApp())
+        encoded_auth = (
+            base64.urlsafe_b64encode(
+                orjson.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                    }
+                )
+            )
+            .decode("ascii")
+            .rstrip("=")
+        )
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/_internal/mcp/transport",
+            "query_string": b"session_id=abc123",
+            "headers": [
+                (b"x-contextforge-mcp-runtime", b"rust"),
+                (b"x-contextforge-mcp-runtime-auth", _expected_internal_mcp_runtime_auth_header().encode("ascii")),
+                (b"x-contextforge-auth-context", encoded_auth.encode("ascii")),
+                (b"x-contextforge-session-validated", b"rust"),
+            ],
+            "client": ("127.0.0.1", 5000),
+        }
+
+        async def receive():
+            return {"type": "http.disconnect"}
+
+        events = []
+
+        async def send(message):
+            events.append(message)
+
+        await bridge.handle_streamable_http(scope, receive, send)
+
+        assert observed["user_context"]["_rust_session_validated"] is True
+        assert events[0]["status"] == 204
+
+    @pytest.mark.asyncio
+    async def test_bridge_allows_post_transport_calls(self):
+        observed = {}
+
+        class FakeTransportApp:
+            async def handle_streamable_http(self, scope, receive, send):
+                observed["method"] = scope["method"]
+                observed["modified_path"] = scope["modified_path"]
+                observed["body"] = await receive()
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 200,
+                        "headers": [(b"x-contextforge-mcp-runtime", b"python")],
+                    }
+                )
+                await send({"type": "http.response.body", "body": b"{}", "more_body": False})
+
+        bridge = InternalTrustedMCPTransportBridge(FakeTransportApp())
+        encoded_auth = (
+            base64.urlsafe_b64encode(
+                orjson.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                    }
+                )
+            )
+            .decode("ascii")
+            .rstrip("=")
+        )
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/_internal/mcp/transport",
+            "query_string": b"",
+            "headers": [
+                (b"x-contextforge-mcp-runtime", b"rust"),
+                (b"x-contextforge-mcp-runtime-auth", _expected_internal_mcp_runtime_auth_header().encode("ascii")),
+                (b"x-contextforge-auth-context", encoded_auth.encode("ascii")),
+                (b"x-contextforge-server-id", b"server-1"),
+            ],
+            "client": ("127.0.0.1", 5000),
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b'{"jsonrpc":"2.0","id":1}', "more_body": False}
+
+        events = []
+
+        async def send(message):
+            events.append(message)
+
+        await bridge.handle_streamable_http(scope, receive, send)
+
+        assert observed["method"] == "POST"
+        assert observed["modified_path"] == "/servers/server-1/mcp"
+        assert observed["body"]["body"] == b'{"jsonrpc":"2.0","id":1}'
+        assert events[0]["status"] == 200
+
+    @pytest.mark.asyncio
+    async def test_bridge_rejects_missing_internal_auth_context(self):
+        bridge = InternalTrustedMCPTransportBridge(AsyncMock())
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/_internal/mcp/transport",
+            "query_string": b"",
+            "headers": [
+                (b"x-contextforge-mcp-runtime", b"rust"),
+                (b"x-contextforge-mcp-runtime-auth", _expected_internal_mcp_runtime_auth_header().encode("ascii")),
+            ],
+            "client": ("127.0.0.1", 5000),
+        }
+
+        async def receive():
+            return {"type": "http.disconnect"}
+
+        events = []
+
+        async def send(message):
+            events.append(message)
+
+        await bridge.handle_streamable_http(scope, receive, send)
+
+        assert events[0]["status"] == 400
+
+    def test_build_internal_mcp_auth_scope_uses_public_request_shape(self):
+        """Synthetic auth scope should preserve the public MCP path and client IP."""
+        scope = _build_internal_mcp_auth_scope(
+            method="post",
+            path="/servers/server-1/mcp",
+            query_string="session_id=abc123",
+            headers={"Authorization": "Bearer token", "X-Test": "value"},
+            client_ip="203.0.113.10",
+        )
+
+        assert scope["type"] == "http"
+        assert scope["method"] == "POST"
+        assert scope["path"] == "/servers/server-1/mcp"
+        assert scope["raw_path"] == b"/servers/server-1/mcp"
+        assert scope["query_string"] == b"session_id=abc123"
+        assert scope["client"] == ("203.0.113.10", 0)
+        assert (b"authorization", b"Bearer token") in scope["headers"]
+        assert (b"x-test", b"value") in scope["headers"]
+
+    @pytest.mark.asyncio
+    async def test_run_internal_mcp_authentication_returns_forwarded_user_context(self, monkeypatch):
+        """Successful internal MCP auth should surface the forwarded auth context."""
+
+        async def _fake_streamable_http_auth(_scope, _receive, _send):
+            user_context_var.set(
+                {
+                    "email": "user@example.com",
+                    "teams": ["team-a"],
+                    "is_authenticated": True,
+                }
+            )
+            return True
+
+        monkeypatch.setattr("mcpgateway.main.settings.email_auth_enabled", False)
+        monkeypatch.setattr("mcpgateway.main.streamable_http_auth", _fake_streamable_http_auth)
+
+        error_response, auth_context = await _run_internal_mcp_authentication(
+            method="POST",
+            path="/mcp",
+            query_string="",
+            headers={"authorization": "Bearer token"},
+            client_ip="203.0.113.10",
+        )
+
+        assert error_response is None
+        assert auth_context["email"] == "user@example.com"
+        assert auth_context["teams"] == ["team-a"]
+        assert auth_context["is_authenticated"] is True
+
+    @pytest.mark.asyncio
+    async def test_handle_internal_mcp_authenticate_returns_auth_context(self, monkeypatch):
+        """Trusted Rust authenticate requests should return the derived auth context."""
+        request = MagicMock(spec=Request)
+        request.json = AsyncMock(
+            return_value={
+                "method": "POST",
+                "path": "/servers/server-1/mcp",
+                "queryString": "session_id=abc123",
+                "headers": {"authorization": "Bearer token"},
+                "clientIp": "203.0.113.10",
+            }
+        )
+
+        monkeypatch.setattr("mcpgateway.main._is_trusted_internal_mcp_runtime_request", lambda _request: True)
+        monkeypatch.setattr(
+            "mcpgateway.main._run_internal_mcp_authentication",
+            AsyncMock(
+                return_value=(
+                    None,
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                    },
+                )
+            ),
+        )
+
+        response = await handle_internal_mcp_authenticate(request)
+
+        assert response.status_code == 200
+        assert orjson.loads(response.body)["authContext"]["email"] == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_handle_internal_mcp_authenticate_rejects_untrusted_requests(self, monkeypatch):
+        """The authenticate bridge should remain trusted-runtime only."""
+        request = MagicMock(spec=Request)
+
+        monkeypatch.setattr("mcpgateway.main._is_trusted_internal_mcp_runtime_request", lambda _request: False)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await handle_internal_mcp_authenticate(request)
+
+        assert exc_info.value.status_code == 403
+
+    def test_build_internal_mcp_auth_scope_skips_non_string_headers_and_defaults_unknown_client(self):
+        """Internal auth scope should ignore malformed headers and avoid loopback defaults."""
+        scope = _build_internal_mcp_auth_scope(
+            method="get",
+            path="/mcp",
+            query_string="cursor=1",
+            headers={"authorization": "Bearer token", "x-bad": 1, 2: "ignored"},  # type: ignore[dict-item]
+            client_ip=None,
+        )
+
+        assert scope["client"] == ("unknown", 0)
+        assert scope["query_string"] == b"cursor=1"
+        assert scope["headers"] == [(b"authorization", b"Bearer token")]
+
+    @pytest.mark.asyncio
+    async def test_run_internal_mcp_authentication_captures_forwarded_error_response(self, monkeypatch):
+        """Auth failures emitted through ASGI send should be reconstructed exactly."""
+
+        async def _fake_streamable_http_auth(_scope, receive, send):
+            await receive()
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [(b"content-type", b"application/json"), (b"www-authenticate", b"Bearer")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b'{\"detail\":\"bad token\"}'})
+            return False
+
+        async def _passthrough_middleware(request, call_next):
+            return await call_next(request)
+
+        monkeypatch.setattr("mcpgateway.main.settings.email_auth_enabled", True)
+        monkeypatch.setattr("mcpgateway.main.streamable_http_auth", _fake_streamable_http_auth)
+        monkeypatch.setattr("mcpgateway.main.token_scoping_middleware", _passthrough_middleware)
+
+        error_response, auth_context = await _run_internal_mcp_authentication(
+            method="POST",
+            path="/mcp",
+            query_string="",
+            headers={"authorization": "Bearer token"},
+            client_ip="203.0.113.10",
+        )
+
+        assert auth_context == {}
+        assert error_response is not None
+        assert error_response.status_code == 401
+        assert error_response.headers["content-type"] == "application/json"
+        assert error_response.headers["www-authenticate"] == "Bearer"
+        assert error_response.body == b'{"detail":"bad token"}'
+
+    @pytest.mark.asyncio
+    async def test_run_internal_mcp_authentication_reconstructs_captured_response_when_middleware_returns_none(self, monkeypatch):
+        """A middleware chain that returns None should still yield a concrete response."""
+
+        async def _ignored_streamable_http_auth(_scope, _receive, _send):
+            return True
+
+        async def _none_middleware(_request, _call_next):
+            return None
+
+        monkeypatch.setattr("mcpgateway.main.settings.email_auth_enabled", True)
+        monkeypatch.setattr("mcpgateway.main.streamable_http_auth", _ignored_streamable_http_auth)
+        monkeypatch.setattr("mcpgateway.main.token_scoping_middleware", _none_middleware)
+
+        error_response, auth_context = await _run_internal_mcp_authentication(
+            method="GET",
+            path="/mcp",
+            query_string="",
+            headers={},
+            client_ip=None,
+        )
+
+        assert auth_context == {}
+        assert error_response is not None
+        assert error_response.status_code == 500
+
+    @pytest.mark.parametrize(
+        ("payload", "detail"),
+        [
+            (["bad"], "Invalid internal MCP authenticate payload"),
+            ({"method": "POST", "queryString": "", "headers": {}, "clientIp": "203.0.113.10"}, "requires path"),
+            ({"method": "POST", "path": "/mcp", "queryString": [], "headers": {}, "clientIp": "203.0.113.10"}, "queryString must be a string"),
+            ({"method": "POST", "path": "/mcp", "queryString": "", "headers": {"authorization": 1}, "clientIp": "203.0.113.10"}, "headers must be a string map"),
+            ({"method": "POST", "path": "/mcp", "queryString": "", "headers": {}, "clientIp": 123}, "clientIp must be a string"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_handle_internal_mcp_authenticate_validates_payload_shape(self, monkeypatch, payload, detail):
+        """Malformed trusted authenticate payloads should fail fast with 400s."""
+        request = MagicMock(spec=Request)
+        request.json = AsyncMock(return_value=payload)
+
+        monkeypatch.setattr("mcpgateway.main._is_trusted_internal_mcp_runtime_request", lambda _request: True)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await handle_internal_mcp_authenticate(request)
+
+        assert exc_info.value.status_code == 400
+        assert detail in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_handle_internal_mcp_authenticate_returns_forwarded_error_response(self, monkeypatch):
+        """Trusted authenticate requests should pass through auth-layer failure responses."""
+        request = MagicMock(spec=Request)
+        request.json = AsyncMock(
+            return_value={
+                "method": "POST",
+                "path": "/mcp",
+                "queryString": "",
+                "headers": {"authorization": "Bearer token"},
+                "clientIp": "203.0.113.10",
+            }
+        )
+        expected = FastAPIResponse(content=b"denied", status_code=401)
+
+        monkeypatch.setattr("mcpgateway.main._is_trusted_internal_mcp_runtime_request", lambda _request: True)
+        monkeypatch.setattr("mcpgateway.main._run_internal_mcp_authentication", AsyncMock(return_value=(expected, {})))
+
+        response = await handle_internal_mcp_authenticate(request)
+
+        assert response is expected
+
+    @pytest.mark.asyncio
+    async def test_bridge_rejects_non_http_scopes(self):
+        """Non-HTTP trusted transport requests should return 404."""
+        bridge = InternalTrustedMCPTransportBridge(AsyncMock())
+        events = []
+
+        async def receive():
+            return {"type": "websocket.disconnect"}
+
+        async def send(message):
+            events.append(message)
+
+        await bridge.handle_streamable_http({"type": "websocket"}, receive, send)
+
+        assert events[0]["status"] == 404
+
+    @pytest.mark.asyncio
+    async def test_bridge_rejects_unsupported_methods(self):
+        """Unsupported internal transport methods should return 405."""
+        bridge = InternalTrustedMCPTransportBridge(AsyncMock())
+        encoded_auth = base64.urlsafe_b64encode(orjson.dumps({"email": "user@example.com"})).decode("ascii").rstrip("=")
+        events = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            events.append(message)
+
+        await bridge.handle_streamable_http(
+            {
+                "type": "http",
+                "method": "PATCH",
+                "headers": [
+                    (b"x-contextforge-mcp-runtime", b"rust"),
+                    (b"x-contextforge-auth-context", encoded_auth.encode("ascii")),
+                ],
+                "client": ("127.0.0.1", 5000),
+            },
+            receive,
+            send,
+        )
+
+        assert events[0]["status"] == 405
+
+
+class TestMcpSerialization:
+    """Test MCP-specific response shaping helpers."""
+
+    def test_serialize_mcp_tool_definition_strips_api_only_fields(self):
+        """MCP tool payloads should exclude API-only metadata like dict-shaped tags."""
+        payload = _serialize_mcp_tool_definition(
+            {
+                "name": "a2a-test-agent",
+                "description": "A2A tool",
+                "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+                "outputSchema": {"type": "object"},
+                "annotations": {"title": "A2A tool"},
+                "tags": [{"id": "ai", "label": "ai"}],
+                "url": "https://example.com/agent",
+            }
+        )
+
+        assert payload == {
+            "name": "a2a-test-agent",
+            "description": "A2A tool",
+            "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+            "outputSchema": {"type": "object"},
+            "annotations": {"title": "A2A tool"},
+        }
+        assert "tags" not in payload
+        assert "url" not in payload
+
+    def test_serialize_mcp_tool_definition_handles_unknown_objects(self):
+        """Unknown objects should serialize to an empty MCP payload."""
+        assert _serialize_mcp_tool_definition(object()) == {}
+
+    def test_serialize_legacy_tool_payloads_preserves_dicts_and_unknowns(self):
+        """Legacy payload serialization should preserve dicts and tolerate unknown objects."""
+        payloads = _serialize_legacy_tool_payloads([{"id": "tool-1"}, object()])
+        assert payloads == [{"id": "tool-1"}, {}]
+
+
+class TestInternalMcpHelperCoverage:
+    """Target helper branches added for trusted Rust MCP forwarding."""
+
+    def test_decode_internal_mcp_auth_context_rejects_non_object_payload(self):
+        """Non-object JSON payloads should be rejected."""
+        header_value = base64.urlsafe_b64encode(orjson.dumps(["not-an-object"])).decode().rstrip("=")
+        with pytest.raises(ValueError, match="must be an object"):
+            _decode_internal_mcp_auth_context(header_value)
+
+    def test_build_internal_mcp_forwarded_user_rejects_invalid_auth_context(self):
+        """Malformed forwarded auth context should return a 400-style HTTPException."""
+        request = MagicMock(spec=Request)
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
+            "x-contextforge-auth-context": "not-base64",
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = MagicMock()
+
+        with pytest.raises(HTTPException) as excinfo:
+            _build_internal_mcp_forwarded_user(request)
+
+        assert excinfo.value.status_code == 400
+        assert "Invalid trusted MCP auth context" in excinfo.value.detail
+
+    def test_build_internal_mcp_forwarded_user_requires_internal_runtime_auth_header(self):
+        """Trusted Rust forwarding must include the shared internal-auth header."""
+        request = MagicMock(spec=Request)
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(orjson.dumps({"email": "user@example.com"})).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = MagicMock()
+
+        with pytest.raises(HTTPException) as excinfo:
+            _build_internal_mcp_forwarded_user(request)
+
+        assert excinfo.value.status_code == 403
+        assert "only available to the local Rust runtime" in excinfo.value.detail
+
+    def test_build_internal_mcp_forwarded_user_sets_session_validated_and_token_teams(self):
+        """Trusted forwarded auth should copy teams and set the Rust session validation marker."""
+        request = MagicMock(spec=Request)
+        request.headers = _trusted_internal_mcp_headers(
+            {
+                "email": "user@example.com",
+                "teams": ["team-a"],
+                "is_authenticated": True,
+                "is_admin": False,
+                "permission_is_admin": True,
+                "token_use": "session",
+            },
+            **{"x-contextforge-session-validated": "rust"},
+        )
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = SimpleNamespace()
+
+        forwarded = _build_internal_mcp_forwarded_user(request)
+
+        assert forwarded["email"] == "user@example.com"
+        assert forwarded["is_admin"] is True
+        assert request.state.token_teams == ["team-a"]
+        assert getattr(request.state, "_mcp_internal_auth_context")["_rust_session_validated"] is True
+
+    @pytest.mark.asyncio
+    async def test_handle_internal_mcp_tools_call_metric_records_buffered_metrics(self):
+        """Trusted Rust metrics writeback should use the buffered Python metric recorder."""
+        request = MagicMock(spec=Request)
+        request.headers = _trusted_internal_mcp_headers(
+            {
+                "email": "user@example.com",
+                "teams": ["team-a"],
+                "is_authenticated": True,
+                "is_admin": False,
+            },
+            **{"x-contextforge-server-id": "server-1"},
+        )
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = SimpleNamespace()
+        request.body = AsyncMock(
+            return_value=orjson.dumps(
+                {
+                    "toolId": "tool-1",
+                    "serverId": "server-1",
+                    "durationMs": 250.0,
+                    "success": True,
+                }
+            )
+        )
+        metrics_buffer = MagicMock()
+
+        with patch(
+            "mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service",
+            return_value=metrics_buffer,
+        ):
+            response = await handle_internal_mcp_tools_call_metric(request)
+
+        assert response.status_code == 200
+        assert orjson.loads(response.body) == {"status": "ok"}
+        metrics_buffer.record_tool_metric_with_duration.assert_called_once_with(
+            tool_id="tool-1",
+            response_time=0.25,
+            success=True,
+            error_message=None,
+        )
+        metrics_buffer.record_server_metric_with_duration.assert_called_once_with(
+            server_id="server-1",
+            response_time=0.25,
+            success=True,
+            error_message=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_handle_internal_mcp_tools_call_metric_rejects_invalid_payload(self):
+        """Tool metric writeback should reject missing identifiers."""
+        request = MagicMock(spec=Request)
+        request.headers = _trusted_internal_mcp_headers({"email": "user@example.com"})
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = SimpleNamespace()
+        request.body = AsyncMock(return_value=orjson.dumps({"durationMs": 25, "success": True}))
+
+        response = await handle_internal_mcp_tools_call_metric(request)
+
+        assert response.status_code == 400
+        assert orjson.loads(response.body) == {"detail": "Missing toolId"}
+
+    def test_enforce_internal_mcp_server_scope_returns_when_no_auth_context(self):
+        """Missing forwarded auth context should skip server-scope enforcement."""
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        request.state = SimpleNamespace()
+
+        _enforce_internal_mcp_server_scope(request, "server-1")
+
+    def test_extract_scoped_permissions_prefers_internal_auth_context(self):
+        """Internal auth context should drive scoped permissions, with empty values deferring to RBAC."""
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        request.state = SimpleNamespace(_mcp_internal_auth_context={"scoped_permissions": []})
+
+        assert _extract_scoped_permissions(request) is None
+
+        request.state._mcp_internal_auth_context = {"scoped_permissions": ["tools.read", "servers.use"]}
+        assert _extract_scoped_permissions(request) == {"tools.read", "servers.use"}
+
+    def test_is_permission_admin_user_handles_object_and_dict_inputs(self):
+        """Permission-layer admin helper should handle object, dict, and unknown payloads."""
+        assert _is_permission_admin_user(SimpleNamespace(is_admin=True)) is True
+        assert _is_permission_admin_user({"permission_is_admin": True}) is True
+        assert _is_permission_admin_user({"is_admin": True}) is False
+        assert _is_permission_admin_user("not-a-user") is False
+
+    @pytest.mark.asyncio
+    async def test_ensure_rpc_permission_short_circuits_admin_system_config_for_permission_admin(self):
+        """Permission-layer admins should short-circuit admin.system_config after scope enforcement."""
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        request.state = SimpleNamespace(_jwt_verified_payload=("token", {"scopes": {"permissions": ["admin.system_config"]}}))
+
+        with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(side_effect=AssertionError("RBAC should be skipped"))):
+            await _ensure_rpc_permission({"permission_is_admin": True}, MagicMock(), "admin.system_config", "roots/list", request)
 
 
 class TestEndpointErrorHandling:
@@ -1025,7 +1877,6 @@ class TestAdminAuthMiddleware:
             response = await middleware.dispatch(request, call_next)
             assert response.status_code == 500
 
-
     @pytest.mark.asyncio
     async def test_admin_auth_team_scoped_request_passes_with_team_role(self, monkeypatch):
         """User with only team-scoped admin.dashboard should pass when request has valid team_id."""
@@ -1320,10 +2171,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
         )
         # Simulate repeated keys — .get() returns the last value
-        request.query_params = QueryParams(
-            "team_id=00000000000000000000000000000099"
-            "&team_id=a1b2c3d4e5f6789012345678abcdef01"
-        )
+        request.query_params = QueryParams("team_id=00000000000000000000000000000099" "&team_id=a1b2c3d4e5f6789012345678abcdef01")
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -4057,6 +4905,19 @@ class TestA2ABranchCoverage:
 class TestRpcHandling:
     """Cover RPC handler branches."""
 
+    @pytest.fixture(autouse=True)
+    def _trust_internal_rust_headers_for_handler_logic_tests(self, monkeypatch):
+        """Keep this suite focused on handler logic, not trust-boundary validation.
+
+        The trust boundary itself is covered separately by the dedicated helper
+        and middleware tests above.
+        """
+        monkeypatch.setattr(
+            "mcpgateway.main._is_trusted_internal_mcp_runtime_request",
+            lambda request: request.headers.get("x-contextforge-mcp-runtime") == "rust"
+            and getattr(getattr(request, "client", None), "host", None) in ("127.0.0.1", "::1"),
+        )
+
     @staticmethod
     def _make_request(payload: dict) -> MagicMock:
         request = MagicMock(spec=Request)
@@ -4083,11 +4944,2794 @@ class TestRpcHandling:
         mock_db = MagicMock()
 
         with (
-            patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])),
+            patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])) as mock_list_server_tools,
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
-            assert result["result"]["tools"][0]["id"] == "tool-1"
+            assert len(result["result"]["tools"]) == 1
+            assert mock_list_server_tools.await_args.args[1] == "srv"
+
+    async def test_handle_rpc_tools_list_uses_internal_rust_server_header(self):
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {"server_id": "body-srv"}}
+        request = self._make_request(payload)
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "header-srv",
+        }
+
+        tool = MagicMock()
+        tool.model_dump.return_value = {"id": "tool-header"}
+        mock_db = MagicMock()
+
+        with (
+            patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])) as mock_list_server_tools,
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+        ):
+            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+
+        assert len(result["result"]["tools"]) == 1
+        assert mock_list_server_tools.await_args.args[1] == "header-srv"
+
+    async def test_handle_rpc_ignores_internal_server_header_without_rust_runtime_marker(self):
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {
+            "x-contextforge-server-id": "spoofed-srv",
+        }
+
+        tool = MagicMock()
+        tool.model_dump.return_value = {"id": "tool-plain"}
+        mock_db = MagicMock()
+
+        with (
+            patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))) as mock_list_tools,
+            patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock()) as mock_list_server_tools,
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+        ):
+            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+
+        assert len(result["result"]["tools"]) == 1
+        mock_list_tools.assert_awaited_once()
+        mock_list_server_tools.assert_not_awaited()
+
+    async def test_handle_internal_mcp_rpc_uses_forwarded_auth_context(self):
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": True,
+                        "token_use": "session",
+                        "scoped_permissions": ["tools.read"],
+                        "scoped_server_id": "srv-scoped",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._handle_rpc_authenticated", new=AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": "1"})) as mock_dispatch,
+        ):
+            result = await handle_internal_mcp_rpc(request)
+
+        assert result["jsonrpc"] == "2.0"
+        forwarded_user = mock_dispatch.await_args.kwargs["user"]
+        assert forwarded_user["email"] == "user@example.com"
+        assert forwarded_user["is_admin"] is True
+        assert request.state.token_teams == ["team-a"]
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    async def test_handle_internal_mcp_rpc_rejects_non_loopback_requests(self):
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="10.0.0.2")
+
+        with pytest.raises(HTTPException) as excinfo:
+            await handle_internal_mcp_rpc(request)
+
+        assert excinfo.value.status_code == 403
+
+    async def test_handle_internal_mcp_rpc_rolls_back_on_dispatch_error(self):
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._handle_rpc_authenticated", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await handle_internal_mcp_rpc(request)
+
+        mock_db.rollback.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    async def test_handle_internal_mcp_rpc_skips_jsonrpc_model_validation(self):
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
+        request = self._make_request(payload)
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": [],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": True,
+                        "scoped_permissions": ["tools.read"],
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        tool = MagicMock()
+        tool.model_dump.return_value = {"name": "tool-1", "description": "desc", "inputSchema": {"type": "object"}}
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main.RPCRequest", side_effect=AssertionError("trusted internal MCP dispatch should skip RPCRequest validation")),
+            patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+        ):
+            result = await handle_internal_mcp_rpc(request)
+
+        assert result["result"]["tools"][0]["name"] == "tool-1"
+
+    async def test_handle_internal_mcp_initialize_returns_jsonrpc_result(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "init-1", "method": "initialize", "params": {"session_id": "sess-1", "protocolVersion": "2025-11-25"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "mcp-session-id": "client-session-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "scoped_server_id": "srv-1",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        init_result = MagicMock()
+        init_result.model_dump.return_value = {"protocolVersion": "2025-11-25", "capabilities": {}}
+        monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value="user@example.com"))
+        handle_initialize_logic = AsyncMock(return_value=init_result)
+        monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", handle_initialize_logic)
+
+        response = await handle_internal_mcp_initialize(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "jsonrpc": "2.0",
+            "id": "init-1",
+            "result": {"protocolVersion": "2025-11-25", "capabilities": {}},
+        }
+        handle_initialize_logic.assert_awaited_once_with(
+            {"session_id": "sess-1", "protocolVersion": "2025-11-25"},
+            session_id="sess-1",
+            server_id="srv-1",
+        )
+
+    async def test_handle_internal_mcp_initialize_rejects_session_owner_mismatch(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "init-deny", "method": "initialize", "params": {"session_id": "sess-1", "protocolVersion": "2025-11-25"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "scoped_server_id": "srv-1",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value="other@example.com"))
+        handle_initialize_logic = AsyncMock()
+        monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", handle_initialize_logic)
+
+        response = await handle_internal_mcp_initialize(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "jsonrpc": "2.0",
+            "id": "init-deny",
+            "error": {"code": -32003, "message": "Access denied", "data": {"method": "initialize"}},
+        }
+        handle_initialize_logic.assert_not_awaited()
+
+    async def test_handle_internal_mcp_session_delete_cleans_up_session_state(self, monkeypatch):
+        request = self._make_request({})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "mcp-session-id": "sess-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "scoped_server_id": "srv-1",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        remove_session = AsyncMock()
+        cleanup_owner = AsyncMock()
+        pool = MagicMock()
+        pool.cleanup_streamable_http_session_owner = cleanup_owner
+        monkeypatch.setattr("mcpgateway.main._validate_streamable_session_access", AsyncMock(return_value=(True, 200, "")))
+        monkeypatch.setattr("mcpgateway.main.session_registry.remove_session", remove_session)
+        monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_session_affinity_enabled", True)
+
+        with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool):
+            response = await handle_internal_mcp_session_delete(request)
+
+        assert response.status_code == 204
+        remove_session.assert_awaited_once_with("sess-1")
+        cleanup_owner.assert_awaited_once_with("sess-1")
+
+    async def test_handle_internal_mcp_session_delete_skips_python_validation_when_rust_validated(self, monkeypatch):
+        request = self._make_request({})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "mcp-session-id": "sess-1",
+            "x-contextforge-session-validated": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "scoped_server_id": "srv-1",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        remove_session = AsyncMock()
+        monkeypatch.setattr("mcpgateway.main._validate_streamable_session_access", AsyncMock(side_effect=AssertionError("should not be called")))
+        monkeypatch.setattr("mcpgateway.main.session_registry.remove_session", remove_session)
+        monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_session_affinity_enabled", False)
+
+        response = await handle_internal_mcp_session_delete(request)
+
+        assert response.status_code == 204
+        remove_session.assert_awaited_once_with("sess-1")
+
+    async def test_handle_internal_mcp_session_delete_requires_session_header(self):
+        request = self._make_request({})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        response = await handle_internal_mcp_session_delete(request)
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode()) == {"detail": "mcp-session-id header is required"}
+
+    async def test_handle_internal_mcp_notifications_initialized_returns_no_content(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "scoped_server_id": "srv-1",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        notify = AsyncMock()
+        monkeypatch.setattr("mcpgateway.main.logging_service.notify", notify)
+
+        response = await handle_internal_mcp_notifications_initialized(request)
+
+        assert response.status_code == 204
+        notify.assert_awaited_once_with("Client initialized", LogLevel.INFO)
+
+    async def test_handle_internal_mcp_notifications_initialized_rejects_wrong_method(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "notif-1", "method": "notifications/message", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        response = await handle_internal_mcp_notifications_initialized(request)
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode()) == {
+            "jsonrpc": "2.0",
+            "id": "notif-1",
+            "error": {"code": -32600, "message": "Invalid Request"},
+        }
+
+    async def test_handle_internal_mcp_notifications_message_returns_no_content(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "method": "notifications/message", "params": {"data": "hello", "level": "info", "logger": "tests"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "scoped_server_id": "srv-1",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        notify = AsyncMock()
+        monkeypatch.setattr("mcpgateway.main.logging_service.notify", notify)
+
+        response = await handle_internal_mcp_notifications_message(request)
+
+        assert response.status_code == 204
+        notify.assert_awaited_once_with("hello", LogLevel.INFO, "tests")
+
+    async def test_handle_internal_mcp_notifications_message_rejects_wrong_method(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "notif-2", "method": "notifications/initialized", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        response = await handle_internal_mcp_notifications_message(request)
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode()) == {
+            "jsonrpc": "2.0",
+            "id": "notif-2",
+            "error": {"code": -32600, "message": "Invalid Request"},
+        }
+
+    async def test_handle_internal_mcp_notifications_cancelled_returns_no_content(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": "run-1", "reason": "stop"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "scoped_server_id": "srv-1",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        monkeypatch.setattr("mcpgateway.main._authorize_run_cancellation", AsyncMock())
+        cancel_run = AsyncMock()
+        notify = AsyncMock()
+        monkeypatch.setattr("mcpgateway.main.cancellation_service.cancel_run", cancel_run)
+        monkeypatch.setattr("mcpgateway.main.logging_service.notify", notify)
+
+        response = await handle_internal_mcp_notifications_cancelled(request)
+
+        assert response.status_code == 204
+        cancel_run.assert_awaited_once_with("run-1", reason="stop")
+        notify.assert_awaited_once_with("Request cancelled: run-1", LogLevel.INFO)
+
+    async def test_handle_internal_mcp_notifications_cancelled_rejects_wrong_method(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "notif-3", "method": "notifications/initialized", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        response = await handle_internal_mcp_notifications_cancelled(request)
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode()) == {
+            "jsonrpc": "2.0",
+            "id": "notif-3",
+            "error": {"code": -32600, "message": "Invalid Request"},
+        }
+
+    async def test_handle_internal_mcp_resources_list_returns_payload(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "resources-1", "method": "resources/list", "params": {"cursor": "cursor-1"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        resource = MagicMock()
+        resource.model_dump.return_value = {"uri": "resource://one", "name": "Resource One"}
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], "next-1"))),
+        ):
+            response = await handle_internal_mcp_resources_list(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "resources": [{"uri": "resource://one", "name": "Resource One"}],
+            "nextCursor": "next-1",
+        }
+
+    async def test_handle_internal_mcp_resources_read_returns_payload(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "resources-read-1", "method": "resources/read", "params": {"uri": "resource://one", "requestId": "req-1"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = MagicMock()
+
+        resource = MagicMock()
+        resource.model_dump.return_value = {"uri": "resource://one", "text": "hello"}
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(return_value=resource)),
+        ):
+            response = await handle_internal_mcp_resources_read(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "contents": [{"uri": "resource://one", "text": "hello"}],
+        }
+
+    async def test_handle_internal_mcp_resources_read_normalizes_legacy_resource_content(self):
+        from mcpgateway.common.models import ResourceContent
+
+        request = self._make_request({"jsonrpc": "2.0", "id": "resources-read-legacy", "method": "resources/read", "params": {"uri": "resource://legacy"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = MagicMock()
+
+        resource = ResourceContent(
+            type="resource",
+            id="legacy-id",
+            uri="resource://legacy",
+            mime_type="text/plain",
+            text="legacy-text",
+        )
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(return_value=resource)),
+        ):
+            response = await handle_internal_mcp_resources_read(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "contents": [{"uri": "resource://legacy", "mimeType": "text/plain", "text": "legacy-text"}],
+        }
+
+    async def test_handle_internal_mcp_resource_templates_list_returns_payload(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "resource-templates-1", "method": "resources/templates/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        template = MagicMock()
+        template.model_dump.return_value = {"uriTemplate": "resource://{id}", "name": "Resource Template"}
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
+        ):
+            response = await handle_internal_mcp_resource_templates_list(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "resourceTemplates": [{"uriTemplate": "resource://{id}", "name": "Resource Template"}],
+        }
+
+    async def test_handle_internal_mcp_resource_templates_list_scope_and_cleanup_paths(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "resource-templates-2", "method": "resources/templates/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        template = MagicMock()
+        template.model_dump.return_value = {"uriTemplate": "resource://{id}"}
+
+        ok_db = MagicMock()
+        ok_db.is_active = True
+        ok_db.in_transaction.return_value = object()
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=ok_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main._enforce_internal_mcp_server_scope"),
+            patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
+        ):
+            response = await handle_internal_mcp_resource_templates_list(request)
+        assert response.status_code == 200
+
+        err_db = MagicMock()
+        err_db.rollback.side_effect = RuntimeError("rollback failed")
+        err_db.invalidate.side_effect = RuntimeError("invalidate failed")
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=err_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await handle_internal_mcp_resource_templates_list(request)
+        err_db.invalidate.assert_called_once()
+
+    async def test_handle_internal_mcp_resources_subscribe_returns_payload(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "resources-sub-1", "method": "resources/subscribe", "params": {"uri": "resource://one"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_scoped_resource_access_context", return_value=("user@example.com", [])),
+            patch("mcpgateway.main.resource_service.subscribe_resource", new=AsyncMock(return_value=None)) as subscribe_resource,
+        ):
+            response = await handle_internal_mcp_resources_subscribe(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {}
+        subscription = subscribe_resource.await_args.args[1]
+        assert subscription.uri == "resource://one"
+        assert subscription.subscriber_id == "user@example.com"
+
+    async def test_handle_internal_mcp_resources_unsubscribe_returns_payload(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "resources-unsub-1", "method": "resources/unsubscribe", "params": {"uri": "resource://one"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main.resource_service.unsubscribe_resource", new=AsyncMock(return_value=None)) as unsubscribe_resource,
+        ):
+            response = await handle_internal_mcp_resources_unsubscribe(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {}
+        subscription = unsubscribe_resource.await_args.args[1]
+        assert subscription.uri == "resource://one"
+        assert subscription.subscriber_id == "user@example.com"
+
+    async def test_handle_internal_mcp_resources_subscribe_and_unsubscribe_extra_error_paths(self):
+        from mcpgateway.services.resource_service import ResourceNotFoundError
+
+        subscribe_request = self._make_request({"jsonrpc": "2.0", "id": "resources-sub-2", "method": "resources/subscribe", "params": []})
+        subscribe_request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        subscribe_request.client = SimpleNamespace(host="127.0.0.1")
+
+        missing_response = await handle_internal_mcp_resources_subscribe(subscribe_request)
+        assert missing_response.status_code == 400
+
+        subscribe_request.body = AsyncMock(return_value=json.dumps({"jsonrpc": "2.0", "id": "resources-sub-3", "method": "resources/subscribe", "params": {"uri": "resource://missing"}}).encode())
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=MagicMock()),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._enforce_internal_mcp_server_scope"),
+            patch("mcpgateway.main.resource_service.subscribe_resource", new=AsyncMock(side_effect=ResourceNotFoundError("missing"))),
+        ):
+            not_found_response = await handle_internal_mcp_resources_subscribe(subscribe_request)
+        assert not_found_response.status_code == 404
+
+        subscribe_request.body = AsyncMock(return_value=json.dumps({"jsonrpc": "2.0", "id": "resources-sub-4", "method": "resources/subscribe", "params": {"uri": "resource://one"}}).encode())
+        subscribe_request.headers.pop("x-contextforge-server-id", None)
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=MagicMock()),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main.resource_service.subscribe_resource", new=AsyncMock(side_effect=PermissionError("denied"))),
+        ):
+            denied_response = await handle_internal_mcp_resources_subscribe(subscribe_request)
+        assert denied_response.status_code == 403
+
+        subscribe_error_db = MagicMock()
+        subscribe_error_db.rollback.side_effect = RuntimeError("rollback failed")
+        subscribe_error_db.invalidate.side_effect = RuntimeError("invalidate failed")
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=subscribe_error_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main.resource_service.subscribe_resource", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            error_response = await handle_internal_mcp_resources_subscribe(subscribe_request)
+        assert error_response.status_code == 500
+        subscribe_error_db.invalidate.assert_called_once()
+
+        unsubscribe_request = self._make_request({"jsonrpc": "2.0", "id": "resources-unsub-2", "method": "resources/unsubscribe", "params": []})
+        unsubscribe_request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        unsubscribe_request.client = SimpleNamespace(host="127.0.0.1")
+        unsubscribe_missing = await handle_internal_mcp_resources_unsubscribe(unsubscribe_request)
+        assert unsubscribe_missing.status_code == 400
+
+        err_db = MagicMock()
+        err_db.rollback.side_effect = RuntimeError("rollback failed")
+        err_db.invalidate.side_effect = RuntimeError("invalidate failed")
+        unsubscribe_request.body = AsyncMock(return_value=json.dumps({"jsonrpc": "2.0", "id": "resources-unsub-3", "method": "resources/unsubscribe", "params": {"uri": "resource://one"}}).encode())
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=err_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._enforce_internal_mcp_server_scope"),
+            patch("mcpgateway.main.resource_service.unsubscribe_resource", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            error_response = await handle_internal_mcp_resources_unsubscribe(unsubscribe_request)
+        assert error_response.status_code == 500
+        err_db.invalidate.assert_called_once()
+
+    async def test_handle_internal_mcp_prompts_list_returns_payload(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "prompts-1", "method": "prompts/list", "params": {"cursor": "cursor-1"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        prompt = MagicMock()
+        prompt.model_dump.return_value = {"name": "prompt-one", "description": "Prompt One"}
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.prompt_service.list_prompts", new=AsyncMock(return_value=([prompt], "next-prompt"))),
+        ):
+            response = await handle_internal_mcp_prompts_list(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "prompts": [{"name": "prompt-one", "description": "Prompt One"}],
+            "nextCursor": "next-prompt",
+        }
+
+    async def test_handle_internal_mcp_prompts_get_returns_payload(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "prompts-get-1", "method": "prompts/get", "params": {"name": "prompt-one", "arguments": {"subject": "hi"}}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = MagicMock()
+
+        prompt = MagicMock()
+        prompt.model_dump.return_value = {"name": "prompt-one", "messages": [{"role": "user", "content": "hi"}]}
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(return_value=prompt)),
+        ):
+            response = await handle_internal_mcp_prompts_get(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "name": "prompt-one",
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+
+    async def test_handle_internal_mcp_roots_list_returns_payload(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "roots-1", "method": "roots/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "admin@example.com",
+                        "teams": None,
+                        "is_authenticated": True,
+                        "is_admin": True,
+                        "permission_is_admin": True,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+        root = MagicMock()
+        root.model_dump.return_value = {"uri": "file:///tmp", "name": "tmp"}
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
+            patch("mcpgateway.main.root_service.list_roots", new=AsyncMock(return_value=[root])),
+        ):
+            response = await handle_internal_mcp_roots_list(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "roots": [{"uri": "file:///tmp", "name": "tmp"}],
+        }
+
+    async def test_handle_internal_mcp_completion_complete_returns_payload(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "completion-1", "method": "completion/complete", "params": {"prompt": "hi"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.completion_service.handle_completion", new=AsyncMock(return_value={"completion": {"text": "done"}})),
+        ):
+            response = await handle_internal_mcp_completion_complete(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {"completion": {"text": "done"}}
+
+    async def test_handle_internal_mcp_completion_complete_returns_json_error_on_exception(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "completion-err-1", "method": "completion/complete", "params": {"prompt": "hi"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.completion_service.handle_completion", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            response = await handle_internal_mcp_completion_complete(request)
+
+        assert response.status_code == 500
+        assert json.loads(response.body.decode()) == {
+            "code": -32000,
+            "message": "Internal error",
+            "data": "boom",
+        }
+
+    async def test_handle_internal_mcp_completion_complete_scope_and_cleanup_variants(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "completion-3", "method": "completion/complete", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        ok_db = MagicMock()
+        ok_db.is_active = True
+        ok_db.in_transaction.return_value = object()
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=ok_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main._enforce_internal_mcp_server_scope"),
+            patch("mcpgateway.main.completion_service.handle_completion", new=AsyncMock(return_value={"completion": {"text": "ok"}})),
+        ):
+            response = await handle_internal_mcp_completion_complete(request)
+        assert response.status_code == 200
+
+        err_db = MagicMock()
+        err_db.rollback.side_effect = RuntimeError("rollback failed")
+        err_db.invalidate.side_effect = RuntimeError("invalidate failed")
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=err_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.completion_service.handle_completion", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            response = await handle_internal_mcp_completion_complete(request)
+        assert response.status_code == 500
+        err_db.invalidate.assert_called_once()
+
+    async def test_handle_internal_mcp_roots_list_ignores_invalidate_failure_on_cleanup(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "roots-err", "method": "roots/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        err_db = MagicMock()
+        err_db.rollback.side_effect = RuntimeError("rollback failed")
+        err_db.invalidate.side_effect = RuntimeError("invalidate failed")
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=err_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
+            patch("mcpgateway.main.root_service.list_roots", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await handle_internal_mcp_roots_list(request)
+        err_db.invalidate.assert_called_once()
+
+    async def test_handle_internal_mcp_sampling_create_message_returns_payload(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "sampling-1", "method": "sampling/createMessage", "params": {"messages": []}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main.sampling_handler.create_message", new=AsyncMock(return_value={"messages": [{"text": "ok"}]})),
+        ):
+            response = await handle_internal_mcp_sampling_create_message(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {"messages": [{"text": "ok"}]}
+
+    async def test_handle_internal_mcp_sampling_create_message_returns_json_error_on_exception(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "sampling-err-1", "method": "sampling/createMessage", "params": {"messages": []}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main.sampling_handler.create_message", new=AsyncMock(side_effect=RuntimeError("sampling boom"))),
+        ):
+            response = await handle_internal_mcp_sampling_create_message(request)
+
+        assert response.status_code == 500
+        assert json.loads(response.body.decode()) == {
+            "code": -32000,
+            "message": "Internal error",
+            "data": "sampling boom",
+        }
+
+    async def test_handle_internal_mcp_sampling_create_message_scope_and_jsonrpc_variants(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "sampling-3", "method": "sampling/createMessage", "params": []})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        ok_db = MagicMock()
+        ok_db.is_active = True
+        ok_db.in_transaction.return_value = object()
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=ok_db),
+            patch("mcpgateway.main._enforce_internal_mcp_server_scope"),
+            patch("mcpgateway.main.sampling_handler.create_message", new=AsyncMock(return_value={"messages": []})),
+        ):
+            response = await handle_internal_mcp_sampling_create_message(request)
+        assert response.status_code == 200
+
+        err_db = MagicMock()
+        err_db.rollback.side_effect = RuntimeError("rollback failed")
+        err_db.invalidate.side_effect = RuntimeError("invalidate failed")
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=err_db),
+            patch("mcpgateway.main.sampling_handler.create_message", new=AsyncMock(side_effect=JSONRPCError(-32003, "Access denied", {"method": "sampling/createMessage"}))),
+        ):
+            response = await handle_internal_mcp_sampling_create_message(request)
+        assert response.status_code == 403
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=err_db),
+            patch("mcpgateway.main.sampling_handler.create_message", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            response = await handle_internal_mcp_sampling_create_message(request)
+        assert response.status_code == 500
+        err_db.invalidate.assert_called_once()
+
+    async def test_handle_internal_mcp_logging_set_level_returns_payload(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "logging-1", "method": "logging/setLevel", "params": {"level": "warning"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "admin@example.com",
+                        "teams": None,
+                        "is_authenticated": True,
+                        "is_admin": True,
+                        "permission_is_admin": True,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
+            patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)),
+        ):
+            response = await handle_internal_mcp_logging_set_level(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {}
+
+    async def test_handle_internal_mcp_logging_set_level_non_dict_params_and_cleanup_path(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "logging-2", "method": "logging/setLevel", "params": []})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        ok_db = MagicMock()
+        ok_db.is_active = True
+        ok_db.in_transaction.return_value = object()
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=ok_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main.LogLevel", lambda _value=None: "info"),
+            patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)),
+        ):
+            response = await handle_internal_mcp_logging_set_level(request)
+        assert response.status_code == 200
+
+        err_db = MagicMock()
+        err_db.rollback.side_effect = RuntimeError("rollback failed")
+        err_db.invalidate.side_effect = RuntimeError("invalidate failed")
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=err_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            response = await handle_internal_mcp_logging_set_level(request)
+        assert response.status_code == 500
+        err_db.invalidate.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("handler", "method_name"),
+        [
+            (handle_internal_mcp_initialize, "initialize"),
+            (handle_internal_mcp_notifications_initialized, "notifications/initialized"),
+            (handle_internal_mcp_notifications_message, "notifications/message"),
+            (handle_internal_mcp_notifications_cancelled, "notifications/cancelled"),
+            (handle_internal_mcp_resources_list, "resources/list"),
+            (handle_internal_mcp_resources_read, "resources/read"),
+            (handle_internal_mcp_resources_subscribe, "resources/subscribe"),
+            (handle_internal_mcp_resources_unsubscribe, "resources/unsubscribe"),
+            (handle_internal_mcp_resource_templates_list, "resources/templates/list"),
+            (handle_internal_mcp_roots_list, "roots/list"),
+            (handle_internal_mcp_completion_complete, "completion/complete"),
+            (handle_internal_mcp_sampling_create_message, "sampling/createMessage"),
+            (handle_internal_mcp_logging_set_level, "logging/setLevel"),
+            (handle_internal_mcp_prompts_list, "prompts/list"),
+            (handle_internal_mcp_prompts_get, "prompts/get"),
+        ],
+    )
+    async def test_internal_mcp_handlers_reject_parse_errors(self, handler, method_name):
+        """Trusted internal handlers should return JSON-RPC parse errors on malformed bodies."""
+        request = MagicMock(spec=Request)
+        request.body = AsyncMock(return_value=b"{bad")
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.query_params = {}
+        request.state = MagicMock()
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        if handler in {
+            handle_internal_mcp_resources_list,
+            handle_internal_mcp_resources_read,
+            handle_internal_mcp_resources_subscribe,
+            handle_internal_mcp_resources_unsubscribe,
+            handle_internal_mcp_resource_templates_list,
+            handle_internal_mcp_roots_list,
+            handle_internal_mcp_completion_complete,
+            handle_internal_mcp_sampling_create_message,
+            handle_internal_mcp_logging_set_level,
+            handle_internal_mcp_prompts_list,
+            handle_internal_mcp_prompts_get,
+        }:
+            mock_db = MagicMock()
+            mock_db.is_active = True
+            mock_db.in_transaction.return_value = object()
+            with patch("mcpgateway.main.SessionLocal", return_value=mock_db):
+                response = await handler(request)
+        else:
+            response = await handler(request)
+
+        assert response.status_code == 400, method_name
+        assert json.loads(response.body.decode())["error"]["code"] == -32700
+
+    @pytest.mark.parametrize(
+        ("handler", "expected_method", "wrong_method"),
+        [
+            (handle_internal_mcp_initialize, "initialize", "tools/list"),
+            (handle_internal_mcp_notifications_initialized, "notifications/initialized", "notifications/message"),
+            (handle_internal_mcp_notifications_message, "notifications/message", "notifications/initialized"),
+            (handle_internal_mcp_notifications_cancelled, "notifications/cancelled", "notifications/initialized"),
+            (handle_internal_mcp_resources_list, "resources/list", "tools/list"),
+            (handle_internal_mcp_resources_read, "resources/read", "resources/list"),
+            (handle_internal_mcp_resources_subscribe, "resources/subscribe", "resources/unsubscribe"),
+            (handle_internal_mcp_resources_unsubscribe, "resources/unsubscribe", "resources/subscribe"),
+            (handle_internal_mcp_resource_templates_list, "resources/templates/list", "resources/list"),
+            (handle_internal_mcp_roots_list, "roots/list", "tools/list"),
+            (handle_internal_mcp_completion_complete, "completion/complete", "tools/list"),
+            (handle_internal_mcp_sampling_create_message, "sampling/createMessage", "tools/list"),
+            (handle_internal_mcp_logging_set_level, "logging/setLevel", "tools/list"),
+            (handle_internal_mcp_prompts_list, "prompts/list", "tools/list"),
+            (handle_internal_mcp_prompts_get, "prompts/get", "prompts/list"),
+        ],
+    )
+    async def test_internal_mcp_handlers_reject_invalid_method(self, handler, expected_method, wrong_method):
+        """Trusted internal handlers should reject unexpected JSON-RPC methods."""
+        request = self._make_request({"jsonrpc": "2.0", "id": "bad-method", "method": wrong_method, "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        if handler in {
+            handle_internal_mcp_resources_list,
+            handle_internal_mcp_resources_read,
+            handle_internal_mcp_resources_subscribe,
+            handle_internal_mcp_resources_unsubscribe,
+            handle_internal_mcp_resource_templates_list,
+            handle_internal_mcp_roots_list,
+            handle_internal_mcp_completion_complete,
+            handle_internal_mcp_sampling_create_message,
+            handle_internal_mcp_logging_set_level,
+            handle_internal_mcp_prompts_list,
+            handle_internal_mcp_prompts_get,
+        }:
+            mock_db = MagicMock()
+            mock_db.is_active = True
+            mock_db.in_transaction.return_value = object()
+            with patch("mcpgateway.main.SessionLocal", return_value=mock_db):
+                response = await handler(request)
+        else:
+            response = await handler(request)
+
+        assert response.status_code == 400, expected_method
+        assert json.loads(response.body.decode())["error"]["code"] == -32600
+
+    @pytest.mark.parametrize(
+        ("handler", "method_name", "params", "patch_target", "expected_payload"),
+        [
+            (
+                handle_internal_mcp_resources_list,
+                "resources/list",
+                [],
+                "mcpgateway.main.resource_service.list_resources",
+                {"resources": [], "nextCursor": "next"},
+            ),
+            (
+                handle_internal_mcp_resource_templates_list,
+                "resources/templates/list",
+                [],
+                "mcpgateway.main.resource_service.list_resource_templates",
+                {"resourceTemplates": []},
+            ),
+            (
+                handle_internal_mcp_completion_complete,
+                "completion/complete",
+                [],
+                "mcpgateway.main.completion_service.handle_completion",
+                {"completion": {"text": "done"}},
+            ),
+            (
+                handle_internal_mcp_sampling_create_message,
+                "sampling/createMessage",
+                [],
+                "mcpgateway.main.sampling_handler.create_message",
+                {"messages": []},
+            ),
+            (
+                handle_internal_mcp_prompts_list,
+                "prompts/list",
+                [],
+                "mcpgateway.main.prompt_service.list_prompts",
+                {"prompts": [], "nextCursor": "next"},
+            ),
+        ],
+    )
+    async def test_internal_mcp_handlers_accept_non_dict_params(self, handler, method_name, params, patch_target, expected_payload):
+        """Handlers should coerce non-dict params to {} and continue safely."""
+        request = self._make_request({"jsonrpc": "2.0", "id": "params-1", "method": method_name, "params": params})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        patch_value = None
+        if handler in {handle_internal_mcp_resources_list, handle_internal_mcp_prompts_list}:
+            patch_value = ([], "next")
+        elif handler is handle_internal_mcp_resource_templates_list:
+            patch_value = []
+        elif handler is handle_internal_mcp_completion_complete:
+            patch_value = {"completion": {"text": "done"}}
+        elif handler is handle_internal_mcp_sampling_create_message:
+            patch_value = {"messages": []}
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main._get_scoped_resource_access_context", return_value=("user@example.com", [])),
+            patch(patch_target, new=AsyncMock(return_value=patch_value)),
+        ):
+            response = await handler(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == expected_payload
+
+    async def test_handle_internal_mcp_tools_list_returns_direct_definitions(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": True,
+                        "scoped_permissions": ["tools.read"],
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", ["team-a"], False)),
+            patch(
+                "mcpgateway.main.tool_service.list_server_mcp_tool_definitions",
+                new=AsyncMock(return_value=[{"name": "echo", "inputSchema": {"type": "object"}, "annotations": {}}]),
+            ) as mock_list_defs,
+        ):
+            response = await handle_internal_mcp_tools_list(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {"tools": [{"name": "echo", "inputSchema": {"type": "object"}, "annotations": {}}]}
+        assert mock_list_defs.await_args.args[1] == "srv-1"
+
+    async def test_handle_internal_mcp_tools_list_authz_returns_no_content(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": True,
+                        "scoped_permissions": ["tools.read"],
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with patch("mcpgateway.main.SessionLocal", return_value=mock_db):
+            response = await handle_internal_mcp_tools_list_authz(request)
+
+        assert response.status_code == 204
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    async def test_handle_internal_mcp_tools_list_authz_skips_rbac_for_unauthenticated_public_only(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": None,
+                        "teams": [],
+                        "is_authenticated": False,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock(side_effect=AssertionError("RBAC should be skipped"))),
+        ):
+            response = await handle_internal_mcp_tools_list_authz(request)
+
+        assert response.status_code == 204
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "handler",
+        [
+            handle_internal_mcp_resources_list_authz,
+            handle_internal_mcp_resources_read_authz,
+            handle_internal_mcp_resource_templates_list_authz,
+            handle_internal_mcp_prompts_list_authz,
+            handle_internal_mcp_prompts_get_authz,
+        ],
+    )
+    async def test_server_scoped_internal_mcp_authz_wrappers_return_no_content(self, handler):
+        request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "noop", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+        ):
+            response = await handler(request)
+
+        assert response.status_code == 204
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    async def test_server_scoped_internal_mcp_authz_wrapper_rolls_back_and_invalidates_on_error(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "noop", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.rollback.side_effect = RuntimeError("rollback failed")
+        mock_db.invalidate.side_effect = RuntimeError("invalidate failed")
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await handle_internal_mcp_resources_list_authz(request)
+
+        mock_db.rollback.assert_called_once()
+        mock_db.invalidate.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    async def test_handle_internal_mcp_tools_list_rejects_scoped_server_mismatch(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-2",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": True,
+                        "scoped_permissions": ["tools.read"],
+                        "scoped_server_id": "srv-1",
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        with pytest.raises(HTTPException) as excinfo:
+            await handle_internal_mcp_tools_list(request)
+
+        assert excinfo.value.status_code == 403
+
+    async def test_handle_internal_mcp_tools_list_requires_server_scope(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        with pytest.raises(HTTPException) as excinfo:
+            await handle_internal_mcp_tools_list(request)
+
+        assert excinfo.value.status_code == 400
+
+    async def test_handle_internal_mcp_tools_list_admin_public_and_cleanup_paths(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "tools-list-2", "method": "tools/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        ok_db = MagicMock()
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=ok_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.tool_service.list_server_mcp_tool_definitions", new=AsyncMock(return_value=[])),
+        ):
+            response = await handle_internal_mcp_tools_list(request)
+        assert response.status_code == 200
+
+        request_public = self._make_request({"jsonrpc": "2.0", "id": "tools-list-3", "method": "tools/list", "params": {}})
+        request_public.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request_public.client = SimpleNamespace(host="127.0.0.1")
+
+        http_db = MagicMock()
+        http_db.rollback.side_effect = RuntimeError("rollback failed")
+        http_db.invalidate.side_effect = RuntimeError("invalidate failed")
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=http_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(side_effect=HTTPException(status_code=403, detail="denied"))),
+        ):
+            with pytest.raises(HTTPException):
+                await handle_internal_mcp_tools_list(request_public)
+        http_db.invalidate.assert_called_once()
+
+        generic_db = MagicMock()
+        generic_db.rollback.side_effect = RuntimeError("rollback failed")
+        generic_db.invalidate.side_effect = RuntimeError("invalidate failed")
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=generic_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.tool_service.list_server_mcp_tool_definitions", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            response = await handle_internal_mcp_tools_list(request_public)
+        assert response.status_code == 500
+        generic_db.invalidate.assert_called_once()
+
+        jsonrpc_db = MagicMock()
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=jsonrpc_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(side_effect=JSONRPCError(-32003, "Access denied", {"method": "tools/list"}))),
+        ):
+            response = await handle_internal_mcp_tools_list(request_public)
+        assert response.status_code == 403
+        assert json.loads(response.body.decode())["code"] == -32003
+
+    async def test_handle_internal_mcp_tools_call_returns_jsonrpc_result(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "2", "method": "tools/call", "params": {"name": "echo", "arguments": {"text": "hello"}}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": True,
+                        "scoped_permissions": ["tools.execute"],
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+        tool_result = MagicMock()
+        tool_result.model_dump.return_value = {"content": [{"type": "text", "text": "ok"}], "isError": False}
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
+            patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value=tool_result)) as mock_invoke_tool,
+        ):
+            result = await handle_internal_mcp_tools_call(request)
+
+        assert result["jsonrpc"] == "2.0"
+        assert result["result"]["content"][0]["text"] == "ok"
+        assert mock_invoke_tool.await_args.kwargs["server_id"] == "srv-1"
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called()
+
+    async def test_handle_internal_mcp_tools_call_skips_rbac_for_unauthenticated_public_only(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "3", "method": "tools/call", "params": {"name": "echo", "arguments": {}}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": None,
+                        "teams": [],
+                        "is_authenticated": False,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+        tool_result = MagicMock()
+        tool_result.model_dump.return_value = {"content": [{"type": "text", "text": "ok"}], "isError": False}
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock(side_effect=AssertionError("RBAC should be skipped"))),
+            patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value=tool_result)),
+        ):
+            result = await handle_internal_mcp_tools_call(request)
+
+        assert result["result"]["content"][0]["text"] == "ok"
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called()
+
+    async def test_handle_internal_mcp_tools_call_returns_jsonrpc_not_found(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "4", "method": "tools/call", "params": {"name": "missing-tool", "arguments": {}}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": True,
+                        "scoped_permissions": ["tools.execute"],
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
+            patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(side_effect=ToolNotFoundError("Tool not found: missing-tool"))),
+        ):
+            result = await handle_internal_mcp_tools_call(request)
+
+        assert result["jsonrpc"] == "2.0"
+        assert result["id"] == "4"
+        assert result["error"]["code"] == -32601
+        assert "Tool not found: missing-tool" in result["error"]["message"]
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called()
+
+    async def test_handle_internal_mcp_tools_call_resolve_returns_jsonrpc_not_found(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "resolve-1", "method": "tools/call", "params": {"name": "missing-tool", "arguments": {}}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": False,
+                        "scoped_permissions": ["tools.execute"],
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
+            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=ToolNotFoundError("Tool not found: missing-tool"))),
+        ):
+            response = await handle_internal_mcp_tools_call_resolve(request)
+
+        assert response.status_code == 404
+        payload = json.loads(response.body)
+        assert payload["jsonrpc"] == "2.0"
+        assert payload["id"] == "resolve-1"
+        assert payload["error"]["code"] == -32601
+        assert "Tool not found: missing-tool" in payload["error"]["message"]
+        mock_db.close.assert_called()
+
+    async def test_handle_internal_mcp_initialize_non_dict_params_returns_internal_error(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        request = self._make_request({"jsonrpc": "2.0", "id": "init-err", "method": "initialize", "params": []})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        monkeypatch.setattr(main_mod, "_execute_rpc_initialize", AsyncMock(side_effect=RuntimeError("init boom")))
+
+        response = await handle_internal_mcp_initialize(request)
+        payload = json.loads(response.body.decode())
+
+        assert payload["error"]["code"] == -32000
+        assert payload["error"]["data"] == "init boom"
+
+    async def test_handle_internal_mcp_initialize_generates_id_and_returns_jsonrpc_error(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "method": "initialize", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        monkeypatch.setattr("mcpgateway.main._execute_rpc_initialize", AsyncMock(side_effect=JSONRPCError(-32003, "Access denied", {"method": "initialize"})))
+
+        response = await handle_internal_mcp_initialize(request)
+        payload = json.loads(response.body.decode())
+
+        assert payload["error"]["code"] == -32003
+        assert payload["id"] is not None
+
+    async def test_handle_internal_mcp_session_delete_denies_invalid_session_access(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "sess-del", "method": "delete", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "mcp-session-id": "sess-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        monkeypatch.setattr("mcpgateway.main._validate_streamable_session_access", AsyncMock(return_value=(False, 403, "denied")))
+
+        response = await handle_internal_mcp_session_delete(request)
+        assert response.status_code == 403
+        assert json.loads(response.body.decode())["detail"] == "denied"
+
+    async def test_handle_internal_mcp_session_delete_ignores_pool_runtime_errors(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "sess-del", "method": "delete", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "mcp-session-id": "sess-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "_rust_session_validated": True}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_session_affinity_enabled", True)
+        monkeypatch.setattr("mcpgateway.main.session_registry.remove_session", AsyncMock(return_value=None))
+        monkeypatch.setattr("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", MagicMock(side_effect=RuntimeError("pool unavailable")))
+
+        response = await handle_internal_mcp_session_delete(request)
+        assert response.status_code == 204
+
+    async def test_handle_internal_mcp_notifications_initialized_re_raises_http_exception(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "n1", "method": "notifications/initialized", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        monkeypatch.setattr("mcpgateway.main._enforce_internal_mcp_server_scope", MagicMock(side_effect=HTTPException(status_code=403, detail="scope mismatch")))
+
+        with pytest.raises(HTTPException) as excinfo:
+            await handle_internal_mcp_notifications_initialized(request)
+
+        assert excinfo.value.status_code == 403
+
+    async def test_handle_internal_mcp_notifications_initialized_returns_internal_error_on_logging_failure(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "n2", "method": "notifications/initialized", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        monkeypatch.setattr("mcpgateway.main.logging_service.notify", AsyncMock(side_effect=RuntimeError("notify boom")))
+
+        response = await handle_internal_mcp_notifications_initialized(request)
+        assert json.loads(response.body.decode())["error"]["data"] == "notify boom"
+
+    async def test_handle_internal_mcp_notifications_message_accepts_non_dict_params(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "n3", "method": "notifications/message", "params": []})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        notify = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.main.logging_service.notify", notify)
+
+        response = await handle_internal_mcp_notifications_message(request)
+        assert response.status_code == 204
+        assert notify.await_args.args[0] is None
+
+    async def test_handle_internal_mcp_notifications_message_re_raises_http_exception(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "n3b", "method": "notifications/message", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        monkeypatch.setattr("mcpgateway.main._enforce_internal_mcp_server_scope", MagicMock(side_effect=HTTPException(status_code=403, detail="scope mismatch")))
+
+        with pytest.raises(HTTPException) as excinfo:
+            await handle_internal_mcp_notifications_message(request)
+
+        assert excinfo.value.status_code == 403
+
+    async def test_handle_internal_mcp_notifications_cancelled_accepts_non_dict_params_and_returns_internal_error(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "n4", "method": "notifications/cancelled", "params": []})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        monkeypatch.setattr("mcpgateway.main.logging_service.notify", AsyncMock(side_effect=RuntimeError("cancel notify boom")))
+
+        response = await handle_internal_mcp_notifications_cancelled(request)
+        payload = json.loads(response.body.decode())
+        assert payload["error"]["data"] == "cancel notify boom"
+
+    async def test_handle_internal_mcp_resources_list_server_scope_admin_unrestricted(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "res-list", "method": "resources/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        resource = MagicMock()
+        resource.model_dump.return_value = {"uri": "resource://one"}
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.resource_service.list_server_resources", new=AsyncMock(return_value=[resource])),
+        ):
+            response = await handle_internal_mcp_resources_list(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {"resources": [{"uri": "resource://one"}]}
+
+    async def test_handle_internal_mcp_resources_list_public_only_and_generic_cleanup_path(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "res-list-2", "method": "resources/list", "params": {"cursor": "c1"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        resource = MagicMock()
+        resource.model_dump.return_value = {"uri": "resource://two"}
+
+        list_db = MagicMock()
+        list_db.is_active = True
+        list_db.in_transaction.return_value = object()
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=list_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], "next-cursor"))),
+        ):
+            response = await handle_internal_mcp_resources_list(request)
+        assert json.loads(response.body.decode()) == {"resources": [{"uri": "resource://two"}], "nextCursor": "next-cursor"}
+
+        error_db = MagicMock()
+        error_db.rollback.side_effect = RuntimeError("rollback failed")
+        error_db.invalidate.side_effect = RuntimeError("invalidate failed")
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=error_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            response = await handle_internal_mcp_resources_list(request)
+        assert response.status_code == 500
+        error_db.invalidate.assert_called_once()
+
+    async def test_handle_internal_mcp_resources_read_server_scope_missing_uri(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "res-read", "method": "resources/read", "params": []})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+        ):
+            response = await handle_internal_mcp_resources_read(request)
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode())["message"] == "Missing resource URI in parameters"
+
+    async def test_handle_internal_mcp_resources_read_admin_unrestricted_with_plain_payload(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "res-read", "method": "resources/read", "params": {"uri": "resource://one"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = MagicMock()
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(return_value={"uri": "resource://one"})),
+        ):
+            response = await handle_internal_mcp_resources_read(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {"contents": [{"uri": "resource://one"}]}
+
+    async def test_handle_internal_mcp_resources_read_returns_not_found_payload(self):
+        from mcpgateway.services.resource_service import ResourceNotFoundError
+
+        request = self._make_request({"jsonrpc": "2.0", "id": "res-read", "method": "resources/read", "params": {"uri": "resource://missing"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = MagicMock()
+        mock_db = MagicMock()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(side_effect=ResourceNotFoundError("missing"))),
+        ):
+            response = await handle_internal_mcp_resources_read(request)
+
+        assert response.status_code == 404
+        assert json.loads(response.body.decode())["data"] == {"uri": "resource://missing"}
+
+    async def test_handle_internal_mcp_resources_read_ignores_invalidate_failure_on_cleanup(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "res-read-err", "method": "resources/read", "params": {"uri": "resource://err"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = MagicMock()
+        mock_db = MagicMock()
+        mock_db.rollback.side_effect = RuntimeError("rollback failed")
+        mock_db.invalidate.side_effect = RuntimeError("invalidate failed")
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            response = await handle_internal_mcp_resources_read(request)
+
+        assert response.status_code == 500
+        mock_db.invalidate.assert_called_once()
+
+    async def test_handle_internal_mcp_resources_read_returns_resource_error_payload(self):
+        from mcpgateway.services.resource_service import ResourceError
+
+        request = self._make_request({"jsonrpc": "2.0", "id": "res-read-ambiguous", "method": "resources/read", "params": {"uri": "resource://dup"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = MagicMock()
+        mock_db = MagicMock()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch(
+                "mcpgateway.main.resource_service.read_resource",
+                new=AsyncMock(side_effect=ResourceError("Resource URI 'resource://dup' is ambiguous across multiple servers; use /servers/{id}/mcp.")),
+            ),
+        ):
+            response = await handle_internal_mcp_resources_read(request)
+
+        assert response.status_code == 400
+        payload = json.loads(response.body.decode())
+        assert payload["code"] == -32602
+        assert payload["data"] == {"uri": "resource://dup"}
+
+    async def test_handle_internal_mcp_prompts_list_server_scope_public_only_when_token_teams_missing(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "prompts-list", "method": "prompts/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        prompt = MagicMock()
+        prompt.model_dump.return_value = {"name": "prompt-one"}
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.prompt_service.list_server_prompts", new=AsyncMock(return_value=[prompt])),
+        ):
+            response = await handle_internal_mcp_prompts_list(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {"prompts": [{"name": "prompt-one"}]}
+
+    async def test_handle_internal_mcp_prompts_list_admin_unrestricted_and_cleanup_path(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "prompts-list-2", "method": "prompts/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        prompt = MagicMock()
+        prompt.model_dump.return_value = {"name": "prompt-two"}
+
+        admin_db = MagicMock()
+        admin_db.is_active = True
+        admin_db.in_transaction.return_value = object()
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=admin_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.prompt_service.list_prompts", new=AsyncMock(return_value=([prompt], "next"))),
+        ):
+            response = await handle_internal_mcp_prompts_list(request)
+        assert json.loads(response.body.decode()) == {"prompts": [{"name": "prompt-two"}], "nextCursor": "next"}
+
+        error_db = MagicMock()
+        error_db.rollback.side_effect = RuntimeError("rollback failed")
+        error_db.invalidate.side_effect = RuntimeError("invalidate failed")
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=error_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.prompt_service.list_prompts", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await handle_internal_mcp_prompts_list(request)
+        error_db.invalidate.assert_called_once()
+
+    async def test_handle_internal_mcp_prompts_get_missing_name_and_not_found(self):
+        from mcpgateway.services.prompt_service import PromptError, PromptNotFoundError
+
+        request_missing = self._make_request({"jsonrpc": "2.0", "id": "prompt-get", "method": "prompts/get", "params": []})
+        request_missing.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request_missing.client = SimpleNamespace(host="127.0.0.1")
+        request_missing.state = MagicMock()
+        mock_db = MagicMock()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+        ):
+            response = await handle_internal_mcp_prompts_get(request_missing)
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode())["message"] == "Missing prompt name in parameters"
+
+        request_not_found = self._make_request({"jsonrpc": "2.0", "id": "prompt-get", "method": "prompts/get", "params": {"name": "missing"}})
+        request_not_found.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
+        }
+        request_not_found.client = SimpleNamespace(host="127.0.0.1")
+        request_not_found.state = MagicMock()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(side_effect=PromptNotFoundError("missing"))),
+        ):
+            response = await handle_internal_mcp_prompts_get(request_not_found)
+
+        assert response.status_code == 404
+        assert json.loads(response.body.decode())["data"] == {"name": "missing"}
+
+        request_invalid = self._make_request({"jsonrpc": "2.0", "id": "prompt-get", "method": "prompts/get", "params": {"name": "broken"}})
+        request_invalid.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
+        }
+        request_invalid.client = SimpleNamespace(host="127.0.0.1")
+        request_invalid.state = MagicMock()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(side_effect=PromptError("bad prompt arguments"))),
+        ):
+            response = await handle_internal_mcp_prompts_get(request_invalid)
+
+        assert response.status_code == 422
+        body = json.loads(response.body.decode())
+        assert body["message"] == "bad prompt arguments"
+        assert body["data"] == {"name": "broken"}
+
+    async def test_handle_internal_mcp_prompts_get_public_only_and_generic_cleanup_path(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "prompt-get-2", "method": "prompts/get", "params": {"name": "prompt-one"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = MagicMock()
+
+        ok_db = MagicMock()
+        ok_db.is_active = True
+        ok_db.in_transaction.return_value = object()
+        payload = MagicMock()
+        payload.model_dump.return_value = {"name": "prompt-one", "template": "hi"}
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=ok_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(return_value=payload)),
+        ):
+            response = await handle_internal_mcp_prompts_get(request)
+        assert json.loads(response.body.decode())["name"] == "prompt-one"
+
+        err_db = MagicMock()
+        err_db.rollback.side_effect = RuntimeError("rollback failed")
+        err_db.invalidate.side_effect = RuntimeError("invalidate failed")
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=err_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await handle_internal_mcp_prompts_get(request)
+        err_db.invalidate.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("handler", "method_name"),
+        [
+            (handle_internal_mcp_resources_list, "resources/list"),
+            (handle_internal_mcp_resources_read, "resources/read"),
+            (handle_internal_mcp_resources_subscribe, "resources/subscribe"),
+            (handle_internal_mcp_resources_unsubscribe, "resources/unsubscribe"),
+            (handle_internal_mcp_resource_templates_list, "resources/templates/list"),
+            (handle_internal_mcp_roots_list, "roots/list"),
+            (handle_internal_mcp_completion_complete, "completion/complete"),
+            (handle_internal_mcp_logging_set_level, "logging/setLevel"),
+            (handle_internal_mcp_prompts_list, "prompts/list"),
+            (handle_internal_mcp_prompts_get, "prompts/get"),
+        ],
+    )
+    async def test_internal_mcp_handlers_return_jsonrpc_errors_from_authorization(self, handler, method_name):
+        request = self._make_request({"jsonrpc": "2.0", "id": "rpc-1", "method": method_name, "params": {"uri": "resource://one", "name": "prompt-one"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.query_params = {}
+        request.state = MagicMock()
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(side_effect=JSONRPCError(-32003, "Access denied", {"method": method_name}))),
+        ):
+            response = await handler(request)
+
+        assert response.status_code == 403
+
+    @pytest.mark.parametrize(
+        ("handler", "method_name", "patch_target", "raises"),
+        [
+            (handle_internal_mcp_resources_list, "resources/list", "mcpgateway.main._authorize_internal_mcp_request", False),
+            (handle_internal_mcp_resources_read, "resources/read", "mcpgateway.main._authorize_internal_mcp_request", False),
+            (handle_internal_mcp_resources_subscribe, "resources/subscribe", "mcpgateway.main._authorize_internal_mcp_request", False),
+            (handle_internal_mcp_resources_unsubscribe, "resources/unsubscribe", "mcpgateway.main._authorize_internal_mcp_request", False),
+            (handle_internal_mcp_resource_templates_list, "resources/templates/list", "mcpgateway.main._authorize_internal_mcp_request", True),
+            (handle_internal_mcp_roots_list, "roots/list", "mcpgateway.main._authorize_internal_mcp_request", True),
+            (handle_internal_mcp_completion_complete, "completion/complete", "mcpgateway.main._authorize_internal_mcp_request", False),
+            (handle_internal_mcp_sampling_create_message, "sampling/createMessage", "mcpgateway.main.sampling_handler.create_message", False),
+            (handle_internal_mcp_logging_set_level, "logging/setLevel", "mcpgateway.main._authorize_internal_mcp_request", False),
+            (handle_internal_mcp_prompts_list, "prompts/list", "mcpgateway.main._authorize_internal_mcp_request", True),
+            (handle_internal_mcp_prompts_get, "prompts/get", "mcpgateway.main._authorize_internal_mcp_request", True),
+        ],
+    )
+    async def test_internal_mcp_handlers_rollback_and_handle_generic_errors(self, handler, method_name, patch_target, raises):
+        request = self._make_request({"jsonrpc": "2.0", "id": "rpc-2", "method": method_name, "params": {"uri": "resource://one", "name": "prompt-one"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.query_params = {}
+        request.state = MagicMock()
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.rollback.side_effect = RuntimeError("rollback failed")
+
+        with patch("mcpgateway.main.SessionLocal", return_value=mock_db), patch(patch_target, new=AsyncMock(side_effect=RuntimeError("boom"))):
+            if raises:
+                with pytest.raises(RuntimeError, match="boom"):
+                    await handler(request)
+            else:
+                response = await handler(request)
+                assert response.status_code == 500
+
+        mock_db.rollback.assert_called_once()
+        mock_db.invalidate.assert_called_once()
+
+    async def test_handle_internal_mcp_tools_call_returns_forwarded_affinity_response(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "aff-1", "method": "tools/call", "params": {"name": "echo"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._maybe_forward_affinitized_rpc_request", new=AsyncMock(return_value={"jsonrpc": "2.0", "result": {"ok": True}, "id": "aff-1"})),
+        ):
+            result = await handle_internal_mcp_tools_call(request)
+
+        assert result == {"jsonrpc": "2.0", "result": {"ok": True}, "id": "aff-1"}
+
+    async def test_handle_internal_mcp_tools_call_rolls_back_and_invalidates_on_unexpected_error(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "aff-2", "method": "tools/call", "params": {"name": "echo"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.rollback.side_effect = RuntimeError("rollback failed")
+        mock_db.invalidate.side_effect = RuntimeError("invalidate failed")
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
+            patch("mcpgateway.main._execute_rpc_tools_call", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await handle_internal_mcp_tools_call(request)
+
+        mock_db.invalidate.assert_called_once()
+
+    async def test_handle_internal_mcp_tools_call_resolve_returns_jsonrpc_error_and_rolls_back(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "resolve-2", "method": "tools/call", "params": {"name": "echo"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock(side_effect=JSONRPCError(-32003, "Access denied", {"method": "tools/call"}))),
+        ):
+            response = await handle_internal_mcp_tools_call_resolve(request)
+
+        assert response.status_code == 403
+        assert json.loads(response.body.decode())["code"] == -32003
+
+    async def test_handle_internal_mcp_tools_call_resolve_commits_success_and_invalidates_on_error(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "resolve-3", "method": "tools/call", "params": {"name": "echo"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        success_db = MagicMock()
+        success_db.is_active = True
+        success_db.in_transaction.return_value = object()
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=success_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
+            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(return_value={"eligible": True})),
+        ):
+            response = await handle_internal_mcp_tools_call_resolve(request)
+        assert response.status_code == 200
+        success_db.commit.assert_called_once()
+
+        error_db = MagicMock()
+        error_db.rollback.side_effect = RuntimeError("rollback failed")
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=error_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
+            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=RuntimeError("resolve boom"))),
+        ):
+            with pytest.raises(RuntimeError, match="resolve boom"):
+                await handle_internal_mcp_tools_call_resolve(request)
+        error_db.invalidate.assert_called_once()
+
+    async def test_handle_internal_mcp_rpc_rolls_back_and_invalidates_on_error(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "rpc-rollback", "method": "tools/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.rollback.side_effect = RuntimeError("rollback failed")
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._handle_rpc_authenticated", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await handle_internal_mcp_rpc(request)
+
+        mock_db.invalidate.assert_called_once()
+
+    async def test_handle_internal_mcp_rpc_ignores_invalidate_failure_on_cleanup(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "rpc-rollback", "method": "tools/list", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.rollback.side_effect = RuntimeError("rollback failed")
+        mock_db.invalidate.side_effect = RuntimeError("invalidate failed")
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._handle_rpc_authenticated", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await handle_internal_mcp_rpc(request)
+
+        mock_db.invalidate.assert_called_once()
+
+    async def test_handle_internal_mcp_notifications_message_returns_internal_error_on_logging_failure(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "n5", "method": "notifications/message", "params": {"level": "info"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        monkeypatch.setattr("mcpgateway.main.logging_service.notify", AsyncMock(side_effect=RuntimeError("message boom")))
+
+        response = await handle_internal_mcp_notifications_message(request)
+        assert json.loads(response.body.decode())["error"]["data"] == "message boom"
+
+    async def test_handle_internal_mcp_notifications_cancelled_re_raises_http_exception(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "n6", "method": "notifications/cancelled", "params": {"requestId": "req-1"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        monkeypatch.setattr("mcpgateway.main._enforce_internal_mcp_server_scope", MagicMock(side_effect=HTTPException(status_code=403, detail="scope mismatch")))
+
+        with pytest.raises(HTTPException) as excinfo:
+            await handle_internal_mcp_notifications_cancelled(request)
+
+        assert excinfo.value.status_code == 403
+
+    async def test_handle_internal_mcp_tools_call_rejects_parse_error_invalid_method_and_missing_tool_name(self):
+        parse_request = MagicMock(spec=Request)
+        parse_request.body = AsyncMock(return_value=b"{bad")
+        parse_request.headers = {"x-contextforge-mcp-runtime": "rust", "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("=")}
+        parse_request.query_params = {}
+        parse_request.state = MagicMock()
+        parse_request.client = SimpleNamespace(host="127.0.0.1")
+
+        parse_response = await handle_internal_mcp_tools_call(parse_request)
+        assert parse_response.status_code == 400
+        assert json.loads(parse_response.body.decode())["error"]["code"] == -32700
+
+        invalid_request = self._make_request({"jsonrpc": "2.0", "id": "bad-method", "method": "tools/list", "params": {}})
+        invalid_request.headers = parse_request.headers
+        invalid_request.client = parse_request.client
+        invalid_result = await handle_internal_mcp_tools_call(invalid_request)
+        assert json.loads(invalid_result.body.decode())["error"]["code"] == -32600
+
+        missing_name_request = self._make_request({"jsonrpc": "2.0", "id": "missing-name", "method": "tools/call", "params": []})
+        missing_name_request.headers = parse_request.headers
+        missing_name_request.client = parse_request.client
+        missing_name_result = await handle_internal_mcp_tools_call(missing_name_request)
+        assert missing_name_result["error"]["code"] == -32602
+
+    async def test_handle_internal_mcp_tools_call_generates_id_and_reraises_plugin_error_while_ignoring_close_failures(self):
+        request = self._make_request({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "echo"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+        mock_db.close.side_effect = [None, RuntimeError("close failed")]
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
+            patch("mcpgateway.main._execute_rpc_tools_call", new=AsyncMock(side_effect=PluginError(MagicMock(message="plugin boom")))),
+        ):
+            with pytest.raises(PluginError):
+                await handle_internal_mcp_tools_call(request)
+
+    async def test_handle_internal_mcp_tools_call_resolve_rejects_parse_error_invalid_method_missing_name_and_tool_error(self):
+        base_headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
+        }
+
+        parse_request = MagicMock(spec=Request)
+        parse_request.body = AsyncMock(return_value=b"{bad")
+        parse_request.headers = base_headers
+        parse_request.query_params = {}
+        parse_request.state = MagicMock()
+        parse_request.client = SimpleNamespace(host="127.0.0.1")
+        parse_response = await handle_internal_mcp_tools_call_resolve(parse_request)
+        assert parse_response.status_code == 400
+        assert json.loads(parse_response.body.decode())["error"]["code"] == -32700
+
+        invalid_request = self._make_request({"jsonrpc": "2.0", "id": "bad-method", "method": "tools/list", "params": {}})
+        invalid_request.headers = base_headers
+        invalid_request.client = parse_request.client
+        invalid_response = await handle_internal_mcp_tools_call_resolve(invalid_request)
+        assert invalid_response.status_code == 400
+        assert json.loads(invalid_response.body.decode())["error"]["code"] == -32600
+
+        missing_name_request = self._make_request({"jsonrpc": "2.0", "id": "missing-name", "method": "tools/call", "params": []})
+        missing_name_request.headers = base_headers
+        missing_name_request.client = parse_request.client
+        missing_name_response = await handle_internal_mcp_tools_call_resolve(missing_name_request)
+        assert missing_name_response.status_code == 400
+        assert json.loads(missing_name_response.body.decode())["error"]["code"] == -32602
+
+        tool_error_request = self._make_request({"jsonrpc": "2.0", "id": "tool-error", "method": "tools/call", "params": {"name": "echo"}})
+        tool_error_request.headers = base_headers
+        tool_error_request.client = parse_request.client
+        mock_db = MagicMock()
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
+            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=ToolError("tool boom"))),
+        ):
+            tool_error_response = await handle_internal_mcp_tools_call_resolve(tool_error_request)
+        assert tool_error_response.status_code == 400
+        assert json.loads(tool_error_response.body.decode())["error"]["code"] == -32000
+
+    async def test_handle_internal_mcp_tools_call_resolve_scope_and_filter_context_variants(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "resolve-scope", "method": "tools/call", "params": {"name": "echo"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        admin_db = MagicMock()
+        admin_db.is_active = True
+        admin_db.in_transaction.return_value = object()
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=admin_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
+            patch("mcpgateway.main._enforce_internal_mcp_server_scope"),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(return_value={"eligible": True})),
+        ):
+            response = await handle_internal_mcp_tools_call_resolve(request)
+        assert response.status_code == 200
+
+        public_db = MagicMock()
+        public_db.rollback.side_effect = RuntimeError("rollback failed")
+        public_db.invalidate.side_effect = RuntimeError("invalidate failed")
+        request_no_scope = self._make_request({"jsonrpc": "2.0", "id": "resolve-scope-2", "method": "tools/call", "params": {"name": "echo"}})
+        request_no_scope.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
+        }
+        request_no_scope.client = SimpleNamespace(host="127.0.0.1")
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=public_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=RuntimeError("resolve boom"))),
+        ):
+            with pytest.raises(RuntimeError, match="resolve boom"):
+                await handle_internal_mcp_tools_call_resolve(request_no_scope)
+        public_db.invalidate.assert_called_once()
+
+    async def test_internal_mcp_tools_call_resolve_re_raises_plugin_errors_and_ignores_close_failures(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "plugin-err", "method": "tools/call", "params": {"name": "echo"}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.close.side_effect = RuntimeError("close failed")
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
+            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=PluginError(MagicMock(message="plugin boom")))),
+        ):
+            with pytest.raises(PluginError):
+                await handle_internal_mcp_tools_call_resolve(request)
+
+    async def test_server_scoped_authz_missing_server_scope_and_jsonrpc_error(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "authz", "method": "noop", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        with pytest.raises(HTTPException) as excinfo:
+            await handle_internal_mcp_resources_list_authz(request)
+        assert excinfo.value.status_code == 400
+
+        request.headers["x-contextforge-server-id"] = "srv-1"
+        mock_db = MagicMock()
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(side_effect=JSONRPCError(-32003, "Access denied", {"method": "resources/list"}))),
+        ):
+            response = await handle_internal_mcp_resources_list_authz(request)
+
+        assert response.status_code == 403
+
+    async def test_server_scoped_authz_ignores_invalidate_failure_on_cleanup(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "authz", "method": "noop", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.rollback.side_effect = RuntimeError("rollback failed")
+        mock_db.invalidate.side_effect = RuntimeError("invalidate failed")
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await handle_internal_mcp_resources_list_authz(request)
+
+        mock_db.invalidate.assert_called_once()
+
+    async def test_handle_rpc_uses_scoped_server_id_from_internal_auth_and_denies_wrong_server(self):
+        request = self._make_request({"jsonrpc": "2.0", "id": "rpc-scoped", "method": "tools/list", "params": []})
+        request.state._jwt_verified_payload = None
+        request.state._mcp_internal_auth_context = {"scoped_server_id": "srv-1"}
+
+        with (
+            patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.tool_service.list_server_mcp_tool_definitions", new=AsyncMock(return_value=[])),
+        ):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+
+        assert result["result"]["tools"] == []
+
+        denied_request = self._make_request({"jsonrpc": "2.0", "id": "rpc-denied", "method": "tools/list", "params": {"server_id": "srv-2"}})
+        denied_request.state._jwt_verified_payload = ("fake", {"scopes": {"server_id": "srv-1"}})
+        denied_request.state._mcp_internal_auth_context = None
+
+        denied_result = await handle_rpc(denied_request, db=MagicMock(), user={"email": "user@example.com"})
+        assert denied_result.status_code == 403
 
     async def test_handle_rpc_list_tools_with_cursor(self):
         payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
@@ -4125,6 +7769,18 @@ class TestRpcHandling:
             assert result["error"]["code"] == -32003
             assert "Access denied" in result["error"]["message"]
 
+    async def test_handle_rpc_list_roots_short_circuits_permission_admin(self):
+        payload = {"jsonrpc": "2.0", "id": "roots-admin", "method": "list_roots", "params": {}}
+        request = self._make_request(payload)
+
+        with (
+            patch("mcpgateway.main.root_service.list_roots", new=AsyncMock(return_value=[])),
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(side_effect=AssertionError("RBAC lookup should be skipped for admins"))),
+        ):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "admin@example.com", "is_admin": True, "permission_is_admin": True})
+
+        assert result["result"]["roots"] == []
+
     async def test_handle_rpc_roots_list_requires_admin_permission(self):
         payload = {"jsonrpc": "2.0", "id": "roots-2", "method": "roots/list", "params": {}}
         request = self._make_request(payload)
@@ -4132,6 +7788,16 @@ class TestRpcHandling:
         with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["error"]["code"] == -32003
+
+    async def test_handle_rpc_admin_short_circuit_still_honors_token_scope_cap(self):
+        payload = {"jsonrpc": "2.0", "id": "roots-scope", "method": "roots/list", "params": {}}
+        request = self._make_request(payload)
+        request.state._mcp_internal_auth_context = {"scoped_permissions": ["tools.read"]}
+
+        with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(side_effect=AssertionError("RBAC lookup should not run when token scope already denies"))):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "admin@example.com", "is_admin": True})
+
+        assert result["error"]["code"] == -32003
 
     async def test_handle_rpc_resources_read_missing_uri(self):
         payload = {"jsonrpc": "2.0", "id": "1", "method": "resources/read", "params": {}}
@@ -4769,6 +8435,24 @@ class TestRpcHandling:
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["result"] == {}
 
+    async def test_maybe_forward_affinitized_rpc_request_internally_forwarded_branch(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
+        request = MagicMock(spec=Request)
+        request.headers = {"mcp-session-id": "sess-123", "x-forwarded-internally": "true"}
+        request.client = SimpleNamespace(host="127.0.0.1")
+
+        forwarded = await main_mod._maybe_forward_affinitized_rpc_request(
+            request,
+            method="tools/call",
+            params={"name": "echo"},
+            req_id="aff-local",
+            lowered_request_headers={"mcp-session-id": "sess-123"},
+        )
+
+        assert forwarded is None
+
     async def test_handle_rpc_initialize_registers_session_owner_success_and_failure(self, monkeypatch):
         """Cover initialize ownership claim paths."""
         monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
@@ -5348,6 +9032,45 @@ class TestRemainingCoverageGaps:
         assert "db down" in result["error"]
         assert sess.closed is True
 
+    def test_healthcheck_reports_runtime_mode_and_headers(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        class FakeSession:  # noqa: D401 - test helper
+            def execute(self, _stmt):  # noqa: ANN001
+                return None
+
+            def commit(self):
+                return None
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+        monkeypatch.setenv("CONTEXTFORGE_ENABLE_RUST_BUILD", "true")
+        monkeypatch.setenv("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", "false")
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", False)
+
+        response = FastAPIResponse()
+        result = main_mod.healthcheck(response)
+
+        assert result["status"] == "healthy"
+        assert result["mcp_runtime"]["mode"] == "python-rust-built-disabled"
+        assert result["mcp_runtime"]["mounted"] == "python"
+        assert result["mcp_runtime"]["rust_build_included"] is True
+        assert result["mcp_runtime"]["session_core_mode"] == "python"
+        assert result["mcp_runtime"]["event_store_mode"] == "python"
+        assert result["mcp_runtime"]["resume_core_mode"] == "python"
+        assert result["mcp_runtime"]["live_stream_core_mode"] == "python"
+        assert result["mcp_runtime"]["session_auth_reuse_mode"] == "python"
+        assert response.headers["x-contextforge-mcp-runtime-mode"] == "python-rust-built-disabled"
+        assert response.headers["x-contextforge-mcp-transport-mounted"] == "python"
+        assert response.headers["x-contextforge-rust-build-included"] == "true"
+        assert response.headers["x-contextforge-mcp-session-core-mode"] == "python"
+        assert response.headers["x-contextforge-mcp-event-store-mode"] == "python"
+        assert response.headers["x-contextforge-mcp-resume-core-mode"] == "python"
+        assert response.headers["x-contextforge-mcp-live-stream-core-mode"] == "python"
+        assert response.headers["x-contextforge-mcp-session-auth-reuse-mode"] == "python"
+
     async def test_readiness_check_invalidate_failure_is_best_effort(self, monkeypatch):
         import mcpgateway.main as main_mod
 
@@ -5378,6 +9101,128 @@ class TestRemainingCoverageGaps:
         assert response.status_code == 503
         payload = json.loads(response.body.decode())
         assert payload["status"] == "not ready"
+
+    async def test_readiness_check_reports_runtime_mode_headers(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        class FakeSession:  # noqa: D401 - test helper
+            def execute(self, _stmt):  # noqa: ANN001
+                return None
+
+            def commit(self):
+                return None
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+
+        async def _to_thread(func, *args, **kwargs):  # noqa: ANN001
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr(main_mod.asyncio, "to_thread", _to_thread)
+        monkeypatch.setenv("CONTEXTFORGE_ENABLE_RUST_BUILD", "true")
+        monkeypatch.setenv("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", "true")
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_uds", "/tmp/contextforge-mcp-rust.sock")
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_session_core_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_event_store_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_resume_core_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_live_stream_core_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_session_auth_reuse_enabled", True)
+
+        response = await main_mod.readiness_check()
+        payload = json.loads(response.body.decode())
+
+        assert response.status_code == 200
+        assert payload["status"] == "ready"
+        assert payload["mcp_runtime"]["mode"] == "rust-managed"
+        assert payload["mcp_runtime"]["mounted"] == "rust"
+        assert payload["mcp_runtime"]["sidecar_transport"] == "uds"
+        assert payload["mcp_runtime"]["session_core_mode"] == "rust"
+        assert payload["mcp_runtime"]["event_store_mode"] == "rust"
+        assert payload["mcp_runtime"]["resume_core_mode"] == "rust"
+        assert payload["mcp_runtime"]["live_stream_core_mode"] == "rust"
+        assert payload["mcp_runtime"]["session_auth_reuse_mode"] == "rust"
+        assert response.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
+        assert response.headers["x-contextforge-mcp-transport-mounted"] == "rust"
+        assert response.headers["x-contextforge-rust-build-included"] == "true"
+        assert response.headers["x-contextforge-mcp-session-core-mode"] == "rust"
+        assert response.headers["x-contextforge-mcp-event-store-mode"] == "rust"
+        assert response.headers["x-contextforge-mcp-resume-core-mode"] == "rust"
+        assert response.headers["x-contextforge-mcp-live-stream-core-mode"] == "rust"
+        assert response.headers["x-contextforge-mcp-session-auth-reuse-mode"] == "rust"
+
+    def test_runtime_status_payload_reports_http_transport_and_rust_affinity_core(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setenv("CONTEXTFORGE_ENABLE_RUST_BUILD", "true")
+        monkeypatch.setenv("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", "true")
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_uds", None)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_affinity_core_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_session_auth_reuse_enabled", True)
+
+        payload = main_mod._mcp_runtime_status_payload()
+
+        assert main_mod._current_mcp_affinity_core_mode() == "rust"
+        assert payload["sidecar_transport"] == "http"
+        assert payload["sidecar_target"] == "http://127.0.0.1:8787"
+        assert payload["affinity_core_mode"] == "rust"
+        assert payload["session_auth_reuse_mode"] == "rust"
+
+    def test_runtime_status_payload_reports_python_mount_without_session_auth_reuse(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setenv("CONTEXTFORGE_ENABLE_RUST_BUILD", "true")
+        monkeypatch.setenv("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", "true")
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_uds", "/tmp/contextforge-mcp-rust.sock")
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_session_core_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_event_store_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_resume_core_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_live_stream_core_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_affinity_core_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_session_auth_reuse_enabled", False)
+
+        payload = main_mod._mcp_runtime_status_payload()
+
+        assert payload["mode"] == "rust-managed"
+        assert payload["mounted"] == "python"
+        assert payload["session_core_mode"] == "python"
+        assert payload["event_store_mode"] == "python"
+        assert payload["resume_core_mode"] == "python"
+        assert payload["live_stream_core_mode"] == "python"
+        assert payload["affinity_core_mode"] == "python"
+        assert payload["rust_session_core_enabled"] is False
+        assert payload["rust_event_store_enabled"] is False
+        assert payload["rust_resume_core_enabled"] is False
+        assert payload["rust_live_stream_core_enabled"] is False
+        assert payload["rust_affinity_core_enabled"] is False
+        assert payload["session_auth_reuse_mode"] == "python"
+
+    def test_healthcheck_unhealthy_applies_runtime_headers(self, monkeypatch):
+        import mcpgateway.main as main_mod
+
+        class FakeSession:  # noqa: D401 - test helper
+            def execute(self, _stmt):  # noqa: ANN001
+                raise RuntimeError("db down")
+
+            def rollback(self):
+                return None
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+        monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", True)
+
+        response = FastAPIResponse()
+        result = main_mod.healthcheck(response)
+
+        assert result["status"] == "unhealthy"
+        assert response.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
 
     async def test_sse_endpoint_cookie_auth_and_disconnect_cleanup(self, monkeypatch):
         import mcpgateway.main as main_mod
@@ -6771,9 +10616,7 @@ async def test_handle_rpc_completion_direct_admin_null_teams_preserves_bypass(mo
     import mcpgateway.main as main_mod
 
     request = MagicMock(spec=Request)
-    request.body = AsyncMock(
-        return_value=json.dumps({"jsonrpc": "2.0", "id": "rpc-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}).encode()
-    )
+    request.body = AsyncMock(return_value=json.dumps({"jsonrpc": "2.0", "id": "rpc-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}).encode())
     request.headers = {}
     request.query_params = {}
     db = MagicMock()
@@ -6797,9 +10640,7 @@ async def test_handle_rpc_completion_direct_non_admin_none_teams_becomes_public_
     import mcpgateway.main as main_mod
 
     request = MagicMock(spec=Request)
-    request.body = AsyncMock(
-        return_value=json.dumps({"jsonrpc": "2.0", "id": "rpc-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}).encode()
-    )
+    request.body = AsyncMock(return_value=json.dumps({"jsonrpc": "2.0", "id": "rpc-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}).encode())
     request.headers = {}
     request.query_params = {}
     db = MagicMock()
@@ -7047,18 +10888,18 @@ class TestRpcScopedPermissions:
         assert result["error"]["code"] == -32003
         assert "Access denied" in result["error"]["message"]
 
-    async def test_logging_set_level_allowed_with_servers_use(self):
-        """Token scoped to servers.use should be allowed logging/setLevel."""
+    async def test_logging_set_level_allowed_with_admin_system_config(self):
+        """Token scoped to admin.system_config should be allowed logging/setLevel."""
         payload = {"jsonrpc": "2.0", "id": 1, "method": "logging/setLevel", "params": {"level": "error"}}
-        request = self._make_request(payload, scoped_permissions=["servers.use"])
+        request = self._make_request(payload, scoped_permissions=["admin.system_config"])
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert "error" not in result
 
-    async def test_logging_set_level_denied_without_servers_use(self):
-        """Token scoped to tools.read only (no servers.use) should be denied logging/setLevel."""
+    async def test_logging_set_level_denied_without_admin_system_config(self):
+        """Token scoped without admin.system_config should be denied logging/setLevel."""
         payload = {"jsonrpc": "2.0", "id": 1, "method": "logging/setLevel", "params": {"level": "error"}}
-        request = self._make_request(payload, scoped_permissions=["tools.read"])
+        request = self._make_request(payload, scoped_permissions=["servers.use"])
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003

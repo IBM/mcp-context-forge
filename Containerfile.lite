@@ -20,6 +20,7 @@
 # Python major.minor series to track
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST=false
+ARG ENABLE_RUST_MCP_RMCP=false
 # Enable profiling tools (memray, py-spy) - off by default for smaller images
 # To enable: docker build --build-arg ENABLE_PROFILING=true -f Containerfile.lite .
 # Usage after enabling:
@@ -36,6 +37,7 @@ ARG ENABLE_PROFILING=false
 ###############################################################################
 FROM quay.io/pypa/manylinux2014:2026.03.06-3 AS rust-builder-base
 ARG ENABLE_RUST
+ARG ENABLE_RUST_MCP_RMCP
 
 # Set shell with pipefail for safety
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -43,7 +45,11 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Only build if ENABLE_RUST=true
 RUN if [ "$ENABLE_RUST" != "true" ]; then \
         echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
-        mkdir -p /build/rust-wheels; \
+        mkdir -p /build/rust-wheels /build/tools_rust/mcp_runtime/target/release; \
+        printf '#!/usr/bin/env sh\n' > /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime; \
+        printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime; \
+        printf 'exit 1\n' >> /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime; \
+        chmod +x /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime; \
         exit 0; \
     fi
 
@@ -55,8 +61,9 @@ ENV PATH="/root/.cargo/bin:$PATH"
 
 WORKDIR /build
 
-# Copy only Rust plugin files (only if ENABLE_RUST=true)
+# Copy only Rust plugin/runtime files (only if ENABLE_RUST=true)
 COPY plugins_rust/ /build/plugins_rust/
+COPY tools_rust/mcp_runtime/ /build/tools_rust/mcp_runtime/
 
 # Build each Rust plugin independently using Python 3.12 from manylinux image
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
@@ -72,6 +79,21 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
         echo "✅ Rust plugins built successfully"; \
     else \
         echo "⏭️  Skipping Rust plugin build"; \
+    fi
+
+WORKDIR /build/tools_rust/mcp_runtime
+
+# Build the experimental Rust MCP runtime binary (only if ENABLE_RUST=true)
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        if [ "$ENABLE_RUST_MCP_RMCP" = "true" ]; then \
+            cargo build --release --features rmcp-upstream-client; \
+        else \
+            cargo build --release; \
+        fi && \
+        cp target/release/contextforge_mcp_runtime target/release/contextforge-mcp-runtime && \
+        echo "✅ Rust MCP runtime built successfully"; \
+    else \
+        echo "⏭️  Skipping Rust MCP runtime build"; \
     fi
 
 FROM rust-builder-base AS rust-builder
@@ -127,6 +149,7 @@ COPY pyproject.toml /app/
 # Copy Rust plugin wheels from rust-builder stage (if any exist)
 # ----------------------------------------------------------------------------
 COPY --from=rust-builder /build/rust-wheels/ /tmp/rust-wheels/
+COPY --from=rust-builder /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
 
 # ----------------------------------------------------------------------------
 # Create and populate virtual environment
@@ -139,6 +162,7 @@ COPY --from=rust-builder /build/rust-wheels/ /tmp/rust-wheels/
 #  - Remove build caches and build artifacts
 # ----------------------------------------------------------------------------
 ARG ENABLE_RUST=false
+ARG ENABLE_RUST_MCP_RMCP=false
 ARG ENABLE_PROFILING=false
 RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
@@ -219,6 +243,8 @@ RUN chown -R 1001:0 /app \
 FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549 AS runtime
 
 ARG PYTHON_VERSION=3.12
+ARG ENABLE_RUST=false
+ARG ENABLE_RUST_MCP_RMCP=false
 ARG ENABLE_PROFILING=false
 
 # ----------------------------------------------------------------------------
@@ -285,6 +311,8 @@ COPY --from=builder --chown=1001:0 /app /app
 # - Disable pip version check to reduce startup time
 # ----------------------------------------------------------------------------
 ENV PATH="/app/.venv/bin:${PATH}" \
+    CONTEXTFORGE_ENABLE_RUST_BUILD=${ENABLE_RUST} \
+    CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD=${ENABLE_RUST_MCP_RMCP} \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \

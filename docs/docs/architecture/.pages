@@ -2,6 +2,9 @@ nav:
   - Overview: index.md
   - Roadmap: roadmap.md
   - Performance Architecture: performance-architecture.md
+  - Rust MCP Runtime: rust-mcp-runtime.md
+  - Modular Runtime Architecture: modular-design.md
+  - Modular Runtime Specification: modular-runtime
   - Security Features: security-features.md
   - Plugin Framework: plugins.md
   - Export-Import Architecture: export-import-architecture.md

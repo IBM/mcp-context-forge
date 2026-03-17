@@ -70,9 +70,6 @@ from mcpgateway.utils.pagination import unified_paginate
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-# Strong references to background tasks to prevent GC before completion
-_background_tasks: set[asyncio.Task] = set()
-
 _GET_ALL_USERS_LIMIT = 10000
 _DUMMY_ARGON2_HASH = "$argon2id$v=19$m=65536,t=3,p=1$9x/nTs9D0R97+BI7BWP2Tg$V/40qCuaGh4i+94HpGpxJESEVs3IDpLzUqtNqRPuty4"
 
@@ -422,6 +419,33 @@ class EmailAuthService:
         except Exception as cache_error:  # nosec B110
             logger.debug("Failed to invalidate auth cache for %s: %s", email, cache_error)
 
+    async def _invalidate_deleted_user_auth_caches(self, email: str) -> None:
+        """Invalidate all auth-cache entries affected by permanent user deletion.
+
+        Args:
+            email: User email for cache invalidation.
+        """
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            results = await asyncio.wait_for(
+                asyncio.gather(
+                    auth_cache.invalidate_user(email),
+                    auth_cache.invalidate_user_teams(email),
+                    auth_cache.invalidate_team_membership(email),
+                    return_exceptions=True,
+                ),
+                timeout=5.0,
+            )
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.debug("Failed to invalidate delete-user auth cache for %s: %s", email, result)
+        except asyncio.TimeoutError:
+            logger.warning("Delete-user auth cache invalidation timed out for %s - continuing", email)
+        except Exception as cache_error:  # nosec B110
+            logger.debug("Failed to invalidate delete-user auth cache for %s: %s", email, cache_error)
+
     def _log_auth_event(
         self,
         event_type: str,
@@ -556,13 +580,14 @@ class EmailAuthService:
         if not skip_password_validation:
             self.validate_password(password)
 
+        # Hash before the first DB read so PgBouncer transaction pooling does not
+        # hold an idle transaction open across the async hashing call.
+        password_hash = await self.password_service.hash_password_async(password)
+
         # Check if user already exists
         existing_user = await self.get_user_by_email(email)
         if existing_user:
             raise UserExistsError(f"User with email {email} already exists")
-
-        # Hash the password
-        password_hash = await self.password_service.hash_password_async(password)
 
         # Create new user (record password change timestamp)
         user = EmailUser(
@@ -1804,17 +1829,7 @@ class EmailAuthService:
             self.db.delete(user)
             self.db.commit()
 
-            # Invalidate all auth caches for deleted user
-            try:
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-                for coro in [auth_cache.invalidate_user(email), auth_cache.invalidate_user_teams(email), auth_cache.invalidate_team_membership(email)]:
-                    task = asyncio.create_task(coro)
-                    _background_tasks.add(task)
-                    task.add_done_callback(_background_tasks.discard)
-            except Exception as cache_error:
-                logger.debug(f"Failed to invalidate cache on user delete: {cache_error}")
+            await self._invalidate_deleted_user_auth_caches(email)
 
             logger.info(f"User {SecurityValidator.sanitize_log_message(email)} deleted permanently")
             return True

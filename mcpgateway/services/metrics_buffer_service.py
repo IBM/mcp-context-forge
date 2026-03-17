@@ -144,10 +144,56 @@ class MetricsBufferService:
             logger.info("MetricsBufferService disabled, skipping start")
             return
 
-        if self._flush_task is None or self._flush_task.done():
+        current_loop = asyncio.get_running_loop()
+        if not self._flush_task_is_active_for_loop(current_loop):
             self._shutdown_event.clear()
             self._flush_task = asyncio.create_task(self._flush_loop())
             logger.info("MetricsBufferService flush task started")
+
+    def _flush_task_is_active_for_loop(self, loop: asyncio.AbstractEventLoop) -> bool:
+        """Return whether the current flush task is usable for the active loop.
+
+        Args:
+            loop: The currently running event loop for this worker process.
+
+        Returns:
+            True when the cached flush task belongs to the current live loop.
+        """
+        task = self._flush_task
+        if task is None or task.done() or task.cancelled():
+            return False
+
+        try:
+            task_loop = task.get_loop()
+        except (AttributeError, RuntimeError):
+            return False
+
+        return task_loop is loop and task_loop.is_running()
+
+    def _ensure_flush_task_started(self) -> None:
+        """Best-effort lazy-start for the background flush task.
+
+        In preloaded multi-worker deployments, the singleton may exist in a
+        worker before the worker's startup hook has started the flush loop. A
+        first buffered metric should recover from that state instead of sitting
+        in memory forever.
+        """
+        if not self.recording_enabled or not self.enabled:
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        if self._flush_task_is_active_for_loop(loop):
+            return
+
+        if self._shutdown_event.is_set():
+            self._shutdown_event = asyncio.Event()
+
+        self._flush_task = loop.create_task(self._flush_loop())
+        logger.info("MetricsBufferService flush task started lazily")
 
     async def shutdown(self) -> None:
         """Shutdown service with final flush."""
@@ -199,6 +245,41 @@ class MetricsBufferService:
             error_message=error_message,
         )
 
+        self._ensure_flush_task_started()
+        with self._lock:
+            self._tool_metrics.append(metric)
+            self._total_buffered += 1
+
+    def record_tool_metric_with_duration(
+        self,
+        tool_id: str,
+        response_time: float,
+        success: bool,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """Buffer a tool metric with pre-calculated response time.
+
+        Args:
+            tool_id: UUID of the tool.
+            response_time: Pre-calculated response time in seconds.
+            success: Whether the operation succeeded.
+            error_message: Optional error message if failed.
+        """
+        if not self.recording_enabled:
+            return  # Execution metrics recording disabled
+        if not self.enabled:
+            self._write_tool_metric_with_duration_immediately(tool_id, response_time, success, error_message)
+            return
+
+        metric = BufferedToolMetric(
+            tool_id=tool_id,
+            timestamp=datetime.now(timezone.utc),
+            response_time=response_time,
+            is_success=success,
+            error_message=error_message,
+        )
+
+        self._ensure_flush_task_started()
         with self._lock:
             self._tool_metrics.append(metric)
             self._total_buffered += 1
@@ -232,6 +313,7 @@ class MetricsBufferService:
             error_message=error_message,
         )
 
+        self._ensure_flush_task_started()
         with self._lock:
             self._resource_metrics.append(metric)
             self._total_buffered += 1
@@ -265,6 +347,7 @@ class MetricsBufferService:
             error_message=error_message,
         )
 
+        self._ensure_flush_task_started()
         with self._lock:
             self._prompt_metrics.append(metric)
             self._total_buffered += 1
@@ -298,6 +381,41 @@ class MetricsBufferService:
             error_message=error_message,
         )
 
+        self._ensure_flush_task_started()
+        with self._lock:
+            self._server_metrics.append(metric)
+            self._total_buffered += 1
+
+    def record_server_metric_with_duration(
+        self,
+        server_id: str,
+        response_time: float,
+        success: bool,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """Buffer a server metric with pre-calculated response time.
+
+        Args:
+            server_id: UUID of the server.
+            response_time: Pre-calculated response time in seconds.
+            success: Whether the operation succeeded.
+            error_message: Optional error message if failed.
+        """
+        if not self.recording_enabled:
+            return  # Execution metrics recording disabled
+        if not self.enabled:
+            self._write_server_metric_with_duration_immediately(server_id, response_time, success, error_message)
+            return
+
+        metric = BufferedServerMetric(
+            server_id=server_id,
+            timestamp=datetime.now(timezone.utc),
+            response_time=response_time,
+            is_success=success,
+            error_message=error_message,
+        )
+
+        self._ensure_flush_task_started()
         with self._lock:
             self._server_metrics.append(metric)
             self._total_buffered += 1
@@ -334,6 +452,7 @@ class MetricsBufferService:
             error_message=error_message,
         )
 
+        self._ensure_flush_task_started()
         with self._lock:
             self._a2a_agent_metrics.append(metric)
             self._total_buffered += 1
@@ -370,6 +489,7 @@ class MetricsBufferService:
             error_message=error_message,
         )
 
+        self._ensure_flush_task_started()
         with self._lock:
             self._a2a_agent_metrics.append(metric)
             self._total_buffered += 1
@@ -594,6 +714,35 @@ class MetricsBufferService:
         except Exception as e:
             logger.error(f"Failed to write tool metric: {e}")
 
+    def _write_tool_metric_with_duration_immediately(
+        self,
+        tool_id: str,
+        response_time: float,
+        success: bool,
+        error_message: Optional[str],
+    ) -> None:
+        """Write a single tool metric with pre-calculated duration immediately.
+
+        Args:
+            tool_id: UUID of the tool.
+            response_time: Pre-calculated response time in seconds.
+            success: Whether the operation succeeded.
+            error_message: Optional error message if failed.
+        """
+        try:
+            with fresh_db_session() as db:
+                metric = ToolMetric(
+                    tool_id=tool_id,
+                    timestamp=datetime.now(timezone.utc),
+                    response_time=response_time,
+                    is_success=success,
+                    error_message=error_message,
+                )
+                db.add(metric)
+                db.commit()
+        except Exception as e:
+            logger.error(f"Failed to write tool metric: {e}")
+
     def _write_resource_metric_immediately(
         self,
         resource_id: str,
@@ -673,6 +822,35 @@ class MetricsBufferService:
                     server_id=server_id,
                     timestamp=datetime.now(timezone.utc),
                     response_time=time.monotonic() - start_time,
+                    is_success=success,
+                    error_message=error_message,
+                )
+                db.add(metric)
+                db.commit()
+        except Exception as e:
+            logger.error(f"Failed to write server metric: {e}")
+
+    def _write_server_metric_with_duration_immediately(
+        self,
+        server_id: str,
+        response_time: float,
+        success: bool,
+        error_message: Optional[str],
+    ) -> None:
+        """Write a single server metric with pre-calculated duration immediately.
+
+        Args:
+            server_id: UUID of the server.
+            response_time: Pre-calculated response time in seconds.
+            success: Whether the operation succeeded.
+            error_message: Optional error message if failed.
+        """
+        try:
+            with fresh_db_session() as db:
+                metric = ServerMetric(
+                    server_id=server_id,
+                    timestamp=datetime.now(timezone.utc),
+                    response_time=response_time,
                     is_success=success,
                     error_message=error_message,
                 )

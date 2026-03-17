@@ -117,6 +117,9 @@ def test_version_json_ok(client: TestClient) -> None:
     payload: Dict[str, Any] = rsp.json()
     assert payload["database"]["server_version"] == "db-vX"
     assert payload["system"] == {"stub": True}
+    assert "mcp_runtime" in payload
+    assert "mode" in payload["mcp_runtime"]
+    assert "mounted" in payload["mcp_runtime"]
 
 
 def test_version_html_query_param(client: TestClient) -> None:
@@ -135,7 +138,7 @@ def test_version_html_accept_header(client: TestClient) -> None:
 
 def test_version_html_all_sections(client: TestClient) -> None:
     html = client.get("/version?fmt=html").text
-    for sec in ["App", "Platform", "Database", "Redis", "Settings", "System", "Environment"]:
+    for sec in ["App", "Platform", "Database", "Redis", "Settings", "MCP Runtime", "System", "Environment"]:
         assert re.search(rf"<h2[^>]*>{sec}</h2>", html)
 
 
@@ -502,6 +505,7 @@ def test_version_partial_html_fragment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert rsp.status_code == 200
     assert rsp.headers["content-type"].startswith("text/html")
     assert "Application Information" in rsp.text
+    assert "MCP Runtime" in rsp.text
 
 
 def test_version_partial_html_uses_existing_app_templates(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -98,6 +98,12 @@ password_reset_completions_counter = Counter(
     ["outcome"],
 )
 
+mcp_auth_cache_events_counter = Counter(
+    "mcp_auth_cache_events_total",
+    "Total number of MCP auth cache events by outcome",
+    ["outcome"],
+)
+
 
 def setup_metrics(app):
     """

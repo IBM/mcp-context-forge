@@ -19,6 +19,103 @@
     </div>
   </div>
 
+  <!-- MCP Runtime Status -->
+  <div
+    id="overview-mcp-runtime-card"
+    class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700"
+  >
+    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+      <div>
+        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+          MCP Runtime
+        </div>
+        <div class="mt-2 flex flex-wrap items-center gap-2">
+          <span
+            id="overview-mcp-core-badge"
+            class="px-3 py-1 rounded-full text-sm font-medium {% if mcp_runtime.mounted == 'rust' %}bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200{% else %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200{% endif %}"
+            title="Effective public MCP transport mounted in this gateway"
+          >
+            {% if mcp_runtime.mounted == 'rust' %}🦀 Rust MCP Core{% else %}🐍
+            Python MCP Core{% endif %}
+          </span>
+          <span
+            id="overview-mcp-runtime-mode-badge"
+            class="px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
+            title="High-level runtime mode"
+          >
+            {{ mcp_runtime.mode | replace('-', ' ') }}
+          </span>
+          {% if mcp_runtime.mode == 'rust-managed' and mcp_runtime.mounted == 'python' %}
+          <span
+            class="px-3 py-1 rounded-full text-sm font-medium bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+            title="Rust sidecar is present, but the public MCP path is still using Python semantics"
+          >
+            Shadow / safe fallback
+          </span>
+          {% elif mcp_runtime.mode == 'python-rust-built-disabled' %}
+          <span
+            class="px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
+            title="Rust binaries are included in the image, but the MCP runtime is disabled"
+          >
+            Rust build available
+          </span>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+        <div class="rounded-lg bg-gray-50 dark:bg-gray-700 px-3 py-2">
+          <div class="text-xs font-medium text-gray-500 dark:text-gray-400">
+            Public MCP
+          </div>
+          <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            {% if mcp_runtime.mounted == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+          </div>
+        </div>
+        <div class="rounded-lg bg-gray-50 dark:bg-gray-700 px-3 py-2">
+          <div class="text-xs font-medium text-gray-500 dark:text-gray-400">
+            Session
+          </div>
+          <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            {% if mcp_runtime.session_core_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+          </div>
+        </div>
+        <div class="rounded-lg bg-gray-50 dark:bg-gray-700 px-3 py-2">
+          <div class="text-xs font-medium text-gray-500 dark:text-gray-400">
+            Replay
+          </div>
+          <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            {% if mcp_runtime.resume_core_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+          </div>
+        </div>
+        <div class="rounded-lg bg-gray-50 dark:bg-gray-700 px-3 py-2">
+          <div class="text-xs font-medium text-gray-500 dark:text-gray-400">
+            Live Stream
+          </div>
+          <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            {% if mcp_runtime.live_stream_core_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+          </div>
+        </div>
+        <div class="rounded-lg bg-gray-50 dark:bg-gray-700 px-3 py-2">
+          <div class="text-xs font-medium text-gray-500 dark:text-gray-400">
+            Affinity
+          </div>
+          <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            {% if mcp_runtime.affinity_core_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+          </div>
+        </div>
+        <div class="rounded-lg bg-gray-50 dark:bg-gray-700 px-3 py-2">
+          <div class="text-xs font-medium text-gray-500 dark:text-gray-400">
+            Auth Reuse
+          </div>
+          <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            {% if mcp_runtime.session_auth_reuse_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Key Metrics Cards -->
   <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
     <!-- Total Executions -->

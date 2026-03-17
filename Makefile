@@ -19,6 +19,10 @@ SHELL := /bin/bash
 # Rust build configuration (set to 1 to enable Rust builds, 0 to disable)
 # Default is disabled to avoid requiring Rust toolchain for standard builds
 ENABLE_RUST_BUILD ?= 0
+ENABLE_RUST_MCP_RMCP_BUILD ?=
+RUST_MCP_BUILD ?= 0
+RUST_MCP_MODE ?= off
+RUST_MCP_LOG ?= warn
 
 # Project variables
 PROJECT_NAME      = mcpgateway
@@ -646,13 +650,14 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test-mcp-cli test-mcp-rbac test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix test-mcp-session-isolation test-mcp-session-isolation-load test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
 # Dirs/files always excluded from standard pytest runs
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/e2e/test_entra_id_integration.py \
     tests/e2e/test_mcp_cli_protocol.py \
-    tests/e2e/test_mcp_rbac_transport.py
+    tests/e2e/test_mcp_rbac_transport.py \
+    tests/e2e_rust
 
 # Expand to --ignore=<path> flags for pytest CLI
 PYTEST_IGNORE_FLAGS := $(foreach p,$(PYTEST_IGNORE),--ignore=$(p))
@@ -682,6 +687,51 @@ test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway
 		uv run --active pytest tests/e2e/test_mcp_rbac_transport.py -v -s --tb=short \
 			|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }; \
 		echo "✅ MCP RBAC transport tests passed!"'
+
+test-mcp-access-matrix:  ## Detailed Rust MCP role/access matrix test with strong tool/resource/prompt sentinels
+	@echo "🧪 Running MCP role/access matrix tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		uv run --active pytest tests/e2e_rust/test_mcp_access_matrix.py -v -s --tb=short \
+			|| { echo "❌ MCP role/access matrix tests failed!"; exit 1; }; \
+		echo "✅ MCP role/access matrix tests passed!"'
+
+test-mcp-plugin-parity:  ## MCP plugin parity E2E for current Python or Rust stack using a test-specific plugin config
+	@echo "🧪 Running MCP plugin parity tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: stack started with PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml"
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		uv run --active pytest tests/e2e/test_mcp_plugin_parity.py -v -s --tb=short \
+			|| { echo "❌ MCP plugin parity tests failed!"; exit 1; }; \
+		echo "✅ MCP plugin parity tests passed!"'
+
+test-mcp-session-isolation:  ## MCP session/auth isolation tests for the Rust public transport path
+	@echo "🧪 Running MCP session/auth isolation tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		uv run --active pytest tests/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
+			|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }; \
+		echo "✅ MCP session/auth isolation tests passed!"'
+
+MCP_ISOLATION_LOCUSTFILE ?= tests/loadtest/locustfile_mcp_isolation.py
+MCP_ISOLATION_LOAD_HOST ?= http://localhost:8080
+MCP_ISOLATION_LOAD_USERS ?= 12
+MCP_ISOLATION_LOAD_SPAWN_RATE ?= 3
+MCP_ISOLATION_LOAD_RUN_TIME ?= 60s
+
+test-mcp-session-isolation-load: ## Multi-user MCP session/auth isolation correctness load test
+	@echo "🧪 Running MCP session/auth isolation load test against $(MCP_ISOLATION_LOAD_HOST)..."
+	@echo "   Requires: docker-compose stack rebuilt in Rust full mode"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		locust -f $(MCP_ISOLATION_LOCUSTFILE) \
+			--host=$(MCP_ISOLATION_LOAD_HOST) \
+			--users=$(MCP_ISOLATION_LOAD_USERS) \
+			--spawn-rate=$(MCP_ISOLATION_LOAD_SPAWN_RATE) \
+			--run-time=$(MCP_ISOLATION_LOAD_RUN_TIME) \
+			--headless \
+			--stop-timeout=30 \
+			--exit-code-on-error=1 \
+			--only-summary'
 
 test:
 	@echo "🧪 Running tests..."
@@ -1288,6 +1338,39 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo ""
 	@echo "   Next:"
 	@echo "      • Open Locust: http://localhost:8089 (default host is http://nginx:80)"
+
+.PHONY: testing-up-rust
+testing-up-rust:                           ## Start testing stack with RUST_MCP_MODE=edge
+	@RUST_MCP_MODE=edge RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
+
+.PHONY: testing-up-rust-shadow
+testing-up-rust-shadow:                    ## Start testing stack with RUST_MCP_MODE=shadow
+	@RUST_MCP_MODE=shadow RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
+
+.PHONY: testing-up-rust-full
+testing-up-rust-full:                      ## Start testing stack with RUST_MCP_MODE=full
+	@RUST_MCP_MODE=full RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
+
+.PHONY: testing-rebuild-rust
+testing-rebuild-rust:                      ## Rebuild Rust image with no cache, then start testing stack in edge mode
+	@$(MAKE) testing-down
+	@$(MAKE) compose-clean
+	@$(MAKE) docker-prod-rust-no-cache
+	@RUST_MCP_MODE=edge RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
+
+.PHONY: testing-rebuild-rust-shadow
+testing-rebuild-rust-shadow:               ## Rebuild Rust image with no cache, then start testing stack in shadow mode
+	@$(MAKE) testing-down
+	@$(MAKE) compose-clean
+	@$(MAKE) docker-prod-rust-no-cache
+	@RUST_MCP_MODE=shadow RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
+
+.PHONY: testing-rebuild-rust-full
+testing-rebuild-rust-full:                 ## Rebuild Rust image with no cache, then start testing stack in full mode
+	@$(MAKE) testing-down
+	@$(MAKE) compose-clean
+	@$(MAKE) docker-prod-rust-no-cache
+	@RUST_MCP_MODE=full RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
 
 .PHONY: testing-down
 testing-down:                              ## Stop testing stack
@@ -2238,6 +2321,19 @@ load-test-agentgateway-mcp-server-time:    ## Load test external MCP server (loc
 
 MCP_PROTOCOL_LOCUSTFILE ?= tests/loadtest/locustfile_mcp_protocol.py
 MCP_PROTOCOL_HOST ?= http://localhost:4444
+MCP_BENCHMARK_HOST ?= http://localhost:8080
+MCP_BENCHMARK_SERVER_ID ?= 9779b6698cbd4b4995ee04a4fab38737
+MCP_BENCHMARK_USERS ?= 125
+MCP_BENCHMARK_SPAWN_RATE ?= 30
+MCP_BENCHMARK_RUN_TIME ?= 60s
+MCP_BENCHMARK_HIGH_USERS ?= 300
+MCP_BENCHMARK_HIGH_SPAWN_RATE ?= 50
+MCP_BENCHMARK_HIGH_RUN_TIME ?= 60s
+MCP_BENCHMARK_WORKERS ?= 4
+MCP_BENCHMARK_MIXED_MASTER_PORT ?= 5567
+MCP_BENCHMARK_TOOLS_MASTER_PORT ?= 5569
+MCP_BENCHMARK_LOCUST_LOG_LEVEL ?= ERROR
+MCP_BENCHMARK_WORKER_LOG_DIR ?= reports/mcp_benchmark_workers
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
 	@echo "🔬 Running MCP STREAMABLE HTTP protocol load test..."
@@ -2273,6 +2369,119 @@ load-test-mcp-protocol-ui:                 ## MCP Streamable HTTP protocol test 
 			--spawn-rate=30 \
 			--run-time=120s \
 			--class-picker'
+
+# help: benchmark-mcp-mixed      - Quick mixed MCP benchmark against the testing stack
+# help: benchmark-mcp-tools      - Quick tools-only MCP benchmark against the testing stack
+# help: benchmark-mcp-mixed-300  - Distributed 300-user mixed MCP benchmark
+# help: benchmark-mcp-tools-300  - Distributed 300-user tools-only MCP benchmark
+
+.PHONY: benchmark-mcp-mixed
+benchmark-mcp-mixed:                        ## Quick mixed MCP benchmark against the testing stack
+	@echo "📊 Running mixed MCP benchmark..."
+	@echo "   Host: $(MCP_BENCHMARK_HOST)"
+	@echo "   Server: $(MCP_BENCHMARK_SERVER_ID)"
+	@echo "   Users: $(MCP_BENCHMARK_USERS), Spawn: $(MCP_BENCHMARK_SPAWN_RATE)/s, Duration: $(MCP_BENCHMARK_RUN_TIME)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_BENCHMARK_HOST) \
+			--users=$(MCP_BENCHMARK_USERS) \
+			--spawn-rate=$(MCP_BENCHMARK_SPAWN_RATE) \
+			--run-time=$(MCP_BENCHMARK_RUN_TIME) \
+			--headless \
+			--only-summary'
+
+.PHONY: benchmark-mcp-tools
+benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark against the testing stack
+	@echo "📊 Running tools-only MCP benchmark..."
+	@echo "   Host: $(MCP_BENCHMARK_HOST)"
+	@echo "   Server: $(MCP_BENCHMARK_SERVER_ID)"
+	@echo "   Users: $(MCP_BENCHMARK_USERS), Spawn: $(MCP_BENCHMARK_SPAWN_RATE)/s, Duration: $(MCP_BENCHMARK_RUN_TIME)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_BENCHMARK_HOST) \
+			--users=$(MCP_BENCHMARK_USERS) \
+			--spawn-rate=$(MCP_BENCHMARK_SPAWN_RATE) \
+			--run-time=$(MCP_BENCHMARK_RUN_TIME) \
+			--headless \
+			--only-summary \
+			MCPToolCallerUser'
+
+.PHONY: benchmark-mcp-mixed-300
+benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP benchmark
+	@echo "📊 Running distributed mixed MCP benchmark..."
+	@echo "   Host: $(MCP_BENCHMARK_HOST)"
+	@echo "   Server: $(MCP_BENCHMARK_SERVER_ID)"
+	@echo "   Users: $(MCP_BENCHMARK_HIGH_USERS), Spawn: $(MCP_BENCHMARK_HIGH_SPAWN_RATE)/s, Duration: $(MCP_BENCHMARK_HIGH_RUN_TIME), Workers: $(MCP_BENCHMARK_WORKERS)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(MCP_BENCHMARK_WORKER_LOG_DIR)
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate; \
+		pids=""; \
+		cleanup() { \
+			for pid in $$pids; do kill $$pid 2>/dev/null || true; done; \
+			wait $$pids 2>/dev/null || true; \
+		}; \
+		trap cleanup EXIT INT TERM; \
+		for i in $$(seq 1 $(MCP_BENCHMARK_WORKERS)); do \
+			LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+			locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+				--worker \
+				--master-host=127.0.0.1 \
+				--master-port=$(MCP_BENCHMARK_MIXED_MASTER_PORT) \
+				> $(MCP_BENCHMARK_WORKER_LOG_DIR)/mixed_worker_$$i.log 2>&1 & \
+			pids="$$pids $$!"; \
+		done; \
+		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_BENCHMARK_HOST) \
+			--master \
+			--headless \
+			--expect-workers=$(MCP_BENCHMARK_WORKERS) \
+			--master-bind-port=$(MCP_BENCHMARK_MIXED_MASTER_PORT) \
+			--users=$(MCP_BENCHMARK_HIGH_USERS) \
+			--spawn-rate=$(MCP_BENCHMARK_HIGH_SPAWN_RATE) \
+			--run-time=$(MCP_BENCHMARK_HIGH_RUN_TIME) \
+			--only-summary'
+
+.PHONY: benchmark-mcp-tools-300
+benchmark-mcp-tools-300:                    ## Distributed 300-user tools-only MCP benchmark
+	@echo "📊 Running distributed tools-only MCP benchmark..."
+	@echo "   Host: $(MCP_BENCHMARK_HOST)"
+	@echo "   Server: $(MCP_BENCHMARK_SERVER_ID)"
+	@echo "   Users: $(MCP_BENCHMARK_HIGH_USERS), Spawn: $(MCP_BENCHMARK_HIGH_SPAWN_RATE)/s, Duration: $(MCP_BENCHMARK_HIGH_RUN_TIME), Workers: $(MCP_BENCHMARK_WORKERS)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(MCP_BENCHMARK_WORKER_LOG_DIR)
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate; \
+		pids=""; \
+		cleanup() { \
+			for pid in $$pids; do kill $$pid 2>/dev/null || true; done; \
+			wait $$pids 2>/dev/null || true; \
+		}; \
+		trap cleanup EXIT INT TERM; \
+		for i in $$(seq 1 $(MCP_BENCHMARK_WORKERS)); do \
+			LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+			locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+				--worker \
+				--master-host=127.0.0.1 \
+				--master-port=$(MCP_BENCHMARK_TOOLS_MASTER_PORT) \
+				> $(MCP_BENCHMARK_WORKER_LOG_DIR)/tools_worker_$$i.log 2>&1 & \
+			pids="$$pids $$!"; \
+		done; \
+		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
+			--host=$(MCP_BENCHMARK_HOST) \
+			--master \
+			--headless \
+			--expect-workers=$(MCP_BENCHMARK_WORKERS) \
+			--master-bind-port=$(MCP_BENCHMARK_TOOLS_MASTER_PORT) \
+			--users=$(MCP_BENCHMARK_HIGH_USERS) \
+			--spawn-rate=$(MCP_BENCHMARK_HIGH_SPAWN_RATE) \
+			--run-time=$(MCP_BENCHMARK_HIGH_RUN_TIME) \
+			--only-summary \
+			MCPToolCallerUser'
 
 load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy test (500 users, 5min)
 	@echo "🔬 Running MCP STREAMABLE HTTP protocol HEAVY load test..."
@@ -4605,13 +4814,26 @@ PLATFORM ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 
 container-build:
 	@echo "🔨 Building with $(CONTAINER_RUNTIME) for platform $(PLATFORM)..."
-	@RUST_ARG=""; PROFILING_ARG=""; \
-	if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
+	@RUST_BUILD_VALUE="$(ENABLE_RUST_BUILD)"; RMCP_BUILD_VALUE="$(ENABLE_RUST_MCP_RMCP_BUILD)"; RUST_ARG=""; RMCP_ARG=""; PROFILING_ARG=""; \
+	if [ "$(RUST_MCP_BUILD)" = "1" ] || [ "$(RUST_MCP_BUILD)" = "true" ]; then \
+		RUST_BUILD_VALUE="1"; \
+		if [ -z "$$RMCP_BUILD_VALUE" ] || [ "$$RMCP_BUILD_VALUE" = "0" ] || [ "$$RMCP_BUILD_VALUE" = "false" ]; then \
+			RMCP_BUILD_VALUE="1"; \
+		fi; \
+	fi; \
+	if [ "$$RUST_BUILD_VALUE" = "1" ] || [ "$$RUST_BUILD_VALUE" = "true" ]; then \
 		echo "🦀 Building container WITH Rust plugins..."; \
 		RUST_ARG="--build-arg ENABLE_RUST=true"; \
+		if [ "$$RMCP_BUILD_VALUE" = "1" ] || [ "$$RMCP_BUILD_VALUE" = "true" ]; then \
+			echo "🦀 Enabling rmcp support in the Rust MCP runtime..."; \
+			RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=true"; \
+		else \
+			RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=false"; \
+		fi; \
 	else \
-		echo "⏭️  Building container WITHOUT Rust plugins (set ENABLE_RUST_BUILD=1 to enable)"; \
+		echo "⏭️  Building container WITHOUT Rust plugins (set RUST_MCP_BUILD=1 or ENABLE_RUST_BUILD=1 to enable)"; \
 		RUST_ARG="--build-arg ENABLE_RUST=false"; \
+		RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=false"; \
 	fi; \
 	if [ "$(ENABLE_PROFILING_BUILD)" = "1" ]; then \
 		echo "📊 Building container WITH profiling tools (memray)..."; \
@@ -4623,7 +4845,9 @@ container-build:
 		--platform=$(PLATFORM) \
 		-f $(CONTAINER_FILE) \
 		$$RUST_ARG \
+		$$RMCP_ARG \
 		$$PROFILING_ARG \
+		$(DOCKER_BUILD_ARGS) \
 		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
 		.
 	@echo "✅ Built image: $(call get_image_name)"
@@ -5122,6 +5346,12 @@ docker:
 
 docker-prod:
 	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+
+docker-prod-rust:
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1
+
+docker-prod-rust-no-cache:
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
 
 # Build production image with profiling tools (memray) for performance debugging
 # Usage: make docker-prod-profiling
@@ -5763,7 +5993,7 @@ MINIKUBE_ADDONS  ?= ingress ingress-dns metrics-server dashboard registry regist
 #   mcpgateway/mcpgateway:latest.  Override with IMAGE=<repo:tag> to use a
 #   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.9.0).
 TAG              ?= latest         # override with TAG=<ver>
-IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TAG)
+IMAGE            ?= $(IMAGE_LOCAL) # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TAG)
 
 # -----------------------------------------------------------------------------
 # 🆘  HELP TARGETS (parsed by `make help`)
@@ -5854,7 +6084,7 @@ minikube-dashboard:
 .PHONY: minikube-context
 minikube-context:
 	@echo "🎯 Switching kubectl context to Minikube ..."
-	kubectl config use-context minikube
+	kubectl config use-context $(MINIKUBE_PROFILE)
 
 .PHONY: minikube-ssh
 minikube-ssh:
@@ -7730,7 +7960,7 @@ migration-test-all: migration-setup        ## Run comprehensive migration test s
 	@echo "📋 Testing PostgreSQL migrations..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
-		-v --tb=short --maxfail=3 -m 'not slow' \
+		-v --tb=short --maxfail=3 \
 		--log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'"
 	@echo ""
 	@echo "📊 Generating migration test report..."
@@ -7752,7 +7982,7 @@ migration-test-postgres:                   ## Run PostgreSQL compose migration t
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
-		-v --tb=short --log-cli-level=INFO -m 'not slow'"
+		-v --tb=short --log-cli-level=INFO"
 	@echo "✅ PostgreSQL migration tests complete!"
 
 migration-test-performance:               ## Run migration performance benchmarking
@@ -7864,10 +8094,14 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-build-all-platforms              - Build for all platforms (Linux, macOS, Windows)
 # help: rust-cross                            - Install targets + build all Linux (convenience)
 # help: rust-cross-install-build              - Install targets + build all platforms (one command)
+# help: rust-mcp-runtime-build                - Build the experimental Rust MCP runtime
+# help: rust-mcp-runtime-test                 - Run tests for the experimental Rust MCP runtime
+# help: rust-mcp-runtime-run                  - Run the experimental Rust MCP runtime against local gateway /rpc
 
 .PHONY: rust-build rust-dev rust-test rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
+.PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
 
 rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and all plugins are installed
 	@if ! command -v rustup > /dev/null 2>&1; then \
@@ -7993,6 +8227,18 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
+
+rust-mcp-runtime-build:                    ## Build the experimental Rust MCP runtime
+	@echo "🦀 Building experimental Rust MCP runtime..."
+	@cd tools_rust/mcp_runtime && cargo build --release
+
+rust-mcp-runtime-test:                     ## Run tests for the experimental Rust MCP runtime
+	@echo "🧪 Running Rust MCP runtime tests..."
+	@cd tools_rust/mcp_runtime && cargo test --release
+
+rust-mcp-runtime-run:                      ## Run the experimental Rust MCP runtime against local gateway /rpc
+	@echo "🚀 Starting Rust MCP runtime on http://127.0.0.1:8787 with backend http://127.0.0.1:4444/rpc"
+	@cd tools_rust/mcp_runtime && cargo run --release -- --backend-rpc-url http://127.0.0.1:4444/rpc --listen-http 127.0.0.1:8787
 
 .PHONY: conc-02-gateways
 conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)

@@ -36,6 +36,43 @@ Compare the 95/99th percentile latencies and error rates with and without the ga
 * Overhead from JSON-RPC wrapping/unwrapping
 * Improper worker/thread config in Gunicorn
 
+## Rust MCP Benchmark Workflow
+
+When benchmarking the Rust MCP runtime on the compose-backed test stack, use the
+mode-specific rebuild helpers first:
+
+```bash
+make testing-rebuild-rust-shadow
+make testing-rebuild-rust
+make testing-rebuild-rust-full
+```
+
+Then use the benchmark wrappers:
+
+```bash
+make benchmark-mcp-mixed
+make benchmark-mcp-tools
+make benchmark-mcp-mixed-300
+make benchmark-mcp-tools-300
+```
+
+These wrappers target the nginx-exposed compose stack on
+`http://localhost:8080` and use the MCP protocol Locust file under
+`tests/loadtest/locustfile_mcp_protocol.py`.
+
+Recommended Rust MCP validation sequence:
+
+```bash
+make testing-rebuild-rust-full
+make test-mcp-cli
+make test-mcp-rbac
+make test-mcp-session-isolation
+make benchmark-mcp-tools-300
+```
+
+If you are comparing performance and rollback behavior, run the same benchmark
+suite in `shadow` and `full`.
+
 ## 🚀 Scripted Load Tests: `tests/hey/hey.sh`
 
 A wrapper script exists at:

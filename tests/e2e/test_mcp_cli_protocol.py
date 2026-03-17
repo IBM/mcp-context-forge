@@ -41,6 +41,7 @@ import subprocess
 import sys
 
 # Third-Party
+import httpx
 import pytest
 
 # Local
@@ -430,3 +431,34 @@ class TestMcpProtocolCoverage:
         assert "prompts" in caps, f"Missing 'prompts' capability: {caps}"
         cap_names = sorted(caps.keys())
         print(f"    -> Server capabilities: {cap_names}")
+
+
+class TestRawHttpTransportParity:
+    """Direct HTTP checks for the Rust-fronted MCP transport."""
+
+    def test_initialize_delete_flow_uses_rust_transport(self, jwt_token: str) -> None:
+        """Raw initialize and DELETE should stay on the Rust MCP edge when enabled."""
+        initialize_headers = {
+            "authorization": f"Bearer {jwt_token}",
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-03-26",
+        }
+
+        with httpx.Client(timeout=10.0) as client:
+            init_response = client.post(f"{BASE_URL}/mcp/", headers=initialize_headers, json=_build_initialize())
+            assert init_response.status_code == 200, init_response.text
+            runtime_marker = init_response.headers.get("x-contextforge-mcp-runtime")
+            if runtime_marker != "rust":
+                pytest.skip("Rust MCP runtime not enabled on target gateway")
+
+            print(f"    -> Raw HTTP initialize runtime header: {runtime_marker}")
+
+            delete_headers = {
+                "authorization": f"Bearer {jwt_token}",
+                "accept": "application/json, text/event-stream",
+            }
+            delete_response = client.request("DELETE", f"{BASE_URL}/mcp/", headers=delete_headers)
+            assert delete_response.status_code == 405, delete_response.text
+            assert delete_response.headers.get("x-contextforge-mcp-runtime") == "rust"
+            print(f"    -> Raw HTTP DELETE runtime header: {delete_response.headers.get('x-contextforge-mcp-runtime')}")

@@ -348,7 +348,7 @@ def test_tool_create_optional_none_branches():
 def test_tool_update_more_branches(caplog):
     assert ToolUpdate.validate_url(None) is None
 
-    caplog.set_level("INFO")
+    caplog.set_level("INFO", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     truncated = ToolUpdate.validate_description(long_desc)
     assert len(truncated) == SecurityValidator.MAX_DESCRIPTION_LENGTH
@@ -391,7 +391,7 @@ def test_resource_create_and_notifications_serialization():
 
 
 def test_prompt_update_description_truncation(caplog):
-    caplog.set_level("INFO")
+    caplog.set_level("INFO", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     truncated = PromptUpdate.validate_description(long_desc)
     assert len(truncated) == SecurityValidator.MAX_DESCRIPTION_LENGTH
@@ -424,7 +424,7 @@ def test_gateway_create_more_branches(monkeypatch):
 
 
 def test_gateway_update_more_branches(caplog):
-    caplog.set_level("WARNING")
+    caplog.set_level("WARNING", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     assert len(GatewayUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
 
@@ -508,7 +508,7 @@ def test_rpc_and_event_admin_and_server_validators(caplog):
 
     assert AdminToolCreate.validate_json("") is None
 
-    caplog.set_level("INFO")
+    caplog.set_level("INFO", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     assert len(ServerCreate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert len(ServerUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
@@ -538,7 +538,7 @@ def test_rpc_and_event_admin_and_server_validators(caplog):
 
 
 def test_a2a_agent_create_and_update_more_branches(monkeypatch, caplog):
-    caplog.set_level("WARNING")
+    caplog.set_level("WARNING", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     assert len(A2AAgentCreate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert len(A2AAgentUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH

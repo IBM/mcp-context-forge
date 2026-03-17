@@ -1437,3 +1437,29 @@ class TestContextManager:
             assert pool._pools[pool_key].qsize() == 1
 
         await pool.close_all()
+
+
+class TestStreamableHttpSessionOwnerCleanup:
+    """Tests for the public session-owner cleanup wrapper."""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_streamable_http_session_owner_skips_invalid_ids(self):
+        """Invalid MCP session ids should be ignored."""
+        pool = MCPSessionPool()
+        pool.is_valid_mcp_session_id = MagicMock(return_value=False)
+        pool._cleanup_pool_session_owner = AsyncMock()
+
+        await pool.cleanup_streamable_http_session_owner("not-valid")
+
+        pool._cleanup_pool_session_owner.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_streamable_http_session_owner_cleans_valid_ids(self):
+        """Valid MCP session ids should delegate to the private cleanup helper."""
+        pool = MCPSessionPool()
+        pool.is_valid_mcp_session_id = MagicMock(return_value=True)
+        pool._cleanup_pool_session_owner = AsyncMock()
+
+        await pool.cleanup_streamable_http_session_owner("abc123def456")
+
+        pool._cleanup_pool_session_owner.assert_awaited_once_with("abc123def456")
