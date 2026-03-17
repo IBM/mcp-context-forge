@@ -3600,10 +3600,6 @@ class ToolService(BaseService):
         db.commit()  # End read-only transaction cleanly (commit not rollback to avoid inflating rollback stats)
         db.close()
 
-        # When the Rust runtime already ran pre-invoke hooks during /resolve
-        # and is now falling back to the Python path, skip re-running them.
-        skip_pre_invoke = bool(request_headers and request_headers.get("x-contextforge-pre-invoke-ran"))
-
         # Plugin hook: tool pre-invoke
         # Use existing context_table from previous hooks if available
         context_table = plugin_context_table
