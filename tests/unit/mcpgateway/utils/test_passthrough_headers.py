@@ -361,7 +361,7 @@ class TestPassthroughHeaders:
             mock_gateway.auth_type = auth_type
             mock_gateway.name = f"gateway-{auth_type or 'none'}"
 
-            with caplog.at_level(logging.WARNING):
+            with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
                 result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
 
             if auth_type in ["basic", "bearer"]:
@@ -442,7 +442,7 @@ class TestPassthroughHeaders:
         request_headers = {"authorization": "Bearer token", "x-conflict": "request-value"}  # Will be blocked by basic auth  # Will conflict with base header
         base_headers = {"X-Conflict": "base-value"}  # Conflicts with x-conflict
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
 
         # Should have warnings for: missing header, auth conflict, base header conflict
@@ -488,7 +488,7 @@ class TestPassthroughHeaders:
         request_headers = {"content-type": "text/plain", "x-tenant-id": "acme-corp"}
         base_headers = {"Content-Type": "application/json", "User-Agent": "MCPGateway"}
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Should preserve base Content-Type and add X-Tenant-Id
