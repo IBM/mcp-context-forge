@@ -6054,7 +6054,7 @@ class TeamResponse(BaseModel):
     description: Optional[str] = Field(None, description="Team description")
     created_by: str = Field(..., description="Email of team creator")
     is_personal: bool = Field(..., description="Whether this is a personal team")
-    visibility: Optional[str] = Field(..., description="Team visibility level")
+    visibility: Optional[Literal["private", "public"]] = Field(..., description="Team visibility level")
     max_members: Optional[int] = Field(None, description="Maximum number of members allowed")
     member_count: int = Field(..., description="Current number of team members")
     created_at: datetime = Field(..., description="Team creation timestamp")
