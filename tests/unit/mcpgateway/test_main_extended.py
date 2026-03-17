@@ -637,23 +637,25 @@ class TestInternalTrustedMcpTransportBridge:
         monkeypatch.setattr(main_mod, "plugin_manager", mock_pm)
 
         transformed_headers = {"authorization": "Bearer exchanged-token", "x-injected": "value"}
+        original_headers = {"authorization": "Bearer original-token"}
 
-        async def _fake_run_pre_request_hooks(plugin_manager, headers, path, method, client_host):
-            return transformed_headers, None, None
-
-        monkeypatch.setattr("mcpgateway.main.run_pre_request_hooks", _fake_run_pre_request_hooks)
+        mock_run_hooks = AsyncMock(return_value=(transformed_headers, None, None))
+        monkeypatch.setattr("mcpgateway.main.run_pre_request_hooks", mock_run_hooks)
 
         error_response, auth_context = await _run_internal_mcp_authentication(
             method="POST",
             path="/mcp",
             query_string="",
-            headers={"authorization": "Bearer original-token"},
+            headers=original_headers,
             client_ip="203.0.113.10",
         )
 
         assert error_response is None
         assert auth_context["email"] == "hook-user@example.com"
         mock_pm.has_hooks_for.assert_called()
+        # Verify run_pre_request_hooks was actually invoked with original headers
+        mock_run_hooks.assert_awaited_once()
+        assert mock_run_hooks.call_args.kwargs["headers"] == original_headers
 
     @pytest.mark.asyncio
     async def test_handle_internal_mcp_authenticate_returns_auth_context(self, monkeypatch):

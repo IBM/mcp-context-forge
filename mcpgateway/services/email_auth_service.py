@@ -552,8 +552,9 @@ class EmailAuthService:
             auth_provider: Authentication provider ('local', 'github', etc.)
             skip_password_validation: Skip password policy validation (for bootstrap)
             granted_by: Email of user creating this user (for role assignment audit trail)
-            skip_onboarding: Skip personal team creation, role assignment, and registration
-                event logging (for service accounts / synthetic users)
+            skip_onboarding: Skip personal team creation, role assignment, and
+                success-path registration event logging (for service accounts /
+                synthetic users).  Failure-path audit events are always recorded.
 
         Returns:
             EmailUser: The created user object
@@ -585,10 +586,11 @@ class EmailAuthService:
 
         # Hash before the first DB read so PgBouncer transaction pooling does not
         # hold an idle transaction open across the async hashing call.
-        # Service-account paths (skip_onboarding) intentionally pass password=""
-        # and get a non-loginable sentinel; all other callers go through
-        # hash_password_async which raises ValueError on empty input.
-        if not password and skip_onboarding:
+        # Callers that skip password validation with an empty password (e.g.
+        # ensure_user_exists for service accounts) get a non-loginable sentinel;
+        # all other callers go through hash_password_async which raises
+        # ValueError on empty input.
+        if not password and skip_password_validation:
             password_hash = "!disabled"  # nosec B105 — not a valid Argon2 hash, verify_password always rejects
         else:
             password_hash = await self.password_service.hash_password_async(password)
@@ -714,7 +716,8 @@ class EmailAuthService:
             is_admin: Whether user has admin privileges
             auth_provider: Authentication provider
             granted_by: Email of creating user (for audit trail)
-            skip_onboarding: Skip personal team, role assignment, and audit events
+            skip_onboarding: Skip personal team, role assignment, and success-path
+                audit events (failure auditing is always recorded)
 
         Returns:
             Tuple of (user, created) where created is True if the user was newly created.
