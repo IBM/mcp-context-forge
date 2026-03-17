@@ -299,6 +299,9 @@ class ServerService(BaseService):
             ...     created_at=now, updated_at=now, enabled=True,
             ...     associated_tools=[], associated_resources=[], associated_prompts=[], associated_a2a_agents=[],
             ...     tags=[], metrics=[m1, m2],
+            ...     metrics_summary={"total_executions": 2, "successful_executions": 1, "failed_executions": 1,
+            ...                      "failure_rate": 0.5, "min_response_time": 0.2, "max_response_time": 0.4,
+            ...                      "avg_response_time": 0.3, "last_execution_time": now},
             ...     tools=[], resources=[], prompts=[], a2a_agents=[],
             ...     team_id=None, owner_email=None, visibility=None,
             ...     created_by=None, modified_by=None
