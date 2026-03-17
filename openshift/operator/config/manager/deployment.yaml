@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: contextforge-operator
-  namespace: contextforge-dev
+  namespace: contextforge-run
   labels:
     app.kubernetes.io/name: contextforge-operator
     app.kubernetes.io/managed-by: kustomize
@@ -21,7 +21,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: manager
-          image: contextforge-operator:latest
+          image: image-registry.openshift-image-registry.svc:5000/contextforge-dev/contextforge-operator:latest
           args:
             - --leader-elect
           ports:
