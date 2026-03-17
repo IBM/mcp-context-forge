@@ -1,0 +1,382 @@
+###############################################################################
+# ContextForge OpenShift Build Pipelines
+#
+# Creates BuildConfig + ImageStream for each component built from
+# docker-compose.yml.  All builds share a single GIT_REF parameter so the
+# target branch can be changed in one place.
+#
+# Usage:
+#   oc process -f build-pipelines.yaml -p GIT_REF=main | oc apply -f -
+#   oc process -f build-pipelines.yaml -p GIT_REF=feature/my-branch | oc apply -f -
+#
+# Trigger a single rebuild after changing branch:
+#   oc start-build contextforge --follow
+#
+# Trigger all rebuilds:
+#   for bc in contextforge nginx-cache fast-time-server fast-test-server \
+#             slow-time-server a2a-echo-agent benchmark-server; do
+#     oc start-build "$bc" --follow &
+#   done; wait
+###############################################################################
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: contextforge-build-pipelines
+  annotations:
+    description: "Build pipelines for ContextForge and subcomponents"
+parameters:
+  - name: GIT_REF
+    description: "Git branch, tag, or commit to build from"
+    value: "main"
+  - name: GIT_URI
+    description: "Git repository URI"
+    value: "https://github.com/IBM/mcp-context-forge.git"
+  - name: NAMESPACE
+    description: "Target namespace for ImageStreams"
+    value: "contextforge-dev"
+  - name: PULL_SECRET
+    description: "Name of the pull secret for external registries (e.g. Docker Hub)"
+    value: "dockerhub-pull-secret"
+
+objects:
+
+###############################################################################
+# ImageStreams
+###############################################################################
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: contextforge
+      namespace: ${NAMESPACE}
+    spec:
+      lookupPolicy:
+        local: true
+
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: nginx-cache
+      namespace: ${NAMESPACE}
+    spec:
+      lookupPolicy:
+        local: true
+
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: fast-time-server
+      namespace: ${NAMESPACE}
+    spec:
+      lookupPolicy:
+        local: true
+
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: fast-test-server
+      namespace: ${NAMESPACE}
+    spec:
+      lookupPolicy:
+        local: true
+
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: slow-time-server
+      namespace: ${NAMESPACE}
+    spec:
+      lookupPolicy:
+        local: true
+
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: a2a-echo-agent
+      namespace: ${NAMESPACE}
+    spec:
+      lookupPolicy:
+        local: true
+
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: benchmark-server
+      namespace: ${NAMESPACE}
+    spec:
+      lookupPolicy:
+        local: true
+
+###############################################################################
+# BuildConfigs
+###############################################################################
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # ContextForge gateway (main application)
+  # Context: repo root   Dockerfile: Containerfile.lite
+  # Equivalent to: make docker-prod-rust
+  # ─────────────────────────────────────────────────────────────────────────
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: contextforge
+      namespace: ${NAMESPACE}
+      labels:
+        app: contextforge
+        component: gateway
+    spec:
+      source:
+        type: Git
+        git:
+          uri: ${GIT_URI}
+          ref: ${GIT_REF}
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: Containerfile.lite
+          pullSecret:
+            name: ${PULL_SECRET}
+          buildArgs:
+            - name: ENABLE_RUST
+              value: "true"
+            - name: ENABLE_RUST_MCP_RMCP
+              value: "true"
+      output:
+        to:
+          kind: ImageStreamTag
+          name: contextforge:latest
+      resources:
+        limits:
+          memory: 4Gi
+          cpu: "2"
+        requests:
+          memory: 2Gi
+          cpu: "1"
+      runPolicy: Serial
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Nginx caching proxy
+  # Context: infra/nginx   Dockerfile: Dockerfile
+  # ─────────────────────────────────────────────────────────────────────────
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: nginx-cache
+      namespace: ${NAMESPACE}
+      labels:
+        app: contextforge
+        component: nginx
+    spec:
+      source:
+        type: Git
+        git:
+          uri: ${GIT_URI}
+          ref: ${GIT_REF}
+        contextDir: infra/nginx
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: Dockerfile
+          pullSecret:
+            name: ${PULL_SECRET}
+      output:
+        to:
+          kind: ImageStreamTag
+          name: nginx-cache:latest
+      resources:
+        limits:
+          memory: 1Gi
+          cpu: "1"
+        requests:
+          memory: 512Mi
+          cpu: 500m
+      runPolicy: Serial
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # fast-time-server (Go)
+  # Context: mcp-servers/go/fast-time-server   Dockerfile: Dockerfile
+  # ─────────────────────────────────────────────────────────────────────────
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: fast-time-server
+      namespace: ${NAMESPACE}
+      labels:
+        app: contextforge
+        component: fast-time-server
+    spec:
+      source:
+        type: Git
+        git:
+          uri: ${GIT_URI}
+          ref: ${GIT_REF}
+        contextDir: mcp-servers/go/fast-time-server
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: Dockerfile
+          pullSecret:
+            name: ${PULL_SECRET}
+      output:
+        to:
+          kind: ImageStreamTag
+          name: fast-time-server:latest
+      resources:
+        limits:
+          memory: 2Gi
+          cpu: "2"
+        requests:
+          memory: 1Gi
+          cpu: 500m
+      runPolicy: Serial
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # fast-test-server (Rust)
+  # Context: mcp-servers/rust/fast-test-server   Dockerfile: Containerfile
+  # ─────────────────────────────────────────────────────────────────────────
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: fast-test-server
+      namespace: ${NAMESPACE}
+      labels:
+        app: contextforge
+        component: fast-test-server
+    spec:
+      source:
+        type: Git
+        git:
+          uri: ${GIT_URI}
+          ref: ${GIT_REF}
+        contextDir: mcp-servers/rust/fast-test-server
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: Containerfile
+          pullSecret:
+            name: ${PULL_SECRET}
+      output:
+        to:
+          kind: ImageStreamTag
+          name: fast-test-server:latest
+      resources:
+        limits:
+          memory: 4Gi
+          cpu: "2"
+        requests:
+          memory: 2Gi
+          cpu: "1"
+      runPolicy: Serial
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # slow-time-server (Go)
+  # Context: mcp-servers/go/slow-time-server   Dockerfile: Dockerfile
+  # ─────────────────────────────────────────────────────────────────────────
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: slow-time-server
+      namespace: ${NAMESPACE}
+      labels:
+        app: contextforge
+        component: slow-time-server
+    spec:
+      source:
+        type: Git
+        git:
+          uri: ${GIT_URI}
+          ref: ${GIT_REF}
+        contextDir: mcp-servers/go/slow-time-server
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: Dockerfile
+          pullSecret:
+            name: ${PULL_SECRET}
+      output:
+        to:
+          kind: ImageStreamTag
+          name: slow-time-server:latest
+      resources:
+        limits:
+          memory: 2Gi
+          cpu: "2"
+        requests:
+          memory: 1Gi
+          cpu: 500m
+      runPolicy: Serial
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # a2a-echo-agent (Go)
+  # Context: a2a-agents/go/a2a-echo-agent   Dockerfile: Dockerfile
+  # ─────────────────────────────────────────────────────────────────────────
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: a2a-echo-agent
+      namespace: ${NAMESPACE}
+      labels:
+        app: contextforge
+        component: a2a-echo-agent
+    spec:
+      source:
+        type: Git
+        git:
+          uri: ${GIT_URI}
+          ref: ${GIT_REF}
+        contextDir: a2a-agents/go/a2a-echo-agent
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: Dockerfile
+          pullSecret:
+            name: ${PULL_SECRET}
+      output:
+        to:
+          kind: ImageStreamTag
+          name: a2a-echo-agent:latest
+      resources:
+        limits:
+          memory: 2Gi
+          cpu: "2"
+        requests:
+          memory: 1Gi
+          cpu: 500m
+      runPolicy: Serial
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # benchmark-server (Go)
+  # Context: mcp-servers/go/benchmark-server   Dockerfile: Dockerfile
+  # ─────────────────────────────────────────────────────────────────────────
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: benchmark-server
+      namespace: ${NAMESPACE}
+      labels:
+        app: contextforge
+        component: benchmark-server
+    spec:
+      source:
+        type: Git
+        git:
+          uri: ${GIT_URI}
+          ref: ${GIT_REF}
+        contextDir: mcp-servers/go/benchmark-server
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: Dockerfile
+          pullSecret:
+            name: ${PULL_SECRET}
+      output:
+        to:
+          kind: ImageStreamTag
+          name: benchmark-server:latest
+      resources:
+        limits:
+          memory: 2Gi
+          cpu: "2"
+        requests:
+          memory: 1Gi
+          cpu: 500m
+      runPolicy: Serial

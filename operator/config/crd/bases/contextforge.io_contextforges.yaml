@@ -1,0 +1,249 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: contextforges.contextforge.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.0
+spec:
+  group: contextforge.io
+  names:
+    kind: ContextForge
+    listKind: ContextForgeList
+    plural: contextforges
+    singular: contextforge
+    shortNames:
+      - cf
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Gateway
+          type: boolean
+          jsonPath: .status.gatewayReady
+        - name: Database
+          type: boolean
+          jsonPath: .status.databaseReady
+        - name: Redis
+          type: boolean
+          jsonPath: .status.redisReady
+        - name: Endpoint
+          type: string
+          jsonPath: .status.gatewayEndpoint
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: ContextForge deploys and manages a complete ContextForge MCP gateway cluster.
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [gateway, database, redis, auth]
+              properties:
+                gateway:
+                  type: object
+                  properties:
+                    image:
+                      type: string
+                      description: Container image for the gateway. Defaults to contextforge:latest ImageStream.
+                    replicas:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      default: 1
+                    httpServer:
+                      type: string
+                      enum: [gunicorn, granian]
+                      default: gunicorn
+                    workers:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                    resources:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    env:
+                      type: array
+                      items:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    route:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: true
+                        host:
+                          type: string
+                        tlsTermination:
+                          type: string
+                          enum: [edge, passthrough, reencrypt]
+                          default: edge
+                database:
+                  type: object
+                  description: "Exactly one of managed or external must be set."
+                  properties:
+                    managed:
+                      type: object
+                      properties:
+                        image:
+                          type: string
+                          default: "postgres:18"
+                        storageSize:
+                          type: string
+                          default: "5Gi"
+                        storageClassName:
+                          type: string
+                        resources:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                    external:
+                      type: object
+                      properties:
+                        url:
+                          type: string
+                        secretRef:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                redis:
+                  type: object
+                  description: "Exactly one of managed or external must be set."
+                  properties:
+                    managed:
+                      type: object
+                      properties:
+                        image:
+                          type: string
+                          default: "redis:latest"
+                        resources:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                    external:
+                      type: object
+                      properties:
+                        url:
+                          type: string
+                        secretRef:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                nginx:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: true
+                    image:
+                      type: string
+                    resources:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                auth:
+                  type: object
+                  properties:
+                    jwtSecretRef:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                    adminEmail:
+                      type: string
+                      default: "admin@example.com"
+                    adminPasswordRef:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                features:
+                  type: object
+                  properties:
+                    ui:
+                      type: boolean
+                      default: true
+                    adminApi:
+                      type: boolean
+                      default: true
+                    a2a:
+                      type: boolean
+                      default: true
+                    plugins:
+                      type: boolean
+                      default: false
+                    catalog:
+                      type: boolean
+                      default: true
+                    rustRuntime:
+                      type: object
+                      properties:
+                        mode:
+                          type: string
+                          enum: ["off", "shadow", "edge", "full"]
+                          default: "off"
+                testing:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                    fastTimeServer:
+                      type: boolean
+                    fastTestServer:
+                      type: boolean
+                    slowTimeServer:
+                      type: boolean
+                    a2aEchoAgent:
+                      type: boolean
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                    required: [type, status]
+                gatewayReady:
+                  type: boolean
+                databaseReady:
+                  type: boolean
+                redisReady:
+                  type: boolean
+                migrationComplete:
+                  type: boolean
+                gatewayEndpoint:
+                  type: string
+                observedGeneration:
+                  type: integer
+                  format: int64

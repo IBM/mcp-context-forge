@@ -1,0 +1,39 @@
+apiVersion: contextforge.io/v1alpha1
+kind: ContextForge
+metadata:
+  name: contextforge-dev
+spec:
+  gateway:
+    # Uses the contextforge:latest ImageStream from the build pipelines
+    image: image-registry.openshift-image-registry.svc:5000/contextforge-dev/contextforge:latest
+    replicas: 1
+    httpServer: gunicorn
+    workers: 4
+    route:
+      enabled: true
+      tlsTermination: edge
+
+  database:
+    managed:
+      image: postgres:18
+      storageSize: "5Gi"
+
+  redis:
+    managed:
+      image: redis:latest
+
+  nginx:
+    enabled: true
+    image: image-registry.openshift-image-registry.svc:5000/contextforge-dev/nginx-cache:latest
+
+  auth:
+    adminEmail: admin@example.com
+
+  features:
+    ui: true
+    adminApi: true
+    a2a: true
+    plugins: false
+    catalog: true
+    rustRuntime:
+      mode: "off"

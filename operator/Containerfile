@@ -1,0 +1,24 @@
+# Build stage
+FROM golang:1.23 AS builder
+
+WORKDIR /workspace
+
+# Resolve and cache dependencies (go.sum generated at build time)
+COPY go.mod ./
+COPY api/ api/
+COPY cmd/ cmd/
+COPY internal/ internal/
+RUN go mod tidy && go mod download
+
+# Build
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /workspace/manager ./cmd/main.go
+
+# Runtime stage
+FROM gcr.io/distroless/static:nonroot
+
+WORKDIR /
+COPY --from=builder /workspace/manager .
+
+USER 65532:65532
+
+ENTRYPOINT ["/manager"]

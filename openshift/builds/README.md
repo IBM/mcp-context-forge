@@ -1,0 +1,1 @@
+../../docs/docs/deployment/openshift-builds.md

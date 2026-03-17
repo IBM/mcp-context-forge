@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: contextforge-operator
+  namespace: contextforge-dev
+  labels:
+    app.kubernetes.io/name: contextforge-operator
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: contextforge-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: contextforge-operator
+    spec:
+      serviceAccountName: contextforge-operator
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: manager
+          image: contextforge-operator:latest
+          args:
+            - --leader-elect
+          ports:
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 65532
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
