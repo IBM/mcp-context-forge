@@ -8470,6 +8470,7 @@ async def _execute_rpc_tools_call(
     params: Dict[str, Any],
     lowered_request_headers: Dict[str, str],
     server_id: Optional[str],
+    skip_pre_invoke: bool = False,
 ):
     """Execute the hot-path ``tools/call`` branch without the generic RPC method switch.
 
@@ -8481,6 +8482,7 @@ async def _execute_rpc_tools_call(
         params: Parsed tools/call params payload.
         lowered_request_headers: Lower-cased request headers used for passthrough.
         server_id: Optional virtual server identifier.
+        skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
 
     Returns:
         Serialized MCP tools/call result payload.
@@ -8557,6 +8559,7 @@ async def _execute_rpc_tools_call(
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
+                    skip_pre_invoke=skip_pre_invoke,
                 )
             except (ToolNotFoundError, ValueError):
                 logger.error("Tool not found: %s", name)
@@ -8649,6 +8652,11 @@ async def handle_internal_mcp_tools_call(request: Request):
         if (_get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
             await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
 
+        # Trust the pre-invoke-ran marker only on this internal endpoint
+        # (authenticated via x-contextforge-mcp-runtime-auth shared secret).
+        # External clients cannot reach this path.
+        pre_invoke_ran = lowered_request_headers.get("x-contextforge-pre-invoke-ran") == "true"
+
         try:
             result = await _execute_rpc_tools_call(
                 request,
@@ -8658,6 +8666,7 @@ async def handle_internal_mcp_tools_call(request: Request):
                 params=params,
                 lowered_request_headers=lowered_request_headers,
                 server_id=server_id,
+                skip_pre_invoke=pre_invoke_ran,
             )
         finally:
             if db.is_active and db.in_transaction() is not None:

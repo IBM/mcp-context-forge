@@ -3217,6 +3217,7 @@ class ToolService(BaseService):
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
+        skip_pre_invoke: bool = False,
     ) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
@@ -3238,6 +3239,7 @@ class ToolService(BaseService):
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
             meta_data: Optional metadata dictionary for additional context (e.g., request ID).
+            skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
 
         Returns:
             Tool invocation result.
@@ -3596,10 +3598,6 @@ class ToolService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         db.commit()  # End read-only transaction cleanly (commit not rollback to avoid inflating rollback stats)
         db.close()
-
-        # When the Rust runtime already ran pre-invoke hooks during /resolve
-        # and is now falling back to the Python path, skip re-running them.
-        skip_pre_invoke = bool(request_headers and request_headers.get("x-contextforge-pre-invoke-ran"))
 
         # Plugin hook: tool pre-invoke
         # Use existing context_table from previous hooks if available
