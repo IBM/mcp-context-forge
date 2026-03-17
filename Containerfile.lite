@@ -85,6 +85,17 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
 
 WORKDIR /build/tools_rust/mcp_runtime
 
+# Install protoc when grpc-uds feature is requested (required by tonic-build)
+RUN if [ "$ENABLE_RUST" = "true" ] && [ "$ENABLE_RUST_MCP_GRPC_UDS" = "true" ]; then \
+        PB_REL="https://github.com/protocolbuffers/protobuf/releases" && \
+        PB_VER="29.3" && \
+        curl -sSLo /tmp/protoc.zip "${PB_REL}/download/v${PB_VER}/protoc-${PB_VER}-linux-x86_64.zip" && \
+        unzip -q /tmp/protoc.zip -d /usr/local && \
+        rm /tmp/protoc.zip && \
+        chmod +x /usr/local/bin/protoc && \
+        echo "✅ protoc $(protoc --version) installed"; \
+    fi
+
 # Build the experimental Rust MCP runtime binary (only if ENABLE_RUST=true)
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         FEATURES=""; \
