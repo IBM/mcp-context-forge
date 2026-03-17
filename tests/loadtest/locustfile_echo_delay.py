@@ -228,7 +228,7 @@ def on_test_stop(environment, **_kwargs):
     print(f"  Total Requests:     {total:,}")
     print(f"  Total Failures:     {failures:,} ({fail_rate:.2f}%)")
     print(f"  Requests/sec (RPS): {stats.total.total_rps:.2f}")
-    print(f"\n  Response Times (ms):")
+    print("\n  Response Times (ms):")
     print(f"    Average:          {stats.total.avg_response_time:.2f}")
     print(f"    Min:              {stats.total.min_response_time:.2f}")
     print(f"    Max:              {stats.total.max_response_time:.2f}")

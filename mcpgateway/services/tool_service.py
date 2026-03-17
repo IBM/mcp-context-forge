@@ -3126,10 +3126,8 @@ class ToolService(BaseService):
         # inject credentials and clean arguments before the Rust direct call.
         modified_args = arguments
         if has_pre_invoke and arguments is not None:
-            import uuid as _uuid  # pylint: disable=import-outside-toplevel
-
             hook_global_context = GlobalContext(
-                request_id=str(_uuid.uuid4()),
+                request_id=str(uuid.uuid4()),
                 server_id=server_id,
                 tenant_id=None,
                 user=app_user_email,

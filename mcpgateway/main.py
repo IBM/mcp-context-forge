@@ -1519,12 +1519,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         validate_security_configuration()
 
         if plugin_manager:
-            logger.warning("[DIAG] plugin_manager.initialize() starting...")
+            logger.debug("plugin_manager.initialize() starting...")
             try:
                 await plugin_manager.initialize()
-                logger.warning(f"[DIAG] plugin_manager.initialize() complete: {plugin_manager.plugin_count} plugins loaded")
+                logger.info(f"Plugin manager initialized with {plugin_manager.plugin_count} plugins")
             except Exception as diag_exc:
-                logger.warning(f"[DIAG] plugin_manager.initialize() FAILED: {diag_exc}", exc_info=True)
+                logger.error(f"plugin_manager.initialize() failed: {diag_exc}", exc_info=True)
                 raise
 
         if settings.enable_header_passthrough:

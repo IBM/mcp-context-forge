@@ -6824,27 +6824,34 @@ async fn execute_tools_call_via_rmcp(
     let rmcp_client =
         get_or_create_rmcp_upstream_client(state, plan, &session_key, &protocol_version).await?;
 
-    let (response, success, error_message) =
-        match invoke_tools_call_via_rmcp(rmcp_client.as_ref(), request, remote_tool_name, plan.modified_args.as_ref()).await {
-            Ok(response) => response,
-            Err(err) => {
-                state
-                    .rmcp_upstream_clients()
-                    .lock()
-                    .await
-                    .remove(&session_key);
-                let retried_client = get_or_create_rmcp_upstream_client(
-                    state,
-                    plan,
-                    &session_key,
-                    &protocol_version,
-                )
-                .await?;
-                invoke_tools_call_via_rmcp(retried_client.as_ref(), request, remote_tool_name, plan.modified_args.as_ref())
-                    .await
-                    .map_err(|retry_err| format!("rmcp retry failed after {err}: {retry_err}"))?
-            }
-        };
+    let (response, success, error_message) = match invoke_tools_call_via_rmcp(
+        rmcp_client.as_ref(),
+        request,
+        remote_tool_name,
+        plan.modified_args.as_ref(),
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            state
+                .rmcp_upstream_clients()
+                .lock()
+                .await
+                .remove(&session_key);
+            let retried_client =
+                get_or_create_rmcp_upstream_client(state, plan, &session_key, &protocol_version)
+                    .await?;
+            invoke_tools_call_via_rmcp(
+                retried_client.as_ref(),
+                request,
+                remote_tool_name,
+                plan.modified_args.as_ref(),
+            )
+            .await
+            .map_err(|retry_err| format!("rmcp retry failed after {err}: {retry_err}"))?
+        }
+    };
 
     let mut response = response;
     if let Some(session_id) = downstream_session_id

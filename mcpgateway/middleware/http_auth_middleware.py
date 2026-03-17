@@ -139,7 +139,7 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         """
         # Skip hook invocation if no plugin manager
         if not self.plugin_manager:
-            logger.warning("[DIAG] HttpAuthMiddleware: no plugin_manager, skipping hooks")
+            logger.debug("HttpAuthMiddleware: no plugin_manager, skipping hooks")
             return await call_next(request)
 
         # Skip payload creation if no HTTP hooks registered
@@ -147,7 +147,7 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         has_post = self.plugin_manager.has_hooks_for(HttpHookType.HTTP_POST_REQUEST)
 
         if not has_pre and not has_post:
-            logger.warning("[DIAG] HttpAuthMiddleware: has_pre=%s has_post=%s initialized=%s, skipping hooks", has_pre, has_post, self.plugin_manager._initialized)
+            logger.debug("HttpAuthMiddleware: has_pre=%s has_post=%s, skipping hooks", has_pre, has_post)
             return await call_next(request)
 
         # Use correlation ID from CorrelationIDMiddleware if available

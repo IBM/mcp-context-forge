@@ -6654,7 +6654,7 @@ class TestRustMcpExecutionPlan:
     @pytest.mark.parametrize(
         ("plugin_hooks", "trace_id", "expected_reason"),
         [
-            (True, None, "plugin-hooks-configured"),
+            (True, None, "post-invoke-hooks-configured"),
             (False, "trace-1", "observability-trace-active"),
         ],
     )
