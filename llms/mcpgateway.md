@@ -18,6 +18,7 @@ ContextForge: Full Project Overview
 - MCP Servers: `mcp-servers/` (5 Go servers, 20 Python servers, scaffolding templates)
 - Docs: `docs/` (MkDocs site + docs Makefile)
 - Charts: `charts/` (Helm chart `mcp-stack`)
+- Rust MCP Runtime: `tools_rust/mcp_runtime/` (optional Rust sidecar/edge runtime; see `DEVELOPING.md` for workflows)
 - Tests: `tests/{unit,integration,e2e,performance,security,fuzz,playwright}`
 - Infrastructure: `infra/` (PostgreSQL, Redis, monitoring Docker Compose)
 - Deployment: `deployment/` (k8s, knative, terraform, ansible)

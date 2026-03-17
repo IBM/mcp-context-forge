@@ -76,11 +76,13 @@ class RustMCPRuntimeProxy:
             send: ASGI send callable.
         """
         if scope.get("type") != "http":
+            logger.debug("Rust MCP runtime deferring to Python fallback: scope type %r is not 'http'", scope.get("type"))
             await self.python_fallback_app(scope, receive, send)
             return
 
         method = str(scope.get("method", "GET")).upper()
         if method not in {"GET", "POST", "DELETE"}:
+            logger.debug("Rust MCP runtime deferring to Python fallback: HTTP method %r is not supported", method)
             await self.python_fallback_app(scope, receive, send)
             return
 

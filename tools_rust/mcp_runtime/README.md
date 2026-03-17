@@ -194,10 +194,33 @@ curl http://127.0.0.1:8787/healthz
 - token scoping
 - RBAC
 - the trusted internal authenticate endpoint
+- plugin hook execution (pre-invoke and post-invoke)
 - fallback compatibility handlers
 - parts of the underlying stream/session behavior behind the trusted bridge
 - existing business logic and data/model semantics where Rust intentionally
   falls back for parity
+
+### tools/call two-phase model
+
+In `edge|full` mode, `tools/call` follows a resolve-then-execute pattern:
+
+1. **Resolve**: Rust calls `POST /_internal/mcp/tools/call/resolve` on
+   Python. Python validates auth/RBAC, runs pre-invoke plugin hooks, and
+   returns an execution plan with `eligible`, `modifiedArgs`, `headers`,
+   and `fallbackReason`.
+2. **Execute or fallback**:
+   - If `eligible == true`: Rust applies the plugin-modified args and
+     headers, then calls the upstream MCP server directly.
+   - If `eligible == false`: Rust forwards the full request to
+     `POST /_internal/mcp/tools/call` for standard Python execution.
+3. **Metrics**: After direct execution, Rust calls
+   `POST /_internal/mcp/tools/call/metric` to record timing.
+
+Post-invoke plugin hooks force `eligible: false`, ensuring the full plugin
+chain runs in Python. Pre-invoke hook results are passed to Rust through
+the execution plan. See the
+[plugin execution documentation](../../docs/docs/architecture/rust-mcp-runtime.md#plugin-execution-and-toolscall-flow)
+for the complete eligibility criteria and flow diagrams.
 
 ## Auth and session model
 

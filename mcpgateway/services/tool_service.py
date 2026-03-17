@@ -2832,11 +2832,14 @@ class ToolService(BaseService):
         self,
         db: Session,
         name: str,
+        arguments: Optional[Dict[str, Any]] = None,
         request_headers: Optional[Dict[str, str]] = None,
         app_user_email: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
         server_id: Optional[str] = None,
+        plugin_global_context: Optional[GlobalContext] = None,
+        plugin_context_table: Optional[PluginContextTable] = None,
     ) -> Dict[str, Any]:
         """Build a narrow MCP execution plan for the Rust runtime hot path.
 
@@ -2845,14 +2848,21 @@ class ToolService(BaseService):
         execute the call directly for the simple streamable HTTP MCP cases that
         dominate load tests, while Python remains the authority for policy.
 
+        When tool_pre_invoke hooks are registered, they are executed during plan
+        resolution and their modifications (cleaned args, injected headers) are
+        returned in the plan for the Rust runtime to apply.
+
         Args:
             db: Active database session.
             name: Tool name requested by the caller.
+            arguments: Tool call arguments from the JSON-RPC params (passed to pre-invoke hooks).
             request_headers: Incoming request headers used for passthrough/auth decisions.
             app_user_email: OAuth application user email, when present.
             user_email: Effective requester email after auth normalization.
             token_teams: Normalized team scope from the caller token.
             server_id: Optional virtual server identifier restricting tool access.
+            plugin_global_context: Optional global context from middleware for hook continuity.
+            plugin_context_table: Optional context table from prior hooks for state sharing.
 
         Returns:
             A Rust execution plan dictionary, or a fallback descriptor when direct
@@ -2862,8 +2872,12 @@ class ToolService(BaseService):
             ToolNotFoundError: If the requested tool is not visible or invocable.
             ToolInvocationError: If gateway auth preparation fails or the tool name is ambiguous.
         """
-        if self._plugin_manager and (self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) or self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)):
-            return {"eligible": False, "fallbackReason": "plugin-hooks-configured"}
+        has_pre_invoke = self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE)
+        has_post_invoke = self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)
+
+        # Post-invoke hooks cannot run after Rust upstream execution; force fallback
+        if has_post_invoke:
+            return {"eligible": False, "fallbackReason": "post-invoke-hooks-configured"}
 
         if current_trace_id.get():
             return {"eligible": False, "fallbackReason": "observability-trace-active"}
@@ -3112,7 +3126,51 @@ class ToolService(BaseService):
 
         runtime_headers = {str(header_name): str(header_value) for header_name, header_value in headers.items() if header_name and header_value}
 
-        return {
+        # Run tool_pre_invoke hooks so that plugins (e.g. wxo_connections) can
+        # inject credentials and clean arguments before the Rust direct call.
+        modified_args = arguments
+        if has_pre_invoke and arguments is not None:
+            # Reuse middleware-provided global context (carries JWT claims state,
+            # correlation ID, etc.) or create a new one as fallback — matching
+            # the pattern used by invoke_tool().
+            if plugin_global_context:
+                hook_global_context = plugin_global_context
+                if tool_gateway_id and isinstance(tool_gateway_id, str):
+                    hook_global_context.server_id = tool_gateway_id
+                if not hook_global_context.user and app_user_email and isinstance(app_user_email, str):
+                    hook_global_context.user = app_user_email
+            else:
+                request_id = get_correlation_id() or uuid.uuid4().hex
+                context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else server_id
+                hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email)
+
+            # Inject tool/gateway metadata so pre-invoke plugins (OPA, Vault,
+            # Cedar, telemetry) see the same context as the Python invoke path.
+            tool_metadata: Optional[PydanticTool] = self._pydantic_tool_from_payload(tool_payload) if tool_payload else None
+            gateway_metadata: Optional[PydanticGateway] = self._pydantic_gateway_from_payload(gateway_payload) if has_gateway and gateway_payload else None
+            if tool_metadata:
+                hook_global_context.metadata[TOOL_METADATA] = tool_metadata
+            if gateway_metadata:
+                hook_global_context.metadata[GATEWAY_METADATA] = gateway_metadata
+
+            pre_result, _ = await self._plugin_manager.invoke_hook(
+                ToolHookType.TOOL_PRE_INVOKE,
+                payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=dict(runtime_headers))),
+                global_context=hook_global_context,
+                local_contexts=plugin_context_table,
+                violations_as_exceptions=True,
+            )
+            if pre_result.modified_payload:
+                modified_args = pre_result.modified_payload.args
+                if pre_result.modified_payload.name and pre_result.modified_payload.name != name:
+                    tool_name_original = pre_result.modified_payload.name
+                if pre_result.modified_payload.headers is not None:
+                    plugin_headers = pre_result.modified_payload.headers.root if hasattr(pre_result.modified_payload.headers, "root") else {}
+                    for hk, hv in plugin_headers.items():
+                        if hk and hv:
+                            runtime_headers[str(hk).lower()] = str(hv)
+
+        plan: Dict[str, Any] = {
             "eligible": True,
             "transport": transport,
             "serverUrl": gateway_url,
@@ -3124,6 +3182,11 @@ class ToolService(BaseService):
             "toolId": tool_id or None,
             "serverId": server_id,
         }
+        if has_pre_invoke:
+            plan["hasPreInvokeHooks"] = True
+            if modified_args is not None:
+                plan["modifiedArgs"] = modified_args
+        return plan
 
     def _load_invocable_tools(self, db: Session, name: str, server_id: Optional[str] = None) -> List[DbTool]:
         """Load candidate tools for invocation, narrowing to a virtual server when possible.
@@ -3154,6 +3217,7 @@ class ToolService(BaseService):
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
+        skip_pre_invoke: bool = False,
     ) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
@@ -3175,6 +3239,7 @@ class ToolService(BaseService):
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
             meta_data: Optional metadata dictionary for additional context (e.g., request ID).
+            skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
 
         Returns:
             Tool invocation result.
@@ -3646,7 +3711,7 @@ class ToolService(BaseService):
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
                             logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity")
 
-                    if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
+                    if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
@@ -4199,7 +4264,7 @@ class ToolService(BaseService):
                     # REMOVED: Redundant gateway query - gateway already eager-loaded via joinedload
                     # tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id)...)
 
-                    if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
+                    if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic models from Phase 2 (no ORM access)
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
@@ -4250,7 +4315,7 @@ class ToolService(BaseService):
                     headers = {"Content-Type": "application/json"}
 
                     # Plugin hook: tool pre-invoke for A2A
-                    if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
+                    if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
                         pre_result, context_table = await self._plugin_manager.invoke_hook(
