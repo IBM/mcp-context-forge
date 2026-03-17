@@ -708,7 +708,7 @@ class TestA2AAgentService:
         # Ensure get_for_update returns our mocked agent so auth_value is read
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent_with_auth):
             # Execute with decode_auth patched to return the expected headers
-            with patch("mcpgateway.services.a2a_service.decode_auth", return_value=basic_auth_headers):
+            with patch("mcpgateway.services.a2a_protocol.decode_auth", return_value=basic_auth_headers):
                 result = await service.invoke_agent(mock_db, "basic-auth-agent", {"test": "data"})
 
         # Verify successful response
@@ -774,7 +774,7 @@ class TestA2AAgentService:
         # Ensure get_for_update returns our mocked agent so auth_value is read
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent_with_auth):
             # Execute with decode_auth patched to return the expected headers
-            with patch("mcpgateway.services.a2a_service.decode_auth", return_value=bearer_auth_headers):
+            with patch("mcpgateway.services.a2a_protocol.decode_auth", return_value=bearer_auth_headers):
                 result = await service.invoke_agent(mock_db, "bearer-auth-agent", {"test": "data"})
 
         # Verify successful response
@@ -840,7 +840,7 @@ class TestA2AAgentService:
         # Ensure get_for_update returns our mocked agent so auth_value is read
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent_with_auth):
             # Execute with decode_auth patched to return the expected headers
-            with patch("mcpgateway.services.a2a_service.decode_auth", return_value=custom_auth_headers):
+            with patch("mcpgateway.services.a2a_protocol.decode_auth", return_value=custom_auth_headers):
                 result = await service.invoke_agent(mock_db, "apikey-auth-agent", {"test": "data"})
 
         # Verify successful response
@@ -2137,7 +2137,7 @@ class TestInvokeAgentEdgeCases:
         mock_fresh_db.return_value.__exit__.return_value = None
         mock_metrics_fn.return_value = MagicMock()
 
-        result = await service.invoke_agent(mock_db, "ag", {"method": "message/send", "params": {}})
+        await service.invoke_agent(mock_db, "ag", {"method": "message/send", "params": {}})
         headers_used = mock_client.post.call_args.kwargs["headers"]
         assert headers_used.get("X-Key") == "val"
 
@@ -2175,7 +2175,7 @@ class TestInvokeAgentEdgeCases:
         mock_fresh_db.return_value.__exit__.return_value = None
         mock_metrics_fn.return_value = MagicMock()
 
-        result = await service.invoke_agent(mock_db, "ag", {"test": "data"}, interaction_type="query")
+        await service.invoke_agent(mock_db, "ag", {"test": "data"}, interaction_type="query")
         post_data = mock_client.post.call_args.kwargs["json"]
         assert "interaction_type" in post_data
         assert post_data["protocol_version"] == "2.0"
@@ -2360,8 +2360,8 @@ class TestInvokeAgentEdgeCases:
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_service.decode_auth", lambda x: {"api_key": "secret123"})
-        monkeypatch.setattr("mcpgateway.utils.url_auth.apply_query_param_auth", lambda url, params: url + "?api_key=secret123")
+        monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda x: {"api_key": "secret123"})
+        monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", lambda url, params: url + "?api_key=secret123")
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2370,7 +2370,7 @@ class TestInvokeAgentEdgeCases:
         mock_fresh_db.return_value.__exit__.return_value = None
         mock_metrics_fn.return_value = MagicMock()
 
-        result = await service.invoke_agent(mock_db, "ag", {})
+        await service.invoke_agent(mock_db, "ag", {})
         # Verify the URL was modified with query params
         call_url = mock_client.post.call_args[0][0]
         assert "api_key=secret123" in call_url
@@ -2401,9 +2401,9 @@ class TestInvokeAgentEdgeCases:
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_service.decode_auth", lambda _x: (_ for _ in ()).throw(ValueError("bad auth")))
+        monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda _x: (_ for _ in ()).throw(ValueError("bad auth")))
         mock_apply = MagicMock()
-        monkeypatch.setattr("mcpgateway.utils.url_auth.apply_query_param_auth", mock_apply)
+        monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", mock_apply)
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
@@ -2476,7 +2476,7 @@ class TestInvokeAgentEdgeCases:
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_service.decode_auth", lambda _x: (_ for _ in ()).throw(ValueError("bad")))
+        monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda _x: (_ for _ in ()).throw(ValueError("bad")))
 
         with pytest.raises(A2AAgentError, match="Failed to decrypt authentication"):
             await service.invoke_agent(mock_db, "ag", {})
@@ -2519,6 +2519,91 @@ class TestInvokeAgentEdgeCases:
         await service.invoke_agent(mock_db, "ag", {})
         headers_used = mock_client.post.call_args.kwargs["headers"]
         assert headers_used.get("X-Correlation-ID") == "corr-123"
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_query_uses_v1_send_message_payload(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """Default query invocations should use A2A v1 SendMessage payloads for v1 agents."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0.0",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        await service.invoke_agent(mock_db, "ag", {"query": "hello"})
+        outbound_json = mock_client.post.call_args.kwargs["json"]
+        outbound_headers = mock_client.post.call_args.kwargs["headers"]
+
+        assert outbound_json["method"] == "SendMessage"
+        assert outbound_json["params"]["message"]["role"] == "ROLE_USER"
+        assert outbound_json["params"]["message"]["parts"] == [{"text": "hello"}]
+        assert "kind" not in outbound_json["params"]["message"]
+        assert outbound_headers["A2A-Version"] == "1.0"
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_delegates_to_rust_runtime_when_enabled(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """A2A invocations should delegate to the Rust runtime when explicitly enabled."""
+        rust_runtime = MagicMock()
+        rust_runtime.invoke = AsyncMock(return_value={"status_code": 200, "json": {"ok": True}, "text": ""})
+
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0.0",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", True)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        result = await service.invoke_agent(mock_db, "ag", {"query": "hello"})
+
+        assert result == {"ok": True}
+        rust_runtime.invoke.assert_called_once()
+        mock_get_client.assert_not_called()
 
 
 class TestConvertAgentToRead:

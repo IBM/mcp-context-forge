@@ -368,6 +368,40 @@ def mock_gateway():
     return gw
 
 
+class TestToolServiceA2A:
+    """Focused tests for A2A helper paths inside tool_service."""
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_call_a2a_agent_uses_v1_send_message_payload(self, mock_get_client, tool_service):
+        """A2A tool calls should default to A2A v1 payloads for v1 agents."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"ok": True}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            name="a2a-agent",
+            endpoint_url="https://example.com/",
+            agent_type="generic",
+            protocol_version="1.0.0",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+        )
+
+        result = await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        assert result == {"ok": True}
+        outbound_json = mock_client.post.call_args.kwargs["json"]
+        outbound_headers = mock_client.post.call_args.kwargs["headers"]
+        assert outbound_json["method"] == "SendMessage"
+        assert outbound_json["params"]["message"]["role"] == "ROLE_USER"
+        assert outbound_json["params"]["message"]["parts"] == [{"text": "hello"}]
+        assert outbound_headers["A2A-Version"] == "1.0"
+
+
 @pytest.fixture
 def mock_tool(mock_gateway):
     """Create a mock tool model."""

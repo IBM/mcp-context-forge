@@ -2283,15 +2283,9 @@ class A2AEchoInvokeUser(BaseUser):
 
         payload = {
             "parameters": {
-                # A2A v0.3.x JSON-RPC: message/send expects params.message as a Message object.
-                "message": {
-                    "kind": "message",
-                    "role": "user",
-                    "messageId": str(uuid.uuid4()),
-                    "parts": [
-                        {"kind": "text", "text": f"locust ping {uuid.uuid4().hex[:8]}"},
-                    ],
-                },
+                # Let the gateway build the protocol-native A2A request for the
+                # registered agent version instead of hard-coding a legacy wire payload.
+                "query": f"locust ping {uuid.uuid4().hex[:8]}",
             },
             "interaction_type": "query",
         }

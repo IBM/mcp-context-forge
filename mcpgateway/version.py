@@ -137,6 +137,11 @@ def _rust_runtime_managed() -> bool:
     return _env_flag("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", default=True)
 
 
+def _rust_a2a_runtime_managed() -> bool:
+    """Return whether the gateway expects to manage the Rust A2A sidecar locally."""
+    return _env_flag("EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED", default=True)
+
+
 def _current_mcp_transport_mount() -> str:
     """Return which public ``/mcp`` transport is currently mounted.
 
@@ -288,6 +293,45 @@ def _mcp_runtime_status_payload() -> Dict[str, Any]:
         else:
             payload["sidecar_transport"] = "http"
             payload["sidecar_target"] = settings.experimental_rust_mcp_runtime_url
+
+    return payload
+
+
+def _current_a2a_runtime_mode() -> str:
+    """Return the current A2A runtime mode label used for diagnostics."""
+    if settings.experimental_rust_a2a_runtime_enabled:
+        return "rust-managed" if _rust_a2a_runtime_managed() else "rust-external"
+    if _rust_build_included():
+        return "python-rust-built-disabled"
+    return "python"
+
+
+def _current_a2a_invoke_mode() -> str:
+    """Return which runtime currently owns registered A2A agent invocation."""
+    if settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled:
+        return "rust"
+    return "python"
+
+
+def _a2a_runtime_status_payload() -> Dict[str, Any]:
+    """Return A2A runtime diagnostics for version and UI surfaces."""
+    payload: Dict[str, Any] = {
+        "mode": _current_a2a_runtime_mode(),
+        "invoke_mode": _current_a2a_invoke_mode(),
+        "rust_runtime_enabled": settings.experimental_rust_a2a_runtime_enabled,
+        "rust_delegate_enabled": bool(
+            settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled
+        ),
+    }
+
+    if settings.experimental_rust_a2a_runtime_enabled:
+        payload["rust_runtime_managed"] = _rust_a2a_runtime_managed()
+        if settings.experimental_rust_a2a_runtime_uds:
+            payload["sidecar_transport"] = "uds"
+            payload["sidecar_target"] = settings.experimental_rust_a2a_runtime_uds
+        else:
+            payload["sidecar_transport"] = "http"
+            payload["sidecar_target"] = settings.experimental_rust_a2a_runtime_url
 
     return payload
 
@@ -868,6 +912,7 @@ def _build_payload(
             "metrics_rollup_enabled": getattr(settings, "metrics_rollup_enabled", True),
         },
         "mcp_runtime": _mcp_runtime_status_payload(),
+        "a2a_runtime": _a2a_runtime_status_payload(),
         "env": _public_env(),
         "system": _system_metrics(),
     }
@@ -935,6 +980,7 @@ def _render_html(payload: Dict[str, Any]) -> str:
         ...     "redis": {"available": False},
         ...     "settings": {"cache_type": "memory"},
         ...     "mcp_runtime": {"mode": "python", "mounted": "python"},
+        ...     "a2a_runtime": {"mode": "python", "invoke_mode": "python"},
         ...     "system": {"cpu_count": 4},
         ...     "env": {"PATH": "/usr/bin"}
         ... }
@@ -953,6 +999,8 @@ def _render_html(payload: Dict[str, Any]) -> str:
         >>> '<h2>Database</h2>' in html
         True
         >>> '<h2>MCP Runtime</h2>' in html
+        True
+        >>> '<h2>A2A Runtime</h2>' in html
         True
         >>> '<style>' in html
         True
@@ -976,6 +1024,7 @@ def _render_html(payload: Dict[str, Any]) -> str:
         ("Redis", "redis"),
         ("Settings", "settings"),
         ("MCP Runtime", "mcp_runtime"),
+        ("A2A Runtime", "a2a_runtime"),
         ("System", "system"),
     ):
         sections += f"<h2>{title}</h2>{_html_table(payload[key])}"

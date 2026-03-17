@@ -51,6 +51,11 @@ RUN if [ "$ENABLE_RUST" != "true" ]; then \
         printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-mcp-runtime; \
         printf 'exit 1\n' >> /build/target/release/contextforge-mcp-runtime; \
         chmod +x /build/target/release/contextforge-mcp-runtime; \
+        mkdir -p /build/tools_rust/a2a_runtime/target/release; \
+        printf '#!/usr/bin/env sh\n' > /build/tools_rust/a2a_runtime/target/release/contextforge-a2a-runtime; \
+        printf 'echo "Rust A2A runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/tools_rust/a2a_runtime/target/release/contextforge-a2a-runtime; \
+        printf 'exit 1\n' >> /build/tools_rust/a2a_runtime/target/release/contextforge-a2a-runtime; \
+        chmod +x /build/tools_rust/a2a_runtime/target/release/contextforge-a2a-runtime; \
         exit 0; \
     fi
 
@@ -82,6 +87,7 @@ WORKDIR /build
 # Copy workspace and crates (only if ENABLE_RUST=true)
 COPY Cargo.toml Cargo.lock /build/
 COPY crates/ /build/crates/
+COPY tools_rust/a2a_runtime/ /build/tools_rust/a2a_runtime/
 
 # Build local native extensions from maturin crates under crates/
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
@@ -126,6 +132,17 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
         echo "✅ Rust MCP runtime built successfully"; \
     else \
         echo "⏭️  Skipping Rust MCP runtime build"; \
+    fi
+
+WORKDIR /build/tools_rust/a2a_runtime
+
+# Build the experimental Rust A2A runtime binary (only if ENABLE_RUST=true)
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        cargo build --release && \
+        cp target/release/contextforge_a2a_runtime target/release/contextforge-a2a-runtime && \
+        echo "✅ Rust A2A runtime built successfully"; \
+    else \
+        echo "⏭️  Skipping Rust A2A runtime build"; \
     fi
 
 FROM rust-builder-base AS rust-builder
@@ -201,8 +218,15 @@ COPY plugins/requirements.txt /app/plugins/requirements.txt
 # ----------------------------------------------------------------------------
 # Copy Rust MCP runtime and local native extensions from rust-builder stage
 # ----------------------------------------------------------------------------
+<<<<<<< HEAD
 COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
 COPY --from=rust-builder /build/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
+||||||| parent of c91d584ec (feat: add Rust A2A 1.0 runtime support)
+COPY --from=rust-builder /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
+=======
+COPY --from=rust-builder /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
+COPY --from=rust-builder /build/tools_rust/a2a_runtime/target/release/contextforge-a2a-runtime /app/bin/contextforge-a2a-runtime
+>>>>>>> c91d584ec (feat: add Rust A2A 1.0 runtime support)
 
 # ----------------------------------------------------------------------------
 # Copy frontend build artifacts from frontend-builder stage
