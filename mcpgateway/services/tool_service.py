@@ -3132,10 +3132,9 @@ class ToolService(BaseService):
                 tenant_id=None,
                 user=app_user_email,
             )
-            hook_headers = dict(request_headers) if request_headers else {}
             pre_result, _ = await self._plugin_manager.invoke_hook(
                 ToolHookType.TOOL_PRE_INVOKE,
-                payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=hook_headers)),
+                payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=dict(runtime_headers))),
                 global_context=hook_global_context,
                 violations_as_exceptions=True,
             )
@@ -3147,7 +3146,7 @@ class ToolService(BaseService):
                     plugin_headers = pre_result.modified_payload.headers.root if hasattr(pre_result.modified_payload.headers, "root") else {}
                     for hk, hv in plugin_headers.items():
                         if hk and hv:
-                            runtime_headers[str(hk)] = str(hv)
+                            runtime_headers[str(hk).lower()] = str(hv)
 
         plan: Dict[str, Any] = {
             "eligible": True,

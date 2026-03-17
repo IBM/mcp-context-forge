@@ -91,7 +91,7 @@ from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
-from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
+from mcpgateway.plugins.framework import HttpHookType, PluginError, PluginManager, PluginViolationError
 from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
@@ -573,7 +573,7 @@ async def _run_internal_mcp_authentication(
     """
     # Run pre-request plugin hooks (e.g. WXO JWT → team token exchange)
     # before building the auth scope, so plugins can transform headers.
-    if plugin_manager and plugin_manager.has_hooks_for("http_pre_request"):
+    if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_PRE_REQUEST):
         headers, _, _ = await run_pre_request_hooks(
             plugin_manager=plugin_manager,
             headers=headers,

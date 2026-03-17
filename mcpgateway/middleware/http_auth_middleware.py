@@ -88,12 +88,16 @@ async def run_pre_request_hooks(
         # for deployments that require plugin-driven token exchange (e.g. WXO auth).
         if not settings.plugins_can_override_auth_headers:
             _auth_protected_headers = {"authorization", "cookie", "x-api-key", "proxy-authorization"}
-            overridden = {k for k in modified_headers_dict if k.lower() in _auth_protected_headers and k.lower() in {h.lower() for h in headers}}
+            original_lower = {h.lower() for h in headers}
+            overridden = {k for k in modified_headers_dict if k.lower() in _auth_protected_headers and k.lower() in original_lower}
             if overridden:
                 logger.warning("Pre-request hook attempted to override existing auth headers (stripped): %s", overridden)
                 modified_headers_dict = {k: v for k, v in modified_headers_dict.items() if k.lower() not in overridden}
 
-        merged_headers = {**headers, **modified_headers_dict}
+        # Normalize to lowercase keys to avoid duplicate logical headers from
+        # casing differences (e.g. "Authorization" vs "authorization").
+        merged_headers = {k.lower(): v for k, v in headers.items()}
+        merged_headers.update({k.lower(): v for k, v in modified_headers_dict.items()})
         logger.debug(f"Pre-request hook modified headers: {list(modified_headers_dict.keys())}")
         return merged_headers, global_context, context_table
 
