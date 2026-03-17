@@ -96,7 +96,7 @@ class TestPassthroughHeaders:
         request_headers = {"authorization": "Bearer should-be-blocked", "x-tenant-id": "acme-corp"}
         base_headers = {"Content-Type": "application/json"}
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
 
         # Authorization should be blocked, X-Tenant-Id should pass through
@@ -124,7 +124,7 @@ class TestPassthroughHeaders:
         request_headers = {"authorization": "Bearer should-be-blocked"}
         base_headers = {"Content-Type": "application/json"}
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
 
         # Only base headers should remain

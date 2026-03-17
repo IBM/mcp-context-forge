@@ -141,7 +141,7 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
 @require_permission("teams.read")
 async def list_teams(
     skip: int = Query(0, ge=0, description="Number of teams to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Number of teams to return"),
+    limit: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Number of teams to return"),
     cursor: Optional[str] = Query(None, description="Pagination cursor"),
     include_pagination: bool = Query(False, description="Include pagination metadata (cursor)"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
@@ -233,7 +233,7 @@ async def list_teams(
 @require_permission("teams.read")
 async def discover_public_teams(
     skip: int = Query(0, ge=0, description="Number of teams to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Number of teams to return"),
+    limit: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Number of teams to return"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> List[TeamDiscoveryResponse]:
