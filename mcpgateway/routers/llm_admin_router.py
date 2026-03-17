@@ -18,6 +18,7 @@ import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import LLMProviderType
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db, require_permission
 from mcpgateway.services.llm_provider_service import (
@@ -48,7 +49,7 @@ llm_provider_service = LLMProviderService()
 async def get_providers_partial(
     request: Request,
     page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(50, ge=1, le=100, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
@@ -126,7 +127,7 @@ async def get_models_partial(
     request: Request,
     provider_id: Optional[str] = Query(None, description="Filter by provider ID"),
     page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(50, ge=1, le=100, description="Items per page"),
+    per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:

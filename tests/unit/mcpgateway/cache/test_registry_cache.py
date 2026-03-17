@@ -292,21 +292,24 @@ class TestRegistryCache:
         """Test that cache entries expire correctly."""
         cache = RegistryCache()
 
-        # Set with short TTL
-        await cache.set("tools", [{"id": "1"}], ttl=1)
+        fake_now = 1000.0
 
-        # Should hit cache immediately
-        result = await cache.get("tools")
-        assert result == [{"id": "1"}]
+        with patch("mcpgateway.cache.registry_cache.time") as mock_time:
+            mock_time.time.return_value = fake_now
 
-        # Wait for expiry
-        import asyncio
+            # Set with short TTL
+            await cache.set("tools", [{"id": "1"}], ttl=1)
 
-        await asyncio.sleep(1.1)
+            # Should hit cache immediately
+            result = await cache.get("tools")
+            assert result == [{"id": "1"}]
 
-        # Should miss cache after expiry
-        result = await cache.get("tools")
-        assert result is None
+            # Advance past expiry
+            mock_time.time.return_value = fake_now + 2.0
+
+            # Should miss cache after expiry
+            result = await cache.get("tools")
+            assert result is None
 
     @pytest.mark.asyncio
     async def test_cache_with_filters(self):
