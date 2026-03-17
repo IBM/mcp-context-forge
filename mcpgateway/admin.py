@@ -17733,7 +17733,7 @@ async def get_top_error_endpoints(
 async def get_latency_heatmap(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
-    time_buckets: int = Query(24, ge=10, le=settings.pagination_max_page_size, description="Number of time buckets"),
+    time_buckets: int = Query(24, ge=10, le=100, description="Number of time buckets"),
     latency_buckets: int = Query(20, ge=5, le=50, description="Number of latency buckets"),
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
