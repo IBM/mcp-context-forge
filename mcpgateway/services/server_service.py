@@ -35,6 +35,8 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import ServerMetric, ServerMetricsHourly
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, PluginManager
+from mcpgateway.plugins.framework.hooks.gateway import GatewayHookType, RuntimePreDeployPayload, ServerPreRegisterPayload
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
@@ -210,6 +212,7 @@ class ServerService(BaseService):
         self._structured_logger = get_structured_logger("server_service")
         self._audit_trail = get_audit_trail_service()
         self._performance_tracker = get_performance_tracker()
+        self._plugin_manager: PluginManager | None = get_plugin_manager()
 
     async def initialize(self) -> None:
         """Initialize the server service."""
@@ -556,6 +559,27 @@ class ServerService(BaseService):
             existing_server = get_for_update(db, DbServer, where=and_(*conditions))
             if existing_server:
                 raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
+
+            if self._plugin_manager and self._plugin_manager.has_hooks_for(GatewayHookType.SERVER_PRE_REGISTER):
+                image_ref = getattr(server_in, "image_ref", "") or ""
+                image_digest = getattr(server_in, "image_digest", None)
+                global_context = GlobalContext(
+                    request_id=str(db_server.id),
+                    user=created_by or "",
+                    server_id=None,
+                    tenant_id=None,
+                )
+                await self._plugin_manager.invoke_hook(
+                    GatewayHookType.SERVER_PRE_REGISTER,
+                    payload=ServerPreRegisterPayload(
+                        assessment_id=str(db_server.id),
+                        image_ref=image_ref,
+                        image_digest=image_digest,
+                    ),
+                    global_context=global_context,
+                    violations_as_exceptions=True,
+                )
+
             # Set custom UUID if provided
             if server_in.id:
                 logger.info(f"Setting custom UUID for server: {server_in.id}")
@@ -1465,6 +1489,26 @@ class ServerService(BaseService):
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, server):
                     raise PermissionError("Only the owner can activate the Server" if activate else "Only the owner can deactivate the Server")
+
+                if activate and self._plugin_manager and self._plugin_manager.has_hooks_for(GatewayHookType.RUNTIME_PRE_DEPLOY):
+                    image_ref = getattr(server, "image_ref", "") or ""
+                    image_digest = getattr(server, "image_digest", None)
+                    global_context = GlobalContext(
+                        request_id=str(server.id),
+                        user=user_email or "",
+                        server_id=str(server.id),
+                        tenant_id=None,
+                    )
+                    await self._plugin_manager.invoke_hook(
+                        GatewayHookType.RUNTIME_PRE_DEPLOY,
+                        payload=RuntimePreDeployPayload(
+                            assessment_id=str(server.id),
+                            image_ref=image_ref,
+                            image_digest=image_digest,
+                        ),
+                        global_context=global_context,
+                        violations_as_exceptions=True,
+                    )
 
             if server.enabled != activate:
                 server.enabled = activate

@@ -23,7 +23,8 @@ from typing import List
 from collections import Counter
 
 # First-Party
-from mcpgateway.plugins.framework import Plugin, PluginConfig
+from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext
+from mcpgateway.plugins.framework.models import PluginViolation
 
 # Local
 from plugins.container_scanner.auth.auth_resolver import AuthResolver
@@ -33,7 +34,8 @@ from plugins.container_scanner.policy.policy_evaluator import PolicyEvaluator
 from plugins.container_scanner.scanners.grype_runner import GrypeRunner
 from plugins.container_scanner.scanners.trivy_runner import TrivyRunner
 from plugins.container_scanner.types import ScanResult, Summary, Vulnerability
-from plugins.container_scanner.storage.repository import ScanResultRepository
+from plugins.container_scanner.storage.repository import ScanResultRepository, container_scan_repo
+from mcpgateway.plugins.framework.hooks.gateway import ServerPreRegisterPayload, ServerPreRegisterResult, RuntimePreDeployPayload, RuntimePreDeployResult
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +68,21 @@ class ContainerScannerPlugin(Plugin):
         else:
             self._runner = GrypeRunner(self._scanner_config)
         self._policy = PolicyEvaluator()
-        self._repo = ScanResultRepository()
+        self._repo = container_scan_repo
 
-    # ------------------------------------------------------------------
+
+    async def server_pre_register(self, payload: ServerPreRegisterPayload, context: PluginContext) -> ServerPreRegisterResult:
+        result = await self.scan(payload.image_ref, payload.image_digest)
+        violation = PluginViolation(reason=result.reason or "", description=result.reason or "", code="CVE_POLICY_VIOLATION") if result.blocked else None
+        return ServerPreRegisterResult(payload=payload, continue_processing=not result.blocked, violation=violation)
+
+    async def runtime_pre_deploy(self, payload: RuntimePreDeployPayload, context: PluginContext) -> RuntimePreDeployResult:
+        result = await self.scan(payload.image_ref, payload.image_digest)
+        violation = PluginViolation(reason=result.reason or "", description=result.reason or "", code="CVE_POLICY_VIOLATION") if result.blocked else None
+        return RuntimePreDeployResult(payload=payload, continue_processing=not result.blocked, violation=violation)
+
     # Core scan pipeline
-    # ------------------------------------------------------------------
-
-    async def scan(self, image_ref: str, image_digest: str) -> ScanResult:
+    async def scan(self, image_ref: str, image_digest: str | None) -> ScanResult:
         """Run the full scan pipeline for *image_digest*.
 
         Args:
@@ -122,7 +132,7 @@ class ContainerScannerPlugin(Plugin):
     def _build_result(
         self,
         image_ref:str,
-        image_digest: str,
+        image_digest: str | None,
         vulnerabilities: List[Vulnerability],
         *,
         blocked: bool,

@@ -1062,3 +1062,26 @@ plugins:
     conditions: []
     config:
       context_key: jwt_claims
+
+# Container Scanner - scan images for CVEs before registration and deployment
+  - name: "ContainerScannerPlugin"
+    kind: "plugins.container_scanner.container_scanner.ContainerScannerPlugin"
+    description: "Scans container images for CVEs before gateway registration and runtime activation"
+    version: "0.1.0"
+    author: "Agnetha"
+    hooks: ["server_pre_register", "runtime_pre_deploy"]
+    tags: ["security", "container", "scanning", "cve"]
+    mode: "enforce"        # enforce | audit | disabled
+    priority: 5            # Run before all other security plugins
+    conditions: []
+    config:
+      scanner: "trivy"               # trivy | grype
+      severity_threshold: "HIGH"     # CRITICAL | HIGH | MEDIUM | LOW
+      fail_on_unfixed: false
+      ignore_cves: []
+      timeout_seconds: 300
+      mode: "enforce"                # enforce | audit | disabled
+      cache_enabled: true
+      cache_ttl_hours: 24
+      registries: []                 # Add per-registry auth here as needed
+      on_scan_error: "fail_closed"   # fail_closed | fail_open
