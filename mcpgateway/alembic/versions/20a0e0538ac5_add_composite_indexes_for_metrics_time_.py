@@ -1,7 +1,7 @@
 """add_composite_indexes_for_metrics_time_partitioning
 
 Revision ID: 20a0e0538ac5
-Revises: a3c38b6c2437
+Revises: 64acf94cb7f2
 Create Date: 2026-03-13 17:16:05.005732
 
 Adds composite indexes on (entity_id, timestamp) columns to raw metrics tables
