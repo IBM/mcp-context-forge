@@ -8756,6 +8756,8 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
             auth_token_teams = []
 
         arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+        plugin_context_table = getattr(request.state, "plugin_context_table", None)
+        plugin_global_context = getattr(request.state, "plugin_global_context", None)
         plan = await tool_service.prepare_rust_mcp_tool_execution(
             db=db,
             name=name,
@@ -8765,6 +8767,8 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
             user_email=auth_user_email,
             token_teams=auth_token_teams,
             server_id=server_id,
+            plugin_global_context=plugin_global_context,
+            plugin_context_table=plugin_context_table,
         )
 
         if db.is_active and db.in_transaction() is not None:

@@ -7455,7 +7455,7 @@ class TestRustMcpExecutionPlan:
         )
 
         # Mock invoke_hook to return modified args and headers
-        async def mock_invoke_hook(hook_type, payload, global_context, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             modified = ToolPreInvokePayload(
                 name=payload.name,
                 args={"cleaned_arg": "value"},
@@ -7501,7 +7501,7 @@ class TestRustMcpExecutionPlan:
             side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE
         )
 
-        async def mock_invoke_hook(hook_type, payload, global_context, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             modified = ToolPreInvokePayload(name="renamed-tool", args=payload.args)
             return PluginResult(modified_payload=modified, continue_processing=True), {}
 
@@ -7564,7 +7564,7 @@ class TestRustMcpExecutionPlan:
 
         received_headers = {}
 
-        async def mock_invoke_hook(hook_type, payload, global_context, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             received_headers.update(payload.headers.root)
             return PluginResult(continue_processing=True), {}
 
@@ -7590,6 +7590,61 @@ class TestRustMcpExecutionPlan:
         # Hook should receive runtime (outbound) headers, not inbound request headers
         assert "Authorization" in received_headers
         assert received_headers["Authorization"] == "Bearer gateway-token"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_receives_plugin_global_context(self, tool_service):
+        """Pre-invoke hook should receive the middleware-provided GlobalContext, not a fresh one."""
+        from mcpgateway.plugins.framework import GlobalContext
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        cache = self._cache_mock(self._cache_payload())
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(
+            side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE
+        )
+
+        received_context = {}
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            received_context["request_id"] = global_context.request_id
+            received_context["user"] = global_context.user
+            received_context["state"] = dict(global_context.state) if hasattr(global_context, "state") else {}
+            received_context["metadata_keys"] = list(global_context.metadata.keys()) if hasattr(global_context, "metadata") else []
+            received_context["local_contexts"] = local_contexts
+            return PluginResult(continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+        tool_service._plugin_manager = mock_pm
+
+        # Simulate middleware-provided context with JWT claims state
+        provided_ctx = GlobalContext(request_id="corr-123", server_id="srv-1", tenant_id=None, user="jwt-user@example.com")
+        provided_ctx.state["jwt_claims"] = {"sub": "jwt-user@example.com", "teams": ["team-a"]}
+        provided_context_table = {"prior_plugin": {"key": "value"}}
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                arguments={"key": "val"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+                plugin_global_context=provided_ctx,
+                plugin_context_table=provided_context_table,
+            )
+
+        # Hook should have received the middleware context, not a fresh one
+        assert received_context["request_id"] == "corr-123"
+        assert received_context["user"] == "jwt-user@example.com"
+        assert received_context["state"]["jwt_claims"]["sub"] == "jwt-user@example.com"
+        # Prior context table should be passed through
+        assert received_context["local_contexts"] == provided_context_table
 
     @pytest.mark.asyncio
     async def test_invoke_tool_header_gateway_not_found(self, tool_service, test_db):

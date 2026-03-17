@@ -6468,11 +6468,17 @@ async fn handle_tools_call(
     match execute_tools_call_direct(state, &incoming_headers, &request, &plan).await {
         Ok(response) => response,
         Err(err) => {
-            // KNOWN LIMITATION: Python will re-run TOOL_PRE_INVOKE hooks on
-            // this fallback path because the original body (not the resolved
-            // plan) is forwarded.  Pre-invoke plugins must be idempotent.
             warn!("Rust MCP direct tools/call execution fallback: {err}");
-            forward_tools_call_to_backend(state, incoming_headers, body).await
+            let mut fallback_headers = incoming_headers;
+            // Tell Python that pre-invoke hooks already ran during /resolve so
+            // invoke_tool() can skip re-executing them on the fallback path.
+            if plan.has_pre_invoke_hooks {
+                fallback_headers.insert(
+                    HeaderName::from_static("x-contextforge-pre-invoke-ran"),
+                    HeaderValue::from_static("true"),
+                );
+            }
+            forward_tools_call_to_backend(state, fallback_headers, body).await
         }
     }
 }
