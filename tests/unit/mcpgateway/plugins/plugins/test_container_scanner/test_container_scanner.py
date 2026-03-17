@@ -10,6 +10,7 @@ Unit tests for ContainerScannerPlugin.scan() pipeline.
 
 from __future__ import annotations
 
+from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -35,8 +36,8 @@ def make_plugin_config(**scanner_config_kwargs) -> PluginConfig:
     )
 
 
-def make_vuln(**kwargs) -> Vulnerability:
-    defaults = dict(
+def make_vuln(**kwargs: Any) -> Vulnerability:
+    defaults: Dict[str, Any] = dict(
         scanner="trivy",
         cve_id="CVE-2023-0001",
         severity="HIGH",
