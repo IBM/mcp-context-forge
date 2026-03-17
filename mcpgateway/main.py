@@ -1300,6 +1300,8 @@ def _apply_runtime_mode_headers(response: Response) -> None:
     response.headers["x-contextforge-mcp-live-stream-core-mode"] = _current_mcp_live_stream_core_mode()
     response.headers["x-contextforge-mcp-affinity-core-mode"] = _current_mcp_affinity_core_mode()
     response.headers["x-contextforge-mcp-session-auth-reuse-mode"] = _current_mcp_session_auth_reuse_mode()
+
+
 # Type aliases for improved readability
 ToolsResponse: TypeAlias = Union[List[ToolRead], CursorPaginatedToolsResponse, List[Dict[Any, Any]], Dict[Any, Any], ORJSONResponse]
 ToolResponse: TypeAlias = Union[ToolRead, Dict[Any, Any], ORJSONResponse]
