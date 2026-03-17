@@ -7711,6 +7711,17 @@ app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
 
+# Include container scanner router if plugins are enabled
+if _PLUGINS_ENABLED:
+    try:
+        # First-Party
+        from mcpgateway.routers.container_scanner_router import container_scanner_router  # pylint: disable=import-outside-toplevel
+
+        app.include_router(container_scanner_router)
+        logger.info("Container scanner router included")
+    except ImportError as e:
+        logger.warning(f"Failed to import container scanner router: {e}")
+
 # Include log search router if structured logging is enabled
 if getattr(settings, "structured_logging_enabled", True):
     try:

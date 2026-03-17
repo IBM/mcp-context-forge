@@ -15688,6 +15688,27 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         return HTMLResponse(content=error_html, status_code=500)
 
 
+@admin_router.get("/container-scanner/partial", response_class=HTMLResponse)
+async def container_scanner_partial(
+    request: Request,
+    _user=Depends(get_current_user_with_permissions),
+) -> Any:
+    """Render the container scanner scan results partial."""
+    try:
+        # First-Party
+        from plugins.container_scanner.storage.repository import container_scan_repo  # pylint: disable=import-outside-toplevel
+
+        results = container_scan_repo.list_recent()
+    except Exception:
+        results = []
+    root_path = request.scope.get("root_path", "")
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "container_scanner_partial.html",
+        {"request": request, "results": results, "root_path": root_path},
+    )
+
+
 @admin_router.get("/plugins", response_model=PluginListResponse)
 @require_permission("admin.plugins", allow_admin_bypass=False)
 async def list_plugins(
