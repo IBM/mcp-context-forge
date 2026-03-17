@@ -3129,12 +3129,6 @@ class ToolService(BaseService):
 
         # Run tool_pre_invoke hooks so that plugins (e.g. wxo_connections) can
         # inject credentials and clean arguments before the Rust direct call.
-        #
-        # KNOWN LIMITATION: if Rust direct execution fails and falls back to
-        # /_internal/mcp/tools/call, Python invoke_tool() will re-run
-        # TOOL_PRE_INVOKE hooks. Pre-invoke plugins must be idempotent for
-        # correctness on the Rust fallback path. A future enhancement could
-        # pass a "pre-invoke-already-ran" marker through the fallback body.
         modified_args = arguments
         if has_pre_invoke and arguments is not None:
             # Reuse middleware-provided global context (carries JWT claims state,
@@ -3605,6 +3599,10 @@ class ToolService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         db.commit()  # End read-only transaction cleanly (commit not rollback to avoid inflating rollback stats)
         db.close()
+
+        # When the Rust runtime already ran pre-invoke hooks during /resolve
+        # and is now falling back to the Python path, skip re-running them.
+        skip_pre_invoke = bool(request_headers and request_headers.get("x-contextforge-pre-invoke-ran"))
 
         # Plugin hook: tool pre-invoke
         # Use existing context_table from previous hooks if available
