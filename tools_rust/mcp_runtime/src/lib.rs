@@ -6468,6 +6468,9 @@ async fn handle_tools_call(
     match execute_tools_call_direct(state, &incoming_headers, &request, &plan).await {
         Ok(response) => response,
         Err(err) => {
+            // KNOWN LIMITATION: Python will re-run TOOL_PRE_INVOKE hooks on
+            // this fallback path because the original body (not the resolved
+            // plan) is forwarded.  Pre-invoke plugins must be idempotent.
             warn!("Rust MCP direct tools/call execution fallback: {err}");
             forward_tools_call_to_backend(state, incoming_headers, body).await
         }

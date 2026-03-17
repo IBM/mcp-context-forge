@@ -89,7 +89,7 @@ async def run_pre_request_hooks(
         if not settings.plugins_can_override_auth_headers:
             _auth_protected_headers = {"authorization", "cookie", "x-api-key", "proxy-authorization"}
             original_lower = {h.lower() for h in headers}
-            overridden = {k for k in modified_headers_dict if k.lower() in _auth_protected_headers and k.lower() in original_lower}
+            overridden = {k.lower() for k in modified_headers_dict if k.lower() in _auth_protected_headers and k.lower() in original_lower}
             if overridden:
                 logger.warning("Pre-request hook attempted to override existing auth headers (stripped): %s", overridden)
                 modified_headers_dict = {k: v for k, v in modified_headers_dict.items() if k.lower() not in overridden}

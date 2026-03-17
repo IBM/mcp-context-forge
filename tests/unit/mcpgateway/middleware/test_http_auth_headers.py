@@ -895,6 +895,33 @@ class TestRunPreRequestHooks:
         assert merged["x-new"] == "allowed"
 
     @pytest.mark.asyncio
+    async def test_auth_header_override_stripped_mixed_case(self):
+        """Mixed-case auth header keys from plugins are also stripped (deny-path)."""
+        from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+
+        pm = MagicMock()
+        pm.has_hooks_for.return_value = True
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            return PluginResult(
+                modified_payload=HttpHeaderPayload({"Authorization": "Bearer HIJACKED", "X-Api-Key": "stolen", "x-new": "ok"}),
+                continue_processing=True,
+            ), {}
+
+        pm.invoke_hook = mock_invoke_hook
+
+        original = {"authorization": "Bearer original-token", "x-api-key": "original-key"}
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("mcpgateway.middleware.http_auth_middleware.settings.plugins_can_override_auth_headers", False)
+            merged, _, _ = await run_pre_request_hooks(pm, original, "/test", "GET")
+
+        # Mixed-case auth header overrides must be stripped
+        assert merged["authorization"] == "Bearer original-token"
+        assert merged["x-api-key"] == "original-key"
+        # Non-auth header from plugin is allowed
+        assert merged["x-new"] == "ok"
+
+    @pytest.mark.asyncio
     async def test_auth_header_override_allowed_when_enabled(self):
         """plugins_can_override_auth_headers=True allows plugins to rewrite auth headers."""
         from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks

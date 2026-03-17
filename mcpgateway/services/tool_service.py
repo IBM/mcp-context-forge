@@ -3124,6 +3124,12 @@ class ToolService(BaseService):
 
         # Run tool_pre_invoke hooks so that plugins (e.g. wxo_connections) can
         # inject credentials and clean arguments before the Rust direct call.
+        #
+        # KNOWN LIMITATION: if Rust direct execution fails and falls back to
+        # /_internal/mcp/tools/call, Python invoke_tool() will re-run
+        # TOOL_PRE_INVOKE hooks. Pre-invoke plugins must be idempotent for
+        # correctness on the Rust fallback path. A future enhancement could
+        # pass a "pre-invoke-already-ran" marker through the fallback body.
         modified_args = arguments
         if has_pre_invoke and arguments is not None:
             hook_global_context = GlobalContext(
