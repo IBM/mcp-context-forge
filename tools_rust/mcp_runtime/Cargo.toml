@@ -10,9 +10,17 @@ description = "Experimental Rust MCP runtime edge for ContextForge"
 [features]
 default = []
 rmcp-upstream-client = ["dep:rmcp", "dep:reqwest-rmcp"]
+grpc-uds = ["dep:tonic", "dep:prost", "dep:tokio-stream", "dep:tower", "dep:bytes", "dep:http", "dep:http-body-util"]
 
 [dependencies]
 async-stream = "0.3.6"
+bytes = { version = "1", optional = true }
+http = { version = "1", optional = true }
+http-body-util = { version = "0.1", optional = true }
+prost = { version = "0.13", optional = true }
+tokio-stream = { version = "0.1", features = ["net"], optional = true }
+tonic = { version = "0.12", features = ["transport", "gzip"], optional = true }
+tower = { version = "0.4", optional = true }
 axum = "0.8.8"
 base64 = "0.22.1"
 clap = { version = "4.5.60", features = ["derive", "env"] }
@@ -35,6 +43,9 @@ tokio-postgres-rustls = "0.13.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 uuid = { version = "1.18.1", features = ["v4"] }
+
+[build-dependencies]
+tonic-build = "0.12"
 
 [dev-dependencies]
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "stream", "http2", "rustls-tls-native-roots"] }

@@ -9,6 +9,8 @@
 //! still delegating authentication and RBAC authority to Python.
 
 pub mod config;
+#[cfg(feature = "grpc-uds")]
+pub mod grpc;
 
 use axum::{
     Json, Router,
@@ -1258,6 +1260,20 @@ pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
     let primary_target = config.listen_target().map_err(RuntimeError::Config)?;
     let public_http_addr = config.public_listen_addr().map_err(RuntimeError::Config)?;
     let shutdown_after = config.exit_after_startup_ms.map(Duration::from_millis);
+
+    // When the grpc-uds feature is active and a gRPC UDS path is configured,
+    // spawn the gRPC server as a concurrent task alongside the Axum servers.
+    #[cfg(feature = "grpc-uds")]
+    if let Some(grpc_uds_path) = config.grpc_uds_path.clone() {
+        let grpc_router = app.clone();
+        let grpc_mode = std::env::var("RUST_MCP_MODE").unwrap_or_else(|_| "edge".to_owned());
+        let grpc_version = env!("CARGO_PKG_VERSION").to_owned();
+        tokio::spawn(async move {
+            if let Err(e) = crate::grpc::serve_grpc_uds(grpc_router, grpc_uds_path, grpc_mode, grpc_version).await {
+                error!("gRPC-over-UDS server error: {e}");
+            }
+        });
+    }
 
     match (primary_target, public_http_addr) {
         (ListenTarget::Http(addr), None) => {

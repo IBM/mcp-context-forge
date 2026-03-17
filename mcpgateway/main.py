@@ -147,6 +147,7 @@ from mcpgateway.services.resource_service import ResourceError, ResourceLockConf
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
+from mcpgateway.transports.rust_mcp_runtime_grpc_proxy import RustMCPRuntimeGrpcProxy
 from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
@@ -10726,6 +10727,18 @@ def _build_mcp_transport_app():
         Transport app object that should be mounted at the public ``/mcp`` path.
     """
     if _should_mount_public_rust_transport():
+        if settings.experimental_rust_mcp_runtime_grpc_uds:
+            logger.warning(
+                "MCP runtime mode: %s (gRPC-over-UDS). GET/POST/DELETE /mcp requests will be proxied to %s via gRPC. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
+                _current_mcp_runtime_mode(),
+                settings.experimental_rust_mcp_runtime_grpc_uds,
+                _current_mcp_session_core_mode(),
+                _current_mcp_resume_core_mode(),
+                _current_mcp_live_stream_core_mode(),
+                _current_mcp_affinity_core_mode(),
+                _current_mcp_session_auth_reuse_mode(),
+            )
+            return RustMCPRuntimeGrpcProxy(streamable_http_session.handle_streamable_http)
         logger.warning(
             "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
             _current_mcp_runtime_mode(),

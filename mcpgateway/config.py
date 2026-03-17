@@ -247,6 +247,13 @@ class Settings(BaseSettings):
         default=None,
         description="Optional Unix domain socket path for the experimental Rust MCP runtime sidecar.",
     )
+    experimental_rust_mcp_runtime_grpc_uds: Optional[str] = Field(
+        default=None,
+        description="Optional Unix domain socket path for the gRPC-over-UDS internal IPC server (ADR-044). "
+        "When set, MCP traffic is proxied to the Rust sidecar via gRPC instead of HTTP. "
+        "Set MCP_RUST_GRPC_UDS to the same path as MCP_RUST_GRPC_UDS in the sidecar config. "
+        "Example: /tmp/contextforge-mcp-grpc.sock",
+    )
     experimental_rust_mcp_runtime_timeout_seconds: int = Field(
         default=30,
         ge=1,
