@@ -19,6 +19,8 @@ spec:
       serviceAccountName: contextforge-operator
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: manager
           image: image-registry.openshift-image-registry.svc:5000/contextforge-dev/contextforge-operator:latest
@@ -42,7 +44,8 @@ spec:
             periodSeconds: 10
           securityContext:
             allowPrivilegeEscalation: false
-            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
           resources:
             requests:
               cpu: 100m
