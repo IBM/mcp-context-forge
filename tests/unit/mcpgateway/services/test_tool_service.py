@@ -30,6 +30,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.plugins.framework import PluginManager
+from mcpgateway.plugins.framework.hooks.tools import ToolHookType
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     _decrypt_tool_header_value,
@@ -6651,22 +6652,27 @@ class TestRustMcpExecutionPlan:
         db.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("plugin_hooks", "trace_id", "expected_reason"),
-        [
-            (True, None, "plugin-hooks-configured"),
-            (False, "trace-1", "observability-trace-active"),
-        ],
-    )
-    async def test_prepare_rust_mcp_tool_execution_fast_fallbacks(self, tool_service, plugin_hooks, trace_id, expected_reason):
-        """Plugin hooks and active traces should bypass Rust direct execution."""
+    async def test_prepare_rust_mcp_tool_execution_post_invoke_hooks_force_fallback(self, tool_service):
+        """Post-invoke hooks should force fallback even when pre-invoke hooks are also registered."""
         tool_service._plugin_manager = MagicMock()
-        tool_service._plugin_manager.has_hooks_for.return_value = plugin_hooks
+        tool_service._plugin_manager.has_hooks_for = MagicMock(
+            side_effect=lambda hook_type: hook_type in (ToolHookType.TOOL_PRE_INVOKE, ToolHookType.TOOL_POST_INVOKE)
+        )
 
-        with patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=trace_id))):
+        with patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))):
             plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
 
-        assert plan == {"eligible": False, "fallbackReason": expected_reason}
+        assert plan == {"eligible": False, "fallbackReason": "post-invoke-hooks-configured"}
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_trace_id_forces_fallback(self, tool_service):
+        """Active observability trace should bypass Rust direct execution."""
+        tool_service._plugin_manager = None
+
+        with patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value="trace-1"))):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+        assert plan == {"eligible": False, "fallbackReason": "observability-trace-active"}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -7434,6 +7440,211 @@ class TestRustMcpExecutionPlan:
             "serverId": None,
         }
 
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_only_returns_eligible_plan_with_hooks(self, tool_service):
+        """Pre-invoke hooks only (no post-invoke) should produce eligible plan with hook results."""
+        from mcpgateway.plugins.framework import HttpHeaderPayload, ToolPreInvokePayload
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        cache = self._cache_mock(self._cache_payload(timeout_ms=2500))
+
+        # Configure plugin manager: pre-invoke YES, post-invoke NO
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(
+            side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE
+        )
+
+        # Mock invoke_hook to return modified args and headers
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            modified = ToolPreInvokePayload(
+                name=payload.name,
+                args={"cleaned_arg": "value"},
+                headers=HttpHeaderPayload({"x-injected-cred": "secret123"}),
+            )
+            return PluginResult(modified_payload=modified, continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+        tool_service._plugin_manager = mock_pm
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"authorization": "Bearer abc"}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                arguments={"wxo_connection_id": "conn-1", "original_arg": "data"},
+                request_headers={"authorization": "Bearer abc"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan["eligible"] is True
+        assert plan["hasPreInvokeHooks"] is True
+        assert plan["modifiedArgs"] == {"cleaned_arg": "value"}
+        # Plugin-injected header should appear (lowercase normalized)
+        assert plan["headers"]["x-injected-cred"] == "secret123"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_hook_modifies_tool_name(self, tool_service):
+        """Pre-invoke hook that renames tool should update remoteToolName in plan."""
+        from mcpgateway.plugins.framework import ToolPreInvokePayload
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        cache = self._cache_mock(self._cache_payload())
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(
+            side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE
+        )
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            modified = ToolPreInvokePayload(name="renamed-tool", args=payload.args)
+            return PluginResult(modified_payload=modified, continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+        tool_service._plugin_manager = mock_pm
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                arguments={"key": "val"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan["eligible"] is True
+        assert plan["remoteToolName"] == "renamed-tool"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_no_hooks_omits_hook_fields(self, tool_service):
+        """When no pre-invoke hooks are registered, plan should not contain hook fields."""
+        cache = self._cache_mock(self._cache_payload())
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan["eligible"] is True
+        assert "hasPreInvokeHooks" not in plan
+        assert "modifiedArgs" not in plan
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_passes_runtime_headers_not_request_headers(self, tool_service):
+        """Pre-invoke hook should receive outbound runtime headers, not inbound request headers."""
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        cache = self._cache_mock(self._cache_payload())
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(
+            side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE
+        )
+
+        received_headers = {}
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            received_headers.update(payload.headers.root)
+            return PluginResult(continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+        tool_service._plugin_manager = mock_pm
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"Authorization": "Bearer gateway-token"}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                arguments={"key": "val"},
+                request_headers={"authorization": "Bearer user-token", "x-request-id": "req-1"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        # Hook should receive runtime (outbound) headers, not inbound request headers
+        assert "Authorization" in received_headers
+        assert received_headers["Authorization"] == "Bearer gateway-token"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_receives_plugin_global_context(self, tool_service):
+        """Pre-invoke hook should receive the middleware-provided GlobalContext, not a fresh one."""
+        from mcpgateway.plugins.framework import GlobalContext
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        cache = self._cache_mock(self._cache_payload())
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(
+            side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE
+        )
+
+        received_context = {}
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            received_context["request_id"] = global_context.request_id
+            received_context["user"] = global_context.user
+            received_context["state"] = dict(global_context.state) if hasattr(global_context, "state") else {}
+            received_context["metadata_keys"] = list(global_context.metadata.keys()) if hasattr(global_context, "metadata") else []
+            received_context["local_contexts"] = local_contexts
+            return PluginResult(continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+        tool_service._plugin_manager = mock_pm
+
+        # Simulate middleware-provided context with JWT claims state
+        provided_ctx = GlobalContext(request_id="corr-123", server_id="srv-1", tenant_id=None, user="jwt-user@example.com")
+        provided_ctx.state["jwt_claims"] = {"sub": "jwt-user@example.com", "teams": ["team-a"]}
+        provided_context_table = {"prior_plugin": {"key": "value"}}
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                arguments={"key": "val"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+                plugin_global_context=provided_ctx,
+                plugin_context_table=provided_context_table,
+            )
+
+        # Hook should have received the middleware context, not a fresh one
+        assert received_context["request_id"] == "corr-123"
+        assert received_context["user"] == "jwt-user@example.com"
+        assert received_context["state"]["jwt_claims"]["sub"] == "jwt-user@example.com"
+        # Prior context table should be passed through
+        assert received_context["local_contexts"] == provided_context_table
 
     @pytest.mark.asyncio
     async def test_invoke_tool_header_gateway_not_found(self, tool_service, test_db):

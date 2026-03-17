@@ -780,6 +780,16 @@ class Settings(BaseSettings):
         default=False,
         description=("Allow HTTP_AUTH_CHECK_PERMISSION plugins to short-circuit built-in RBAC grants. " "Disabled by default so plugin grant decisions are audit-only unless explicitly enabled."),
     )
+    plugins_can_override_auth_headers: bool = Field(
+        default=False,
+        description=(
+            "DANGEROUS: Allow pre-request plugin hooks to override auth-sensitive headers "
+            "(authorization, cookie, x-api-key, proxy-authorization) that the client already sent. "
+            "Disabled by default because a malicious or misconfigured plugin could impersonate any "
+            "user by rewriting the Authorization header. Only enable when all loaded plugins are "
+            "fully trusted and the deployment requires token exchange (e.g. WXO auth)."
+        ),
+    )
 
     # database-backed polling settings for session message delivery
     poll_interval: float = Field(default=1.0, description="Initial polling interval in seconds for checking new session messages")

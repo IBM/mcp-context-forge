@@ -400,6 +400,10 @@ struct ResolvedMcpToolCallPlan {
     parsed_headers: Option<Vec<(HeaderName, HeaderValue)>>,
     #[serde(skip)]
     headers_hash: Option<u64>,
+    #[serde(default)]
+    has_pre_invoke_hooks: bool,
+    #[serde(default)]
+    modified_args: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -6465,7 +6469,16 @@ async fn handle_tools_call(
         Ok(response) => response,
         Err(err) => {
             warn!("Rust MCP direct tools/call execution fallback: {err}");
-            forward_tools_call_to_backend(state, incoming_headers, body).await
+            let mut fallback_headers = incoming_headers;
+            // Tell Python that pre-invoke hooks already ran during /resolve so
+            // invoke_tool() can skip re-executing them on the fallback path.
+            if plan.has_pre_invoke_hooks {
+                fallback_headers.insert(
+                    HeaderName::from_static("x-contextforge-pre-invoke-ran"),
+                    HeaderValue::from_static("true"),
+                );
+            }
+            forward_tools_call_to_backend(state, fallback_headers, body).await
         }
     }
 }
@@ -6553,7 +6566,12 @@ async fn resolve_tools_call(
     }
 
     let plan = resolve_tools_call_plan_via_backend(state, incoming_headers, body).await?;
-    if plan.eligible && plan.transport.as_deref() == Some("streamablehttp") {
+    // Do not cache plans that ran pre-invoke hooks — hook results depend on
+    // per-call arguments (e.g. wxo_connection_id) and must be resolved fresh.
+    if plan.eligible
+        && plan.transport.as_deref() == Some("streamablehttp")
+        && !plan.has_pre_invoke_hooks
+    {
         state.resolved_tool_call_plans().lock().await.insert(
             cache_key,
             CachedResolvedToolCallPlan {
@@ -6815,27 +6833,34 @@ async fn execute_tools_call_via_rmcp(
     let rmcp_client =
         get_or_create_rmcp_upstream_client(state, plan, &session_key, &protocol_version).await?;
 
-    let (response, success, error_message) =
-        match invoke_tools_call_via_rmcp(rmcp_client.as_ref(), request, remote_tool_name).await {
-            Ok(response) => response,
-            Err(err) => {
-                state
-                    .rmcp_upstream_clients()
-                    .lock()
-                    .await
-                    .remove(&session_key);
-                let retried_client = get_or_create_rmcp_upstream_client(
-                    state,
-                    plan,
-                    &session_key,
-                    &protocol_version,
-                )
-                .await?;
-                invoke_tools_call_via_rmcp(retried_client.as_ref(), request, remote_tool_name)
-                    .await
-                    .map_err(|retry_err| format!("rmcp retry failed after {err}: {retry_err}"))?
-            }
-        };
+    let (response, success, error_message) = match invoke_tools_call_via_rmcp(
+        rmcp_client.as_ref(),
+        request,
+        remote_tool_name,
+        plan.modified_args.as_ref(),
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            state
+                .rmcp_upstream_clients()
+                .lock()
+                .await
+                .remove(&session_key);
+            let retried_client =
+                get_or_create_rmcp_upstream_client(state, plan, &session_key, &protocol_version)
+                    .await?;
+            invoke_tools_call_via_rmcp(
+                retried_client.as_ref(),
+                request,
+                remote_tool_name,
+                plan.modified_args.as_ref(),
+            )
+            .await
+            .map_err(|retry_err| format!("rmcp retry failed after {err}: {retry_err}"))?
+        }
+    };
 
     let mut response = response;
     if let Some(session_id) = downstream_session_id
@@ -6999,6 +7024,11 @@ async fn send_direct_tools_call(
         "name".to_string(),
         Value::String(remote_tool_name.to_string()),
     );
+    // Apply plugin-modified arguments from pre-invoke hooks (e.g. wxo_connections
+    // strips wxo_* params and injects credential headers via the plan).
+    if let Some(ref modified_args) = plan.modified_args {
+        params_object.insert("arguments".to_string(), modified_args.clone());
+    }
 
     state
         .client
@@ -7162,6 +7192,7 @@ async fn invoke_tools_call_via_rmcp(
     client: &RmcpRunningService<RmcpRoleClient, RmcpClientInfo>,
     request: &JsonRpcRequest,
     remote_tool_name: &str,
+    modified_args: Option<&Value>,
 ) -> Result<(Response, bool, Option<String>), String> {
     let mut params = request.params.clone();
     let params_object = params
@@ -7171,6 +7202,9 @@ async fn invoke_tools_call_via_rmcp(
         "name".to_string(),
         Value::String(remote_tool_name.to_string()),
     );
+    if let Some(args) = modified_args {
+        params_object.insert("arguments".to_string(), args.clone());
+    }
 
     let params = serde_json::from_value::<RmcpCallToolRequestParams>(params)
         .map_err(|err| format!("rmcp tools/call params decode failed: {err}"))?;

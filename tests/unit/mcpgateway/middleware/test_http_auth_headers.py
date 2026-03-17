@@ -803,3 +803,224 @@ class TestPostHookResponseHeaders:
         response = client.get("/test")
         assert response.status_code == 200
         assert response.json() == {"ok": True}
+
+
+class TestRunPreRequestHooks:
+    """Tests for the standalone run_pre_request_hooks() function.
+
+    This function is the shared hook runner used by both the Python
+    middleware chain and the Rust internal auth path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_returns_original_headers_when_no_hooks_registered(self):
+        """No hooks registered => original headers returned unchanged."""
+        from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+
+        pm = MagicMock()
+        pm.has_hooks_for.return_value = False
+
+        original = {"authorization": "Bearer abc", "x-custom": "val"}
+        merged, ctx, table = await run_pre_request_hooks(pm, original, "/test", "GET")
+
+        assert merged is original
+        assert table is None
+        pm.invoke_hook.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_modified_headers_from_plugin(self):
+        """Plugin that adds a header should produce merged output."""
+        from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+
+        pm = MagicMock()
+        pm.has_hooks_for.return_value = True
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            modified = dict(payload.headers.root)
+            modified["x-injected"] = "plugin-value"
+            return PluginResult(modified_payload=HttpHeaderPayload(modified), continue_processing=True), {"ctx": "data"}
+
+        pm.invoke_hook = mock_invoke_hook
+
+        original = {"x-custom": "original"}
+        merged, ctx, table = await run_pre_request_hooks(pm, original, "/path", "POST", client_host="127.0.0.1")
+
+        assert merged["x-custom"] == "original"
+        assert merged["x-injected"] == "plugin-value"
+        assert table == {"ctx": "data"}
+        assert ctx is not None
+
+    @pytest.mark.asyncio
+    async def test_no_modification_when_plugin_returns_no_payload(self):
+        """Plugin that returns no modified_payload should leave headers unchanged."""
+        from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+
+        pm = MagicMock()
+        pm.has_hooks_for.return_value = True
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            return PluginResult(continue_processing=True), {}
+
+        pm.invoke_hook = mock_invoke_hook
+
+        original = {"authorization": "Bearer xyz"}
+        merged, ctx, table = await run_pre_request_hooks(pm, original, "/test", "GET")
+
+        assert merged is original
+
+    @pytest.mark.asyncio
+    async def test_auth_header_override_stripped_by_default(self):
+        """Default config prevents plugins from overriding existing auth headers."""
+        from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+
+        pm = MagicMock()
+        pm.has_hooks_for.return_value = True
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            return PluginResult(
+                modified_payload=HttpHeaderPayload({"authorization": "Bearer HIJACKED", "x-new": "allowed"}),
+                continue_processing=True,
+            ), {}
+
+        pm.invoke_hook = mock_invoke_hook
+
+        original = {"authorization": "Bearer original-token"}
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("mcpgateway.middleware.http_auth_middleware.settings.plugins_can_override_auth_headers", False)
+            merged, _, _ = await run_pre_request_hooks(pm, original, "/test", "GET")
+
+        # Original auth header must survive; plugin's override is stripped
+        assert merged["authorization"] == "Bearer original-token"
+        # Non-auth header from plugin is allowed
+        assert merged["x-new"] == "allowed"
+
+    @pytest.mark.asyncio
+    async def test_auth_header_override_stripped_mixed_case(self):
+        """Mixed-case auth header keys from plugins are also stripped (deny-path)."""
+        from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+
+        pm = MagicMock()
+        pm.has_hooks_for.return_value = True
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            return PluginResult(
+                modified_payload=HttpHeaderPayload({"Authorization": "Bearer HIJACKED", "X-Api-Key": "stolen", "x-new": "ok"}),
+                continue_processing=True,
+            ), {}
+
+        pm.invoke_hook = mock_invoke_hook
+
+        original = {"authorization": "Bearer original-token", "x-api-key": "original-key"}
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("mcpgateway.middleware.http_auth_middleware.settings.plugins_can_override_auth_headers", False)
+            merged, _, _ = await run_pre_request_hooks(pm, original, "/test", "GET")
+
+        # Mixed-case auth header overrides must be stripped
+        assert merged["authorization"] == "Bearer original-token"
+        assert merged["x-api-key"] == "original-key"
+        # Non-auth header from plugin is allowed
+        assert merged["x-new"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_auth_header_override_allowed_when_enabled(self):
+        """plugins_can_override_auth_headers=True allows plugins to rewrite auth headers."""
+        from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+
+        pm = MagicMock()
+        pm.has_hooks_for.return_value = True
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            return PluginResult(
+                modified_payload=HttpHeaderPayload({"authorization": "Bearer EXCHANGED"}),
+                continue_processing=True,
+            ), {}
+
+        pm.invoke_hook = mock_invoke_hook
+
+        original = {"authorization": "Bearer original"}
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("mcpgateway.middleware.http_auth_middleware.settings.plugins_can_override_auth_headers", True)
+            merged, _, _ = await run_pre_request_hooks(pm, original, "/test", "GET")
+
+        assert merged["authorization"] == "Bearer EXCHANGED"
+
+    @pytest.mark.asyncio
+    async def test_exception_returns_original_headers(self):
+        """Hook failure should return original headers, not crash."""
+        from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+
+        pm = MagicMock()
+        pm.has_hooks_for.return_value = True
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            raise RuntimeError("plugin crashed")
+
+        pm.invoke_hook = mock_invoke_hook
+
+        original = {"x-test": "value"}
+        merged, ctx, table = await run_pre_request_hooks(pm, original, "/test", "GET")
+
+        assert merged is original
+        assert table is None
+
+    @pytest.mark.asyncio
+    async def test_headers_normalized_to_lowercase(self):
+        """Merged headers should have lowercase keys to prevent duplicates."""
+        from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+
+        pm = MagicMock()
+        pm.has_hooks_for.return_value = True
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            return PluginResult(
+                modified_payload=HttpHeaderPayload({"X-Plugin-Header": "value"}),
+                continue_processing=True,
+            ), {}
+
+        pm.invoke_hook = mock_invoke_hook
+
+        original = {"X-Original": "val"}
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("mcpgateway.middleware.http_auth_middleware.settings.plugins_can_override_auth_headers", False)
+            merged, _, _ = await run_pre_request_hooks(pm, original, "/test", "GET")
+
+        # All keys should be lowercase
+        assert all(k == k.lower() for k in merged), f"Non-lowercase keys found: {list(merged.keys())}"
+        assert merged["x-original"] == "val"
+        assert merged["x-plugin-header"] == "value"
+
+    @pytest.mark.asyncio
+    async def test_creates_global_context_when_not_provided(self):
+        """When no global_context is passed, the function should create one."""
+        from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+        from mcpgateway.plugins.framework import GlobalContext
+
+        pm = MagicMock()
+        pm.has_hooks_for.return_value = True
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            return PluginResult(continue_processing=True), {}
+
+        pm.invoke_hook = mock_invoke_hook
+
+        _, ctx, _ = await run_pre_request_hooks(pm, {}, "/test", "GET")
+        assert isinstance(ctx, GlobalContext)
+        assert ctx.request_id is not None
+
+    @pytest.mark.asyncio
+    async def test_reuses_provided_global_context(self):
+        """When a global_context is passed, the function should reuse it."""
+        from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+        from mcpgateway.plugins.framework import GlobalContext
+
+        pm = MagicMock()
+        pm.has_hooks_for.return_value = True
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            return PluginResult(continue_processing=True), {}
+
+        pm.invoke_hook = mock_invoke_hook
+
+        provided_ctx = GlobalContext(request_id="req-123", server_id="srv-1", tenant_id=None)
+        _, ctx, _ = await run_pre_request_hooks(pm, {}, "/test", "GET", global_context=provided_ctx)
+        assert ctx is provided_ctx

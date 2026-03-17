@@ -1743,6 +1743,59 @@ FEDERATION_POST_SYNC = "federation_post_sync"  # Post-federation processing
 - ✅ **OpenAI Moderation API:** Commercial content moderation
 - ✅ **Custom MCP Servers:** Any language, any protocol
 
+## Rust MCP Runtime Interaction
+
+When the Rust MCP runtime is active in `edge` or `full` mode
+(see [Rust MCP Runtime Architecture](rust-mcp-runtime.md)), plugin
+execution follows a modified path. The Rust runtime does not execute
+plugins directly — all hook invocation remains in Python.
+
+### How Plugins Execute in the Rust Path
+
+For `tools/call` requests handled by the Rust runtime:
+
+1. Rust calls `POST /_internal/mcp/tools/call/resolve` on the Python
+   gateway.
+2. Python runs `prepare_rust_mcp_tool_execution()`, which:
+   - Checks whether post-invoke hooks are registered. If so, returns
+     `eligible: false` immediately — the entire call falls back to the
+     standard Python path where both pre-invoke and post-invoke hooks run.
+   - If no post-invoke hooks block eligibility, and pre-invoke hooks are
+     registered, executes them via `ToolHookType.TOOL_PRE_INVOKE`.
+   - Returns an execution plan to Rust containing any plugin modifications:
+     modified arguments, injected headers, and a `hasPreInvokeHooks` flag.
+3. Rust applies the plugin-modified arguments and headers, then either
+   executes the upstream call directly or falls back to Python.
+
+### Hook Compatibility
+
+| Hook Type | Rust Direct Path | Python Fallback Path |
+|-----------|-----------------|---------------------|
+| `TOOL_PRE_INVOKE` | Runs in Python during `/resolve`; results applied by Rust | Runs normally in Python |
+| `TOOL_POST_INVOKE` | **Not supported** — forces fallback to Python | Runs normally in Python |
+| All other hooks | Not applicable to `tools/call` | Unchanged |
+
+### Implications for Plugin Authors
+
+- **Pre-invoke plugins** work transparently in both paths. Modifications to
+  arguments and headers are forwarded to Rust through the execution plan.
+- **Post-invoke plugins** are fully supported but cause all `tools/call`
+  requests to go through the Python fallback path, bypassing the Rust direct
+  execution optimization. This is by design — post-invoke hooks need access
+  to the upstream response, which is only available in Python when Rust
+  executes directly.
+- **Plugin violations** (e.g. from policy enforcement plugins) raised during
+  pre-invoke execution propagate back through the resolve endpoint as errors,
+  preventing tool execution in both paths.
+
+### Caching Behavior
+
+Rust caches resolved execution plans per tool call signature to avoid
+repeated `/resolve` round-trips. However, when `hasPreInvokeHooks` is
+`true` in the plan response, caching is disabled for that plan because
+plugin hook results may depend on per-request context such as connection
+identifiers or rotated credentials.
+
 #### Planned Integrations (Phase 2-3)
 
 - 🚧 **HashiCorp Vault:** Secret management for plugin configurations
