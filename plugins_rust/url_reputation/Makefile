@@ -11,7 +11,7 @@
 #   make bench        - Run benchmarks
 #   make compare      - Compare Python vs Rust performance
 
-.PHONY: help build dev test test-python clean fmt fmt-check clippy bench audit audit-fix doc doc-open coverage install compare
+.PHONY: help build dev test test-python clean fmt fmt-check clippy check-all bench audit audit-fix doc doc-open coverage install compare
 
 # Default target
 .DEFAULT_GOAL := help
@@ -74,6 +74,12 @@ fmt-check: ## Check code format
 clippy: ## Run clippy linter
 	@echo "$(GREEN)Running clippy...$(NC)"
 	cargo clippy --all-targets --all-features -- -D warnings
+
+check-all: ## Run all checks (format, lint, test)
+	@echo "$(GREEN)Running all checks...$(NC)"
+	@$(MAKE) --no-print-directory fmt-check
+	@$(MAKE) --no-print-directory clippy
+	@$(MAKE) --no-print-directory test
 
 audit: ## Run cargo-audit
 	@echo "$(GREEN)Running security audit...$(NC)"
