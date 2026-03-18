@@ -511,13 +511,10 @@ class TestPromptService:
     async def test_get_prompt_id_fallback_backward_compat(self, prompt_service, test_db):
         """Verify ID-based lookup still works as fallback for backward compatibility."""
         db_prompt = _build_db_prompt(pid=123, name="some_prompt", template="Hello!")
+        db_prompt.enabled = True  # Ensure prompt is active
         prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
-        test_db.execute = Mock(
-            side_effect=[
-                _make_execute_result(scalar=None),  # active by name (tried first, fails)
-                _make_execute_result(scalar=db_prompt),  # active by id (fallback, succeeds)
-            ]
-        )
+        # Single execute call - _find_prompt_by_name_or_id uses OR query (name OR id)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
 
         result = await prompt_service.get_prompt(test_db, "123", {})
         assert result.messages[0].content.text == "Hello!"
@@ -587,9 +584,8 @@ class TestPromptService:
         prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
         test_db.execute = Mock(
             side_effect=[
-                _make_execute_result(scalar=None),  # active by name
-                _make_execute_result(scalar=None),  # active by id
-                _make_execute_result(scalar=inactive),  # inactive by name
+                _make_execute_result(scalar=None),  # active query (OR name/id) - not found
+                _make_execute_result(scalar=inactive),  # inactive query (OR name/id) - found
             ]
         )
         with pytest.raises(PromptNotFoundError) as exc_info:
