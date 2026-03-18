@@ -319,6 +319,7 @@ class JsonPathModifier(BaseModelWithConfigDict):
     Provides the structure for parsing JSONPath queries and optional mapping.
     """
 
+    model_config = ConfigDict(extra="forbid")  # ← rejects unknown fields
     jsonpath: Optional[str] = Field(None, description="JSONPath expression for querying JSON data.")
     mapping: Optional[Dict[str, str]] = Field(None, description="Mapping of fields from original data to output.")
 
