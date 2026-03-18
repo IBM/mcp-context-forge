@@ -1369,7 +1369,7 @@ testing-rebuild-rust-shadow:               ## Rebuild Rust image with no cache, 
 testing-rebuild-rust-full:                 ## Rebuild Rust image with no cache, then start testing stack in full mode
 	@$(MAKE) testing-down
 	@$(MAKE) compose-clean
-	@$(MAKE) docker-prod-rust-no-cache
+	@$(MAKE) docker-prod-rust-no-cache ENABLE_RUST_MCP_GRPC_UDS_BUILD=$(ENABLE_RUST_MCP_GRPC_UDS_BUILD)
 	@RUST_MCP_MODE=full RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
 
 .PHONY: testing-down
@@ -4841,12 +4841,19 @@ container-build:
 	else \
 		PROFILING_ARG="--build-arg ENABLE_PROFILING=false"; \
 	fi; \
+	if [ "$(ENABLE_RUST_MCP_GRPC_UDS_BUILD)" = "1" ] || [ "$(ENABLE_RUST_MCP_GRPC_UDS_BUILD)" = "true" ]; then \
+		echo "🔌 Enabling gRPC-over-UDS in the Rust MCP runtime..."; \
+		GRPC_UDS_ARG="--build-arg ENABLE_RUST_MCP_GRPC_UDS=true"; \
+	else \
+		GRPC_UDS_ARG="--build-arg ENABLE_RUST_MCP_GRPC_UDS=false"; \
+	fi; \
 	$(CONTAINER_RUNTIME) build \
 		--platform=$(PLATFORM) \
 		-f $(CONTAINER_FILE) \
 		$$RUST_ARG \
 		$$RMCP_ARG \
 		$$PROFILING_ARG \
+		$$GRPC_UDS_ARG \
 		$(DOCKER_BUILD_ARGS) \
 		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
 		.
@@ -5351,7 +5358,10 @@ docker-prod-rust:
 	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1
 
 docker-prod-rust-no-cache:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1 ENABLE_RUST_MCP_GRPC_UDS_BUILD=$(ENABLE_RUST_MCP_GRPC_UDS_BUILD) DOCKER_BUILD_ARGS="--no-cache"
+
+docker-prod-rust-grpc-uds:
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1 ENABLE_RUST_MCP_GRPC_UDS_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
 
 # Build production image with profiling tools (memray) for performance debugging
 # Usage: make docker-prod-profiling

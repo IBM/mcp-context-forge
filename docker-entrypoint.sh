@@ -337,6 +337,12 @@ start_managed_rust_mcp_runtime() {
     if [[ -n "${rust_redis_url}" ]]; then
         export MCP_RUST_REDIS_URL="${rust_redis_url}"
     fi
+    if [[ -n "${MCP_RUST_GRPC_UDS:-}" ]]; then
+        export MCP_RUST_GRPC_UDS="${MCP_RUST_GRPC_UDS}"
+        mkdir -p "$(dirname "${MCP_RUST_GRPC_UDS}")" || true
+    else
+        unset MCP_RUST_GRPC_UDS || true
+    fi
 
     if [[ -n "${rust_listen_uds}" ]]; then
         echo "Starting experimental Rust MCP runtime on unix://${MCP_RUST_LISTEN_UDS} (backend: ${MCP_RUST_BACKEND_RPC_URL})..."
