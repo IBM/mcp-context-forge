@@ -4232,10 +4232,10 @@ class ToolService(BaseService):
                     # Build the payload based on integration type
                     payload = arguments.copy()
 
-                    # Handle URL path parameter substitution (using local variable)
+                    # Handle URL path and query parameter substitution (using local variable)
                     final_url = tool_url
                     if "{" in tool_url and "}" in tool_url:
-                        # Extract path parameters from URL template and arguments
+                        # Extract ALL parameters (path and query) from URL template
                         url_params = re.findall(r"\{(\w+)\}", tool_url)
                         url_substitutions = {}
 
@@ -4246,7 +4246,7 @@ class ToolService(BaseService):
                             else:
                                 raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
-                    # --- Extract query params from URL ---
+                    # --- Extract query params from URL (after substitution) ---
                     parsed = urlparse(final_url)
                     final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
