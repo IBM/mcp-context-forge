@@ -470,3 +470,6 @@ async def test_create_platform_admin_existing_user_role_assignment_exception(moc
                 # Verify user was still updated with is_admin=True
                 assert result.is_admin is True
                 assert result.is_active is True
+
+                # Verify session was rolled back to clear failed transaction state
+                mock_db.rollback.assert_called_once()
