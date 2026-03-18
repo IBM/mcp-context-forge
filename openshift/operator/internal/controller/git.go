@@ -20,7 +20,7 @@ import (
 
 const (
 	pluginsVolumeName          = "plugins"
-	pluginsMountPath           = "/plugins"
+	pluginsMountPath           = "/app/wxo-plugins"
 	pluginsConfigVolumeName    = "plugins-config"
 	pluginsConfigMountPath     = "/etc/mcpgateway/plugins-config"
 	defaultGitImage            = "alpine/git:latest"
