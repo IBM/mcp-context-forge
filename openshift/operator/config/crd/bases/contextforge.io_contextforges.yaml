@@ -221,6 +221,9 @@ spec:
                         canOverrideAuthHeaders:
                           type: boolean
                           description: Allows plugins to override authentication headers.
+                        image:
+                          type: string
+                          description: "Container image containing plugins. An initContainer copies contents to /plugins. Mutually exclusive with gitSource."
                         gitSource:
                           type: object
                           description: Clone a git repo into an emptyDir as the plugins directory. The operator resolves the ref to a commit SHA and triggers rolling restarts on changes.

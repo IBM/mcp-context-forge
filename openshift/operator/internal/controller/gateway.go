@@ -145,7 +145,7 @@ func reconcileGatewayConfigMap(ctx context.Context, c client.Client, cf *cfv1.Co
 					data["PLUGINS_CONFIG_FILE"] = pluginsConfigMountPath + "/config.yaml"
 				case f.Plugins.ConfigFile != "":
 					data["PLUGINS_CONFIG_FILE"] = f.Plugins.ConfigFile
-				case f.Plugins.GitSource != nil:
+				case f.Plugins.Image != "" || f.Plugins.GitSource != nil:
 					data["PLUGINS_CONFIG_FILE"] = pluginsMountPath + "/config.yaml"
 				}
 				if f.Plugins.CanOverrideAuthHeaders != nil {
@@ -281,7 +281,34 @@ func reconcileGatewayDeployment(ctx context.Context, c client.Client, cf *cfv1.C
 		if cf.Spec.Features != nil && cf.Spec.Features.Plugins != nil {
 			p := cf.Spec.Features.Plugins
 
-			if p.GitSource != nil {
+			if p.Image != "" {
+				// Image-based plugins: initContainer copies from image to emptyDir
+				dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes, corev1.Volume{
+					Name: pluginsVolumeName,
+					VolumeSource: corev1.VolumeSource{
+						EmptyDir: &corev1.EmptyDirVolumeSource{},
+					},
+				})
+				dep.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+					dep.Spec.Template.Spec.Containers[0].VolumeMounts,
+					corev1.VolumeMount{Name: pluginsVolumeName, MountPath: pluginsMountPath},
+				)
+				dep.Spec.Template.Spec.InitContainers = append(
+					dep.Spec.Template.Spec.InitContainers,
+					corev1.Container{
+						Name:    "copy-plugins",
+						Image:   p.Image,
+						Command: []string{"cp", "-a", "/plugins/.", pluginsMountPath + "/"},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      pluginsVolumeName,
+							MountPath: pluginsMountPath,
+						}},
+						SecurityContext: &corev1.SecurityContext{
+							AllowPrivilegeEscalation: boolPtr(false),
+						},
+					},
+				)
+			} else if p.GitSource != nil {
 				// gitSource: emptyDir + initContainer + annotation for rolling restart
 				dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes, corev1.Volume{
 					Name: pluginsVolumeName,

@@ -265,19 +265,26 @@ type PluginsSpec struct {
 	// +optional
 	CanOverrideAuthHeaders *bool `json:"canOverrideAuthHeaders,omitempty"`
 
+	// Image specifies a container image containing plugins. An initContainer
+	// copies the image contents into a shared emptyDir mounted at /plugins.
+	// Mutually exclusive with gitSource.
+	// +optional
+	Image string `json:"image,omitempty"`
+
 	// GitSource clones a git repository into an emptyDir and mounts it as the
 	// plugins directory. The operator resolves the ref to a commit SHA on each
 	// reconciliation and triggers a rolling restart when it changes.
+	// Mutually exclusive with image.
 	// +optional
 	GitSource *GitSourceSpec `json:"gitSource,omitempty"`
 
 	// VolumeMounts defines additional volume mounts for plugin directories.
-	// Used only when gitSource is not configured.
+	// Used only when neither image nor gitSource is configured.
 	// +optional
 	VolumeMounts []corev1.VolumeMount `json:"volumeMounts,omitempty"`
 
 	// Volumes defines additional volumes for plugin data.
-	// Used only when gitSource is not configured.
+	// Used only when neither image nor gitSource is configured.
 	// +optional
 	Volumes []corev1.Volume `json:"volumes,omitempty"`
 }
