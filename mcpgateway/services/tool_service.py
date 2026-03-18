@@ -4260,9 +4260,6 @@ class ToolService(BaseService):
                         for qk, qv in payload.items():
                             if isinstance(qv, (dict, list)):
                                 raise ToolInvocationError(f"Tool '{name}': query_mapping produced non-scalar value for parameter '{qk}'")
-                    else:
-                        # No query mapping — merge URL query params into the payload (query params override on collision)
-                        payload.update(query_params)
 
                     # Headers are mapped from the original arguments (not the path-param-reduced payload)
                     # to preserve all available data for header injection.
@@ -4280,9 +4277,16 @@ class ToolService(BaseService):
                         rest_start_time = time.time()
                         try:
                             if method == "GET":
+                                # For GET: merge query params from URL into payload and send as query string
+                                if not tool_query_mapping:
+                                    payload.update(query_params)
                                 response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
                             else:
-                                response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
+                                # For POST/PUT/PATCH/DELETE: query params stay in URL, payload goes to body
+                                if not tool_query_mapping and query_params:
+                                    response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, params=query_params, headers=headers), timeout=effective_timeout)
+                                else:
+                                    response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(
