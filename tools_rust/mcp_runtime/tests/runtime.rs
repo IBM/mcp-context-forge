@@ -97,6 +97,7 @@ fn test_runtime_config() -> RuntimeConfig {
         db_pool_max_size: 20,
         log_filter: "error".to_string(),
         exit_after_startup_ms: None,
+        grpc_uds_path: None,
     }
 }
 

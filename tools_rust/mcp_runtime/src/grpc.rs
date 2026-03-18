@@ -3,28 +3,28 @@
 //
 // gRPC-over-UDS server for the Rust MCP runtime sidecar (ADR-044).
 //
-// Replaces the HTTP/JSON proxy boundary (rust_mcp_runtime_proxy.py) with a
-// typed protobuf contract.  The gRPC service handlers convert incoming proto
-// messages into `http::Request` objects and call the existing Axum router
-// directly as a Tower service — no additional network hop inside the sidecar.
+// Replaces the HTTP/JSON proxy boundary with a typed protobuf contract over a
+// Unix Domain Socket.  The gRPC service handlers call the shared `_inner`
+// handler functions directly — no http::Request encoding, no Tower/Axum
+// dispatch overhead.
 //
 // Feature-gated: only compiled when `--features grpc-uds` is set.
 
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use axum::Router;
-use axum::body::Body;
 use bytes::Bytes;
 use futures_util::StreamExt;
-use http::{HeaderName, HeaderValue, Method, Request, Uri, Version};
+use http::{HeaderName, HeaderValue, Uri};
 use http_body_util::BodyExt;
+use axum::http::HeaderMap;
 use tokio::net::UnixListener;
 use tokio_stream::Stream;
 use tonic::codec::CompressionEncoding;
 use tonic::{Request as TonicRequest, Response as TonicResponse, Status};
-use tower::ServiceExt;
 use tracing::{debug, error, info};
+
+use crate::AppState;
 
 // ---------------------------------------------------------------------------
 // Include the tonic-generated types for the mcp_runtime.proto service
@@ -41,25 +41,22 @@ use proto::{HealthRequest, HealthResponse, McpChunk, McpRequest, McpResponse};
 // Service implementation
 // ---------------------------------------------------------------------------
 
-/// gRPC service that wraps the existing Axum MCP router.
+/// gRPC service that calls into the shared MCP handler functions directly.
 ///
-/// Each RPC handler converts the incoming protobuf [`McpRequest`] into an
-/// [`http::Request`], calls the Axum router as a Tower service, and converts
-/// the [`http::Response`] back into the appropriate proto response type.
+/// Each RPC handler converts the incoming protobuf [`McpRequest`] into the
+/// plain Rust types that the `_inner` handler functions accept (`HeaderMap`,
+/// `Uri`, `Bytes`) and calls them without any HTTP encoding round-trip.
 #[derive(Clone)]
 pub struct McpRuntimeService {
-    /// The internal Axum router (same instance as the HTTP/UDS server).
-    router: Router,
-    /// Sidecar mode string forwarded in health responses.
+    state: AppState,
     mode: String,
-    /// Sidecar version string forwarded in health responses.
     version: String,
 }
 
 impl McpRuntimeService {
-    pub fn new(router: Router, mode: impl Into<String>, version: impl Into<String>) -> Self {
+    pub fn new(state: AppState, mode: impl Into<String>, version: impl Into<String>) -> Self {
         Self {
-            router,
+            state,
             mode: mode.into(),
             version: version.into(),
         }
@@ -67,71 +64,85 @@ impl McpRuntimeService {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: proto McpRequest → http::Request<Body>
+// Helper: build HeaderMap from proto McpRequest fields
 // ---------------------------------------------------------------------------
 
-fn proto_to_http_request(req: &McpRequest) -> Result<Request<Body>, Status> {
-    let method = Method::from_bytes(req.method.as_bytes())
-        .map_err(|_| Status::invalid_argument(format!("invalid HTTP method: {}", req.method)))?;
+fn build_headers(req: &McpRequest) -> Result<HeaderMap, Status> {
+    let mut headers = HeaderMap::new();
 
-    let uri_str = if req.query.is_empty() {
-        req.path.clone()
-    } else {
-        format!("{}?{}", req.path, req.query)
-    };
-    let uri = uri_str
-        .parse::<Uri>()
-        .map_err(|_| Status::invalid_argument(format!("invalid URI: {uri_str}")))?;
-
-    let mut builder = Request::builder().method(method).uri(uri).version(Version::HTTP_11);
-
-    // Forward safe headers from the proto map
     for (name, value) in &req.headers {
         let header_name = HeaderName::from_bytes(name.as_bytes())
             .map_err(|_| Status::invalid_argument(format!("invalid header name: {name}")))?;
         let header_value = HeaderValue::from_str(value)
             .map_err(|_| Status::invalid_argument(format!("invalid header value for {name}")))?;
-        builder = builder.header(header_name, header_value);
+        headers.insert(header_name, header_value);
     }
 
-    // Inject server-id as the trusted internal header the Axum handlers expect
+    // Inject trusted internal headers that the handler functions expect
     if !req.server_id.is_empty() {
-        builder = builder.header("x-contextforge-server-id", &req.server_id);
+        headers.insert(
+            HeaderName::from_static("x-contextforge-server-id"),
+            HeaderValue::from_str(&req.server_id)
+                .map_err(|_| Status::invalid_argument("invalid server_id"))?,
+        );
     }
 
-    // Inject the encoded auth context forwarded from Python
     if let Some(auth) = &req.auth_context {
         if !auth.encoded.is_empty() {
-            builder = builder.header("x-contextforge-auth-context", &auth.encoded);
+            headers.insert(
+                HeaderName::from_static("x-contextforge-auth-context"),
+                HeaderValue::from_str(&auth.encoded)
+                    .map_err(|_| Status::invalid_argument("invalid auth_context encoding"))?,
+            );
         }
     }
 
-    // Inject the affinity-forwarded marker when set
     if req.affinity_forwarded {
-        builder = builder.header("x-contextforge-affinity-forwarded", "rust");
+        headers.insert(
+            HeaderName::from_static("x-contextforge-affinity-forwarded"),
+            HeaderValue::from_static("rust"),
+        );
     }
 
-    // Inject MCP session ID when present
     if !req.session_id.is_empty() {
-        builder = builder.header("mcp-session-id", &req.session_id);
+        headers.insert(
+            HeaderName::from_static("mcp-session-id"),
+            HeaderValue::from_str(&req.session_id)
+                .map_err(|_| Status::invalid_argument("invalid session_id"))?,
+        );
     }
 
-    let body = if req.body.is_empty() {
-        Body::empty()
-    } else {
-        Body::from(Bytes::copy_from_slice(&req.body))
-    };
-
-    builder
-        .body(body)
-        .map_err(|e| Status::internal(format!("failed to build HTTP request: {e}")))
+    Ok(headers)
 }
 
 // ---------------------------------------------------------------------------
-// Helper: http::Response<Body> → proto McpResponse (unary)
+// Helper: build Uri from path + query
 // ---------------------------------------------------------------------------
 
-async fn http_response_to_proto(response: http::Response<Body>) -> Result<McpResponse, Status> {
+fn build_uri(path: &str, query: &str) -> Result<Uri, Status> {
+    let uri_str = if query.is_empty() {
+        path.to_owned()
+    } else {
+        format!("{path}?{query}")
+    };
+    uri_str
+        .parse::<Uri>()
+        .map_err(|_| Status::invalid_argument(format!("invalid URI: {uri_str}")))
+}
+
+// ---------------------------------------------------------------------------
+// Helper: non-empty string → Option<String>
+// ---------------------------------------------------------------------------
+
+fn non_empty(s: String) -> Option<String> {
+    if s.is_empty() { None } else { Some(s) }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: axum Response → proto McpResponse (unary)
+// ---------------------------------------------------------------------------
+
+async fn response_to_proto(response: axum::response::Response) -> Result<McpResponse, Status> {
     let status = response.status().as_u16() as i32;
 
     let mut headers = std::collections::HashMap::new();
@@ -156,16 +167,16 @@ async fn http_response_to_proto(response: http::Response<Body>) -> Result<McpRes
 }
 
 // ---------------------------------------------------------------------------
-// Helper: http::Response<Body> → stream of McpChunk (server-streaming)
+// Helper: axum Response → stream of McpChunk (server-streaming)
 // ---------------------------------------------------------------------------
 
-fn http_response_to_chunk_stream(
-    response: http::Response<Body>,
+fn response_to_chunk_stream(
+    response: axum::response::Response,
 ) -> Pin<Box<dyn Stream<Item = Result<McpChunk, Status>> + Send>> {
-    let status = response.status().as_u16() as u16;
+    let status = response.status().as_u16();
     let body = response.into_body();
 
-    let stream: Pin<Box<dyn Stream<Item = Result<McpChunk, Status>> + Send>> = Box::pin(async_stream::try_stream! {
+    Box::pin(async_stream::try_stream! {
         if status >= 400 {
             yield McpChunk {
                 data: Vec::new(),
@@ -199,9 +210,7 @@ fn http_response_to_chunk_stream(
             done: true,
             error_status: 0,
         };
-    });
-
-    stream
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -217,19 +226,17 @@ impl McpRuntime for McpRuntimeService {
         &self,
         request: TonicRequest<McpRequest>,
     ) -> Result<TonicResponse<McpResponse>, Status> {
-        let mcp_req = request.into_inner();
-        debug!("gRPC Invoke: method={} path={}", mcp_req.method, mcp_req.path);
+        let r = request.into_inner();
+        debug!("gRPC Invoke: path={}", r.path);
 
-        let http_req = proto_to_http_request(&mcp_req)?;
+        let headers = build_headers(&r)?;
+        let uri = build_uri(&r.path, &r.query)?;
+        let body = Bytes::from(r.body);
+        let server_id = non_empty(r.server_id);
 
-        let response = self
-            .router
-            .clone()
-            .oneshot(http_req)
-            .await
-            .map_err(|e| Status::internal(format!("router error: {e}")))?;
+        let response = crate::rpc_inner(self.state.clone(), None, headers, uri, body, server_id).await;
 
-        let proto_resp = http_response_to_proto(response).await?;
+        let proto_resp = response_to_proto(response).await?;
         Ok(TonicResponse::new(proto_resp))
     }
 
@@ -238,19 +245,16 @@ impl McpRuntime for McpRuntimeService {
         &self,
         request: TonicRequest<McpRequest>,
     ) -> Result<TonicResponse<Self::InvokeStreamStream>, Status> {
-        let mcp_req = request.into_inner();
-        debug!("gRPC InvokeStream: method={} path={}", mcp_req.method, mcp_req.path);
+        let r = request.into_inner();
+        debug!("gRPC InvokeStream: path={}", r.path);
 
-        let http_req = proto_to_http_request(&mcp_req)?;
+        let headers = build_headers(&r)?;
+        let uri = build_uri(&r.path, &r.query)?;
+        let server_id = non_empty(r.server_id);
 
-        let response = self
-            .router
-            .clone()
-            .oneshot(http_req)
-            .await
-            .map_err(|e| Status::internal(format!("router error: {e}")))?;
+        let response = crate::transport_get_inner(self.state.clone(), None, headers, uri, server_id).await;
 
-        Ok(TonicResponse::new(http_response_to_chunk_stream(response)))
+        Ok(TonicResponse::new(response_to_chunk_stream(response)))
     }
 
     /// Unary: DELETE /mcp — session close
@@ -258,19 +262,16 @@ impl McpRuntime for McpRuntimeService {
         &self,
         request: TonicRequest<McpRequest>,
     ) -> Result<TonicResponse<McpResponse>, Status> {
-        let mcp_req = request.into_inner();
-        debug!("gRPC CloseSession: session_id={}", mcp_req.session_id);
+        let r = request.into_inner();
+        debug!("gRPC CloseSession: session_id={}", r.session_id);
 
-        let http_req = proto_to_http_request(&mcp_req)?;
+        let headers = build_headers(&r)?;
+        let uri = build_uri(&r.path, &r.query)?;
+        let server_id = non_empty(r.server_id);
 
-        let response = self
-            .router
-            .clone()
-            .oneshot(http_req)
-            .await
-            .map_err(|e| Status::internal(format!("router error: {e}")))?;
+        let response = crate::transport_delete_inner(self.state.clone(), None, headers, uri, server_id).await;
 
-        let proto_resp = http_response_to_proto(response).await?;
+        let proto_resp = response_to_proto(response).await?;
         Ok(TonicResponse::new(proto_resp))
     }
 
@@ -293,11 +294,10 @@ impl McpRuntime for McpRuntimeService {
 
 /// Start the gRPC-over-UDS server alongside the existing Axum HTTP server.
 ///
-/// Binds a `tonic` gRPC server to `uds_path`, wrapping the shared `router`
-/// so that every incoming RPC is dispatched directly into the Axum handler
-/// tree — no additional network hop.
+/// Binds a `tonic` gRPC server to `uds_path`.  Each incoming RPC calls the
+/// shared `_inner` handler functions directly — no HTTP encoding round-trip.
 pub async fn serve_grpc_uds(
-    router: Router,
+    state: AppState,
     uds_path: PathBuf,
     mode: String,
     version: String,
@@ -308,7 +308,7 @@ pub async fn serve_grpc_uds(
 
     info!("starting gRPC-over-UDS server on unix://{}", uds_path.display());
 
-    let service = McpRuntimeService::new(router, mode, version);
+    let service = McpRuntimeService::new(state, mode, version);
     let server = McpRuntimeServer::new(service)
         .accept_compressed(CompressionEncoding::Gzip)
         .send_compressed(CompressionEncoding::Gzip);

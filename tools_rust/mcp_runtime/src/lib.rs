@@ -1255,7 +1255,7 @@ pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
     let state = AppState::new(&config)?;
     spawn_local_cache_sweeper(state.clone());
     let app = build_router(state.clone());
-    let public_app = build_public_router(state);
+    let public_app = build_public_router(state.clone());
 
     let primary_target = config.listen_target().map_err(RuntimeError::Config)?;
     let public_http_addr = config.public_listen_addr().map_err(RuntimeError::Config)?;
@@ -1265,11 +1265,11 @@ pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
     // spawn the gRPC server as a concurrent task alongside the Axum servers.
     #[cfg(feature = "grpc-uds")]
     if let Some(grpc_uds_path) = config.grpc_uds_path.clone() {
-        let grpc_router = app.clone();
+        let grpc_state = state.clone();
         let grpc_mode = std::env::var("RUST_MCP_MODE").unwrap_or_else(|_| "edge".to_owned());
         let grpc_version = env!("CARGO_PKG_VERSION").to_owned();
         tokio::spawn(async move {
-            if let Err(e) = crate::grpc::serve_grpc_uds(grpc_router, grpc_uds_path, grpc_mode, grpc_version).await {
+            if let Err(e) = crate::grpc::serve_grpc_uds(grpc_state, grpc_uds_path, grpc_mode, grpc_version).await {
                 error!("gRPC-over-UDS server error: {e}");
             }
         });
@@ -1412,7 +1412,7 @@ async fn transport_delete_server_scoped(
     transport_delete_inner(state, peer_addr.0, headers, uri, Some(server_id)).await
 }
 
-async fn transport_get_inner(
+pub(crate) async fn transport_get_inner(
     state: AppState,
     peer_addr: Option<SocketAddr>,
     headers: HeaderMap,
@@ -1435,7 +1435,7 @@ async fn transport_get_inner(
     forward_transport_request(&state, reqwest::Method::GET, headers, path, uri).await
 }
 
-async fn transport_delete_inner(
+pub(crate) async fn transport_delete_inner(
     state: AppState,
     peer_addr: Option<SocketAddr>,
     headers: HeaderMap,
@@ -1535,7 +1535,7 @@ async fn rpc_server_scoped(
     rpc_inner(state, peer_addr.0, headers, uri, body, Some(server_id)).await
 }
 
-async fn rpc_inner(
+pub(crate) async fn rpc_inner(
     state: AppState,
     peer_addr: Option<SocketAddr>,
     headers: HeaderMap,
@@ -7783,6 +7783,7 @@ mod unit_tests {
             db_pool_max_size: 7,
             log_filter: "error".to_string(),
             exit_after_startup_ms: None,
+            grpc_uds_path: None,
         }
     }
 
