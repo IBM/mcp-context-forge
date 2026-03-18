@@ -466,6 +466,42 @@ class TestEdgeCases:
 
         engine.dispose()
 
+    def test_downgrade_strips_pre_existing_permissions(self, migration_module):
+        """Downgrade is not provenance-aware: it removes listed permissions
+        even if they existed before the migration ran.
+
+        Accepted trade-off: the migration targets system-bootstrapped roles
+        whose baselines are known, so pre-existing customizations are unlikely.
+        """
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        with engine.connect() as conn:
+            conn.execute(text("CREATE TABLE roles (id TEXT PRIMARY KEY, name TEXT NOT NULL, permissions TEXT, updated_at TEXT)"))
+            # viewer already has admin.overview before migration
+            conn.execute(
+                text("INSERT INTO roles (id, name, permissions) VALUES (:id, :name, :perms)"),
+                {"id": "1", "name": "viewer", "perms": json.dumps(["admin.dashboard", "tools.read", "admin.overview"])},
+            )
+            conn.commit()
+
+            original = _get_role_permissions(conn, "viewer")
+            assert "admin.overview" in original
+
+            # upgrade is a no-op for admin.overview (already present), adds servers.use
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=True)
+            conn.commit()
+            after_upgrade = _get_role_permissions(conn, "viewer")
+            assert "admin.overview" in after_upgrade
+            assert "servers.use" in after_upgrade
+
+            # downgrade removes both — including the pre-existing admin.overview
+            migration_module._update_role_permissions(conn, "viewer", ROLE_PERMISSION_ADDITIONS["viewer"], add=False)
+            conn.commit()
+            after_downgrade = _get_role_permissions(conn, "viewer")
+            assert "servers.use" not in after_downgrade
+            assert "admin.overview" not in after_downgrade
+
+        engine.dispose()
+
     def test_upgrade_via_entry_point(self, migration_db, migration_module):
         """upgrade() adds all expected permissions when called via its public entry point."""
         from unittest.mock import patch
