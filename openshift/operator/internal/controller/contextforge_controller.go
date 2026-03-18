@@ -83,7 +83,12 @@ func (r *ContextForgeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	// Step 4: Database migration
+	// Step 4: Gateway ConfigMap (needed by both migration and gateway)
+	if err := reconcileGatewayConfigMap(ctx, r.Client, cf, dbURL, redisURL); err != nil {
+		return r.setFailed(cf, "GatewayConfigFailed", err)
+	}
+
+	// Step 5: Database migration
 	migrationDone, err := reconcileMigration(ctx, r.Client, cf)
 	if err != nil {
 		return r.setFailed(cf, "MigrationFailed", err)
