@@ -249,6 +249,9 @@ SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
 }
 
 # Section-to-route-path mapping for validation
+# NOTE: Only includes routes that exist on admin_router itself.
+# Routes on other routers (version.py, llm_admin_router, etc.) are excluded
+# from validation since they're mounted separately and have their own decorators.
 _SECTION_TO_ROUTE_PATH: Dict[str, str] = {
     "users": "/admin/users/partial",
     "maintenance": "/admin/maintenance/partial",
@@ -256,11 +259,11 @@ _SECTION_TO_ROUTE_PATH: Dict[str, str] = {
     "export-import": "/admin/export/configuration",
     "plugins": "/admin/plugins/partial",
     "metrics": "/admin/metrics",
-    "version-info": "/admin/version",
-    "settings": "/admin/llm-settings",
-    "llm-providers": "/admin/llm/providers/html",
-    "llm-models": "/admin/llm/models/html",
-    "llm-api-info": "/admin/llm/api-info/html",
+    # "version-info": "/admin/version",  # Route is on version.py router, not admin_router
+    # "settings": "/admin/llm-settings",  # No such route exists
+    # "llm-providers": "/admin/llm/providers/html",  # Route is on llm_admin_router
+    # "llm-models": "/admin/llm/models/html",  # Route is on llm_admin_router
+    # "llm-api-info": "/admin/llm/api-info/html",  # Route is on llm_admin_router
     "tools": "/admin/tools/partial",
     "servers": "/admin/servers/partial",
     "resources": "/admin/resources/partial",
@@ -270,7 +273,7 @@ _SECTION_TO_ROUTE_PATH: Dict[str, str] = {
     "tokens": "/admin/tokens/partial",
     "agents": "/admin/a2a/partial",
     "overview": "/admin/overview/partial",
-    "roots": "/admin/roots/partial",
+    # "roots": "/admin/roots/partial",  # No such route exists on admin_router
     "mcp-registry": "/admin/servers/partial",
 }
 
@@ -354,10 +357,9 @@ def validate_section_permissions(router) -> None:
         if is_test_env:
             # Hard error in test/CI to fail fast
             raise ValueError(error_msg)
-        else:
-            # Warning only in production to avoid breaking deployments
-            LOGGER.warning(error_msg)
-            LOGGER.warning("This may indicate the mapping needs updating.")
+        # Warning only in production to avoid breaking deployments
+        LOGGER.warning(error_msg)
+        LOGGER.warning("This may indicate the mapping needs updating.")
     else:
         LOGGER.info(f"SECTION_PERMISSIONS validation passed: all {len(SECTION_PERMISSIONS)} sections match route decorators")
 
