@@ -2415,7 +2415,7 @@
               x-init="syncCheckboxFromUrl('servers', 'show-inactive-servers')"
               @change="updateInactiveUrlState('servers', $el.checked)"
               hx-get="{{ root_path }}/admin/servers/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-servers').checked, per_page: document.querySelector('#servers-pagination-controls select')?.value || 50, q: document.getElementById('catalog-search-input')?.value || '', tags: document.getElementById('catalog-tag-filter')?.value || ''}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-servers').checked, per_page: document.querySelector('#servers-pagination-controls select')?.value || 50, q: document.getElementById('servers-search-input')?.value || '', tags: document.getElementById('servers-tag-filter')?.value || ''}"
               hx-target="#servers-table"
               hx-swap="outerHTML"
               hx-indicator="#servers-loading"
@@ -2439,7 +2439,7 @@
               <div class="relative">
                 <input
                   type="text"
-                  id="catalog-search-input"
+                  id="servers-search-input"
                   data-testid="search-input"
                   placeholder="Search servers..."
                   class="w-64 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
@@ -2458,7 +2458,7 @@
             </div>
 
             <!-- Hidden tag filter (for internal JavaScript usage) -->
-            <input type="hidden" id="catalog-tag-filter" />
+            <input type="hidden" id="servers-tag-filter" />
 
             <!-- Filter Status Badge (optional, if you want to show active filter count) -->
             <div class="mt-2">
