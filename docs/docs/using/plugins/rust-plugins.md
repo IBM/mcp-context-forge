@@ -10,7 +10,7 @@ MCP Gateway supports high-performance Rust implementations of plugins through Py
 ### Key Benefits
 
 - **🚀 5-10x Performance**: Native compilation, zero-copy operations, parallel processing
-- **🔄 Seamless Integration**: Automatic fallback to Python when Rust unavailable
+- **🔄 Seamless Integration**: Plugin-defined integration model, including auto-detect wrappers and dedicated Rust-only wrappers
 - **📦 Zero Breaking Changes**: Identical API to Python plugins
 - **⚙️ Auto-Detection**: Automatically uses Rust when available
 - **🛡️ Memory Safe**: Rust's ownership system prevents common bugs
@@ -86,14 +86,15 @@ make rust-dev
 # Standard installation (Python-only)
 pip install mcpgateway
 
-# Rust plugins will gracefully fall back to Python implementations
+# Auto-detect wrappers can fall back to Python implementations
+# Dedicated Rust-only wrappers such as RustPIIFilterPlugin will fail fast instead
 ```
 
 ## Configuration
 
 ### Plugin Configuration
 
-No changes needed! Rust plugins use the same configuration as Python:
+No changes needed! Rust plugins use the same plugin configuration shape as Python plugins:
 
 ```yaml
 # plugins/config.yaml
@@ -112,6 +113,93 @@ plugins:
 ```
 
 ## Usage
+
+### Rust PII Filter in This Branch
+
+The Rust PII filter now ships as a dedicated plugin path rather than a helper
+module tucked under the Python plugin package.
+
+- Plugin class: `plugins.pii_filter_rust.pii_filter_rust.RustPIIFilterPlugin`
+- Canonical runtime config: `plugins/config.yaml`
+- Plugin metadata manifest: `plugins/pii_filter_rust/plugin-manifest.yaml`
+- Compiled detector import: `from pii_filter_rust import PIIDetectorRust`
+
+This wrapper is intentionally Rust-first:
+
+- It uses the Rust detector directly instead of silently falling back to the
+  Python detector.
+- It passes plugin configuration through to Rust unchanged; the Rust detector is
+  the source of truth for supported config keys and defaults.
+- If the `pii_filter_rust` package is not installed, plugin initialization fails
+  fast with `ImportError`.
+- The shipped Rust plugin entry in `plugins/config.yaml` defaults to
+  `default_mask_strategy: "partial"` with `block_on_detection: false`.
+
+Supported Rust PII config keys are defined by the shipped Rust plugin entry in
+`plugins/config.yaml`. On this branch they include detector toggles for SSN,
+BSN, credit card, email, phone, IP address, date of birth, passport, bank
+account, medical record, full name, street address, US ZIP code, US EIN, US
+ITIN, and driver license, plus:
+
+Driver license detection on this branch is intentionally scoped to U.S. formats
+for California, Texas, Florida, and New York only; it accepts either a
+driver-license label or a state marker, and it is not a general international
+or 50-state detector.
+
+Passport detection on this branch is intentionally limited: it is guaranteed
+only for U.S. passport numbers (`9 digits`) and EU-style passport numbers
+(`2 uppercase letters + 7 digits`) when paired with either a passport label or
+a U.S. / EU region marker. It should not be described as worldwide passport
+coverage beyond those documented formats.
+
+Several other detectors are also intentionally narrower than their short config
+names may imply:
+
+- `detect_phone` is validated with `rlibphonenumber` and is guaranteed for U.S.
+  domestic formats plus international numbers with country code, not all global
+  local dialing formats.
+- `detect_ip_address` is guaranteed for IPv4 and standard fully expanded or
+  compressed IPv6 forms.
+- `detect_date_of_birth` is contextual and requires DOB or birth-date style
+  labels.
+- `detect_bank_account` is guaranteed for contextual numeric account identifiers
+  (`8-17 digits`) and checksum-validated IBAN, not arbitrary country-specific
+  account schemes.
+- `detect_medical_record` is contextual and limited to `MRN` / `Medical Record`
+  labeled identifiers.
+- `detect_full_name` is contextual and limited to labeled full-name fields.
+- `detect_street_address` is contextual and limited to labeled addresses with
+  common English street suffixes.
+
+For the current Rust PII detector, the practical contract is:
+
+| Detector | Guaranteed coverage | Explicitly not guaranteed |
+| --- | --- | --- |
+| `detect_ssn` | U.S. SSN shape with invalid ranges rejected | General 9-digit identifiers outside SSN rules |
+| `detect_bsn` | Dutch BSN with explicit BSN context and elfproef validation | Unlabeled 9-digit numbers |
+| `detect_credit_card` | Luhn-valid card numbers | Arbitrary 12-19 digit numbers |
+| `detect_email` | Standard email address syntax | Deliverability or mailbox ownership |
+| `detect_phone` | `rlibphonenumber`-validated U.S. domestic formats and international numbers with country code | Every unlabeled local format worldwide |
+| `detect_ip_address` | IPv4 and standard fully expanded or compressed IPv6 | IPv4-mapped IPv6 or every exotic textual variant |
+| `detect_date_of_birth` | DOB / birth-date labeled values | Unlabeled dates in free text |
+| `detect_passport` | U.S. `9 digits` and EU-style `2 letters + 7 digits` with passport label or `US` / `EU` marker | Other passport schemes or global passport validation |
+| `detect_driver_license` | CA, TX, FL, and NY with driver-license label or state marker | Other states, non-U.S. licenses, or global coverage |
+| `detect_bank_account` | Contextual `8-17 digit` account numbers and checksum-valid IBAN | Unlabeled U.S. account numbers or arbitrary country-specific schemes |
+| `detect_medical_record` | `MRN` / `Medical Record` labeled identifiers | Unlabeled medical identifiers |
+| `detect_full_name` | Labeled full-name fields | General NER-style person detection |
+| `detect_street_address` | Labeled addresses with common English street suffixes | Unlabeled addresses or global postal parsing |
+| `detect_us_aba_routing_number` | 9-digit U.S. ABA routing transit numbers that satisfy prefix and checksum rules | A guarantee that the number is currently assigned or active at a bank |
+| `detect_us_zip_code` | Labeled U.S. ZIP / ZIP+4 | Unlabeled 5-digit / 9-digit numbers |
+| `detect_us_ein` | Labeled U.S. EIN | Unlabeled 9-digit tax identifiers |
+| `detect_us_itin` | Labeled U.S. ITIN in supported ranges | Unlabeled tax identifiers or non-ITIN formats |
+
+- `default_mask_strategy`
+- `redaction_text`
+- `block_on_detection`
+- `log_detections`
+- `include_detection_details`
+- `custom_patterns`
+- `whitelist_patterns`
 
 ### Automatic Detection
 
@@ -154,8 +242,8 @@ result = plugin.process(data)
 ### Check Installation
 
 ```bash
-# Verify Rust plugin is available
-python -c "from plugin_rust.plugin_rust import PluginRust; print('✓ Rust plugin available')"
+# Verify the compiled detector is importable
+python -c "from pii_filter_rust import PIIDetectorRust; print('✓ Rust detector available')"
 
 # Check implementation being used
 python -c "
@@ -175,7 +263,7 @@ The gateway logs which implementation is being used:
 # With Rust available
 INFO - ✓ Plugin: Using Rust implementation (5-10x faster)
 
-# Without Rust
+# Without Rust on an auto-detect wrapper
 WARNING - Plugin: Using Python implementation
 WARNING - 💡 Build Rust plugins for better performance
 ```
@@ -215,7 +303,7 @@ make rust-verify           # Verify installation
 
 # From individual plugin directory
 cd plugins_rust/pii_filter
-make develop               # Build and install
+make install               # Build and install
 make test                  # Run tests
 make bench                 # Run benchmarks
 make bench-compare         # Compare Rust vs Python performance
@@ -278,11 +366,11 @@ Average Speedup: 7.8x
 cd plugins_rust/pii_filter
 cargo test
 
-# Python integration tests
-pytest tests/unit/mcpgateway/plugins/test_pii_filter.py
+# Python unit tests for the Python plugin
+uv run pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py
 
-# Differential tests (Rust vs Python compatibility)
-pytest tests/differential/test_pii_filter_differential.py
+# Python unit tests for the Rust plugin
+uv run pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter_rust.py
 
 # Or use make
 make rust-test-all         # Run all tests
@@ -290,23 +378,24 @@ make rust-test-all         # Run all tests
 
 ### Test Coverage
 
-The Rust plugin system includes comprehensive testing:
+Rust PII plugin details, supported config keys, and current limitations are
+documented in [`plugins_rust/pii_filter/README.md`](https://github.com/IBM/mcp-context-forge/tree/main/plugins_rust/pii_filter).
 
-- **Rust Unit Tests**: 14 tests covering core Rust functionality
-- **Python Integration Tests**: 45 tests covering PyO3 bindings
-- **Differential Tests**: 40+ tests ensuring Rust = Python outputs
-- **Performance Tests**: Benchmarks verifying >5x speedup
+Avoid treating this page as the plugin-specific source of truth for the Rust PII
+plugin. The plugin README and `plugins/config.yaml` are the canonical sources
+for the Rust plugin contract.
 
 ## Troubleshooting
 
 ### Rust Plugin Not Available
 
-**Symptom**: Logs show "Using Python implementation"
+**Symptom**: The Rust PII plugin fails to initialize or logs that the detector
+cannot be imported
 
 **Solutions**:
 ```bash
-# 1. Check if Rust extension is installed
-python -c "from pii_filter import PIIDetectorRust; print('OK')"
+# 1. Check if the Rust package is installed and importable
+python -c "from pii_filter_rust import PIIDetectorRust; print('OK')"
 
 # 2. Build from source
 cd plugins_rust/pii_filter
@@ -315,7 +404,8 @@ maturin develop --release
 
 ### Import Errors
 
-**Symptom**: `ImportError: cannot import name 'PIIDetectorRust'`
+**Symptom**: `ImportError: No module named 'pii_filter_rust'` or legacy imports
+from `plugins_rust` fail
 
 **Solutions**:
 ```bash
@@ -328,6 +418,18 @@ maturin develop --release
 
 # 3. Check Python version (requires 3.11+)
 python --version
+```
+
+Use the current public import path:
+
+```python
+from pii_filter_rust import PIIDetectorRust
+```
+
+For the plugin wrapper itself, use:
+
+```python
+from plugins.pii_filter_rust.pii_filter_rust import RustPIIFilterPlugin
 ```
 
 ### Performance Not Improved

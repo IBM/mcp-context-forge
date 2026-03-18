@@ -56,12 +56,12 @@ plugins:
       # Field overrides: customize per key pattern
       field_overrides: []
 
-  # PII Filter Plugin - Run first with highest priority for security
-  - name: "PIIFilterPlugin"
-    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
-    description: "Detects and masks Personally Identifiable Information"
+  # Rust-backed PII Filter Plugin - dedicated Rust-only entry
+  - name: "RustPIIFilterPlugin"
+    kind: "plugins.pii_filter_rust.pii_filter_rust.RustPIIFilterPlugin"
+    description: "Detects and masks Personally Identifiable Information with the Rust detector"
     version: "0.1.0"
-    author: "Mihai Criveti"
+    author: "ContextForge Contributors"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
     mode: "disabled"  # enforce | enforce_ignore_error | permissive | disabled
@@ -71,14 +71,24 @@ plugins:
         server_ids: []  # Apply to all servers
         tenant_ids: []  # Apply to all tenants
     config:
-      # PII Detection Settings
-      detect_ssn: true
-      detect_credit_card: true
-      detect_email: true
-      detect_phone: false
-      detect_ip_address: false  # Disabled for development
-      detect_aws_keys: true
-      detect_api_keys: true
+      # PII detection settings supported by the Rust detector
+      detect_ssn: true  # U.S. SSN shape with invalid ranges rejected; not a generic 9-digit identifier detector
+      detect_bsn: true  # Dutch BSN with BSN context and elfproef validation
+      detect_credit_card: true  # Luhn-valid card numbers only
+      detect_email: true  # Standard email syntax only
+      detect_phone: true  # Validated with libphonenumber; guaranteed for US domestic formats and international numbers with country code
+      detect_ip_address: true  # Guaranteed for IPv4 plus standard fully expanded and compressed IPv6 forms
+      detect_date_of_birth: true  # Contextual only; requires DOB/birth-date style labels
+      detect_passport: true  # Guaranteed for US (9 digits) and EU-style (2 letters + 7 digits) formats with passport label or US/EU region marker
+      detect_driver_license: true  # U.S. only; CA, TX, FL, and NY with driver-license label or state marker
+      detect_bank_account: true  # Guaranteed for contextual 8-17 digit account numbers and checksum-validated IBAN
+      detect_medical_record: true  # Contextual only; MRN/Medical Record labeled identifiers
+      detect_full_name: true  # Contextual only; labeled full names
+      detect_street_address: true  # Contextual only; labeled addresses with common English street suffixes
+      detect_us_aba_routing_number: true  # Checksum-valid U.S. ABA routing numbers; does not guarantee current bank assignment
+      detect_us_zip_code: true  # Labeled U.S. ZIP / ZIP+4 only
+      detect_us_ein: true  # Labeled U.S. EIN only
+      detect_us_itin: true  # Labeled U.S. ITIN within supported issuance ranges only
       # Masking Settings
       default_mask_strategy: "partial"  # redact | partial | hash | tokenize | remove
       redaction_text: "[PII_REDACTED]"
@@ -645,9 +655,8 @@ plugins:
     description: "Detects keys/tokens/secrets in inputs/outputs; optional redaction/blocking"
     version: "0.1.0"
     author: "ContextForge"
-    hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "secrets", "dlp"]
-    # mode: "enforce"
     mode: "disabled"
     priority: 51
     conditions: []

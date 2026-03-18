@@ -1,0 +1,16 @@
+description: "Rust-backed PII Filter plugin for detecting and masking sensitive information"
+author: "ContextForge Contributors"
+version: "0.1.0"
+tags: ["security", "pii", "compliance", "rust"]
+available_hooks:
+  - "prompt_pre_fetch"
+  - "prompt_post_fetch"
+  - "tool_pre_invoke"
+  - "tool_post_invoke"
+default_configs:
+  detect_ssn: true
+  detect_credit_card: true
+  detect_email: true
+  detect_driver_license: true
+  detect_us_aba_routing_number: true
+  default_mask_strategy: "partial"

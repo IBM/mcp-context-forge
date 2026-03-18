@@ -8,7 +8,7 @@ Secrets Detection Plugin.
 
 Detects likely credentials and secrets in inputs and outputs using regex and simple heuristics.
 
-Hooks: prompt_pre_fetch, tool_post_invoke, resource_post_fetch
+Hooks: prompt_pre_fetch, prompt_post_fetch, tool_pre_invoke, tool_post_invoke, resource_post_fetch
 """
 
 # Future
@@ -28,10 +28,14 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
+    PromptPosthookPayload,
+    PromptPosthookResult,
     PromptPrehookPayload,
     PromptPrehookResult,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
+    ToolPreInvokePayload,
+    ToolPreInvokeResult,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
@@ -178,6 +182,25 @@ class SecretsDetectionPlugin(Plugin):
             self.implementation = "Python"
             logger.info("🐍 SecretsDetectionPlugin initialized with Python implementation")
 
+    def _build_violation(self, description: str, count: int, findings: list[dict[str, Any]]) -> PluginViolation:
+        """Create a consistent violation payload for detected secrets."""
+        return PluginViolation(
+            reason="Secrets detected",
+            description=description,
+            code="SECRETS_DETECTED",
+            details={"count": count, "examples": findings[:5]},
+        )
+
+    @staticmethod
+    def _metadata(count: int, findings: list[dict[str, Any]], redacted: bool = False) -> dict[str, Any]:
+        """Build hook metadata only when detections exist."""
+        if not count:
+            return {}
+        metadata: dict[str, Any] = {"secrets_findings": findings, "count": count}
+        if redacted:
+            metadata["secrets_redacted"] = True
+        return metadata
+
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """Detect secrets in prompt arguments.
 
@@ -192,16 +215,63 @@ class SecretsDetectionPlugin(Plugin):
         if count >= self._cfg.min_findings_to_block and self._cfg.block_on_detection:
             return PromptPrehookResult(
                 continue_processing=False,
-                violation=PluginViolation(
-                    reason="Secrets detected",
-                    description="Potential secrets detected in prompt arguments",
-                    code="SECRETS_DETECTED",
-                    details={"count": count, "examples": findings[:5]},
-                ),
+                violation=self._build_violation("Potential secrets detected in prompt arguments", count, findings),
             )
         if self._cfg.redact and new_args != (payload.args or {}):
-            return PromptPrehookResult(modified_payload=PromptPrehookPayload(prompt_id=payload.prompt_id, args=new_args), metadata={"secrets_redacted": True, "count": count})
-        return PromptPrehookResult(metadata={"secrets_findings": findings, "count": count} if count else {})
+            return PromptPrehookResult(
+                modified_payload=PromptPrehookPayload(prompt_id=payload.prompt_id, args=new_args),
+                metadata=self._metadata(count, findings, redacted=True),
+            )
+        return PromptPrehookResult(metadata=self._metadata(count, findings))
+
+    async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
+        """Detect secrets in rendered prompt messages."""
+        messages = getattr(payload.result, "messages", None)
+        if not messages:
+            return PromptPosthookResult()
+
+        total_count = 0
+        all_findings: list[dict[str, Any]] = []
+        modified = False
+
+        for message in messages:
+            content = getattr(message, "content", None)
+            text = getattr(content, "text", None)
+            if not isinstance(text, str):
+                continue
+
+            count, new_text, findings = _scan_container(text, self._cfg)
+            total_count += count
+            all_findings.extend(findings)
+
+            if count >= self._cfg.min_findings_to_block and self._cfg.block_on_detection:
+                return PromptPosthookResult(
+                    continue_processing=False,
+                    violation=self._build_violation("Potential secrets detected in rendered prompt output", total_count, all_findings),
+                )
+
+            if self._cfg.redact and new_text != text:
+                message.content.text = new_text
+                modified = True
+
+        if self._cfg.redact and modified:
+            return PromptPosthookResult(modified_payload=payload, metadata=self._metadata(total_count, all_findings, redacted=True))
+        return PromptPosthookResult(metadata=self._metadata(total_count, all_findings))
+
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        """Detect secrets in tool arguments before invocation."""
+        count, new_args, findings = _scan_container(payload.args or {}, self._cfg)
+        if count >= self._cfg.min_findings_to_block and self._cfg.block_on_detection:
+            return ToolPreInvokeResult(
+                continue_processing=False,
+                violation=self._build_violation("Potential secrets detected in tool arguments", count, findings),
+            )
+        if self._cfg.redact and new_args != (payload.args or {}):
+            return ToolPreInvokeResult(
+                modified_payload=payload.model_copy(update={"args": new_args}),
+                metadata=self._metadata(count, findings, redacted=True),
+            )
+        return ToolPreInvokeResult(metadata=self._metadata(count, findings))
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Detect secrets in tool results.
@@ -217,16 +287,14 @@ class SecretsDetectionPlugin(Plugin):
         if count >= self._cfg.min_findings_to_block and self._cfg.block_on_detection:
             return ToolPostInvokeResult(
                 continue_processing=False,
-                violation=PluginViolation(
-                    reason="Secrets detected",
-                    description="Potential secrets detected in tool result",
-                    code="SECRETS_DETECTED",
-                    details={"count": count, "examples": findings[:5]},
-                ),
+                violation=self._build_violation("Potential secrets detected in tool result", count, findings),
             )
         if self._cfg.redact and new_result != payload.result:
-            return ToolPostInvokeResult(modified_payload=ToolPostInvokePayload(name=payload.name, result=new_result), metadata={"secrets_redacted": True, "count": count})
-        return ToolPostInvokeResult(metadata={"secrets_findings": findings, "count": count} if count else {})
+            return ToolPostInvokeResult(
+                modified_payload=ToolPostInvokePayload(name=payload.name, result=new_result),
+                metadata=self._metadata(count, findings, redacted=True),
+            )
+        return ToolPostInvokeResult(metadata=self._metadata(count, findings))
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
         """Detect secrets in fetched resource content.
@@ -245,15 +313,10 @@ class SecretsDetectionPlugin(Plugin):
             if count >= self._cfg.min_findings_to_block and self._cfg.block_on_detection:
                 return ResourcePostFetchResult(
                     continue_processing=False,
-                    violation=PluginViolation(
-                        reason="Secrets detected",
-                        description="Potential secrets detected in resource content",
-                        code="SECRETS_DETECTED",
-                        details={"count": count, "examples": findings[:5]},
-                    ),
+                    violation=self._build_violation("Potential secrets detected in resource content", count, findings),
                 )
             if self._cfg.redact and new_text != content.text:
                 new_payload = ResourcePostFetchPayload(uri=payload.uri, content=type(content)(**{**content.model_dump(), "text": new_text}))
-                return ResourcePostFetchResult(modified_payload=new_payload, metadata={"secrets_redacted": True, "count": count})
-            return ResourcePostFetchResult(metadata={"secrets_findings": findings, "count": count} if count else {})
+                return ResourcePostFetchResult(modified_payload=new_payload, metadata=self._metadata(count, findings, redacted=True))
+            return ResourcePostFetchResult(metadata=self._metadata(count, findings))
         return ResourcePostFetchResult(continue_processing=True)
