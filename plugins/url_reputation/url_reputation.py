@@ -12,7 +12,7 @@ Blocks known-bad domains or URL patterns before fetching resources.
 from __future__ import annotations
 
 # Standard
-from typing import List, Set
+from typing import Any, List, Set
 from urllib.parse import urlparse
 import logging
 
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 # Try to import Rust-accelerated implementation
 try:
-    from url_reputation_rust import URLReputationPlugin as plugin_rust
+    from url_reputation_rust import URLReputationPlugin as URLReputationPluginRust
     _RUST_AVAILABLE = True
     logger.info("Rust url reputation plugin available")
 except ImportError as e:
@@ -79,7 +79,8 @@ class URLReputationConfig(BaseModel):
 
     @field_validator("whitelist_domains", "blocked_domains", mode="before")
     @classmethod
-    def normalize_domains(cls, v: object) -> Set[str]:
+    def normalize_domains(cls, v: Any) -> Set[str]:
+        """Transform domains for lowercase"""
         if not v:
             return set()
         return {d.lower() for d in v}
@@ -97,7 +98,7 @@ class URLReputationPlugin(Plugin):
         super().__init__(config)
         self._cfg = URLReputationConfig(**(config.config or {}))
         if _RUST_AVAILABLE:
-            self.rust_plugin = plugin_rust(self._cfg)
+            self.rust_plugin = URLReputationPluginRust(self._cfg)
         else:
             logger.warning(
                 "Rust plugin not available. Using Python implementation with less features; "
@@ -132,7 +133,6 @@ class URLReputationPlugin(Plugin):
                         details={"url": payload.uri},
                     ),
                 )
-
 
         # Python plugin version will be deprecated
         parsed = urlparse(payload.uri)

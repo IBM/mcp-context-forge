@@ -415,7 +415,7 @@ mod tests {
         let url = format!("https://{}.com", domain_label);
         let result = plugin.validate_url(&url);
 
-        assert!(result.continue_processing == false);
+        assert!(!result.continue_processing);
         assert_eq!(
             result.violation.unwrap().reason,
             "Domain unicode is not secure"
@@ -438,7 +438,7 @@ mod tests {
         let url = "https://pаypal.com/test"; // Cyrillic 'а'
         let result = plugin.validate_url(url);
 
-        assert!(result.continue_processing == false);
+        assert!(!result.continue_processing);
         assert_eq!(
             result.violation.unwrap().reason,
             "Domain unicode is not secure"
@@ -480,7 +480,7 @@ mod tests {
         let url = "https://my..com";
         let result = plugin.validate_url(url);
 
-        assert!(result.continue_processing == false);
+        assert!(!result.continue_processing);
         assert_eq!(
             result.violation.unwrap().reason,
             "Domain unicode is not secure"
@@ -503,7 +503,7 @@ mod tests {
         let url = "https://exa!mple.com";
         let result = plugin.validate_url(url);
 
-        assert!(result.continue_processing == false);
+        assert!(!result.continue_processing);
         assert_eq!(
             result.violation.unwrap().reason,
             "Domain unicode is not secure"
@@ -545,7 +545,7 @@ mod tests {
         let url = "https://332.168.0.1:442";
         let result = plugin.validate_url(url);
 
-        assert!(result.continue_processing == false);
+        assert!(!result.continue_processing);
     }
 
     #[test]
@@ -583,7 +583,7 @@ mod tests {
         let url = "https://[2001:db8::85a3::8a2e:370:7334 ]:442/";
         let result = plugin.validate_url(url);
 
-        assert!(result.continue_processing == false);
+        assert!(!result.continue_processing);
     }
 
     #[test]
