@@ -8967,7 +8967,15 @@ async def test_get_overview_partial_renders(monkeypatch, mock_request, mock_db):
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
     monkeypatch.setattr(
         "mcpgateway.admin.version_module._mcp_runtime_status_payload",
-        lambda: {"mode": "rust-managed", "mounted": "rust", "session_core_mode": "rust", "resume_core_mode": "rust", "live_stream_core_mode": "rust", "affinity_core_mode": "rust", "session_auth_reuse_mode": "rust"},
+        lambda: {
+            "mode": "rust-managed",
+            "mounted": "rust",
+            "session_core_mode": "rust",
+            "resume_core_mode": "rust",
+            "live_stream_core_mode": "rust",
+            "affinity_core_mode": "rust",
+            "session_auth_reuse_mode": "rust",
+        },
     )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", False)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
@@ -9033,7 +9041,15 @@ async def test_get_overview_partial_a2a_plugin_manager_redis(monkeypatch, mock_r
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
     monkeypatch.setattr(
         "mcpgateway.admin.version_module._mcp_runtime_status_payload",
-        lambda: {"mode": "python", "mounted": "python", "session_core_mode": "python", "resume_core_mode": "python", "live_stream_core_mode": "python", "affinity_core_mode": "python", "session_auth_reuse_mode": "python"},
+        lambda: {
+            "mode": "python",
+            "mounted": "python",
+            "session_core_mode": "python",
+            "resume_core_mode": "python",
+            "live_stream_core_mode": "python",
+            "affinity_core_mode": "python",
+            "session_auth_reuse_mode": "python",
+        },
     )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", True)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
@@ -9093,7 +9109,15 @@ async def test_get_overview_partial_redis_check_exception(monkeypatch, mock_requ
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
     monkeypatch.setattr(
         "mcpgateway.admin.version_module._mcp_runtime_status_payload",
-        lambda: {"mode": "python", "mounted": "python", "session_core_mode": "python", "resume_core_mode": "python", "live_stream_core_mode": "python", "affinity_core_mode": "python", "session_auth_reuse_mode": "python"},
+        lambda: {
+            "mode": "python",
+            "mounted": "python",
+            "session_core_mode": "python",
+            "resume_core_mode": "python",
+            "live_stream_core_mode": "python",
+            "affinity_core_mode": "python",
+            "session_auth_reuse_mode": "python",
+        },
     )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", True)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
@@ -9148,7 +9172,15 @@ async def test_get_overview_partial_error_returns_html(monkeypatch, mock_request
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
     monkeypatch.setattr(
         "mcpgateway.admin.version_module._mcp_runtime_status_payload",
-        lambda: {"mode": "python", "mounted": "python", "session_core_mode": "python", "resume_core_mode": "python", "live_stream_core_mode": "python", "affinity_core_mode": "python", "session_auth_reuse_mode": "python"},
+        lambda: {
+            "mode": "python",
+            "mounted": "python",
+            "session_core_mode": "python",
+            "resume_core_mode": "python",
+            "live_stream_core_mode": "python",
+            "affinity_core_mode": "python",
+            "session_auth_reuse_mode": "python",
+        },
     )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", False)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
@@ -14928,6 +14960,194 @@ async def test_admin_edit_a2a_agent_error_handlers(monkeypatch, mock_db):
 
         response = await admin_edit_a2a_agent("agent-1", request, mock_db, user={"email": "user@example.com"})
         assert response.status_code == expected_status
+
+
+@pytest.mark.asyncio
+async def test_admin_add_a2a_agent_with_custom_headers(monkeypatch, mock_db):
+    """Test creating A2A agent with custom headers via admin UI (issue #3637)."""
+    form_data = FakeForm(
+        {
+            "name": "Test Agent",
+            "endpoint_url": "https://api.example.com/agent",
+            "agent_type": "generic",
+            "auth_type": "authheaders",
+            "auth_headers": '[{"key": "X-API-Key", "value": "secret123"}, {"key": "X-Custom-Header", "value": "custom-value"}]',
+            "visibility": "private",
+        }
+    )
+
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.register_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+        MagicMock(
+            return_value={
+                "created_by": "test@example.com",
+                "created_from_ip": "127.0.0.1",
+                "created_via": "ui",
+                "created_user_agent": "test",
+                "import_batch_id": None,
+                "federation_source": None,
+            }
+        ),
+    )
+
+    response = await admin_add_a2a_agent(request, mock_db, user={"email": "test@example.com", "db": mock_db})
+
+    assert response.status_code == 200
+    service.register_agent.assert_called_once()
+
+    # Get the agent_data argument (first positional arg after db)
+    call_args = service.register_agent.call_args
+    agent_data = call_args[0][1]  # Second positional argument
+
+    # Verify auth_headers were processed correctly
+    assert hasattr(agent_data, "auth_headers")
+    auth_headers = agent_data.auth_headers
+    assert isinstance(auth_headers, list)
+    assert len(auth_headers) == 2
+    assert auth_headers[0]["key"] == "X-API-Key"
+    assert auth_headers[0]["value"] == "secret123"
+    assert auth_headers[1]["key"] == "X-Custom-Header"
+    assert auth_headers[1]["value"] == "custom-value"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_a2a_agent_with_custom_headers(monkeypatch, mock_db):
+    """Test editing A2A agent with custom headers via admin UI (issue #3637)."""
+    form_data = FakeForm(
+        {
+            "name": "Updated Agent",
+            "endpoint_url": "https://api.example.com/agent",
+            "agent_type": "generic",
+            "auth_type": "authheaders",
+            "auth_headers": '[{"key": "X-API-Key", "value": "newsecret456"}, {"key": "X-Another-Header", "value": "another-value"}]',
+            "visibility": "private",
+            "tags": "test, api",
+        }
+    )
+
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.update_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+        MagicMock(return_value={"modified_by": "test@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "ui", "modified_user_agent": "test"}),
+    )
+
+    response = await admin_edit_a2a_agent("test-agent-id", request, mock_db, user={"email": "test@example.com", "db": mock_db})
+
+    assert response.status_code == 200
+    service.update_agent.assert_called_once()
+
+    # Get the agent_data keyword argument
+    call_kwargs = service.update_agent.call_args.kwargs
+    agent_update = call_kwargs["agent_data"]
+
+    # Verify auth_headers were processed correctly
+    assert hasattr(agent_update, "auth_headers")
+    auth_headers = agent_update.auth_headers
+    assert isinstance(auth_headers, list)
+    assert len(auth_headers) == 2
+    assert auth_headers[0]["key"] == "X-API-Key"
+    assert auth_headers[1]["key"] == "X-Another-Header"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_a2a_agent_empty_custom_headers(monkeypatch, mock_db):
+    """Test editing A2A agent with empty custom headers (clearing headers)."""
+    form_data = FakeForm(
+        {
+            "name": "Updated Agent",
+            "endpoint_url": "https://api.example.com/agent",
+            "agent_type": "generic",
+            "auth_type": "authheaders",
+            "auth_headers": "",  # Empty headers
+            "auth_header_key": "X-Legacy",  # Provide legacy fields to satisfy validation
+            "auth_header_value": "legacy-value",
+            "visibility": "private",
+        }
+    )
+
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.update_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+        MagicMock(return_value={"modified_by": "test@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "ui", "modified_user_agent": "test"}),
+    )
+
+    response = await admin_edit_a2a_agent("test-agent-id", request, mock_db, user={"email": "test@example.com", "db": mock_db})
+
+    assert response.status_code == 200
+    service.update_agent.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_a2a_agent_invalid_json_headers(monkeypatch, mock_db):
+    """Test editing A2A agent with invalid JSON in auth_headers field."""
+    form_data = FakeForm(
+        {
+            "name": "Updated Agent",
+            "endpoint_url": "https://api.example.com/agent",
+            "agent_type": "generic",
+            "auth_type": "authheaders",
+            "auth_headers": "not-valid-json{",  # Invalid JSON
+            "auth_header_key": "X-Legacy",  # Provide legacy fields to satisfy validation
+            "auth_header_value": "legacy-value",
+            "visibility": "private",
+        }
+    )
+
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.update_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+        MagicMock(return_value={"modified_by": "test@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "ui", "modified_user_agent": "test"}),
+    )
+
+    # Should handle gracefully (invalid JSON is ignored, empty list used)
+    response = await admin_edit_a2a_agent("test-agent-id", request, mock_db, user={"email": "test@example.com", "db": mock_db})
+
+    assert response.status_code == 200
 
 
 # ============================================================================ #

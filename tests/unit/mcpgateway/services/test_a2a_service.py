@@ -348,6 +348,57 @@ class TestA2AAgentService:
 
         assert sample_db_agent.oauth_config["client_secret"] == existing_secret
 
+    async def test_update_agent_masked_auth_headers_preserves_existing_values(self, service, mock_db, sample_db_agent):
+        """Masked auth_headers placeholders preserve existing encrypted header values (issue #3637)."""
+        sample_db_agent.version = 1
+        sample_db_agent.auth_type = "authheaders"
+        sample_db_agent.auth_value = encode_auth({"X-API-Key": "real-secret-123", "X-Client-ID": "real-client-456"})
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                # Simulate what the UI sends: masked values for unchanged headers
+                update_data = A2AAgentUpdate(
+                    auth_type="authheaders",
+                    auth_headers=[
+                        {"key": "X-API-Key", "value": settings.masked_auth_value},
+                        {"key": "X-Client-ID", "value": settings.masked_auth_value},
+                    ],
+                )
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+        from mcpgateway.utils.services_auth import decode_auth
+
+        persisted = decode_auth(sample_db_agent.auth_value)
+        assert persisted["X-API-Key"] == "real-secret-123", "Masked placeholder must not overwrite real credential"
+        assert persisted["X-Client-ID"] == "real-client-456", "Masked placeholder must not overwrite real credential"
+
+    async def test_update_agent_mixed_masked_and_new_auth_headers(self, service, mock_db, sample_db_agent):
+        """When some headers are masked and one is changed, only the changed header is updated."""
+        sample_db_agent.version = 1
+        sample_db_agent.auth_type = "authheaders"
+        sample_db_agent.auth_value = encode_auth({"X-API-Key": "original-secret", "X-Client-ID": "original-client"})
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                update_data = A2AAgentUpdate(
+                    auth_type="authheaders",
+                    auth_headers=[
+                        {"key": "X-API-Key", "value": settings.masked_auth_value},  # unchanged
+                        {"key": "X-Client-ID", "value": "new-client-value"},  # user changed this
+                    ],
+                )
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+        from mcpgateway.utils.services_auth import decode_auth
+
+        persisted = decode_auth(sample_db_agent.auth_value)
+        assert persisted["X-API-Key"] == "original-secret", "Unchanged masked header must be preserved"
+        assert persisted["X-Client-ID"] == "new-client-value", "Changed header must be updated"
+
     async def test_update_agent_not_found(self, service, mock_db):
         """Test updating non-existent agent."""
         # Mock get_for_update to return None (agent not found)
