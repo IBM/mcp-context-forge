@@ -247,10 +247,10 @@ func reconcileGatewayDeployment(ctx context.Context, c client.Client, cf *cfv1.C
 									Path: "/health", Port: intstr.FromInt32(gatewayPort),
 								},
 							},
-							InitialDelaySeconds: 15,
+							InitialDelaySeconds: 30,
 							PeriodSeconds:       10,
 							TimeoutSeconds:      10,
-							FailureThreshold:    30,
+							FailureThreshold:    60,
 						},
 						SecurityContext: &corev1.SecurityContext{
 							AllowPrivilegeEscalation: boolPtr(false),
