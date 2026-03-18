@@ -1149,6 +1149,36 @@ class EmailAuthService:
             existing_admin.is_admin = True
             existing_admin.is_active = True
 
+            # Synchronize platform_admin RBAC role with is_admin flag
+            # This ensures atomicity: when setting is_admin=True, also assign the platform_admin role
+            try:
+                platform_admin_role = await self.role_service.get_role_by_name("platform_admin", "global")
+                if platform_admin_role:
+                    # Check if role assignment already exists
+                    existing_assignment = await self.role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+
+                    if not existing_assignment or not existing_assignment.is_active:
+                        await self.role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
+                        logger.info(f"Assigned platform_admin role to {SecurityValidator.sanitize_log_message(email)} during create_platform_admin()")
+                    else:
+                        logger.debug(f"User {SecurityValidator.sanitize_log_message(email)} already has active platform_admin role")
+                else:
+                    logger.warning(f"platform_admin role not found. User {SecurityValidator.sanitize_log_message(email)} updated with is_admin=True but without platform_admin role assignment.")
+            except Exception as role_error:
+                logger.error(
+                    f"Failed to assign platform_admin role to {SecurityValidator.sanitize_log_message(email)}: {SecurityValidator.sanitize_log_message(str(role_error))}. User updated with is_admin=True but role assignment failed."
+                )
+                # Rollback to clear any failed transaction state (e.g. PendingRollbackError
+                # from a failed commit inside assign_role_to_user), then re-apply admin flags
+                # so the subsequent commit can persist the admin user update.
+                try:
+                    self.db.rollback()
+                    existing_admin.is_admin = True
+                    existing_admin.is_active = True
+                except Exception as rollback_error:  # nosec B110
+                    logger.debug("Session rollback after role sync failure also failed: %s", rollback_error)
+                # bootstrap_default_roles() will sync the role assignment later
+
             self.db.commit()
             logger.info(f"Updated platform admin user: {SecurityValidator.sanitize_log_message(email)}")
             return existing_admin
