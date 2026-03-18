@@ -855,3 +855,207 @@ class TestMaskOauthConfig:
         masked = server.masked()
         assert masked.oauth_config["client_secret"] == settings.masked_auth_value
         assert masked.oauth_config["authorization_server"] == "https://idp.example.com"
+
+
+def test_a2a_agent_read_populates_auth_headers_single():
+    """Test A2AAgentRead populates auth_headers from single custom header."""
+    auth_value = encode_auth({"X-API-Key": "secret123"})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers is not None
+    assert isinstance(agent.auth_headers, list)
+    assert len(agent.auth_headers) == 1
+    assert agent.auth_headers[0]["key"] == "X-API-Key"
+    assert agent.auth_headers[0]["value"] == "secret123"
+    # Backward compatibility
+    assert agent.auth_header_key == "X-API-Key"
+    assert agent.auth_header_value == "secret123"
+
+
+def test_a2a_agent_read_populates_auth_headers_multiple():
+    """Test A2AAgentRead populates auth_headers from multiple custom headers."""
+    auth_value = encode_auth({"X-API-Key": "secret123", "X-Client-ID": "client456", "X-Region": "us-east-1"})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers is not None
+    assert len(agent.auth_headers) == 3
+    keys = [h["key"] for h in agent.auth_headers]
+    assert "X-API-Key" in keys
+    assert "X-Client-ID" in keys
+    assert "X-Region" in keys
+
+
+def test_a2a_agent_read_masked_hides_auth_header_values():
+    """Test A2AAgentRead.masked() masks auth_headers values."""
+    auth_value = encode_auth({"X-API-Key": "secret123", "X-Client-ID": "client456"})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        last_interaction=None,
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+    masked_agent = agent.masked()
+
+    assert masked_agent.auth_headers is not None
+    assert len(masked_agent.auth_headers) == 2
+    # Keys should be visible
+    assert masked_agent.auth_headers[0]["key"] == "X-API-Key"
+    assert masked_agent.auth_headers[1]["key"] == "X-Client-ID"
+    # Values should be masked
+    assert masked_agent.auth_headers[0]["value"] == settings.masked_auth_value
+    assert masked_agent.auth_headers[1]["value"] == settings.masked_auth_value
+
+
+def test_a2a_agent_read_auth_headers_empty_values():
+    """Test A2AAgentRead handles empty header values correctly."""
+    auth_value = encode_auth({"X-Empty-Header": ""})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers[0]["value"] == ""
+
+
+def test_a2a_agent_read_authheaders_rejects_non_dict():
+    """Test A2AAgentRead._populate_auth raises ValueError when decoded auth_value is not a dict."""
+    # encode_auth expects a dict, so we encode a list-wrapping hack that decode_auth
+    # still returns as a dict.  Instead, manually construct with a raw string to bypass
+    # encode_auth and trigger the isinstance guard.
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=encode_auth({"_list": ["not-a-dict"]}),
+    )
+    # Monkey-patch decode_auth to return a non-dict value
+    # First-Party
+    import mcpgateway.schemas as _schemas_mod
+
+    _original = _schemas_mod.decode_auth
+
+    def _fake_decode(val, **kw):
+        return ["not", "a", "dict"]
+
+    _schemas_mod.decode_auth = _fake_decode
+    try:
+        with pytest.raises(ValueError, match="authheaders requires at least one key/value pair"):
+            A2AAgentRead._populate_auth(agent)
+    finally:
+        _schemas_mod.decode_auth = _original
+
+
+def test_a2a_agent_read_auth_headers_none_values():
+    """Test A2AAgentRead handles None header values by converting to empty string."""
+    auth_value = encode_auth({"X-Null-Header": None})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers[0]["key"] == "X-Null-Header"
+    assert agent.auth_headers[0]["value"] == ""
+
+
+def test_a2a_agent_read_masked_preserves_empty_header_values():
+    """Test A2AAgentRead.masked() does not mask empty header values."""
+    auth_value = encode_auth({"X-Empty": "", "X-Secret": "real-value"})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        last_interaction=None,
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+    masked_agent = agent.masked()
+
+    # Empty value should stay empty (not masked)
+    empty_header = next(h for h in masked_agent.auth_headers if h["key"] == "X-Empty")
+    assert empty_header["value"] == ""
+    # Non-empty value should be masked
+    secret_header = next(h for h in masked_agent.auth_headers if h["key"] == "X-Secret")
+    assert secret_header["value"] == settings.masked_auth_value
