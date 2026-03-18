@@ -127,6 +127,7 @@ def normalize_a2a_method(method: Optional[str], protocol_version: Optional[str])
 
 
 def _normalize_role(role: Any, protocol_version: Optional[str]) -> Any:
+    """Normalize an A2A message role between v1 and legacy protocol forms."""
     value = str(role or "").strip()
     if not value:
         return role
@@ -136,6 +137,7 @@ def _normalize_role(role: Any, protocol_version: Optional[str]) -> Any:
 
 
 def _normalize_part(part: Any, protocol_version: Optional[str]) -> Any:
+    """Normalize an A2A message part between v1 and legacy protocol forms."""
     if not isinstance(part, Mapping):
         return part
 
@@ -160,6 +162,7 @@ def _normalize_part(part: Any, protocol_version: Optional[str]) -> Any:
 
 
 def _normalize_task_state(state: Any, protocol_version: Optional[str]) -> Any:
+    """Normalize an A2A task state between v1 and legacy protocol forms."""
     value = str(state or "").strip()
     if not value:
         return state
@@ -169,6 +172,7 @@ def _normalize_task_state(state: Any, protocol_version: Optional[str]) -> Any:
 
 
 def _normalize_message(message: Any, protocol_version: Optional[str]) -> Any:
+    """Normalize an A2A message object for the target protocol version."""
     if not isinstance(message, Mapping):
         return message
 
@@ -185,6 +189,7 @@ def _normalize_message(message: Any, protocol_version: Optional[str]) -> Any:
 
 
 def _normalize_task_status(status: Any, protocol_version: Optional[str]) -> Any:
+    """Normalize an A2A task status for the target protocol version."""
     if isinstance(status, str):
         return _normalize_task_state(status, protocol_version)
     if not isinstance(status, Mapping):
@@ -199,6 +204,7 @@ def _normalize_task_status(status: Any, protocol_version: Optional[str]) -> Any:
 
 
 def _normalize_task(task: Any, protocol_version: Optional[str]) -> Any:
+    """Normalize an A2A task object for the target protocol version."""
     if not isinstance(task, Mapping):
         return task
 
@@ -250,6 +256,7 @@ def normalize_a2a_params(params: Any, protocol_version: Optional[str]) -> Any:
 
 
 def _build_default_message(query: str, protocol_version: Optional[str], message_id: Optional[str] = None) -> Dict[str, Any]:
+    """Build a default user message in the appropriate protocol format."""
     target_message_id = message_id or f"contextforge-{uuid.uuid4().hex}"
     if is_v1_a2a_protocol(protocol_version):
         return {
@@ -265,7 +272,7 @@ def _build_default_message(query: str, protocol_version: Optional[str], message_
     }
 
 
-def build_a2a_jsonrpc_request(parameters: Dict[str, Any], protocol_version: Optional[str], *, interaction_type: str = "query") -> Dict[str, Any]:
+def build_a2a_jsonrpc_request(parameters: Dict[str, Any], protocol_version: Optional[str], *, interaction_type: str = "query") -> Dict[str, Any]:  # pylint: disable=unused-argument
     """Build a JSON-RPC A2A request body for the target protocol version."""
     payload = dict(parameters or {})
     request_id = payload.pop("id", 1)

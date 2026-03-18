@@ -80,18 +80,18 @@ def _bypass_a2aagentread_validation(monkeypatch):
 def mock_all_settings():
     """Mock settings in schemas, a2a_service, and config modules."""
     with patch("mcpgateway.schemas.settings") as schema_settings, \
-         patch("mcpgateway.config.settings") as config_settings:
+         patch("mcpgateway.services.a2a_service.settings") as svc_settings:
         # Configure schema settings
         schema_settings.insecure_allow_queryparam_auth = True
         schema_settings.insecure_queryparam_auth_allowed_hosts = ["api.tavily.com", "mcp.tavily.com", "api.example.com"]
         schema_settings.masked_auth_value = "*****"
 
-        # Configure config settings (used by service layer imports)
-        config_settings.insecure_allow_queryparam_auth = True
-        config_settings.insecure_queryparam_auth_allowed_hosts = ["api.tavily.com", "mcp.tavily.com", "api.example.com"]
-        config_settings.masked_auth_value = "*****"
+        # Configure service-layer settings (module-level import in a2a_service)
+        svc_settings.insecure_allow_queryparam_auth = True
+        svc_settings.insecure_queryparam_auth_allowed_hosts = ["api.tavily.com", "mcp.tavily.com", "api.example.com"]
+        svc_settings.masked_auth_value = "*****"
 
-        yield {"schema": schema_settings, "config": config_settings}
+        yield {"schema": schema_settings, "config": svc_settings}
 
 
 @pytest.fixture(autouse=True)

@@ -72,6 +72,7 @@ class RustA2ARuntimeClient:
         return payload
 
     async def _get_runtime_client(self) -> httpx.AsyncClient:
+        """Return the httpx client, lazily creating a UDS transport if configured."""
         uds_path = settings.experimental_rust_a2a_runtime_uds
         if not uds_path:
             return await get_http_client()
