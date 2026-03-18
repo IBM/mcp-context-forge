@@ -8967,7 +8967,15 @@ async def test_get_overview_partial_renders(monkeypatch, mock_request, mock_db):
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
     monkeypatch.setattr(
         "mcpgateway.admin.version_module._mcp_runtime_status_payload",
-        lambda: {"mode": "rust-managed", "mounted": "rust", "session_core_mode": "rust", "resume_core_mode": "rust", "live_stream_core_mode": "rust", "affinity_core_mode": "rust", "session_auth_reuse_mode": "rust"},
+        lambda: {
+            "mode": "rust-managed",
+            "mounted": "rust",
+            "session_core_mode": "rust",
+            "resume_core_mode": "rust",
+            "live_stream_core_mode": "rust",
+            "affinity_core_mode": "rust",
+            "session_auth_reuse_mode": "rust",
+        },
     )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", False)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
@@ -9033,7 +9041,15 @@ async def test_get_overview_partial_a2a_plugin_manager_redis(monkeypatch, mock_r
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
     monkeypatch.setattr(
         "mcpgateway.admin.version_module._mcp_runtime_status_payload",
-        lambda: {"mode": "python", "mounted": "python", "session_core_mode": "python", "resume_core_mode": "python", "live_stream_core_mode": "python", "affinity_core_mode": "python", "session_auth_reuse_mode": "python"},
+        lambda: {
+            "mode": "python",
+            "mounted": "python",
+            "session_core_mode": "python",
+            "resume_core_mode": "python",
+            "live_stream_core_mode": "python",
+            "affinity_core_mode": "python",
+            "session_auth_reuse_mode": "python",
+        },
     )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", True)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
@@ -9093,7 +9109,15 @@ async def test_get_overview_partial_redis_check_exception(monkeypatch, mock_requ
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
     monkeypatch.setattr(
         "mcpgateway.admin.version_module._mcp_runtime_status_payload",
-        lambda: {"mode": "python", "mounted": "python", "session_core_mode": "python", "resume_core_mode": "python", "live_stream_core_mode": "python", "affinity_core_mode": "python", "session_auth_reuse_mode": "python"},
+        lambda: {
+            "mode": "python",
+            "mounted": "python",
+            "session_core_mode": "python",
+            "resume_core_mode": "python",
+            "live_stream_core_mode": "python",
+            "affinity_core_mode": "python",
+            "session_auth_reuse_mode": "python",
+        },
     )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", True)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
@@ -9148,7 +9172,15 @@ async def test_get_overview_partial_error_returns_html(monkeypatch, mock_request
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
     monkeypatch.setattr(
         "mcpgateway.admin.version_module._mcp_runtime_status_payload",
-        lambda: {"mode": "python", "mounted": "python", "session_core_mode": "python", "resume_core_mode": "python", "live_stream_core_mode": "python", "affinity_core_mode": "python", "session_auth_reuse_mode": "python"},
+        lambda: {
+            "mode": "python",
+            "mounted": "python",
+            "session_core_mode": "python",
+            "resume_core_mode": "python",
+            "live_stream_core_mode": "python",
+            "affinity_core_mode": "python",
+            "session_auth_reuse_mode": "python",
+        },
     )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", False)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
@@ -14933,14 +14965,16 @@ async def test_admin_edit_a2a_agent_error_handlers(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_add_a2a_agent_with_custom_headers(monkeypatch, mock_db):
     """Test creating A2A agent with custom headers via admin UI (issue #3637)."""
-    form_data = FakeForm({
-        "name": "Test Agent",
-        "endpoint_url": "https://api.example.com/agent",
-        "agent_type": "generic",
-        "auth_type": "authheaders",
-        "auth_headers": '[{"key": "X-API-Key", "value": "secret123"}, {"key": "X-Custom-Header", "value": "custom-value"}]',
-        "visibility": "private",
-    })
+    form_data = FakeForm(
+        {
+            "name": "Test Agent",
+            "endpoint_url": "https://api.example.com/agent",
+            "agent_type": "generic",
+            "auth_type": "authheaders",
+            "auth_headers": '[{"key": "X-API-Key", "value": "secret123"}, {"key": "X-Custom-Header", "value": "custom-value"}]',
+            "visibility": "private",
+        }
+    )
 
     request = MagicMock(spec=Request)
     request.form = AsyncMock(return_value=form_data)
@@ -14956,14 +14990,16 @@ async def test_admin_add_a2a_agent_with_custom_headers(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr(
         "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
-        MagicMock(return_value={
-            "created_by": "test@example.com",
-            "created_from_ip": "127.0.0.1",
-            "created_via": "ui",
-            "created_user_agent": "test",
-            "import_batch_id": None,
-            "federation_source": None,
-        }),
+        MagicMock(
+            return_value={
+                "created_by": "test@example.com",
+                "created_from_ip": "127.0.0.1",
+                "created_via": "ui",
+                "created_user_agent": "test",
+                "import_batch_id": None,
+                "federation_source": None,
+            }
+        ),
     )
 
     response = await admin_add_a2a_agent(request, mock_db, user={"email": "test@example.com", "db": mock_db})
@@ -14989,15 +15025,17 @@ async def test_admin_add_a2a_agent_with_custom_headers(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_edit_a2a_agent_with_custom_headers(monkeypatch, mock_db):
     """Test editing A2A agent with custom headers via admin UI (issue #3637)."""
-    form_data = FakeForm({
-        "name": "Updated Agent",
-        "endpoint_url": "https://api.example.com/agent",
-        "agent_type": "generic",
-        "auth_type": "authheaders",
-        "auth_headers": '[{"key": "X-API-Key", "value": "newsecret456"}, {"key": "X-Another-Header", "value": "another-value"}]',
-        "visibility": "private",
-        "tags": "test, api",
-    })
+    form_data = FakeForm(
+        {
+            "name": "Updated Agent",
+            "endpoint_url": "https://api.example.com/agent",
+            "agent_type": "generic",
+            "auth_type": "authheaders",
+            "auth_headers": '[{"key": "X-API-Key", "value": "newsecret456"}, {"key": "X-Another-Header", "value": "another-value"}]',
+            "visibility": "private",
+            "tags": "test, api",
+        }
+    )
 
     request = MagicMock(spec=Request)
     request.form = AsyncMock(return_value=form_data)
@@ -15037,16 +15075,18 @@ async def test_admin_edit_a2a_agent_with_custom_headers(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_edit_a2a_agent_empty_custom_headers(monkeypatch, mock_db):
     """Test editing A2A agent with empty custom headers (clearing headers)."""
-    form_data = FakeForm({
-        "name": "Updated Agent",
-        "endpoint_url": "https://api.example.com/agent",
-        "agent_type": "generic",
-        "auth_type": "authheaders",
-        "auth_headers": "",  # Empty headers
-        "auth_header_key": "X-Legacy",  # Provide legacy fields to satisfy validation
-        "auth_header_value": "legacy-value",
-        "visibility": "private",
-    })
+    form_data = FakeForm(
+        {
+            "name": "Updated Agent",
+            "endpoint_url": "https://api.example.com/agent",
+            "agent_type": "generic",
+            "auth_type": "authheaders",
+            "auth_headers": "",  # Empty headers
+            "auth_header_key": "X-Legacy",  # Provide legacy fields to satisfy validation
+            "auth_header_value": "legacy-value",
+            "visibility": "private",
+        }
+    )
 
     request = MagicMock(spec=Request)
     request.form = AsyncMock(return_value=form_data)
@@ -15074,16 +15114,18 @@ async def test_admin_edit_a2a_agent_empty_custom_headers(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_edit_a2a_agent_invalid_json_headers(monkeypatch, mock_db):
     """Test editing A2A agent with invalid JSON in auth_headers field."""
-    form_data = FakeForm({
-        "name": "Updated Agent",
-        "endpoint_url": "https://api.example.com/agent",
-        "agent_type": "generic",
-        "auth_type": "authheaders",
-        "auth_headers": "not-valid-json{",  # Invalid JSON
-        "auth_header_key": "X-Legacy",  # Provide legacy fields to satisfy validation
-        "auth_header_value": "legacy-value",
-        "visibility": "private",
-    })
+    form_data = FakeForm(
+        {
+            "name": "Updated Agent",
+            "endpoint_url": "https://api.example.com/agent",
+            "agent_type": "generic",
+            "auth_type": "authheaders",
+            "auth_headers": "not-valid-json{",  # Invalid JSON
+            "auth_header_key": "X-Legacy",  # Provide legacy fields to satisfy validation
+            "auth_header_value": "legacy-value",
+            "visibility": "private",
+        }
+    )
 
     request = MagicMock(spec=Request)
     request.form = AsyncMock(return_value=form_data)
@@ -15106,8 +15148,6 @@ async def test_admin_edit_a2a_agent_invalid_json_headers(monkeypatch, mock_db):
     response = await admin_edit_a2a_agent("test-agent-id", request, mock_db, user={"email": "test@example.com", "db": mock_db})
 
     assert response.status_code == 200
-
-
 
 
 # ============================================================================ #
