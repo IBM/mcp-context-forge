@@ -779,7 +779,7 @@ coverage-pytest: install-dev
 		export JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' && \
 		export AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-			--dist loadgroup -n auto -rA --cov-append --capture=fd -v \
+			--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
 			--durations=120 --cov-report=term --cov=mcpgateway \
 			$(PYTEST_IGNORE_FLAGS) tests/ || true"
 
@@ -793,7 +793,7 @@ coverage: coverage-pytest install-dev
 		export JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' && \
 		export AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-			--dist loadgroup -n auto -rA --cov-append --capture=fd -v \
+			--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
 			--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
 			--cov=mcpgateway mcpgateway/ || true"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*"
@@ -3081,7 +3081,6 @@ images:
 # help: pyright              - Static type-checking with Pyright
 # help: radon                - Code complexity & maintainability metrics
 # help: pyroma               - Validate packaging metadata
-# help: importchecker        - Detect orphaned imports
 # help: spellcheck           - Spell-check the codebase
 # help: fawltydeps           - Detect undeclared / unused deps
 # help: wily                 - Maintainability report
@@ -3095,7 +3094,6 @@ images:
 # help: sbom                 - Produce a CycloneDX SBOM and vulnerability scan
 # help: pytype               - Flow-sensitive type checker
 # help: check-manifest       - Verify sdist/wheel completeness
-# help: unimport             - Unused import detection
 # help: vulture              - Dead code detection
 # help: linting-workflow-actionlint  - Lint GitHub Actions workflows (actionlint; shellcheck disabled)
 # help: linting-workflow-zizmor      - Security-focused linting of GitHub Actions workflows
@@ -3135,12 +3133,12 @@ endif
 
 # List of individual lint targets
 LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle \
-	ruff ty pyright radon pyroma pyrefly spellcheck importchecker \
-		pytype check-manifest markdownlint vulture unimport
+	ruff ty pyright radon pyroma pyrefly spellcheck \
+		pytype check-manifest markdownlint vulture
 
 # Linters that work well with individual files/directories
 FILE_AWARE_LINTERS := isort black flake8 pylint mypy bandit pydocstyle \
-	pycodestyle ruff pyright vulture unimport markdownlint
+	pycodestyle ruff pyright vulture markdownlint
 
 .PHONY: lint $(LINTERS) black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
 	lint-count-errors lint-report lint-changed lint-staged lint-commit \
@@ -3744,9 +3742,6 @@ radon:                              ## 📈  Complexity / MI metrics
 pyroma:                             ## 📦  Packaging metadata check
 	@$(VENV_DIR)/bin/pyroma -d .
 
-importchecker:                      ## 🧐  Orphaned import detector
-	@$(VENV_DIR)/bin/importchecker .
-
 spellcheck:                         ## 🔤  Spell-check
 	@$(VENV_DIR)/bin/pyspelling || true
 
@@ -3851,9 +3846,6 @@ pytype:								## 🧠  Pytype static type analysis
 check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness..."
 	@$(VENV_DIR)/bin/check-manifest
-
-unimport:                           ## 📦  Unused import detection
-	@echo "📦  unimport $(TARGET)…" && $(VENV_DIR)/bin/unimport --check --diff $(TARGET)
 
 vulture:                            ## 🧹  Dead code detection
 	@echo "🧹  vulture $(TARGET) …" && $(VENV_DIR)/bin/vulture $(TARGET) --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"
