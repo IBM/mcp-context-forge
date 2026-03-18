@@ -478,7 +478,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     # Synchronize is_admin flag with platform_admin role assignment
                     # This ensures consistency when admin is manually demoted in DB but role is re-assigned during bootstrap
                     if not admin_user.is_admin:
-                        logger.info(f"Synchronizing is_admin flag for {admin_user.email} (was False, setting to True)")
+                        logger.info(f"Synchronizing is_admin flag for {SecurityValidator.sanitize_log_message(admin_user.email)} (was False, setting to True)")
                         admin_user.is_admin = True
                         db.commit()
 

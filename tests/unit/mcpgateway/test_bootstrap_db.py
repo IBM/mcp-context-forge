@@ -25,6 +25,7 @@ from mcpgateway.bootstrap_db import (
     main,
     normalize_team_visibility,
 )
+from mcpgateway.common.validators import SecurityValidator
 
 
 @pytest.fixture
@@ -571,8 +572,8 @@ class TestBootstrapDefaultRoles:
                             assert mock_admin_user.is_admin is True
                             mock_db.commit.assert_called()
 
-                            # Verify synchronization was logged
-                            mock_logger.info.assert_any_call(f"Synchronizing is_admin flag for {mock_admin_user.email} (was False, setting to True)")
+                            # Verify synchronization was logged (with sanitized email)
+                            mock_logger.info.assert_any_call(f"Synchronizing is_admin flag for {SecurityValidator.sanitize_log_message(mock_admin_user.email)} (was False, setting to True)")
 
     @pytest.mark.asyncio
     async def test_bootstrap_roles_skips_sync_when_is_admin_already_true(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
