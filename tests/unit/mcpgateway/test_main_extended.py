@@ -11,19 +11,20 @@ error handlers, and startup logic.
 """
 
 # Standard
-import builtins
 import asyncio
 import base64
+import builtins
 import importlib.util
 import json
 from pathlib import Path
-from types import SimpleNamespace
 import sys
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 # Third-Party
-from fastapi import HTTPException, Request, Response as FastAPIResponse
+from fastapi import HTTPException, Request
+from fastapi import Response as FastAPIResponse
 from fastapi.testclient import TestClient
 import orjson
 import pytest
@@ -33,24 +34,21 @@ from starlette.responses import Response as StarletteResponse
 # First-Party
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
+import mcpgateway.db as db_mod
 from mcpgateway.main import (
-    AdminAuthMiddleware,
-    DocsAuthMiddleware,
-    InternalTrustedMCPTransportBridge,
-    MCPRuntimeHeaderTransportWrapper,
-    MCPPathRewriteMiddleware,
-    _expected_internal_mcp_runtime_auth_header,
     _build_internal_mcp_auth_scope,
     _build_internal_mcp_forwarded_user,
     _decode_internal_mcp_auth_context,
     _enforce_internal_mcp_server_scope,
     _ensure_rpc_permission,
+    _expected_internal_mcp_runtime_auth_header,
     _extract_scoped_permissions,
     _is_permission_admin_user,
-    _run_internal_mcp_authentication,
-    _serialize_mcp_tool_definition,
-    _serialize_legacy_tool_payloads,
     _parse_apijsonpath,
+    _run_internal_mcp_authentication,
+    _serialize_legacy_tool_payloads,
+    _serialize_mcp_tool_definition,
+    AdminAuthMiddleware,
     app,
     create_prompt,
     create_resource,
@@ -58,42 +56,46 @@ from mcpgateway.main import (
     delete_prompt,
     delete_resource,
     delete_tool,
+    DocsAuthMiddleware,
     export_configuration,
     export_selective_configuration,
     get_a2a_agent,
-    handle_internal_mcp_initialize,
-    handle_internal_mcp_completion_complete,
     handle_internal_mcp_authenticate,
+    handle_internal_mcp_completion_complete,
+    handle_internal_mcp_initialize,
     handle_internal_mcp_logging_set_level,
     handle_internal_mcp_notifications_cancelled,
     handle_internal_mcp_notifications_initialized,
     handle_internal_mcp_notifications_message,
-    handle_internal_mcp_session_delete,
+    handle_internal_mcp_prompts_get,
+    handle_internal_mcp_prompts_get_authz,
+    handle_internal_mcp_prompts_list,
+    handle_internal_mcp_prompts_list_authz,
+    handle_internal_mcp_resource_templates_list,
+    handle_internal_mcp_resource_templates_list_authz,
     handle_internal_mcp_resources_list,
+    handle_internal_mcp_resources_list_authz,
     handle_internal_mcp_resources_read,
+    handle_internal_mcp_resources_read_authz,
     handle_internal_mcp_resources_subscribe,
     handle_internal_mcp_resources_unsubscribe,
-    handle_internal_mcp_resource_templates_list,
     handle_internal_mcp_roots_list,
-    handle_internal_mcp_prompts_get,
-    handle_internal_mcp_prompts_list,
-    handle_internal_mcp_prompts_get_authz,
-    handle_internal_mcp_prompts_list_authz,
-    handle_internal_mcp_resource_templates_list_authz,
-    handle_internal_mcp_resources_list_authz,
-    handle_internal_mcp_resources_read_authz,
+    handle_internal_mcp_rpc,
     handle_internal_mcp_sampling_create_message,
+    handle_internal_mcp_session_delete,
     handle_internal_mcp_tools_call,
     handle_internal_mcp_tools_call_metric,
     handle_internal_mcp_tools_call_resolve,
-    handle_internal_mcp_tools_list_authz,
     handle_internal_mcp_tools_list,
-    handle_internal_mcp_rpc,
+    handle_internal_mcp_tools_list_authz,
     handle_rpc,
     import_configuration,
+    InternalTrustedMCPTransportBridge,
     jsonpath_modifier,
     list_a2a_agents,
     list_resources,
+    MCPPathRewriteMiddleware,
+    MCPRuntimeHeaderTransportWrapper,
     message_endpoint,
     server_get_prompts,
     server_get_resources,
@@ -109,7 +111,6 @@ from mcpgateway.main import (
     update_tool,
     validate_security_configuration,
 )
-import mcpgateway.db as db_mod
 from mcpgateway.plugins.framework import PluginError
 from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError
@@ -690,7 +691,7 @@ class TestInternalTrustedMcpTransportBridge:
                     "headers": [(b"content-type", b"application/json"), (b"www-authenticate", b"Bearer")],
                 }
             )
-            await send({"type": "http.response.body", "body": b'{\"detail\":\"bad token\"}'})
+            await send({"type": "http.response.body", "body": b'{"detail":"bad token"}'})
             return False
 
         async def _passthrough_middleware(request, call_next):
@@ -1124,8 +1125,10 @@ class TestApplicationStartupPaths:
         # NOTE: This test previously used a single giant parenthesized `with (...)` statement
         # with many context managers. On Python 3.12.3 that reliably triggered a compiler
         # segfault when compiling this file. Keep patches explicit via ExitStack instead.
+        # Standard
         from contextlib import ExitStack
 
+        # First-Party
         import mcpgateway.main as main_mod
 
         mock_logging_service = MagicMock()
@@ -1230,6 +1233,7 @@ class TestJsonPathHelpers:
 
     def test_jsonpath_modifier_debug_logging_with_list(self, monkeypatch):
         """Test jsonpath_modifier debug logging with list data (lines 789-790)."""
+        # Standard
         import logging
 
         # Mock logger to ensure debug is enabled
@@ -1260,6 +1264,7 @@ class TestParseApijsonpath:
 
     def test_parse_apijsonpath_with_valid_string(self):
         """Test successful parsing of valid JSON string (line 729)."""
+        # First-Party
         from mcpgateway.schemas import JsonPathModifier
 
         json_string = '{"jsonpath": "$.name", "mapping": null}'
@@ -1272,6 +1277,7 @@ class TestParseApijsonpath:
 
     def test_parse_apijsonpath_with_valid_string_and_mapping(self):
         """Test successful parsing with mapping to ensure line 729 coverage."""
+        # First-Party
         from mcpgateway.schemas import JsonPathModifier
 
         json_string = '{"jsonpath": "$.items[*]", "mapping": {"id": "$.id", "name": "$.name"}}'
@@ -1314,6 +1320,7 @@ class TestParseApijsonpath:
 
     def test_parse_apijsonpath_jsonpathmodifier_valid(self):
         """Test valid JsonPathModifier instance (lines 745-749)."""
+        # First-Party
         from mcpgateway.schemas import JsonPathModifier
 
         modifier = JsonPathModifier(jsonpath="$.test", mapping=None)
@@ -1324,6 +1331,7 @@ class TestParseApijsonpath:
 
     def test_parse_apijsonpath_jsonpathmodifier_empty_jsonpath(self):
         """Test JsonPathModifier with empty jsonpath (lines 747-748)."""
+        # First-Party
         from mcpgateway.schemas import JsonPathModifier
 
         modifier = JsonPathModifier(jsonpath="  ", mapping=None)
@@ -1333,6 +1341,27 @@ class TestParseApijsonpath:
 
         assert excinfo.value.status_code == 400
         assert "JSONPath expression cannot be empty" in excinfo.value.detail
+
+    def test_parse_apijsonpath_validation_error_extra_fields(self, monkeypatch):
+        """Test that extra fields in JSON string trigger ValidationError path."""
+        monkeypatch.setattr("mcpgateway.main.settings.log_level", "INFO")
+
+        # Valid JSON but with extra field rejected by extra="forbid"
+        with pytest.raises(HTTPException) as excinfo:
+            _parse_apijsonpath('{"jsonpath": "$.name", "unexpected_field": "value"}')
+
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail == "Invalid apijsonpath structure"
+
+    def test_parse_apijsonpath_validation_error_debug_mode(self, monkeypatch):
+        """Test ValidationError path shows details in DEBUG mode."""
+        monkeypatch.setattr("mcpgateway.main.settings.log_level", "DEBUG")
+
+        with pytest.raises(HTTPException) as excinfo:
+            _parse_apijsonpath('{"jsonpath": "$.name", "unknown": 123}')
+
+        assert excinfo.value.status_code == 400
+        assert "Invalid apijsonpath structure:" in excinfo.value.detail
 
     def test_parse_apijsonpath_invalid_type_debug_mode(self, monkeypatch):
         """Test invalid type in DEBUG mode (lines 753-754)."""
@@ -1356,6 +1385,7 @@ class TestParseApijsonpath:
 
     def test_parse_apijsonpath_unexpected_exception_logging(self, monkeypatch):
         """Test unexpected exception handling with logging (lines 741-744)."""
+        # Standard
         import logging
 
         # Mock json.loads to raise an unexpected exception (not ValueError/ValidationError/HTTPException)
@@ -1409,6 +1439,7 @@ class TestParseApijsonpath:
 
     def test_parse_apijsonpath_invalid_jsonpath_syntax_modifier(self, monkeypatch):
         """Test invalid JSONPath syntax in JsonPathModifier instance."""
+        # First-Party
         from mcpgateway.schemas import JsonPathModifier
 
         monkeypatch.setattr("mcpgateway.main.settings.log_level", "DEBUG")
@@ -1424,6 +1455,7 @@ class TestParseApijsonpath:
 
     def test_parse_apijsonpath_valid_jsonpath_syntax_validation(self):
         """Test that valid JSONPath expressions pass early syntax validation."""
+        # First-Party
         from mcpgateway.schemas import JsonPathModifier
 
         # Valid JSONPath expressions that should pass validation
@@ -2374,6 +2406,7 @@ class TestAdminAuthMiddleware:
     @pytest.mark.asyncio
     async def test_admin_auth_repeated_team_id_uses_last_value(self, monkeypatch):
         """Repeated team_id query keys: .get() returns last value; validate against token_teams."""
+        # Third-Party
         from starlette.datastructures import QueryParams
 
         middleware = AdminAuthMiddleware(None)
@@ -2514,6 +2547,7 @@ class TestServerEndpointCoverage:
         request.scope = {"root_path": ""}
         db = MagicMock()
 
+        # First-Party
         from mcpgateway.services.permission_service import PermissionService
 
         monkeypatch.setattr(PermissionService, "check_permission", AsyncMock(return_value=True))
@@ -2543,6 +2577,7 @@ class TestServerEndpointCoverage:
         request.scope = {"root_path": ""}
         db = MagicMock()
 
+        # First-Party
         from mcpgateway.services.server_service import ServerNotFoundError
 
         monkeypatch.setattr("mcpgateway.main.server_service.get_server", AsyncMock(side_effect=ServerNotFoundError("missing")))
@@ -2573,6 +2608,7 @@ class TestServerEndpointCoverage:
 
     @pytest.mark.asyncio
     async def test_get_server_denies_when_scope_enforcement_fails(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -2592,6 +2628,7 @@ class TestServerEndpointCoverage:
 
     @pytest.mark.asyncio
     async def test_get_tool_denies_when_scope_enforcement_fails(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -2614,6 +2651,7 @@ class TestServerEndpointCoverage:
 
     @pytest.mark.asyncio
     async def test_get_gateway_denies_when_scope_enforcement_fails(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -2633,6 +2671,7 @@ class TestServerEndpointCoverage:
 
     @pytest.mark.asyncio
     async def test_read_resource_denies_when_scope_enforcement_fails(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -3018,6 +3057,7 @@ class TestCrudEndpoints:
             },
         )
 
+        # First-Party
         from mcpgateway.services.tool_service import ToolNameConflictError
 
         monkeypatch.setattr("mcpgateway.main.tool_service.register_tool", AsyncMock(side_effect=ToolNameConflictError("tool-a", enabled=False, tool_id=123)))
@@ -3045,6 +3085,7 @@ class TestCrudEndpoints:
             },
         )
 
+        # First-Party
         from mcpgateway.services.tool_service import ToolError
 
         monkeypatch.setattr("mcpgateway.main.tool_service.register_tool", AsyncMock(side_effect=ToolError("bad")))
@@ -3074,6 +3115,7 @@ class TestCrudEndpoints:
             },
         )
 
+        # First-Party
         from mcpgateway.services.tool_service import ToolError
 
         monkeypatch.setattr("mcpgateway.main.tool_service.update_tool", AsyncMock(side_effect=ToolError("bad")))
@@ -3089,6 +3131,7 @@ class TestCrudEndpoints:
 
     @pytest.mark.asyncio
     async def test_set_tool_state_lock_conflict_and_generic_error(self, monkeypatch, allow_permission):
+        # First-Party
         from mcpgateway.services.tool_service import ToolLockConflictError
 
         monkeypatch.setattr("mcpgateway.main.tool_service.set_tool_state", AsyncMock(side_effect=ToolLockConflictError("locked")))
@@ -3161,6 +3204,7 @@ class TestCrudEndpoints:
         )
 
         # Build a real pydantic ValidationError instance
+        # Third-Party
         from pydantic import BaseModel, ValidationError
 
         class _DummyModel(BaseModel):
@@ -3179,6 +3223,7 @@ class TestCrudEndpoints:
             await create_resource(resource_input, request, db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 422
 
+        # Third-Party
         from sqlalchemy.exc import IntegrityError
 
         monkeypatch.setattr("mcpgateway.main.ErrorFormatter.format_database_error", lambda _e: "db-error")
@@ -3199,6 +3244,7 @@ class TestCrudEndpoints:
                 "modified_user_agent": "test",
             },
         )
+        # First-Party
         from mcpgateway.services.resource_service import ResourceURIConflictError
 
         monkeypatch.setattr("mcpgateway.main.resource_service.update_resource", AsyncMock(side_effect=ResourceURIConflictError("conflict")))
@@ -3208,6 +3254,7 @@ class TestCrudEndpoints:
 
     @pytest.mark.asyncio
     async def test_delete_resource_permission_not_found_and_error(self, monkeypatch, allow_permission):
+        # First-Party
         from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError
 
         monkeypatch.setattr("mcpgateway.main.resource_service.delete_resource", AsyncMock(side_effect=PermissionError("nope")))
@@ -3257,6 +3304,7 @@ class TestCrudEndpoints:
         await create_prompt(prompt_input, request3, team_id="team-1", visibility="public", db=MagicMock(), user={"email": "user@example.com"})
         assert register_prompt.await_args.kwargs["team_id"] is None
 
+        # First-Party
         from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError
 
         monkeypatch.setattr("mcpgateway.main.prompt_service.register_prompt", AsyncMock(side_effect=PromptNameConflictError("dup")))
@@ -3269,6 +3317,7 @@ class TestCrudEndpoints:
             await create_prompt(prompt_input, request3, visibility="public", db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 400
 
+        # Third-Party
         from pydantic import BaseModel, ValidationError
 
         class _DummyModel(BaseModel):
@@ -3304,6 +3353,7 @@ class TestCrudEndpoints:
         )
         prompt_update = PromptUpdate(name="Prompt Updated")
 
+        # First-Party
         from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError
 
         monkeypatch.setattr("mcpgateway.main.prompt_service.update_prompt", AsyncMock(side_effect=PromptNameConflictError("dup")))
@@ -3323,6 +3373,7 @@ class TestCrudEndpoints:
 
     @pytest.mark.asyncio
     async def test_delete_prompt_permission_prompt_error_and_unexpected(self, monkeypatch, allow_permission):
+        # First-Party
         from mcpgateway.services.prompt_service import PromptError
 
         monkeypatch.setattr("mcpgateway.main.prompt_service.delete_prompt", AsyncMock(side_effect=PermissionError("nope")))
@@ -3385,6 +3436,7 @@ class TestSecurityConfiguration:
     def test_log_critical_issues_exits_when_enforced(self, monkeypatch):
         monkeypatch.setattr(settings, "require_strong_secrets", True)
         with patch("mcpgateway.main.sys.exit") as mock_exit:
+            # First-Party
             from mcpgateway.main import log_critical_issues
 
             log_critical_issues(["bad"])
@@ -3400,6 +3452,7 @@ class TestSecurityHealthEndpoint:
 
     @pytest.mark.asyncio
     async def test_security_health_returns_healthy_for_admin(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -3425,6 +3478,7 @@ class TestSecurityHealthEndpoint:
 
     @pytest.mark.asyncio
     async def test_security_health_includes_warnings_when_present(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -3449,6 +3503,7 @@ class TestSecurityHealthEndpoint:
 
     @pytest.mark.asyncio
     async def test_security_health_unhealthy_low_score(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -3475,8 +3530,10 @@ class TestSecurityHealthEndpoint:
         """Unauthenticated HTTP requests to /health/security must be rejected."""
         # The test_client fixture overrides require_auth but NOT require_admin_auth,
         # so this exercises the real admin auth dependency rejection path.
+        # Third-Party
         from fastapi.testclient import TestClient
 
+        # First-Party
         from mcpgateway.main import app
 
         # Create a client with NO auth overrides for admin auth
@@ -3490,6 +3547,7 @@ class TestRootEndpointsCoverage:
 
     @pytest.mark.asyncio
     async def test_export_root_success_and_username_extraction(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         root = SimpleNamespace(uri="root://example", name="Root Name")
@@ -3502,6 +3560,7 @@ class TestRootEndpointsCoverage:
 
     @pytest.mark.asyncio
     async def test_export_root_not_found_and_generic_error(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.root_service, "get_root_by_uri", AsyncMock(side_effect=main_mod.RootServiceNotFoundError("nope")))
@@ -3516,6 +3575,7 @@ class TestRootEndpointsCoverage:
 
     @pytest.mark.asyncio
     async def test_get_root_by_uri_success_and_errors(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         root = SimpleNamespace(uri="root://example", name="Root Name")
@@ -3533,6 +3593,7 @@ class TestRootEndpointsCoverage:
 
     @pytest.mark.asyncio
     async def test_update_root_success_and_errors(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         updated = SimpleNamespace(uri="root://example", name="Updated")
@@ -3555,6 +3616,7 @@ class TestToolListEndpointCoverage:
 
     @pytest.mark.asyncio
     async def test_list_tools_parses_tags_and_paginates(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -3587,6 +3649,7 @@ class TestToolListEndpointCoverage:
 
     @pytest.mark.asyncio
     async def test_list_tools_admin_bypass_and_public_only_default(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -3633,6 +3696,7 @@ class TestToolListEndpointCoverage:
 
     @pytest.mark.asyncio
     async def test_list_tools_team_mismatch_returns_403(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -3662,6 +3726,7 @@ class TestPromptListEndpointCoverage:
 
     @pytest.mark.asyncio
     async def test_list_prompts_parses_tags_and_paginates(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -3692,6 +3757,7 @@ class TestPromptListEndpointCoverage:
 
     @pytest.mark.asyncio
     async def test_list_prompts_team_mismatch_returns_403(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -3719,6 +3785,7 @@ class TestReadResourceEndpointCoverage:
 
     @pytest.mark.asyncio
     async def test_read_resource_serializes_text_bytes_and_str(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -3729,6 +3796,7 @@ class TestReadResourceEndpointCoverage:
         monkeypatch.setattr(db, "commit", MagicMock())
         monkeypatch.setattr(db, "close", MagicMock())
 
+        # First-Party
         from mcpgateway.common.models import TextContent
 
         class TextWithUri(TextContent):
@@ -3775,6 +3843,7 @@ class TestGetPromptEndpointCoverage:
 
     @pytest.mark.asyncio
     async def test_get_prompt_maps_common_errors_to_422(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -3782,6 +3851,7 @@ class TestGetPromptEndpointCoverage:
         request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
 
         # PluginViolationError -> 422 with plugin message.
+        # First-Party
         from mcpgateway.plugins.framework.errors import PluginViolationError
 
         monkeypatch.setattr(main_mod.prompt_service, "get_prompt", AsyncMock(side_effect=PluginViolationError("blocked", violation=SimpleNamespace(code="c"))))
@@ -3794,6 +3864,7 @@ class TestGetPromptEndpointCoverage:
         assert response.status_code == 422
 
         # PromptError -> 422 with message.
+        # First-Party
         from mcpgateway.services.prompt_service import PromptError
 
         monkeypatch.setattr(main_mod.prompt_service, "get_prompt", AsyncMock(side_effect=PromptError("bad prompt")))
@@ -3806,6 +3877,7 @@ class TestGatewayEndpointsCoverage:
 
     @pytest.mark.asyncio
     async def test_delete_gateway_error_mappings(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         db = MagicMock()
@@ -3817,7 +3889,8 @@ class TestGatewayEndpointsCoverage:
             await main_mod.delete_gateway("gw-1", db=db, user={"email": "user@example.com"})
         assert excinfo.value.status_code == 403
 
-        from mcpgateway.services.gateway_service import GatewayNotFoundError, GatewayError
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayError, GatewayNotFoundError
 
         monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(side_effect=GatewayNotFoundError("missing")))
         with pytest.raises(HTTPException) as excinfo:
@@ -3831,6 +3904,7 @@ class TestGatewayEndpointsCoverage:
 
     @pytest.mark.asyncio
     async def test_delete_gateway_success_invalidates_resource_cache_when_needed(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         db = MagicMock()
@@ -3849,9 +3923,11 @@ class TestGatewayEndpointsCoverage:
 
     @pytest.mark.asyncio
     async def test_refresh_gateway_tools_success_and_errors(self, monkeypatch):
-        import mcpgateway.main as main_mod
-
+        # Standard
         from datetime import datetime, timezone
+
+        # First-Party
+        import mcpgateway.main as main_mod
         from mcpgateway.services.gateway_service import GatewayError, GatewayNotFoundError
 
         request = MagicMock(spec=Request)
@@ -3903,6 +3979,7 @@ class TestGatewayEndpointsCoverage:
 
     @pytest.mark.asyncio
     async def test_refresh_gateway_tools_denies_cross_scope_access(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -3929,6 +4006,7 @@ class TestLifespanAdvanced:
 
     @pytest.mark.asyncio
     async def test_lifespan_with_feature_flags(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         class FakeEvent:
@@ -4049,6 +4127,7 @@ class TestLifespanAdvanced:
         subscriber.stop = AsyncMock(side_effect=Exception("stop fail"))
         # `mcpgateway.cache` uses lazy `__getattr__` which returns a `registry_cache`
         # instance, so string-based patching can resolve to the wrong object under xdist.
+        # First-Party
         import mcpgateway.cache.registry_cache as registry_cache_mod
 
         monkeypatch.setattr(registry_cache_mod, "get_cache_invalidation_subscriber", MagicMock(return_value=subscriber))
@@ -4082,6 +4161,7 @@ class TestLifespanAdvanced:
     @pytest.mark.asyncio
     async def test_lifespan_exits_on_plugin_initialization_failed(self, monkeypatch):
         """Cover lifespan startup exception branch that raises SystemExit on plugin init failure."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         def make_service():  # noqa: ANN001 - local test helper
@@ -4138,6 +4218,7 @@ class TestLifespanAdvanced:
         subscriber = MagicMock()
         subscriber.start = AsyncMock()
         subscriber.stop = AsyncMock()
+        # First-Party
         import mcpgateway.cache.registry_cache as registry_cache_mod
 
         monkeypatch.setattr(registry_cache_mod, "get_cache_invalidation_subscriber", MagicMock(return_value=subscriber))
@@ -4158,6 +4239,7 @@ class TestLifespanAdvanced:
     @pytest.mark.asyncio
     async def test_shutdown_services_continues_on_exception(self):
         """Cover shutdown_services exception logging branch."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         bad = MagicMock()
@@ -4280,6 +4362,7 @@ class TestUtilityFunctions:
     @pytest.mark.asyncio
     async def test_websocket_feature_disabled_closes(self, monkeypatch):
         """WebSocket relay should reject connections when feature flag is disabled."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.settings, "mcpgateway_ws_relay_enabled", False)
@@ -4294,6 +4377,7 @@ class TestUtilityFunctions:
 
     def test_get_websocket_bearer_token_accepts_lowercase_scheme(self):
         """Bearer scheme parsing should be case-insensitive for WebSocket auth headers."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         websocket = MagicMock()
@@ -4304,6 +4388,7 @@ class TestUtilityFunctions:
 
     def test_get_websocket_bearer_token_ignores_query_param(self):
         """Query-string tokens should not be accepted for WebSocket auth."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         websocket = MagicMock()
@@ -4315,6 +4400,7 @@ class TestUtilityFunctions:
     @pytest.mark.asyncio
     async def test_authenticate_websocket_user_wraps_unexpected_auth_errors(self, monkeypatch):
         """Unexpected auth backend errors should be normalized to HTTP 401."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", True)
@@ -4337,6 +4423,7 @@ class TestUtilityFunctions:
     @pytest.mark.asyncio
     async def test_authenticate_websocket_user_propagates_http_exception(self, monkeypatch):
         """HTTPException from auth backend should pass through unchanged."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", True)
@@ -4359,6 +4446,7 @@ class TestUtilityFunctions:
     @pytest.mark.asyncio
     async def test_authenticate_websocket_user_success_with_bearer_token(self, monkeypatch):
         """Successful bearer auth should return token and no proxy user."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", True)
@@ -4382,6 +4470,7 @@ class TestUtilityFunctions:
     @pytest.mark.asyncio
     async def test_authenticate_websocket_user_proxy_auth_missing_header_requires_auth(self, monkeypatch):
         """Proxy-auth mode should reject requests without trusted user header when auth is required."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", False)
@@ -4405,6 +4494,7 @@ class TestUtilityFunctions:
     @pytest.mark.asyncio
     async def test_authenticate_websocket_user_denies_when_permissions_missing(self, monkeypatch):
         """Authenticated websocket users must have at least one allowed permission."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", True)
@@ -4429,6 +4519,7 @@ class TestUtilityFunctions:
     @pytest.mark.asyncio
     async def test_websocket_bearer_auth_invalid_token_closes(self, monkeypatch):
         """Cover Bearer token extraction + invalid token close path."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", True)
@@ -4451,6 +4542,7 @@ class TestUtilityFunctions:
     @pytest.mark.asyncio
     async def test_websocket_proxy_auth_required_closes(self, monkeypatch):
         """Cover proxy-auth required branch when trust_proxy_auth is enabled."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", False)
@@ -4474,6 +4566,7 @@ class TestUtilityFunctions:
     @pytest.mark.asyncio
     async def test_websocket_jsonrpc_error_sends_error_text(self, monkeypatch):
         """Cover JSONRPCError branch inside the websocket relay loop."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", False)
@@ -4514,6 +4607,7 @@ class TestUtilityFunctions:
     @pytest.mark.asyncio
     async def test_websocket_invalid_json_sends_parse_error(self, monkeypatch):
         """Cover orjson.JSONDecodeError -> JSON-RPC parse error response."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", False)
@@ -4538,6 +4632,7 @@ class TestUtilityFunctions:
     @pytest.mark.asyncio
     async def test_websocket_outer_exception_close_failure_is_caught(self, monkeypatch):
         """Cover outer exception handler when websocket.close itself fails."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", False)
@@ -4571,6 +4666,7 @@ class TestUtilityFunctions:
     @pytest.mark.asyncio
     async def test_utility_sse_bearer_token_and_disconnect_cleanup(self, monkeypatch, allow_permission):
         """Cover /sse auth token extraction + defensive disconnect cleanup callback."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -4614,6 +4710,7 @@ class TestUtilityFunctions:
     @pytest.mark.asyncio
     async def test_utility_sse_cookie_token_and_cleanup_warning(self, monkeypatch, allow_permission):
         """Cover cookie token extraction + cleanup exception branch."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -4809,6 +4906,7 @@ def test_client(app_with_temp_db):
 @pytest.fixture
 def allow_permission(monkeypatch):
     """Force permission checks to pass for direct endpoint calls."""
+    # First-Party
     from mcpgateway.services.permission_service import PermissionService
 
     monkeypatch.setattr(PermissionService, "check_permission", AsyncMock(return_value=True))
@@ -4898,6 +4996,7 @@ class TestA2ABranchCoverage:
 
     @pytest.mark.asyncio
     async def test_create_a2a_agent_rejects_public_only_token_for_team_visibility(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import A2AAgentCreate
 
@@ -4922,6 +5021,7 @@ class TestA2ABranchCoverage:
 
     @pytest.mark.asyncio
     async def test_create_a2a_agent_team_mismatch_and_service_unavailable(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import A2AAgentCreate
 
@@ -4951,10 +5051,13 @@ class TestA2ABranchCoverage:
 
     @pytest.mark.asyncio
     async def test_create_a2a_agent_validation_and_integrity_errors(self, monkeypatch):
-        import mcpgateway.main as main_mod
-        from mcpgateway.schemas import A2AAgentCreate
+        # Third-Party
         from pydantic import BaseModel, ValidationError
         from sqlalchemy.exc import IntegrityError
+
+        # First-Party
+        import mcpgateway.main as main_mod
+        from mcpgateway.schemas import A2AAgentCreate
 
         class _Tmp(BaseModel):
             value: int
@@ -4997,6 +5100,7 @@ class TestA2ABranchCoverage:
 
     @pytest.mark.asyncio
     async def test_delete_a2a_agent_error_mappings(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNotFoundError
 
@@ -5024,6 +5128,7 @@ class TestA2ABranchCoverage:
 
     @pytest.mark.asyncio
     async def test_invoke_a2a_agent_branches_and_errors(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNotFoundError
 
@@ -5062,6 +5167,7 @@ class TestA2ABranchCoverage:
 
     @pytest.mark.asyncio
     async def test_list_and_get_a2a_agents_branches(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.services.a2a_service import A2AAgentNotFoundError
 
@@ -5125,8 +5231,7 @@ class TestRpcHandling:
         """
         monkeypatch.setattr(
             "mcpgateway.main._is_trusted_internal_mcp_runtime_request",
-            lambda request: request.headers.get("x-contextforge-mcp-runtime") == "rust"
-            and getattr(getattr(request, "client", None), "host", None) in ("127.0.0.1", "::1"),
+            lambda request: request.headers.get("x-contextforge-mcp-runtime") == "rust" and getattr(getattr(request, "client", None), "host", None) in ("127.0.0.1", "::1"),
         )
 
     @staticmethod
@@ -5757,6 +5862,7 @@ class TestRpcHandling:
         }
 
     async def test_handle_internal_mcp_resources_read_normalizes_legacy_resource_content(self):
+        # First-Party
         from mcpgateway.common.models import ResourceContent
 
         request = self._make_request({"jsonrpc": "2.0", "id": "resources-read-legacy", "method": "resources/read", "params": {"uri": "resource://legacy"}})
@@ -5953,6 +6059,7 @@ class TestRpcHandling:
         assert subscription.subscriber_id == "user@example.com"
 
     async def test_handle_internal_mcp_resources_subscribe_and_unsubscribe_extra_error_paths(self):
+        # First-Party
         from mcpgateway.services.resource_service import ResourceNotFoundError
 
         subscribe_request = self._make_request({"jsonrpc": "2.0", "id": "resources-sub-2", "method": "resources/subscribe", "params": []})
@@ -7034,6 +7141,7 @@ class TestRpcHandling:
         mock_db.close.assert_called()
 
     async def test_handle_internal_mcp_initialize_non_dict_params_returns_internal_error(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = self._make_request({"jsonrpc": "2.0", "id": "init-err", "method": "initialize", "params": []})
@@ -7273,6 +7381,7 @@ class TestRpcHandling:
         assert json.loads(response.body.decode()) == {"contents": [{"uri": "resource://one"}]}
 
     async def test_handle_internal_mcp_resources_read_returns_not_found_payload(self):
+        # First-Party
         from mcpgateway.services.resource_service import ResourceNotFoundError
 
         request = self._make_request({"jsonrpc": "2.0", "id": "res-read", "method": "resources/read", "params": {"uri": "resource://missing"}})
@@ -7319,6 +7428,7 @@ class TestRpcHandling:
         mock_db.invalidate.assert_called_once()
 
     async def test_handle_internal_mcp_resources_read_returns_resource_error_payload(self):
+        # First-Party
         from mcpgateway.services.resource_service import ResourceError
 
         request = self._make_request({"jsonrpc": "2.0", "id": "res-read-ambiguous", "method": "resources/read", "params": {"uri": "resource://dup"}})
@@ -7407,6 +7517,7 @@ class TestRpcHandling:
         error_db.invalidate.assert_called_once()
 
     async def test_handle_internal_mcp_prompts_get_missing_name_and_not_found(self):
+        # First-Party
         from mcpgateway.services.prompt_service import PromptError, PromptNotFoundError
 
         request_missing = self._make_request({"jsonrpc": "2.0", "id": "prompt-get", "method": "prompts/get", "params": []})
@@ -8573,6 +8684,7 @@ class TestRpcHandling:
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["ok"] is True
 
+        # First-Party
         from mcpgateway.plugins.framework.models import PluginErrorModel
 
         with (
@@ -8647,6 +8759,7 @@ class TestRpcHandling:
         assert result["result"] == {}
 
     async def test_maybe_forward_affinitized_rpc_request_internally_forwarded_branch(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
@@ -8937,6 +9050,7 @@ class TestExportImportEndpoints:
             assert result["tools"] == []
 
     async def test_export_configuration_parsing_and_error_mappings(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.services.export_service import ExportError
 
@@ -8987,6 +9101,7 @@ class TestExportImportEndpoints:
             assert kwargs["token_teams"] == []
 
     async def test_export_selective_configuration_error_mappings(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.services.export_service import ExportError
 
@@ -9016,6 +9131,7 @@ class TestExportImportEndpoints:
         assert excinfo.value.status_code == 500
 
     async def test_import_configuration_invalid_strategy(self):
+        # First-Party
         import mcpgateway.main as main_mod
 
         with pytest.raises(HTTPException) as excinfo:
@@ -9036,8 +9152,11 @@ class TestExportImportEndpoints:
             assert result["status"] == "ok"
 
     async def test_import_configuration_error_mappings(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
-        from mcpgateway.services.import_service import ImportConflictError, ImportError as ImportServiceError, ImportValidationError
+        from mcpgateway.services.import_service import ImportConflictError
+        from mcpgateway.services.import_service import ImportError as ImportServiceError
+        from mcpgateway.services.import_service import ImportValidationError
 
         request_import_status = MagicMock()
         request_import_status.to_dict.return_value = {"status": "ok"}
@@ -9080,6 +9199,7 @@ class TestMessageEndpointElicitation:
         request.body = AsyncMock(return_value=json.dumps({"id": "req-1", "result": {"action": "accept", "content": {"foo": "bar"}}}).encode())
 
         # Allow permission checks to pass for direct invocation
+        # First-Party
         from mcpgateway.services.permission_service import PermissionService
 
         monkeypatch.setattr(PermissionService, "check_permission", AsyncMock(return_value=True))
@@ -9177,6 +9297,7 @@ class TestRemainingCoverageGaps:
     """Targeted unit tests for remaining uncovered main.py branches (per HTML coverage report)."""
 
     def test_get_db_invalidates_when_rollback_fails(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         class FakeSession:  # noqa: D401 - test helper
@@ -9214,6 +9335,7 @@ class TestRemainingCoverageGaps:
         assert sess.closed is True
 
     def test_healthcheck_invalidate_failure_is_best_effort(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         class FakeSession:  # noqa: D401 - test helper
@@ -9244,6 +9366,7 @@ class TestRemainingCoverageGaps:
         assert sess.closed is True
 
     def test_healthcheck_reports_runtime_mode_and_headers(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         class FakeSession:  # noqa: D401 - test helper
@@ -9283,6 +9406,7 @@ class TestRemainingCoverageGaps:
         assert response.headers["x-contextforge-mcp-session-auth-reuse-mode"] == "python"
 
     async def test_readiness_check_invalidate_failure_is_best_effort(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         class FakeSession:  # noqa: D401 - test helper
@@ -9314,6 +9438,7 @@ class TestRemainingCoverageGaps:
         assert payload["status"] == "not ready"
 
     async def test_readiness_check_reports_runtime_mode_headers(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         class FakeSession:  # noqa: D401 - test helper
@@ -9365,6 +9490,7 @@ class TestRemainingCoverageGaps:
         assert response.headers["x-contextforge-mcp-session-auth-reuse-mode"] == "rust"
 
     def test_runtime_status_payload_reports_http_transport_and_rust_affinity_core(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setenv("CONTEXTFORGE_ENABLE_RUST_BUILD", "true")
@@ -9384,6 +9510,7 @@ class TestRemainingCoverageGaps:
         assert payload["session_auth_reuse_mode"] == "rust"
 
     def test_runtime_status_payload_reports_python_mount_without_session_auth_reuse(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setenv("CONTEXTFORGE_ENABLE_RUST_BUILD", "true")
@@ -9414,6 +9541,7 @@ class TestRemainingCoverageGaps:
         assert payload["session_auth_reuse_mode"] == "python"
 
     def test_healthcheck_unhealthy_applies_runtime_headers(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         class FakeSession:  # noqa: D401 - test helper
@@ -9436,6 +9564,7 @@ class TestRemainingCoverageGaps:
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
 
     async def test_sse_endpoint_cookie_auth_and_disconnect_cleanup(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -9472,6 +9601,7 @@ class TestRemainingCoverageGaps:
         remove_session.assert_awaited_once()
 
     async def test_sse_endpoint_disconnect_cleanup_warns_on_failure(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -9505,6 +9635,7 @@ class TestRemainingCoverageGaps:
         assert response.status_code == 200
 
     async def test_list_servers_tags_team_mismatch_and_pagination(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -9549,6 +9680,7 @@ class TestRemainingCoverageGaps:
         assert list_servers.call_args.kwargs["tags"] == ["a", "b"]
 
     async def test_list_gateways_team_mismatch_and_pagination(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -9591,6 +9723,7 @@ class TestRemainingCoverageGaps:
         db.close.assert_called()
 
     async def test_read_resource_fallback_serialization_branches(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -9628,6 +9761,7 @@ class TestRemainingCoverageGaps:
         assert result["text"] == "dummy"
 
     async def test_get_resource_info_success_and_not_found(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.services.resource_service import ResourceNotFoundError
 
@@ -9658,6 +9792,7 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 404
 
     async def test_get_resource_info_denies_when_scope_enforcement_fails(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -9679,6 +9814,7 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 403
 
     async def test_get_import_status_found_and_not_found(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         status_obj = MagicMock()
@@ -9693,6 +9829,7 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 404
 
     async def test_list_and_cleanup_import_statuses(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         s1 = MagicMock()
@@ -9708,6 +9845,7 @@ class TestRemainingCoverageGaps:
         assert result["removed_count"] == 2
 
     async def test_create_server_public_only_restrictions_and_team_id(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = _make_request("/servers")
@@ -9762,6 +9900,7 @@ class TestRemainingCoverageGaps:
         assert register.call_args.kwargs["team_id"] is None
 
     async def test_register_gateway_public_only_restrictions_and_validation_error(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = _make_request("/gateways")
@@ -9799,6 +9938,7 @@ class TestRemainingCoverageGaps:
         assert json.loads(response.body.decode()) == {"detail": "bad"}
 
     async def test_state_endpoints_error_branches(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.services.gateway_service import GatewayNotFoundError
         from mcpgateway.services.prompt_service import PromptLockConflictError
@@ -9846,6 +9986,7 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 400
 
     async def test_delete_server_error_mappings(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.services.server_service import ServerError
 
@@ -9861,6 +10002,7 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 400
 
     async def test_message_endpoints_generic_exception_mapping(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -9883,10 +10025,13 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 500
 
     async def test_list_tools_and_get_tool_jsonpath_modifier(self, monkeypatch):
+        # Third-Party
+        import orjson
+
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import JsonPathModifier
         from mcpgateway.utils.orjson_response import ORJSONResponse
-        import orjson
 
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
@@ -9924,10 +10069,13 @@ class TestRemainingCoverageGaps:
 
     async def test_list_tools_apijsonpath_with_pagination(self, monkeypatch):
         """Test list_tools with apijsonpath and pagination returns cursor (lines 4100-4109)."""
+        # Third-Party
+        import orjson
+
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import JsonPathModifier
         from mcpgateway.utils.orjson_response import ORJSONResponse
-        import orjson
 
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
@@ -9979,10 +10127,13 @@ class TestRemainingCoverageGaps:
 
     async def test_list_tools_apijsonpath_pagination_last_page(self, monkeypatch):
         """Test list_tools with apijsonpath on last page returns null cursor (lines 4100-4109)."""
+        # Third-Party
+        import orjson
+
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import JsonPathModifier
         from mcpgateway.utils.orjson_response import ORJSONResponse
-        import orjson
 
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
@@ -10029,6 +10180,7 @@ class TestRemainingCoverageGaps:
 
     async def test_list_tools_apijsonpath_string_parsing_error(self, monkeypatch):
         """Test list_tools with invalid apijsonpath string (lines 3668-3671)."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10061,6 +10213,7 @@ class TestRemainingCoverageGaps:
 
     async def test_list_tools_apijsonpath_none_with_pagination(self, monkeypatch):
         """Test list_tools with parsed_apijsonpath=None and include_pagination=True (lines 3674-3681)."""
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import JsonPathModifier
 
@@ -10093,12 +10246,13 @@ class TestRemainingCoverageGaps:
             assert "nextCursor" in result
             assert result["nextCursor"] == "next_cursor_123"
         else:
-            assert hasattr(result, 'tools')
-            assert hasattr(result, 'next_cursor')
+            assert hasattr(result, "tools")
+            assert hasattr(result, "next_cursor")
             assert result.next_cursor == "next_cursor_123"
 
     async def test_list_tools_apijsonpath_exception_handling(self, monkeypatch):
         """Test list_tools jsonpath_modifier exception (lines 3684-3685, 3690-3692)."""
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import JsonPathModifier
 
@@ -10134,10 +10288,13 @@ class TestRemainingCoverageGaps:
 
     async def test_list_tools_apijsonpath_with_empty_tools_list(self, monkeypatch):
         """Test list_tools with empty tools list and jsonpath (line 3684-3685 branch)."""
+        # Third-Party
+        import orjson
+
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import JsonPathModifier
         from mcpgateway.utils.orjson_response import ORJSONResponse
-        import orjson
 
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
@@ -10167,6 +10324,7 @@ class TestRemainingCoverageGaps:
 
     async def test_get_tool_apijsonpath_none(self, monkeypatch):
         """Test get_tool with parsed_apijsonpath=None (lines 3833-3834)."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10182,17 +10340,12 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
         monkeypatch.setattr(main_mod.tool_service, "get_tool", mock_get_tool)
 
-        result = await main_mod.get_tool.__wrapped__(
-            "tool-1",
-            request=request,
-            db=MagicMock(),
-            user={"email": "u"},
-            apijsonpath=None
-        )
+        result = await main_mod.get_tool.__wrapped__("tool-1", request=request, db=MagicMock(), user={"email": "u"}, apijsonpath=None)
         assert result == data
 
     async def test_get_tool_apijsonpath_string_parsing_error(self, monkeypatch):
         """Test get_tool with invalid apijsonpath string (lines 3827-3830)."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10207,13 +10360,7 @@ class TestRemainingCoverageGaps:
 
         # Invalid JSON string for apijsonpath - should raise 400 Bad Request
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_tool.__wrapped__(
-                "tool-1",
-                request=request,
-                db=MagicMock(),
-                user={"email": "u"},
-                apijsonpath="{invalid json"
-            )
+            await main_mod.get_tool.__wrapped__("tool-1", request=request, db=MagicMock(), user={"email": "u"}, apijsonpath="{invalid json")
         # Should be 400 (not 404) for invalid apijsonpath JSON
         assert excinfo.value.status_code == 400
         # Generic error message in non-DEBUG mode (security improvement)
@@ -10221,6 +10368,7 @@ class TestRemainingCoverageGaps:
 
     async def test_get_tool_jsonpath_modifier_exception(self, monkeypatch):
         """Test get_tool jsonpath_modifier exception (lines 3841-3843)."""
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import JsonPathModifier
 
@@ -10239,19 +10387,14 @@ class TestRemainingCoverageGaps:
 
         apijsonpath = JsonPathModifier(jsonpath="$", mapping={})
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_tool.__wrapped__(
-                "tool-1",
-                request=request,
-                db=MagicMock(),
-                user={"email": "u"},
-                apijsonpath=apijsonpath
-            )
+            await main_mod.get_tool.__wrapped__("tool-1", request=request, db=MagicMock(), user={"email": "u"}, apijsonpath=apijsonpath)
         # Should be 500 (not 404) for JSONPath modifier errors
         assert excinfo.value.status_code == 500
         assert "JSONPath modifier error" in str(excinfo.value.detail)
 
     async def test_list_tools_apijsonpath_httpexception_reraise(self, monkeypatch):
         """Test list_tools re-raises HTTPException from jsonpath_modifier (line 3695)."""
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import JsonPathModifier
 
@@ -10288,6 +10431,7 @@ class TestRemainingCoverageGaps:
 
     async def test_get_tool_apijsonpath_httpexception_reraise(self, monkeypatch):
         """Test get_tool re-raises HTTPException from jsonpath_modifier (line 3844)."""
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import JsonPathModifier
 
@@ -10306,19 +10450,14 @@ class TestRemainingCoverageGaps:
 
         apijsonpath = JsonPathModifier(jsonpath="$", mapping={})
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_tool.__wrapped__(
-                "tool-1",
-                request=request,
-                db=MagicMock(),
-                user={"email": "u"},
-                apijsonpath=apijsonpath
-            )
+            await main_mod.get_tool.__wrapped__("tool-1", request=request, db=MagicMock(), user={"email": "u"}, apijsonpath=apijsonpath)
         # Should preserve the original HTTPException status and detail
         assert excinfo.value.status_code == 400
         assert "Invalid JSONPath expression" in str(excinfo.value.detail)
 
     async def test_list_tools_jsonpath_none_returns_pagination(self, monkeypatch):
         """Test list_tools returns paginated response when jsonpath is None."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10352,12 +10491,13 @@ class TestRemainingCoverageGaps:
             assert "nextCursor" in result
             assert result["nextCursor"] == "cursor_abc"
         else:
-            assert hasattr(result, 'tools')
-            assert hasattr(result, 'next_cursor')
+            assert hasattr(result, "tools")
+            assert hasattr(result, "next_cursor")
             assert result.next_cursor == "cursor_abc"
 
     async def test_list_tools_apijsonpath_invalid_type(self, monkeypatch):
         """Test list_tools with invalid apijsonpath type raises clear error."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10391,6 +10531,7 @@ class TestRemainingCoverageGaps:
 
     async def test_get_tool_apijsonpath_invalid_type(self, monkeypatch):
         """Test get_tool with invalid apijsonpath type raises clear error."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10405,13 +10546,7 @@ class TestRemainingCoverageGaps:
 
         # Pass invalid type (list) - should raise 400 with clear message
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_tool.__wrapped__(
-                "tool-1",
-                request=request,
-                db=MagicMock(),
-                user={"email": "u"},
-                apijsonpath=["invalid", "type"]  # Invalid type
-            )
+            await main_mod.get_tool.__wrapped__("tool-1", request=request, db=MagicMock(), user={"email": "u"}, apijsonpath=["invalid", "type"])  # Invalid type
         assert excinfo.value.status_code == 400
         # Generic error message in non-DEBUG mode (security improvement)
         assert "Invalid apijsonpath type" in str(excinfo.value.detail)
@@ -10419,6 +10554,7 @@ class TestRemainingCoverageGaps:
 
     async def test_list_tools_empty_jsonpath_string(self, monkeypatch):
         """Test list_tools rejects empty jsonpath string."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10450,6 +10586,7 @@ class TestRemainingCoverageGaps:
 
     async def test_get_tool_empty_jsonpath_model(self, monkeypatch):
         """Test get_tool rejects JsonPathModifier with empty jsonpath."""
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import JsonPathModifier
 
@@ -10465,18 +10602,13 @@ class TestRemainingCoverageGaps:
 
         # JsonPathModifier with empty jsonpath
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_tool.__wrapped__(
-                "tool-1",
-                request=request,
-                db=MagicMock(),
-                user={"email": "u"},
-                apijsonpath=JsonPathModifier(jsonpath="", mapping=None)
-            )
+            await main_mod.get_tool.__wrapped__("tool-1", request=request, db=MagicMock(), user={"email": "u"}, apijsonpath=JsonPathModifier(jsonpath="", mapping=None))
         assert excinfo.value.status_code == 400
         assert "JSONPath expression cannot be empty" in str(excinfo.value.detail)
 
     async def test_create_tool_endpoint_coverage(self, monkeypatch):
         """Test create_tool endpoint (lines 3695-3698)."""
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import ToolCreate
         from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -10484,26 +10616,17 @@ class TestRemainingCoverageGaps:
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None, token_teams=None)
 
-        tool_data = ToolCreate(
-            name="test_tool",
-            url="http://example.com",
-            description="Test",
-            integration_type="REST",
-            request_type="GET"
-        )
+        tool_data = ToolCreate(name="test_tool", url="http://example.com", description="Test", integration_type="REST", request_type="GET")
 
         created_tool = MagicMock()
         created_tool.id = "tool-123"
 
         # Mock all the dependencies
-        monkeypatch.setattr(MetadataCapture, "extract_creation_metadata", lambda *args: {
-            "created_by": "user@example.com",
-            "created_from_ip": "127.0.0.1",
-            "created_via": "api",
-            "created_user_agent": "test",
-            "import_batch_id": None,
-            "federation_source": None
-        })
+        monkeypatch.setattr(
+            MetadataCapture,
+            "extract_creation_metadata",
+            lambda *args: {"created_by": "user@example.com", "created_from_ip": "127.0.0.1", "created_via": "api", "created_user_agent": "test", "import_batch_id": None, "federation_source": None},
+        )
         monkeypatch.setattr(main_mod, "get_user_email", lambda user: "user@example.com")
         monkeypatch.setattr(main_mod.tool_service, "register_tool", AsyncMock(return_value=created_tool))
 
@@ -10511,21 +10634,16 @@ class TestRemainingCoverageGaps:
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
 
-        result = await main_mod.create_tool.__wrapped__(
-            tool=tool_data,
-            request=request,
-            team_id=None,
-            db=mock_db,
-            user={"email": "user@example.com"}
-        )
+        result = await main_mod.create_tool.__wrapped__(tool=tool_data, request=request, team_id=None, db=mock_db, user={"email": "user@example.com"})
         assert result == created_tool
 
     async def test_update_tool_endpoint_coverage(self, monkeypatch):
         """Test update_tool endpoint (lines 3848-3851)."""
+        # First-Party
+        from mcpgateway.db import Tool as DbTool
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import ToolUpdate
         from mcpgateway.utils.metadata_capture import MetadataCapture
-        from mcpgateway.db import Tool as DbTool
 
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
@@ -10544,25 +10662,16 @@ class TestRemainingCoverageGaps:
         mock_db.close = MagicMock()
 
         # Mock dependencies
-        monkeypatch.setattr(MetadataCapture, "extract_modification_metadata", lambda *args: {
-            "modified_by": "user@example.com",
-            "modified_from_ip": "127.0.0.1",
-            "modified_via": "api",
-            "modified_user_agent": "test"
-        })
+        monkeypatch.setattr(
+            MetadataCapture, "extract_modification_metadata", lambda *args: {"modified_by": "user@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "api", "modified_user_agent": "test"}
+        )
         monkeypatch.setattr(main_mod.tool_service, "update_tool", AsyncMock(return_value=updated_tool))
 
-        result = await main_mod.update_tool.__wrapped__(
-            tool_id="tool-123",
-            tool=tool_update,
-            request=request,
-            db=mock_db,
-            user={"email": "user@example.com"}
-        )
+        result = await main_mod.update_tool.__wrapped__(tool_id="tool-123", tool=tool_update, request=request, db=mock_db, user={"email": "user@example.com"})
         assert result == updated_tool
 
-
     async def test_deprecated_toggle_endpoints(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod, "set_server_state", AsyncMock(return_value={"ok": True}))
@@ -10590,6 +10699,7 @@ class TestRemainingCoverageGaps:
             assert await main_mod.toggle_a2a_agent_status.__wrapped__("a1", True, MagicMock(), {"email": "u"}) == {"ok": True}
 
     async def test_reset_metrics_a2a_agent_enabled_and_disabled(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         a2a = MagicMock()
@@ -10606,6 +10716,7 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 400
 
     async def test_get_prompt_no_args_not_found_and_permission(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.services.prompt_service import PromptNotFoundError
 
@@ -10624,6 +10735,7 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 403
 
     async def test_list_resource_templates_token_teams_normalization(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10640,6 +10752,7 @@ class TestRemainingCoverageGaps:
         assert result.resource_templates == []
 
     async def test_list_prompts_token_teams_normalization(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10680,6 +10793,7 @@ class TestRemainingCoverageGaps:
         assert list_prompts.call_args.kwargs["token_teams"] == []
 
     async def test_server_get_resources_and_prompts_admin_bypass(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10701,8 +10815,11 @@ class TestRemainingCoverageGaps:
         assert result == [{"id": "p1"}]
 
     async def test_update_a2a_agent_service_unavailable_and_validation(self, monkeypatch):
-        import mcpgateway.main as main_mod
+        # Third-Party
         from pydantic import ValidationError
+
+        # First-Party
+        import mcpgateway.main as main_mod
 
         request = _make_request("/a2a/a1")
         monkeypatch.setattr(
@@ -10727,8 +10844,10 @@ class TestRemainingCoverageGaps:
 
     async def test_module_level_router_registration_branches(self, monkeypatch):
         """Import main.py under unique name to cover module-level wiring branches."""
+        # Standard
         from types import ModuleType
 
+        # Third-Party
         from fastapi import APIRouter
 
         # Provide lightweight router modules to avoid importing heavy optional dependencies.
@@ -10782,6 +10901,7 @@ class TestRemainingCoverageGaps:
         assert jsonpath_modifier([{"a": 1}], jsonpath="") == {"a": 1}
 
     async def test_import_configuration_uses_user_email_attribute(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         status_obj = MagicMock()
@@ -10804,6 +10924,7 @@ class TestRemainingCoverageGaps:
         assert svc.import_configuration.call_args.kwargs["imported_by"] == "obj@example.com"
 
     async def test_initialize_maps_orjson_decode_error(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10814,6 +10935,7 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 400
 
     async def test_update_server_name_conflict_maps_to_409(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.services.server_service import ServerNameConflictError
 
@@ -10829,6 +10951,7 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 409
 
     async def test_server_get_tools_public_only_default(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10844,6 +10967,7 @@ class TestRemainingCoverageGaps:
         assert result == [{"id": "t1"}]
 
     async def test_tag_endpoints_parse_entity_types(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = _make_request("/tags")
@@ -10856,6 +10980,7 @@ class TestRemainingCoverageGaps:
         _ = await main_mod.get_entities_by_tag.__wrapped__(request, "tag-1", entity_types="Tools", db=MagicMock(), user={"email": "u"})
 
     async def test_get_a2a_agent_service_unavailable(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = _make_request("/a2a/a1")
@@ -10866,6 +10991,7 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 503
 
     async def test_create_a2a_agent_public_only_sets_team_id_none(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = _make_request("/a2a")
@@ -10898,6 +11024,7 @@ class TestRemainingCoverageGaps:
         assert svc.register_agent.call_args.kwargs["team_id"] is None
 
     async def test_set_a2a_agent_state_service_unavailable(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod, "a2a_service", None)
@@ -10906,6 +11033,7 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 503
 
     async def test_delete_tool_not_found_maps_to_404(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.services.tool_service import ToolNotFoundError
 
@@ -10915,6 +11043,7 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 404
 
     async def test_create_resource_resource_error_maps_to_400(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.services.resource_service import ResourceError
 
@@ -10939,6 +11068,7 @@ class TestRemainingCoverageGaps:
         assert excinfo.value.status_code == 400
 
     async def test_get_prompt_reraises_unhandled_exception(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10950,12 +11080,14 @@ class TestRemainingCoverageGaps:
             await main_mod.get_prompt.__wrapped__(request, "p1", args={}, db=MagicMock(), user={"email": "u"})
 
     def test_log_security_recommendations_skip_ssl_verify_line(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.settings, "skip_ssl_verify", True, raising=False)
         main_mod.log_security_recommendations({"secure_secrets": False, "auth_enabled": False})
 
     async def test_request_validation_exception_handler_ctx_non_dict(self):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -10968,6 +11100,7 @@ class TestRemainingCoverageGaps:
         assert response.status_code == 422
 
     async def test_update_gateway_validation_error_branch(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         class FakeValidationError(Exception):
@@ -10988,6 +11121,7 @@ class TestRemainingCoverageGaps:
         assert json.loads(response.body.decode()) == {"detail": "bad"}
 
     async def test_lifespan_log_aggregation_timeout_and_cancellation(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         def make_service():  # noqa: ANN001 - local test helper
@@ -11046,6 +11180,7 @@ class TestRemainingCoverageGaps:
         subscriber = MagicMock()
         subscriber.start = AsyncMock()
         subscriber.stop = AsyncMock()
+        # First-Party
         import mcpgateway.cache.registry_cache as registry_cache_mod
 
         monkeypatch.setattr(registry_cache_mod, "get_cache_invalidation_subscriber", MagicMock(return_value=subscriber))
@@ -11076,6 +11211,7 @@ class TestRemainingCoverageGaps:
 
     async def test_lifespan_log_aggregation_timeout_branch(self, monkeypatch):
         """Specifically hit the TimeoutError -> continue branch in run_log_aggregation_loop."""
+        # First-Party
         import mcpgateway.main as main_mod
 
         def make_service():  # noqa: ANN001 - local test helper
@@ -11130,6 +11266,7 @@ class TestRemainingCoverageGaps:
         subscriber = MagicMock()
         subscriber.start = AsyncMock()
         subscriber.stop = AsyncMock()
+        # First-Party
         import mcpgateway.cache.registry_cache as registry_cache_mod
 
         monkeypatch.setattr(registry_cache_mod, "get_cache_invalidation_subscriber", MagicMock(return_value=subscriber))
@@ -11160,6 +11297,7 @@ class TestRemainingCoverageGaps:
             await asyncio.sleep(0.05)
 
     async def test_lifespan_reraises_unexpected_startup_error(self, monkeypatch):
+        # First-Party
         import mcpgateway.main as main_mod
 
         # Keep startup/shutdown lightweight.
@@ -11174,6 +11312,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
 
+        # First-Party
         import mcpgateway.cache.registry_cache as registry_cache_mod
 
         subscriber = MagicMock()
@@ -11188,8 +11327,10 @@ class TestRemainingCoverageGaps:
                 pass
 
     async def test_module_level_structured_logging_and_static_mount_errors(self, monkeypatch):
+        # Standard
         from types import ModuleType
 
+        # Third-Party
         from fastapi import APIRouter
 
         # Keep router imports light.
@@ -11215,8 +11356,10 @@ class TestRemainingCoverageGaps:
         assert resp.status_code == 301
 
     async def test_module_level_llm_and_toolops_router_success_paths(self, monkeypatch):
+        # Standard
         from types import ModuleType
 
+        # Third-Party
         from fastapi import APIRouter
 
         # Stub router modules so include_router executes without importing heavy deps.
@@ -11248,8 +11391,10 @@ class TestRemainingCoverageGaps:
         _ = _import_fresh_main_module(monkeypatch, overrides=overrides)
 
     async def test_module_level_email_auth_and_sso_success(self, monkeypatch):
+        # Standard
         from types import ModuleType
 
+        # Third-Party
         from fastapi import APIRouter
 
         auth_mod = ModuleType("mcpgateway.routers.auth")
@@ -11268,8 +11413,10 @@ class TestRemainingCoverageGaps:
         _ = _import_fresh_main_module(monkeypatch, overrides=overrides)
 
     async def test_module_level_email_auth_and_sso_import_error(self, monkeypatch):
+        # Standard
         from types import ModuleType
 
+        # Third-Party
         from fastapi import APIRouter
 
         auth_mod = ModuleType("mcpgateway.routers.auth")
@@ -11299,8 +11446,10 @@ class TestRemainingCoverageGaps:
         _ = _import_fresh_main_module(monkeypatch, overrides=overrides, force_import_error=force_error)
 
     async def test_module_level_reverse_proxy_router_success(self, monkeypatch):
+        # Standard
         from types import ModuleType
 
+        # Third-Party
         from fastapi import APIRouter
 
         reverse_proxy_mod = ModuleType("mcpgateway.routers.reverse_proxy")
@@ -11328,6 +11477,7 @@ class TestRemainingCoverageGaps:
         assert mod.plugin_manager is None
 
     async def test_module_level_uses_settings_backed_plugin_enablement(self, monkeypatch):
+        # First-Party
         import mcpgateway.plugins.framework.settings as plugin_settings_mod
 
         monkeypatch.delenv("PLUGINS_ENABLED", raising=False)
@@ -11351,6 +11501,7 @@ class TestHardeningHelperCoverage:
     """Target helper branches added for hardening paths."""
 
     def test_get_request_identity_prefers_verified_payload_context(self):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -11363,6 +11514,7 @@ class TestHardeningHelperCoverage:
         assert is_admin is True
 
     def test_get_request_identity_uses_user_attribute_admin_fallback(self):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -11379,6 +11531,7 @@ class TestHardeningHelperCoverage:
         assert is_admin is True
 
     def test_get_scoped_resource_access_context_admin_and_public_only(self):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -11392,6 +11545,7 @@ class TestHardeningHelperCoverage:
 
     @pytest.mark.asyncio
     async def test_assert_session_owner_or_admin_returns_404_for_missing_session(self):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -11407,6 +11561,7 @@ class TestHardeningHelperCoverage:
         assert excinfo.value.status_code == 404
 
     def test_enforce_scoped_resource_access_denies_on_failed_ownership_check(self):
+        # First-Party
         import mcpgateway.main as main_mod
 
         request = MagicMock(spec=Request)
@@ -11425,6 +11580,7 @@ class TestHardeningHelperCoverage:
 @pytest.mark.asyncio
 async def test_protocol_completion_endpoint_direct_admin_null_teams_preserves_bypass(monkeypatch):
     """Direct call should preserve admin bypass semantics for completion endpoint."""
+    # First-Party
     import mcpgateway.main as main_mod
 
     request = MagicMock(spec=Request)
@@ -11447,6 +11603,7 @@ async def test_protocol_completion_endpoint_direct_admin_null_teams_preserves_by
 @pytest.mark.asyncio
 async def test_protocol_completion_endpoint_direct_non_admin_none_teams_becomes_public_only(monkeypatch):
     """Direct call should normalize non-admin teams=None to public-only scope."""
+    # First-Party
     import mcpgateway.main as main_mod
 
     request = MagicMock(spec=Request)
@@ -11469,6 +11626,7 @@ async def test_protocol_completion_endpoint_direct_non_admin_none_teams_becomes_
 @pytest.mark.asyncio
 async def test_handle_rpc_completion_direct_admin_null_teams_preserves_bypass(monkeypatch):
     """RPC completion direct path should preserve admin bypass context."""
+    # First-Party
     import mcpgateway.main as main_mod
 
     request = MagicMock(spec=Request)
@@ -11493,6 +11651,7 @@ async def test_handle_rpc_completion_direct_admin_null_teams_preserves_bypass(mo
 @pytest.mark.asyncio
 async def test_handle_rpc_completion_direct_non_admin_none_teams_becomes_public_only(monkeypatch):
     """RPC completion direct path should normalize teams=None for non-admin callers."""
+    # First-Party
     import mcpgateway.main as main_mod
 
     request = MagicMock(spec=Request)

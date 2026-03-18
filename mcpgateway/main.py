@@ -4675,6 +4675,9 @@ async def list_tools(
         HTTPException: If JSONPath modifier fails to process the tools list
     """
 
+    # Validate apijsonpath early — fail fast before the database query
+    parsed_apijsonpath = _parse_apijsonpath(apijsonpath)
+
     # Parse tags parameter if provided
     tags_list = None
     if tags:
@@ -4727,10 +4730,6 @@ async def list_tools(
     # Release transaction before response serialization
     db.commit()
     db.close()
-
-    # Allow apijsonpath to be supplied either as a model (direct call/tests) or
-    # as a JSON-encoded string via query (HTTP GET). Body() is not allowed on GET.
-    parsed_apijsonpath = _parse_apijsonpath(apijsonpath)
 
     if parsed_apijsonpath is None:
         if include_pagination:
