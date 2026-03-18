@@ -30,6 +30,18 @@ MCP_RUST_AFFINITY_CORE_ENABLED="${MCP_RUST_AFFINITY_CORE_ENABLED:-}"
 MCP_RUST_SESSION_AUTH_REUSE_ENABLED="${MCP_RUST_SESSION_AUTH_REUSE_ENABLED:-}"
 MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS="${MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS:-}"
 
+# Rust A2A sidecar mode (mirrors MCP runtime approach).
+RUST_A2A_MODE="${RUST_A2A_MODE:-off}"
+CONTEXTFORGE_ENABLE_RUST_A2A_BUILD="${CONTEXTFORGE_ENABLE_RUST_A2A_BUILD:-${CONTEXTFORGE_ENABLE_RUST_BUILD:-false}}"
+A2A_RUST_LISTEN_HTTP="${A2A_RUST_LISTEN_HTTP:-}"
+A2A_RUST_BACKEND_BASE_URL="${A2A_RUST_BACKEND_BASE_URL:-}"
+A2A_RUST_AUTH_SECRET="${A2A_RUST_AUTH_SECRET:-}"
+A2A_RUST_MAX_CONCURRENT="${A2A_RUST_MAX_CONCURRENT:-}"
+A2A_RUST_MAX_QUEUED="${A2A_RUST_MAX_QUEUED:-}"
+A2A_RUST_INVOKE_TIMEOUT_SECS="${A2A_RUST_INVOKE_TIMEOUT_SECS:-}"
+
+RUST_A2A_PID=""
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}" || {
     echo "ERROR: Cannot change to script directory: ${SCRIPT_DIR}"
@@ -191,10 +203,72 @@ cleanup() {
         pids+=("${RUST_MCP_PID}")
     fi
 
+    if [[ -n "${RUST_A2A_PID}" ]] && kill -0 "${RUST_A2A_PID}" 2>/dev/null; then
+        pids+=("${RUST_A2A_PID}")
+    fi
+
     if [[ ${#pids[@]} -gt 0 ]]; then
         kill "${pids[@]}" 2>/dev/null || true
         wait "${pids[@]}" 2>/dev/null || true
     fi
+}
+
+start_managed_rust_a2a_service() {
+    local runtime_bin="/app/bin/a2a-service"
+    local rust_listen_http="${A2A_RUST_LISTEN_HTTP:-127.0.0.1:8790}"
+    local backend_base_url="${A2A_RUST_BACKEND_BASE_URL:-http://127.0.0.1:${PORT:-4444}}"
+
+    if [[ "${CONTEXTFORGE_ENABLE_RUST_A2A_BUILD}" != "true" ]]; then
+        echo "ERROR: RUST_A2A_MODE enabled but this image was built without Rust A2A artifacts."
+        echo "Rebuild with the Rust A2A binary included, or set RUST_A2A_MODE=off."
+        exit 1
+    fi
+
+    if [[ ! -x "${runtime_bin}" ]]; then
+        echo "ERROR: Rust A2A service binary not found at ${runtime_bin}"
+        exit 1
+    fi
+
+    export A2A_RUST_LISTEN_HTTP="${rust_listen_http}"
+    export A2A_RUST_BACKEND_BASE_URL="${backend_base_url}"
+    if [[ -n "${A2A_RUST_AUTH_SECRET}" ]]; then
+        export A2A_RUST_AUTH_SECRET="${A2A_RUST_AUTH_SECRET}"
+    fi
+    if [[ -n "${A2A_RUST_MAX_CONCURRENT}" ]]; then
+        export A2A_RUST_MAX_CONCURRENT="${A2A_RUST_MAX_CONCURRENT}"
+    fi
+    if [[ -n "${A2A_RUST_MAX_QUEUED}" ]]; then
+        export A2A_RUST_MAX_QUEUED="${A2A_RUST_MAX_QUEUED}"
+    fi
+    if [[ -n "${A2A_RUST_INVOKE_TIMEOUT_SECS}" ]]; then
+        export A2A_RUST_INVOKE_TIMEOUT_SECS="${A2A_RUST_INVOKE_TIMEOUT_SECS}"
+    fi
+
+    echo "Starting Rust A2A service on ${A2A_RUST_LISTEN_HTTP} (backend: ${A2A_RUST_BACKEND_BASE_URL})..."
+    "${runtime_bin}" &
+    RUST_A2A_PID=$!
+
+    python3 - <<'PY'
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+listen = os.environ.get("A2A_RUST_LISTEN_HTTP", "127.0.0.1:8790")
+health_url = f"http://{listen}/health"
+
+for _ in range(60):
+    try:
+        with urllib.request.urlopen(health_url, timeout=2) as response:
+            if response.status == 200:
+                sys.exit(0)
+    except (OSError, urllib.error.URLError):
+        time.sleep(0.5)
+
+print(f\"ERROR: Rust A2A service failed health check at {health_url}\", file=sys.stderr)
+sys.exit(1)
+PY
 }
 
 print_mcp_runtime_mode() {
@@ -385,6 +459,20 @@ PY
 apply_rust_mcp_mode_defaults
 build_server_command "$@"
 print_mcp_runtime_mode
+
+case "${RUST_A2A_MODE,,}" in
+    ""|off)
+        ;;
+    shadow|edge)
+        trap cleanup EXIT INT TERM
+        start_managed_rust_a2a_service
+        ;;
+    *)
+        echo "ERROR: Unknown RUST_A2A_MODE value: ${RUST_A2A_MODE}"
+        echo "Valid options: off, shadow, edge"
+        exit 1
+        ;;
+esac
 
 if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" && "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
     trap cleanup EXIT INT TERM

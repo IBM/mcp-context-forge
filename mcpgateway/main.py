@@ -8344,6 +8344,84 @@ async def handle_internal_mcp_prompts_get_authz(request: Request):
     )
 
 
+async def _authorize_internal_a2a_method(
+    request: Request,
+    *,
+    permission: str,
+    method: str,
+) -> Response:
+    """Authorize a trusted internal A2A method for Rust module execution.
+
+    A2A is not server-scoped like MCP. We still enforce both token-scope caps and RBAC
+    via the same core authorization machinery used by internal MCP authz endpoints.
+
+    Args:
+        request: Trusted internal authz request.
+        permission: Permission required for the operation.
+        method: Method label used for permission error reporting.
+
+    Returns:
+        Empty 204 response when authorized; otherwise a JSON error response.
+    """
+    db = SessionLocal()
+    try:
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission=permission,
+            method=method,
+        )
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/list/authz/")
+@utility_router.post("/_internal/a2a/list/authz")
+async def handle_internal_a2a_list_authz(request: Request):
+    """Authorize trusted A2A list requests for Rust module execution."""
+    return await _authorize_internal_a2a_method(
+        request,
+        permission="a2a.read",
+        method="a2a/list",
+    )
+
+
+@utility_router.post("/_internal/a2a/get/authz/")
+@utility_router.post("/_internal/a2a/get/authz")
+async def handle_internal_a2a_get_authz(request: Request):
+    """Authorize trusted A2A get requests for Rust module execution."""
+    return await _authorize_internal_a2a_method(
+        request,
+        permission="a2a.read",
+        method="a2a/get",
+    )
+
+
+@utility_router.post("/_internal/a2a/invoke/authz/")
+@utility_router.post("/_internal/a2a/invoke/authz")
+async def handle_internal_a2a_invoke_authz(request: Request):
+    """Authorize trusted A2A invoke requests for Rust module execution."""
+    return await _authorize_internal_a2a_method(
+        request,
+        permission="a2a.invoke",
+        method="a2a/invoke",
+    )
+
+
 async def _maybe_forward_affinitized_rpc_request(
     request: Request,
     *,
