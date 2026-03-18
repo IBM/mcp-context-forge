@@ -2218,7 +2218,7 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_post_with_path_query_and_body_params(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test POST request with path parameters, query parameters (with templates), and body parameters.
-        
+
         This test demonstrates the complete parameter handling:
         - Path parameters (e.g., {user_id}) are substituted into the URL path
         - Query parameters can also use templates (e.g., ?api_key={api_key})
