@@ -1423,7 +1423,9 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
     # Log jsonpath_modifier invocation with structured data (only if debug enabled)
     if logger.isEnabledFor(logging.DEBUG):
         data_length = len(data) if isinstance(data, list) else None
-        logger.debug(f"jsonpath_modifier: path='{jsonpath}', has_mappings={mappings is not None}, " f"data_type={type(data).__name__}, data_length={data_length}")
+        logger.debug(
+            f"jsonpath_modifier: path='{SecurityValidator.sanitize_log_message(jsonpath)}', has_mappings={mappings is not None}, " f"data_type={type(data).__name__}, data_length={data_length}"
+        )
 
     try:
         main_expr: JSONPath = _parse_jsonpath(jsonpath)
@@ -4740,9 +4742,10 @@ async def list_tools(
     try:
         result = jsonpath_modifier(tools_dict_list, parsed_apijsonpath.jsonpath, parsed_apijsonpath.mapping)
 
-        # If pagination is requested, wrap the result with cursor metadata
+        # If pagination is requested, wrap the result with cursor metadata.
+        # Use "nextCursor" to match the CursorPaginatedToolsResponse alias contract.
         if include_pagination:
-            paginated_result = {"tools": result, "next_cursor": next_cursor}
+            paginated_result = {"tools": result, "nextCursor": next_cursor}
             return ORJSONResponse(content=paginated_result)
 
         # Return ORJSONResponse to bypass FastAPI's response_model validation

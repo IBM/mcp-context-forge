@@ -1471,6 +1471,36 @@ class TestParseApijsonpath:
             assert isinstance(result, JsonPathModifier)
 
 
+class TestApijsonpathHTTP:
+    """End-to-end HTTP tests for the apijsonpath query parameter via TestClient."""
+
+    def test_list_tools_apijsonpath_via_http(self, test_client, auth_headers):
+        """GET /tools?apijsonpath=... should return 200 with JSONPath applied."""
+        resp = test_client.get("/tools/", headers=auth_headers, params={"apijsonpath": '{"jsonpath":"$[*].name"}'})
+        assert resp.status_code == 200
+        data = resp.json()
+        # jsonpath_modifier returns a list of matched values (may be empty)
+        assert isinstance(data, list)
+
+    def test_list_tools_apijsonpath_invalid_json_via_http(self, test_client, auth_headers):
+        """GET /tools?apijsonpath={bad should return 400."""
+        resp = test_client.get("/tools/", headers=auth_headers, params={"apijsonpath": "{bad json"})
+        assert resp.status_code == 400
+
+    def test_list_tools_apijsonpath_pagination_via_http(self, test_client, auth_headers):
+        """GET /tools?apijsonpath=...&include_pagination=true should use nextCursor key."""
+        resp = test_client.get(
+            "/tools/",
+            headers=auth_headers,
+            params={"apijsonpath": '{"jsonpath":"$[*].name"}', "include_pagination": "true"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "tools" in data
+        # Must be camelCase to match CursorPaginatedToolsResponse alias contract
+        assert "nextCursor" in data
+
+
 class TestDocsAuthMiddleware:
     """Cover DocsAuthMiddleware branches."""
 
@@ -10117,10 +10147,10 @@ class TestRemainingCoverageGaps:
         assert isinstance(result, ORJSONResponse)
         response_data = orjson.loads(result.body)
 
-        # Should have both tools and next_cursor
+        # Should have both tools and nextCursor (camelCase matches CursorPaginatedToolsResponse alias)
         assert "tools" in response_data
-        assert "next_cursor" in response_data
-        assert response_data["next_cursor"] == "cursor123"
+        assert "nextCursor" in response_data
+        assert response_data["nextCursor"] == "cursor123"
         assert len(response_data["tools"]) == 2
         assert response_data["tools"][0] == {"toolId": "t1", "toolName": "Tool 1"}
         assert response_data["tools"][1] == {"toolId": "t2", "toolName": "Tool 2"}
@@ -10171,10 +10201,10 @@ class TestRemainingCoverageGaps:
         assert isinstance(result, ORJSONResponse)
         response_data = orjson.loads(result.body)
 
-        # Should have tools and next_cursor as null (last page)
+        # Should have tools and nextCursor as null (last page, camelCase matches alias)
         assert "tools" in response_data
-        assert "next_cursor" in response_data
-        assert response_data["next_cursor"] is None
+        assert "nextCursor" in response_data
+        assert response_data["nextCursor"] is None
         assert len(response_data["tools"]) == 1
         assert response_data["tools"][0] == {"toolId": "t1", "toolName": "Tool 1"}
 
