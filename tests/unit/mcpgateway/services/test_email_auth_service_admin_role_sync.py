@@ -473,3 +473,25 @@ async def test_create_platform_admin_existing_user_role_assignment_exception(moc
 
                 # Verify session was rolled back to clear failed transaction state
                 mock_db.rollback.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_create_platform_admin_role_sync_rollback_also_fails(mock_db):
+    """Test create_platform_admin when both role sync and rollback fail."""
+    mock_db.rollback = MagicMock(side_effect=Exception("rollback failed"))
+    service = EmailAuthService(mock_db)
+
+    existing_user = EmailUser(email="test@example.com", password_hash="hash", is_admin=False, is_active=True)
+
+    with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=existing_user)):
+        with patch.object(service.password_service, "verify_password_async", new=AsyncMock(return_value=True)):
+            with patch("mcpgateway.services.role_service.RoleService") as mock_role_service_cls:
+                mock_role_service = AsyncMock()
+                mock_role_service.get_role_by_name = AsyncMock(side_effect=Exception("DB error"))
+                mock_role_service_cls.return_value = mock_role_service
+
+                result = await service.create_platform_admin(email="test@example.com", password="pass", full_name="Test Admin")
+
+                assert result.is_admin is True
+                assert result.is_active is True
+                mock_db.rollback.assert_called_once()
