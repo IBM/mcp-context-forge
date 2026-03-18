@@ -63,10 +63,10 @@ Logical groups that:
 | Role | Scope | Permissions |
 |------|-------|-------------|
 | `platform_admin` | global | `["*"]` (all permissions) |
-| `team_admin` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
-| `developer` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.read, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
-| `viewer` | team | admin.dashboard, gateways.read, servers.read, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
-| `platform_viewer` | global | admin.dashboard, gateways.read, servers.read, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `team_admin` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `developer` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `viewer` | team | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `platform_viewer` | global | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
 
 !!! info "Default Role Assignment"
     **New users automatically receive up to two roles upon creation:**
@@ -462,7 +462,7 @@ Permissions are defined in the `Permissions` class and control what actions user
 | **Resources** | resources.create, resources.read, resources.update, resources.delete, resources.share |
 | **Gateways** | gateways.create, gateways.read, gateways.update, gateways.delete |
 | **Prompts** | prompts.create, prompts.read, prompts.update, prompts.delete, prompts.execute |
-| **Servers** | servers.create, servers.read, servers.update, servers.delete, servers.manage |
+| **Servers** | servers.create, servers.read, servers.use, servers.update, servers.delete, servers.manage |
 | **Tokens** | tokens.create, tokens.read, tokens.update, tokens.revoke |
 | **Admin** | admin.system_config, admin.user_management, admin.security_audit, admin.overview, admin.dashboard, admin.events, admin.grpc, admin.plugins |
 | **A2A** | a2a.create, a2a.read, a2a.update, a2a.delete, a2a.invoke |
@@ -717,7 +717,7 @@ Create a JSON file containing an array of role definitions:
 | Tools | `tools.create`, `tools.read`, `tools.update`, `tools.delete`, `tools.execute` |
 | Resources | `resources.create`, `resources.read`, `resources.update`, `resources.delete` |
 | Prompts | `prompts.create`, `prompts.read`, `prompts.update`, `prompts.delete` |
-| Servers | `servers.create`, `servers.read`, `servers.update`, `servers.delete` |
+| Servers | `servers.create`, `servers.read`, `servers.use`, `servers.update`, `servers.delete`, `servers.manage` |
 | Gateways | `gateways.create`, `gateways.read`, `gateways.update`, `gateways.delete` |
 | Teams | `teams.create`, `teams.read`, `teams.update`, `teams.delete`, `teams.join` |
 
