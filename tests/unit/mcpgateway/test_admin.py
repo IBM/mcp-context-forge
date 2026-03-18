@@ -4874,7 +4874,7 @@ class TestA2AAgentManagement:
         body = json.loads(result.body)
         assert body["success"] is True
         assert "result" in body
-        mock_get_agent.assert_called_with(mock_db, "agent-1")
+        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email="test-user", token_teams=None)
         mock_invoke_agent.assert_called_once()
 
     @pytest.mark.asyncio
