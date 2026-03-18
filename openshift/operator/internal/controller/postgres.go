@@ -146,7 +146,7 @@ func reconcileManagedPostgres(ctx context.Context, c client.Client, cf *cfv1.Con
 							TimeoutSeconds:      5,
 						},
 						VolumeMounts: []corev1.VolumeMount{{
-							Name: "data", MountPath: "/var/lib/postgresql/data",
+							Name: "data", MountPath: "/var/lib/postgresql",
 						}},
 						SecurityContext: &corev1.SecurityContext{
 							AllowPrivilegeEscalation: boolPtr(false),
