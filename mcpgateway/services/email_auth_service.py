@@ -1165,7 +1165,9 @@ class EmailAuthService:
                 else:
                     logger.warning(f"platform_admin role not found. User {SecurityValidator.sanitize_log_message(email)} updated with is_admin=True but without platform_admin role assignment.")
             except Exception as role_error:
-                logger.error(f"Failed to assign platform_admin role to {SecurityValidator.sanitize_log_message(email)}: {SecurityValidator.sanitize_log_message(str(role_error))}. User updated with is_admin=True but role assignment failed.")
+                logger.error(
+                    f"Failed to assign platform_admin role to {SecurityValidator.sanitize_log_message(email)}: {SecurityValidator.sanitize_log_message(str(role_error))}. User updated with is_admin=True but role assignment failed."
+                )
                 # Rollback to clear any failed transaction state (e.g. PendingRollbackError
                 # from a failed commit inside assign_role_to_user), then re-apply admin flags
                 # so the subsequent commit can persist the admin user update.
