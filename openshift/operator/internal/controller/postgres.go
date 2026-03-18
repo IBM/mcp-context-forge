@@ -97,8 +97,7 @@ func reconcileManagedPostgres(ctx context.Context, c client.Client, cf *cfv1.Con
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: boolPtr(true),
-						FSGroup:      int64Ptr(999),
+						FSGroup: int64Ptr(999),
 					},
 					Containers: []corev1.Container{{
 						Name:  "postgres",
