@@ -719,7 +719,7 @@ Observed behavior:
     `/_internal/mcp/tools/list/authz`
 
 Why this matters:
-- The current “sustained-load tail” is not one problem:
+- The current "sustained-load tail" is not one problem:
   - one part is specific to the experimental RMCP upstream client path on the
     richer `fast_time` server profile
   - the other part is a lower-rate internal Rust -> Python auth/authz hop
@@ -756,7 +756,7 @@ Observed behavior:
 
 Why this matters:
 - Empty-string bool env handling is easy to misread operationally.
-- The experimental RMCP path should not appear enabled “by accident” through
+- The experimental RMCP path should not appear enabled "by accident" through
   ambiguous compose/env wiring.
 
 Likely area:
