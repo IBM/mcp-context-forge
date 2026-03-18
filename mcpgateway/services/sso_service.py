@@ -1444,6 +1444,15 @@ class SSOService:
         # _is_email_verified_claim's absent-means-pass-through logic applies correctly.
         # Injecting None (via .get()) when the key is missing would cause the key to
         # be present in the dict with a falsy value, silently blocking login.
+        metadata = provider.provider_metadata or {}
+        groups_claim = metadata.get("groups_claim", "groups")
+        groups = []
+        if groups_claim in user_data:
+            gc = user_data.get(groups_claim, [])
+            if isinstance(gc, list):
+                groups = gc
+            elif isinstance(gc, str):
+                groups = [gc]
         generic_normalized: Dict[str, Any] = {
             "email": user_data.get("email"),
             "full_name": user_data.get("name"),
@@ -1451,6 +1460,7 @@ class SSOService:
             "provider_id": user_data.get("sub"),
             "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
             "provider": provider.id,
+            "groups": groups,
         }
         if "email_verified" in user_data:
             generic_normalized["email_verified"] = user_data["email_verified"]
