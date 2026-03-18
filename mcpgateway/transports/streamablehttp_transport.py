@@ -3406,12 +3406,38 @@ class _StreamableHttpAuthHandler:
     async def _auth_jwt(self, *, token: str) -> bool:
         """Verify a JWT Bearer token and populate the user context.
 
+        Routes to ContextForge-issued or IdP-issued (OAuth) verification based
+        on the token's ``iss`` claim. IdP-issued tokens are only accepted for
+        virtual servers with ``oauth_enabled=True``.
+
         Args:
             token: Bearer token value extracted from the Authorization header.
 
         Returns:
             True if verification succeeds, False if rejected (401/403/503 sent).
         """
+        # Peek at the token issuer to decide verification path.
+        # ContextForge-issued tokens (SSO session, API tokens) have iss == settings.jwt_issuer.
+        # IdP-issued tokens (OAuth access tokens from e.g. Keycloak, Authentik) have the IdP's issuer.
+        # Third-Party
+        import jwt  # pylint: disable=import-outside-toplevel
+
+        try:
+            unverified = jwt.decode(token, options={"verify_signature": False})
+        except jwt.DecodeError:
+            return await self._send_error(detail="Invalid token format", headers={"WWW-Authenticate": "Bearer"})
+
+        token_issuer = unverified.get("iss", "")
+        if token_issuer != settings.jwt_issuer:
+            # IdP-issued token — delegate to OAuth access token verification
+            oauth_result = await self._try_oauth_access_token(token)
+            if oauth_result is True:
+                return True
+            if oauth_result is False:
+                return False  # Error response already sent
+            # Not an oauth_enabled server — reject
+            return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
+
         try:
             user_payload = await verify_credentials(token)
             # Store enriched user context with normalized teams
@@ -3671,7 +3697,7 @@ class _StreamableHttpAuthHandler:
                 team_name=trace_team_name,
             )
         except HTTPException:
-            # JWT verification failed (expired, malformed, bad signature, etc.)
+            # Internal JWT verification failed (expired, malformed, bad signature, etc.)
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
         except SQLAlchemyError:
             # DB failure during team resolution or membership validation
@@ -3682,6 +3708,104 @@ class _StreamableHttpAuthHandler:
             logger.exception("Unexpected error during MCP JWT authentication")
             return await self._send_error(detail="Authentication failed", headers={"WWW-Authenticate": "Bearer"})
 
+        return True
+
+    async def _try_oauth_access_token(self, token: str) -> Optional[bool]:
+        """Attempt OAuth access token verification for oauth_enabled virtual servers.
+
+        Called when internal JWT verification fails. Checks if the target server
+        has ``oauth_enabled=True``, verifies the token against the server's
+        configured authorization servers via JWKS, and resolves the user from DB.
+
+        Args:
+            token: Raw Bearer token that failed internal JWT verification.
+
+        Returns:
+            True if OAuth verification and user resolution succeeded.
+            False if verification succeeded but user resolution failed (error sent).
+            None if this server does not use OAuth (caller should send standard 401).
+        """
+        path = self.scope.get("path", "")
+        match = _SERVER_ID_RE.search(path)
+        if not match:
+            return None
+
+        server_id = match.group("server_id")
+
+        # Look up server OAuth configuration
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
+
+        try:
+            async with get_db() as db:
+                server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
+        except SQLAlchemyError:
+            logger.exception("DB error looking up server %s for OAuth verification", server_id)
+            await self._send_error(detail="Service unavailable", status_code=503)
+            return False
+
+        if not server or not server.oauth_enabled or not server.oauth_config:
+            return None
+
+        authorization_servers = server.oauth_config.get("authorization_servers", [])
+        if not authorization_servers:
+            auth_server = server.oauth_config.get("authorization_server")
+            if isinstance(auth_server, str) and auth_server.strip():
+                authorization_servers = [auth_server.strip()]
+        if not authorization_servers:
+            return None
+
+        client_id = server.oauth_config.get("client_id")
+
+        # Verify token against the IdP's JWKS
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
+
+        claims = await verify_oauth_access_token(token, authorization_servers, expected_audience=client_id)
+        if claims is None:
+            resource_metadata = _build_resource_metadata_url(self.scope, server_id)
+            www_auth = f'Bearer resource_metadata="{resource_metadata}"' if resource_metadata else "Bearer"
+            await self._send_error(detail="Invalid OAuth access token", headers={"WWW-Authenticate": www_auth})
+            return False
+
+        # Resolve user identity from verified claims
+        user_email = claims.get("email") or claims.get("preferred_username") or claims.get("sub")
+        if not user_email or not isinstance(user_email, str) or "@" not in user_email:
+            await self._send_error(detail="OAuth token missing valid email claim")
+            return False
+
+        user_email = user_email.strip().lower()
+
+        # Look up user in ContextForge DB — user must already exist (no auto-creation)
+        # First-Party
+        from mcpgateway.auth import _get_user_by_email_sync, _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
+
+        user_record = await asyncio.to_thread(_get_user_by_email_sync, user_email)
+        if user_record is None:
+            await self._send_error(detail="User not registered in ContextForge. Please log in via SSO first.")
+            return False
+        if not user_record.is_active:
+            await self._send_error(detail="Account disabled")
+            return False
+
+        # Resolve teams from DB (same path as session tokens)
+        is_admin = bool(user_record.is_admin)
+        final_teams = None if is_admin else await _resolve_teams_from_db(user_email, user_record)
+
+        user_context_var.set(
+            {
+                "email": user_email,
+                "teams": final_teams,
+                "is_authenticated": True,
+                "is_admin": is_admin,
+                "permission_is_admin": is_admin,
+                "token_use": "oauth_access_token",
+            }
+        )
+        _oauth_checked_var.set(True)
         return True
 
 

@@ -4106,3 +4106,240 @@ class TestTenantIdPropagation:
                 await get_current_user(credentials=credentials, request=request)
 
             assert mock_prop.called, "_propagate_tenant_id must be called on the batched-query return path"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# OAuth access token verification via JWKS (RFC 9728)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestVerifyOauthAccessToken:
+    """Tests for verify_oauth_access_token() in verify_credentials.py.
+
+    Covers token verification via OIDC discovery + JWKS for Virtual Server
+    MCP endpoints with oauth_enabled=True (RFC 9728).
+    """
+
+    ISSUER = "https://auth.example.com/application/o/test/"
+    JWKS_URI = "https://auth.example.com/application/o/test/jwks/"
+
+    @staticmethod
+    def _generate_rsa_keypair():
+        # Third-Party
+        from cryptography.hazmat.primitives.asymmetric import rsa  # pylint: disable=import-outside-toplevel
+
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        return private_key, private_key.public_key()
+
+    @classmethod
+    def _sign_token(cls, claims: dict, private_key, kid: str = "test-key-1") -> str:
+        # Third-Party
+        import jwt  # pylint: disable=import-outside-toplevel
+
+        return jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": kid})
+
+    @pytest.fixture(autouse=True)
+    def _clear_oauth_caches(self):
+        # First-Party
+        from mcpgateway.utils.verify_credentials import _oauth_jwks_client_cache, _oauth_oidc_metadata_cache  # pylint: disable=import-outside-toplevel
+
+        _oauth_oidc_metadata_cache.clear()
+        _oauth_jwks_client_cache.clear()
+        yield
+        _oauth_oidc_metadata_cache.clear()
+        _oauth_jwks_client_cache.clear()
+
+    def _mock_discovery_and_jwks(self, public_key):
+        """Return a context manager that mocks OIDC discovery and JWKS client."""
+        mock_jwks_client = MagicMock()
+        mock_signing_key = MagicMock()
+        mock_signing_key.key = public_key
+        mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"issuer": self.ISSUER, "jwks_uri": self.JWKS_URI}
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_resp
+
+        # Standard
+        from contextlib import ExitStack  # pylint: disable=import-outside-toplevel
+
+        stack = ExitStack()
+        stack.enter_context(patch("mcpgateway.services.http_client_service.get_http_client", AsyncMock(return_value=mock_http)))
+        stack.enter_context(patch("mcpgateway.utils.verify_credentials._oauth_jwks_client_cache", {self.JWKS_URI: mock_jwks_client}))
+        return stack
+
+    @pytest.mark.asyncio
+    async def test_valid_token_returns_claims(self):
+        """A properly signed token from an allowed issuer returns verified claims."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
+
+        private_key, public_key = self._generate_rsa_keypair()
+        token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "email": "user@example.com", "exp": 9999999999, "iat": 1700000000}, private_key)
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(token, [self.ISSUER])
+
+        assert result is not None
+        assert result["sub"] == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_issuer_not_in_allowlist_returns_none(self):
+        """A token whose issuer is not in the allowlist is rejected."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
+
+        private_key, _ = self._generate_rsa_keypair()
+        token = self._sign_token({"iss": "https://evil.example.com/", "sub": "attacker", "exp": 9999999999, "iat": 1700000000}, private_key)
+
+        result = await verify_oauth_access_token(token, [self.ISSUER])
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_missing_issuer_claim_returns_none(self):
+        """A token without an iss claim is rejected."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
+
+        private_key, _ = self._generate_rsa_keypair()
+        token = self._sign_token({"sub": "user@example.com", "exp": 9999999999, "iat": 1700000000}, private_key)
+
+        result = await verify_oauth_access_token(token, [self.ISSUER])
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_malformed_token_returns_none(self):
+        """A non-JWT string is rejected gracefully."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
+
+        result = await verify_oauth_access_token("not-a-jwt", [self.ISSUER])
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_expired_token_returns_none(self):
+        """An expired token is rejected."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
+
+        private_key, public_key = self._generate_rsa_keypair()
+        token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "exp": 1000000000, "iat": 999999000}, private_key)
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(token, [self.ISSUER])
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_wrong_signature_returns_none(self):
+        """A token signed with a different key than JWKS provides is rejected."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
+
+        private_key, _ = self._generate_rsa_keypair()
+        _, wrong_public_key = self._generate_rsa_keypair()
+        token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "exp": 9999999999, "iat": 1700000000}, private_key)
+
+        with self._mock_discovery_and_jwks(wrong_public_key):
+            result = await verify_oauth_access_token(token, [self.ISSUER])
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_oidc_discovery_failure_returns_none(self):
+        """When OIDC discovery fails, verification returns None."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
+
+        private_key, _ = self._generate_rsa_keypair()
+        token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "exp": 9999999999, "iat": 1700000000}, private_key)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_resp
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", AsyncMock(return_value=mock_http)):
+            result = await verify_oauth_access_token(token, [self.ISSUER])
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_trailing_slash_normalization(self):
+        """Trailing slash differences between token issuer and allowlist are tolerated."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
+
+        private_key, public_key = self._generate_rsa_keypair()
+        issuer_no_slash = "https://auth.example.com/application/o/test"
+        token = self._sign_token({"iss": issuer_no_slash, "sub": "user@example.com", "email": "user@example.com", "exp": 9999999999, "iat": 1700000000}, private_key)
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(token, [self.ISSUER])  # allowlist has trailing slash
+
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_discovery_cache_reused(self):
+        """Second call within TTL reuses cached OIDC metadata."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import _discover_oidc_metadata  # pylint: disable=import-outside-toplevel
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"issuer": self.ISSUER, "jwks_uri": self.JWKS_URI}
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_resp
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", AsyncMock(return_value=mock_http)):
+            r1 = await _discover_oidc_metadata(self.ISSUER)
+            r2 = await _discover_oidc_metadata(self.ISSUER)
+
+        assert r1 == r2
+        assert mock_http.get.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_valid_audience_passes(self):
+        """Token with matching aud claim passes when expected_audience is set."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
+
+        private_key, public_key = self._generate_rsa_keypair()
+        client_id = "my-client-id"
+        token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "email": "user@example.com", "aud": client_id, "exp": 9999999999, "iat": 1700000000}, private_key)
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(token, [self.ISSUER], expected_audience=client_id)
+
+        assert result is not None
+        assert result["aud"] == client_id
+
+    @pytest.mark.asyncio
+    async def test_wrong_audience_rejected(self):
+        """Token with mismatched aud claim is rejected when expected_audience is set."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
+
+        private_key, public_key = self._generate_rsa_keypair()
+        token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "aud": "wrong-client", "exp": 9999999999, "iat": 1700000000}, private_key)
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(token, [self.ISSUER], expected_audience="correct-client")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_no_audience_check_when_not_configured(self):
+        """Token passes without aud check when expected_audience is not provided."""
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_oauth_access_token  # pylint: disable=import-outside-toplevel
+
+        private_key, public_key = self._generate_rsa_keypair()
+        token = self._sign_token({"iss": self.ISSUER, "sub": "user@example.com", "email": "user@example.com", "aud": "any-audience", "exp": 9999999999, "iat": 1700000000}, private_key)
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(token, [self.ISSUER])  # no expected_audience
+
+        assert result is not None

@@ -55,7 +55,8 @@ Examples:
 import asyncio
 from base64 import b64decode
 import binascii
-from typing import Any, Optional
+from time import monotonic
+from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -1219,3 +1220,116 @@ async def require_admin_auth(
         else:
             # Re-raise the basic auth error
             raise
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# OAuth access token verification via JWKS (RFC 9728 — Virtual Server MCP auth)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Module-level caches for OIDC discovery and JWKS clients.
+# Same caching pattern used in sso_service.py for id_token verification.
+_oauth_oidc_metadata_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_OAUTH_OIDC_METADATA_TTL = 300  # seconds
+_oauth_jwks_client_cache: Dict[str, jwt.PyJWKClient] = {}
+
+
+async def _discover_oidc_metadata(issuer: str) -> Optional[Dict[str, Any]]:
+    """Fetch and cache OIDC provider metadata via well-known endpoint.
+
+    Args:
+        issuer: OIDC issuer URL.
+
+    Returns:
+        Provider metadata dict, or None on failure.
+    """
+    normalized = issuer.rstrip("/")
+    cached = _oauth_oidc_metadata_cache.get(normalized)
+    if cached is not None:
+        cached_at, metadata = cached
+        if monotonic() - cached_at < _OAUTH_OIDC_METADATA_TTL:
+            return metadata
+        _oauth_oidc_metadata_cache.pop(normalized, None)
+
+    # First-Party
+    from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+
+    try:
+        client = await get_http_client()
+        resp = await client.get(f"{normalized}/.well-known/openid-configuration", timeout=10)
+        if resp.status_code != 200:
+            logger.warning("OAuth OIDC discovery failed for %s: HTTP %s", normalized, resp.status_code)
+            return None
+        metadata = resp.json()
+        if not isinstance(metadata, dict):
+            return None
+        _oauth_oidc_metadata_cache[normalized] = (monotonic(), metadata)
+        return metadata
+    except Exception as exc:
+        logger.warning("OAuth OIDC discovery request failed for %s: %s", normalized, exc)
+        return None
+
+
+async def verify_oauth_access_token(token: str, authorization_servers: List[str], *, expected_audience: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Verify an OAuth access token issued by a configured authorization server.
+
+    Used for Virtual Server MCP endpoints with ``oauth_enabled=True``.
+    Validates the token issuer against the server's allowlist, discovers
+    the JWKS endpoint via OIDC metadata, and verifies the signature.
+    When ``expected_audience`` is provided (from ``oauth_config.client_id``),
+    the token's ``aud`` claim is also validated.
+
+    Args:
+        token: Raw JWT Bearer token string.
+        authorization_servers: Allowed issuer URLs from ``server.oauth_config``.
+        expected_audience: Optional audience to validate against (typically the OAuth client_id).
+
+    Returns:
+        Verified claims dict on success, None on failure.
+    """
+    try:
+        unverified = jwt.decode(token, options={"verify_signature": False})
+    except jwt.DecodeError:
+        return None
+
+    token_issuer = unverified.get("iss")
+    if not token_issuer:
+        return None
+
+    # Validate issuer against allowlist (normalize trailing slashes)
+    normalized_issuer = token_issuer.rstrip("/")
+    normalized_allowed = {s.rstrip("/") for s in authorization_servers if isinstance(s, str)}
+    if normalized_issuer not in normalized_allowed:
+        logger.warning("OAuth token issuer %s not in allowlist %s", normalized_issuer, normalized_allowed)
+        return None
+
+    # Discover OIDC metadata and resolve JWKS URI
+    metadata = await _discover_oidc_metadata(normalized_issuer)
+    if not metadata:
+        return None
+
+    jwks_uri = metadata.get("jwks_uri")
+    if not isinstance(jwks_uri, str) or not jwks_uri.strip():
+        logger.warning("No jwks_uri in OIDC metadata for issuer %s", normalized_issuer)
+        return None
+
+    try:
+        jwks_uri = jwks_uri.strip()
+        if jwks_uri not in _oauth_jwks_client_cache:
+            _oauth_jwks_client_cache[jwks_uri] = jwt.PyJWKClient(jwks_uri)
+        jwks_client = _oauth_jwks_client_cache[jwks_uri]
+
+        signing_key = await asyncio.to_thread(jwks_client.get_signing_key_from_jwt, token)
+        decode_options = {"verify_signature": True, "verify_exp": True, "verify_iat": True, "verify_iss": False, "verify_aud": bool(expected_audience)}
+        decode_kwargs: Dict[str, Any] = {
+            "key": signing_key.key,
+            "algorithms": ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "EdDSA"],
+            "options": decode_options,
+        }
+        if expected_audience:
+            decode_kwargs["audience"] = expected_audience
+        verified = await asyncio.to_thread(jwt.decode, token, **decode_kwargs)
+        logger.info("OAuth access token verified (issuer=%s, sub=%s)", normalized_issuer, verified.get("sub", "unknown"))
+        return verified
+    except jwt.PyJWTError as exc:
+        logger.warning("OAuth access token verification failed (issuer=%s): %s", normalized_issuer, exc)
+        return None
