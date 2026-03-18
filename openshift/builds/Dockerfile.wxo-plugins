@@ -1,2 +1,3 @@
 FROM registry.access.redhat.com/ubi9/ubi-micro:latest
-COPY . /plugins
+COPY . /src-plugins
+USER 65534

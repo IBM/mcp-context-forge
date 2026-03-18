@@ -298,7 +298,7 @@ func reconcileGatewayDeployment(ctx context.Context, c client.Client, cf *cfv1.C
 					corev1.Container{
 						Name:    "copy-plugins",
 						Image:   p.Image,
-						Command: []string{"cp", "-a", "/plugins/.", pluginsMountPath + "/"},
+						Command: []string{"cp", "-a", "/src-plugins/.", pluginsMountPath + "/"},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      pluginsVolumeName,
 							MountPath: pluginsMountPath,
