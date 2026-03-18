@@ -475,6 +475,13 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     else:
                         logger.info("Admin user already has platform_admin role")
 
+                    # Synchronize is_admin flag with platform_admin role assignment
+                    # This ensures consistency when admin is manually demoted in DB but role is re-assigned during bootstrap
+                    if not admin_user.is_admin:
+                        logger.info(f"Synchronizing is_admin flag for {SecurityValidator.sanitize_log_message(admin_user.email)} (was False, setting to True)")
+                        admin_user.is_admin = True
+                        db.commit()
+
                 except Exception as e:
                     logger.error(
                         f"Failed to assign platform_admin role to {SecurityValidator.sanitize_log_message(admin_user.email)}: {SecurityValidator.sanitize_log_message(str(e))}. Admin UI routes using allow_admin_bypass=False will return 403."

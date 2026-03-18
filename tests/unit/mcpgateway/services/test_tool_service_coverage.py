@@ -119,6 +119,19 @@ def mock_gateway():
     gw.owner_email = None
     gw.visibility = "public"
     gw.tags = []
+    gw.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    gw.updated_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    gw.created_by = None
+    gw.created_from_ip = None
+    gw.created_via = None
+    gw.created_user_agent = None
+    gw.modified_by = None
+    gw.modified_from_ip = None
+    gw.modified_via = None
+    gw.modified_user_agent = None
+    gw.import_batch_id = None
+    gw.federation_source = None
+    gw.version = None
     return gw
 
 
