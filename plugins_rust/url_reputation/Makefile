@@ -11,7 +11,7 @@
 #   make bench        - Run benchmarks
 #   make compare      - Compare Python vs Rust performance
 
-.PHONY: help build dev test test-python clean fmt fmt-check clippy check-all bench audit audit-fix doc doc-open coverage install compare
+.PHONY: help build dev stub-gen test test-python clean fmt fmt-check clippy check-all bench audit audit-fix doc doc-open coverage install compare uninstall verify
 
 # Default target
 .DEFAULT_GOAL := help
@@ -35,29 +35,50 @@ help: ## Show this help message
 	@echo "  make test-python  # Run Python unit tests"
 
 
+# Stub generation
+stub-gen: ## Generate Python type stubs (.pyi files)
+	@echo "$(GREEN)Generating Python type stubs...$(NC)"
+	@mkdir -p python/url_reputation_rust
+	@cp url_reputation_rust.pyi python/url_reputation_rust/__init__.pyi
+	@echo "$(GREEN)Type stubs generated at python/url_reputation_rust/__init__.pyi$(NC)"
+
+
 # Build targets
-build: ## Build plugin in release mode
+build: stub-gen ## Build plugin in release mode
 	@echo "$(GREEN)Building url_reputation_rust plugin...$(NC)"
-	maturin build --release
+	@cd ../.. && uv run maturin build --release --manifest-path plugins_rust/url_reputation/Cargo.toml
 
-dev: ## Build and install plugin in dev mode (faster, no optimizations)
+dev: stub-gen ## Build and install plugin in dev mode (faster, no optimizations)
 	@echo "$(GREEN)Installing url_reputation_rust plugin (dev mode)...$(NC)"
-	maturin develop
+	@cd ../.. && uv run maturin develop --manifest-path plugins_rust/url_reputation/Cargo.toml
 	@echo "$(GREEN)Verifying installation...$(NC)"
-	@python -c "import url_reputation; print('✓ url_reputation installed'); print('✓ Module:', url_reputation.__file__)" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
+	@uv run python -c "import url_reputation_rust; print('✓ url_reputation_rust installed'); print('✓ Module:', url_reputation_rust.__file__)" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
 
-install: ## Build and install plugin (maturin develop)
+install: stub-gen ## Build and install plugin (maturin develop)
 	@echo "$(GREEN)Installing url_reputation_rust plugin...$(NC)"
-	maturin develop --release
+	@cd ../.. && uv run maturin develop --release --manifest-path plugins_rust/url_reputation/Cargo.toml
 	@echo "$(GREEN)Verifying installation...$(NC)"
-	@python -c "import url_reputation; print('✓ url_reputation installed'); print('✓ Module:', url_reputation.__file__)" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
+	@uv run python -c "import url_reputation_rust; print('✓ url_reputation_rust installed'); print('✓ Module:', url_reputation_rust.__file__)" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
 	@echo "$(GREEN)Installation verified successfully!$(NC)"
+
+uninstall: ## Uninstall plugin from Python environment
+	@echo "$(YELLOW)Uninstalling url_reputation_rust...$(NC)"
+	@uv pip uninstall -y url_reputation_rust 2>/dev/null || pip uninstall -y url_reputation_rust 2>/dev/null || true
+	@echo "$(GREEN)url_reputation_rust uninstalled$(NC)"
+
+verify: ## Verify plugin installation
+	@echo "$(GREEN)Verifying url_reputation_rust installation...$(NC)"
+	@uv run python -c "import url_reputation_rust; print('✅ url_reputation_rust available')" || echo "⚠️  url_reputation_rust not installed"
 
 
 # Testing targets
 test: ## Run Rust tests
 	@echo "$(GREEN)Running Rust tests...$(NC)"
 	cargo test
+
+test-verbose: ## Run Rust tests (verbose)
+	@echo "$(GREEN)Running Rust tests (verbose)...$(NC)"
+	cargo test --verbose
 
 test-python: ## Run Python tests (requires dev install)
 	@echo "$(GREEN)Running Python unit tests...$(NC)"
