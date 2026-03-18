@@ -133,6 +133,26 @@ func (in *GatewaySpec) DeepCopyInto(out *GatewaySpec) {
 		*out = new(corev1.ResourceRequirements)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.SessionPoolEnabled != nil {
+		in, out := &in.SessionPoolEnabled, &out.SessionPoolEnabled
+		*out = new(bool)
+		**out = **in
+	}
+	if in.StreamableHTTPMaxEventsPerStream != nil {
+		in, out := &in.StreamableHTTPMaxEventsPerStream, &out.StreamableHTTPMaxEventsPerStream
+		*out = new(int32)
+		**out = **in
+	}
+	if in.HTTPXMaxConnections != nil {
+		in, out := &in.HTTPXMaxConnections, &out.HTTPXMaxConnections
+		*out = new(int32)
+		**out = **in
+	}
+	if in.HTTPXMaxKeepaliveConnections != nil {
+		in, out := &in.HTTPXMaxKeepaliveConnections, &out.HTTPXMaxKeepaliveConnections
+		*out = new(int32)
+		**out = **in
+	}
 	if in.Env != nil {
 		in, out := &in.Env, &out.Env
 		*out = make([]corev1.EnvVar, len(*in))
@@ -353,8 +373,8 @@ func (in *FeaturesSpec) DeepCopyInto(out *FeaturesSpec) {
 	}
 	if in.Plugins != nil {
 		in, out := &in.Plugins, &out.Plugins
-		*out = new(bool)
-		**out = **in
+		*out = new(PluginsSpec)
+		(*in).DeepCopyInto(*out)
 	}
 	if in.Catalog != nil {
 		in, out := &in.Catalog, &out.Catalog
@@ -412,6 +432,11 @@ func (in *TestingSpec) DeepCopyInto(out *TestingSpec) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.Locust != nil {
+		in, out := &in.Locust, &out.Locust
+		*out = new(LocustSpec)
+		(*in).DeepCopyInto(*out)
+	}
 }
 
 func (in *TestingSpec) DeepCopy() *TestingSpec {
@@ -419,6 +444,94 @@ func (in *TestingSpec) DeepCopy() *TestingSpec {
 		return nil
 	}
 	out := new(TestingSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *PluginsSpec) DeepCopyInto(out *PluginsSpec) {
+	*out = *in
+	if in.Enabled != nil {
+		in, out := &in.Enabled, &out.Enabled
+		*out = new(bool)
+		**out = **in
+	}
+	if in.ConfigMapRef != nil {
+		in, out := &in.ConfigMapRef, &out.ConfigMapRef
+		*out = new(corev1.LocalObjectReference)
+		**out = **in
+	}
+	if in.CanOverrideAuthHeaders != nil {
+		in, out := &in.CanOverrideAuthHeaders, &out.CanOverrideAuthHeaders
+		*out = new(bool)
+		**out = **in
+	}
+	if in.GitSource != nil {
+		in, out := &in.GitSource, &out.GitSource
+		*out = new(GitSourceSpec)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.VolumeMounts != nil {
+		in, out := &in.VolumeMounts, &out.VolumeMounts
+		*out = make([]corev1.VolumeMount, len(*in))
+		copy(*out, *in)
+	}
+	if in.Volumes != nil {
+		in, out := &in.Volumes, &out.Volumes
+		*out = make([]corev1.Volume, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+func (in *PluginsSpec) DeepCopy() *PluginsSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(PluginsSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *GitSourceSpec) DeepCopyInto(out *GitSourceSpec) {
+	*out = *in
+	if in.SecretRef != nil {
+		in, out := &in.SecretRef, &out.SecretRef
+		*out = new(corev1.LocalObjectReference)
+		**out = **in
+	}
+}
+
+func (in *GitSourceSpec) DeepCopy() *GitSourceSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(GitSourceSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *LocustSpec) DeepCopyInto(out *LocustSpec) {
+	*out = *in
+	if in.Enabled != nil {
+		in, out := &in.Enabled, &out.Enabled
+		*out = new(bool)
+		**out = **in
+	}
+	if in.Env != nil {
+		in, out := &in.Env, &out.Env
+		*out = make([]corev1.EnvVar, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+func (in *LocustSpec) DeepCopy() *LocustSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(LocustSpec)
 	in.DeepCopyInto(out)
 	return out
 }

@@ -9,6 +9,9 @@ spec:
     replicas: 1
     httpServer: gunicorn
     workers: 4
+    sessionPoolEnabled: true
+    httpxMaxConnections: 500
+    httpxMaxKeepaliveConnections: 300
     route:
       enabled: true
       tlsTermination: edge
@@ -33,7 +36,17 @@ spec:
     ui: true
     adminApi: true
     a2a: true
-    plugins: false
+    plugins:
+      enabled: true
+      canOverrideAuthHeaders: true
+      # Clone plugins from a git repo; operator polls for new commits
+      # and triggers a rolling restart when the ref advances.
+      gitSource:
+        url: https://github.com/org/my-plugins.git
+        ref: main
+        directory: wxo-plugins
+        # secretRef:
+        #   name: git-credentials  # Secret with key "token" for private repos
     catalog: true
     rustRuntime:
       mode: "off"

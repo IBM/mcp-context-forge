@@ -76,6 +76,25 @@ spec:
                     resources:
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
+                    sessionPoolEnabled:
+                      type: boolean
+                      default: true
+                      description: Enables MCP session pooling.
+                    streamableHTTPMaxEventsPerStream:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      description: Maximum events per streamable HTTP stream.
+                    httpxMaxConnections:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      description: Maximum number of HTTPX client connections.
+                    httpxMaxKeepaliveConnections:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      description: Maximum number of HTTPX keepalive connections.
                     env:
                       type: array
                       items:
@@ -184,8 +203,57 @@ spec:
                       type: boolean
                       default: true
                     plugins:
-                      type: boolean
-                      default: false
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: false
+                          description: Toggles the plugin framework on or off.
+                        configFile:
+                          type: string
+                          description: Path to the plugins configuration YAML inside the container.
+                        configMapRef:
+                          type: object
+                          description: "ConfigMap with key 'config.yaml' mounted as the plugins config. Overrides config.yaml from gitSource."
+                          properties:
+                            name:
+                              type: string
+                        canOverrideAuthHeaders:
+                          type: boolean
+                          description: Allows plugins to override authentication headers.
+                        gitSource:
+                          type: object
+                          description: Clone a git repo into an emptyDir as the plugins directory. The operator resolves the ref to a commit SHA and triggers rolling restarts on changes.
+                          required: [url]
+                          properties:
+                            url:
+                              type: string
+                              description: HTTPS clone URL of the git repository.
+                            ref:
+                              type: string
+                              default: main
+                              description: Branch, tag, or commit to checkout.
+                            directory:
+                              type: string
+                              description: Subdirectory within the repo to use as plugins root.
+                            secretRef:
+                              type: object
+                              description: "Secret with git credentials. Keys: 'token' (Bearer) or 'username'+'password' (Basic)."
+                              properties:
+                                name:
+                                  type: string
+                        volumeMounts:
+                          type: array
+                          description: Additional volume mounts for plugin directories.
+                          items:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                        volumes:
+                          type: array
+                          description: Additional volumes for plugin data.
+                          items:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
                     catalog:
                       type: boolean
                       default: true
@@ -196,6 +264,9 @@ spec:
                           type: string
                           enum: ["off", "shadow", "edge", "full"]
                           default: "off"
+                        logPath:
+                          type: string
+                          description: File path for Rust runtime logs inside the container.
                 testing:
                   type: object
                   properties:
@@ -209,6 +280,21 @@ spec:
                       type: boolean
                     a2aEchoAgent:
                       type: boolean
+                    locust:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                          description: Deploys Locust load testing pods.
+                        locustfile:
+                          type: string
+                          description: Name of the locustfile to use.
+                        env:
+                          type: array
+                          description: Additional environment variables for Locust pods.
+                          items:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
             status:
               type: object
               properties:

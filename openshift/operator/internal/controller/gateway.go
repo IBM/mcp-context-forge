@@ -21,11 +21,12 @@ const (
 )
 
 // reconcileGateway creates or updates the gateway ConfigMap, Deployment, and Service.
-func reconcileGateway(ctx context.Context, c client.Client, cf *cfv1.ContextForge, dbURL, dbSecretName, redisURL string) error {
+// pluginsGitSHA is the resolved commit SHA for the plugins git source (empty if not configured).
+func reconcileGateway(ctx context.Context, c client.Client, cf *cfv1.ContextForge, dbURL, dbSecretName, redisURL, pluginsGitSHA string) error {
 	if err := reconcileGatewayConfigMap(ctx, c, cf, dbURL, redisURL); err != nil {
 		return fmt.Errorf("gateway configmap: %w", err)
 	}
-	if err := reconcileGatewayDeployment(ctx, c, cf, dbSecretName); err != nil {
+	if err := reconcileGatewayDeployment(ctx, c, cf, dbSecretName, pluginsGitSHA); err != nil {
 		return fmt.Errorf("gateway deployment: %w", err)
 	}
 	if err := reconcileGatewayService(ctx, c, cf); err != nil {
@@ -76,10 +77,8 @@ func reconcileGatewayConfigMap(ctx context.Context, c client.Client, cf *cfv1.Co
 			"REDIS_MAX_CONNECTIONS": "100",
 
 			// HTTPX client pool
-			"HTTPX_MAX_CONNECTIONS":           "500",
-			"HTTPX_MAX_KEEPALIVE_CONNECTIONS": "300",
-			"HTTPX_KEEPALIVE_EXPIRY":          "30.0",
-			"HTTPX_READ_TIMEOUT":              "120.0",
+			"HTTPX_KEEPALIVE_EXPIRY": "30.0",
+			"HTTPX_READ_TIMEOUT":     "120.0",
 
 			// Caching (enabled by default per docker-compose)
 			"AUTH_CACHE_ENABLED":     "true",
@@ -91,8 +90,23 @@ func reconcileGatewayConfigMap(ctx context.Context, c client.Client, cf *cfv1.Co
 			"DISABLE_ACCESS_LOG":  "true",
 
 			// MCP transport
-			"TRANSPORT_TYPE":            "all",
-			"MCP_SESSION_POOL_ENABLED":  "true",
+			"TRANSPORT_TYPE": "all",
+		}
+
+		// Gateway performance tuning from spec fields
+		data["MCP_SESSION_POOL_ENABLED"] = strconv.FormatBool(boolVal(gw.SessionPoolEnabled, true))
+		if gw.HTTPXMaxConnections != nil {
+			data["HTTPX_MAX_CONNECTIONS"] = strconv.Itoa(int(*gw.HTTPXMaxConnections))
+		} else {
+			data["HTTPX_MAX_CONNECTIONS"] = "500"
+		}
+		if gw.HTTPXMaxKeepaliveConnections != nil {
+			data["HTTPX_MAX_KEEPALIVE_CONNECTIONS"] = strconv.Itoa(int(*gw.HTTPXMaxKeepaliveConnections))
+		} else {
+			data["HTTPX_MAX_KEEPALIVE_CONNECTIONS"] = "300"
+		}
+		if gw.StreamableHTTPMaxEventsPerStream != nil {
+			data["STREAMABLE_HTTP_MAX_EVENTS_PER_STREAM"] = strconv.Itoa(int(*gw.StreamableHTTPMaxEventsPerStream))
 		}
 
 		// Database URL: if managed, it will be injected via env var to
@@ -120,11 +134,34 @@ func reconcileGatewayConfigMap(ctx context.Context, c client.Client, cf *cfv1.Co
 			data["MCPGATEWAY_UI_ENABLED"] = strconv.FormatBool(boolVal(f.UI, true))
 			data["MCPGATEWAY_ADMIN_API_ENABLED"] = strconv.FormatBool(boolVal(f.AdminAPI, true))
 			data["MCPGATEWAY_A2A_ENABLED"] = strconv.FormatBool(boolVal(f.A2A, true))
-			data["PLUGINS_ENABLED"] = strconv.FormatBool(boolVal(f.Plugins, false))
 			data["MCPGATEWAY_CATALOG_ENABLED"] = strconv.FormatBool(boolVal(f.Catalog, true))
+
+			// Plugins
+			if f.Plugins != nil {
+				data["PLUGINS_ENABLED"] = strconv.FormatBool(boolVal(f.Plugins.Enabled, false))
+				switch {
+				case f.Plugins.ConfigMapRef != nil:
+					// ConfigMap mount takes highest precedence
+					data["PLUGINS_CONFIG_FILE"] = pluginsConfigMountPath + "/config.yaml"
+				case f.Plugins.ConfigFile != "":
+					data["PLUGINS_CONFIG_FILE"] = f.Plugins.ConfigFile
+				case f.Plugins.GitSource != nil:
+					data["PLUGINS_CONFIG_FILE"] = pluginsMountPath + "/config.yaml"
+				}
+				if f.Plugins.CanOverrideAuthHeaders != nil {
+					data["PLUGINS_CAN_OVERRIDE_AUTH_HEADERS"] = strconv.FormatBool(*f.Plugins.CanOverrideAuthHeaders)
+				}
+			} else {
+				data["PLUGINS_ENABLED"] = "false"
+			}
+
+			// Rust runtime
 			if f.RustRuntime != nil && f.RustRuntime.Mode != "" && f.RustRuntime.Mode != "off" {
 				data["RUST_MCP_MODE"] = f.RustRuntime.Mode
 				data["EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED"] = "true"
+				if f.RustRuntime.LogPath != "" {
+					data["RUST_MCP_LOG"] = f.RustRuntime.LogPath
+				}
 			}
 		} else {
 			data["MCPGATEWAY_UI_ENABLED"] = "true"
@@ -139,7 +176,7 @@ func reconcileGatewayConfigMap(ctx context.Context, c client.Client, cf *cfv1.Co
 	})
 }
 
-func reconcileGatewayDeployment(ctx context.Context, c client.Client, cf *cfv1.ContextForge, dbSecretName string) error {
+func reconcileGatewayDeployment(ctx context.Context, c client.Client, cf *cfv1.ContextForge, dbSecretName, pluginsGitSHA string) error {
 	gw := cf.Spec.Gateway
 	name := nameFor(cf, "gateway")
 	labels := commonLabels(cf, "gateway")
@@ -238,6 +275,69 @@ func reconcileGatewayDeployment(ctx context.Context, c client.Client, cf *cfv1.C
 				dep.Spec.Template.Spec.Containers[0].Env,
 				gw.Env...,
 			)
+		}
+
+		// Plugin volume injection
+		if cf.Spec.Features != nil && cf.Spec.Features.Plugins != nil {
+			p := cf.Spec.Features.Plugins
+
+			if p.GitSource != nil {
+				// gitSource: emptyDir + initContainer + annotation for rolling restart
+				dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes, corev1.Volume{
+					Name: pluginsVolumeName,
+					VolumeSource: corev1.VolumeSource{
+						EmptyDir: &corev1.EmptyDirVolumeSource{},
+					},
+				})
+				dep.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+					dep.Spec.Template.Spec.Containers[0].VolumeMounts,
+					corev1.VolumeMount{Name: pluginsVolumeName, MountPath: pluginsMountPath},
+				)
+				dep.Spec.Template.Spec.InitContainers = append(
+					dep.Spec.Template.Spec.InitContainers,
+					pluginsGitInitContainer(p.GitSource),
+				)
+
+				// Set the resolved commit SHA as a pod annotation. When the SHA
+				// changes, the pod template hash changes, triggering a rolling update.
+				if pluginsGitSHA != "" {
+					if dep.Spec.Template.Annotations == nil {
+						dep.Spec.Template.Annotations = map[string]string{}
+					}
+					dep.Spec.Template.Annotations[annotationPluginsGitSHA] = pluginsGitSHA
+				}
+			} else {
+				// Raw volumes/mounts escape hatch
+				if len(p.Volumes) > 0 {
+					dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes, p.Volumes...)
+				}
+				if len(p.VolumeMounts) > 0 {
+					dep.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+						dep.Spec.Template.Spec.Containers[0].VolumeMounts,
+						p.VolumeMounts...,
+					)
+				}
+			}
+
+			// ConfigMap-based plugins config (overrides config.yaml from gitSource)
+			if p.ConfigMapRef != nil {
+				dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes, corev1.Volume{
+					Name: pluginsConfigVolumeName,
+					VolumeSource: corev1.VolumeSource{
+						ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{Name: p.ConfigMapRef.Name},
+						},
+					},
+				})
+				dep.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+					dep.Spec.Template.Spec.Containers[0].VolumeMounts,
+					corev1.VolumeMount{
+						Name:      pluginsConfigVolumeName,
+						MountPath: pluginsConfigMountPath,
+						ReadOnly:  true,
+					},
+				)
+			}
 		}
 		return nil
 	})

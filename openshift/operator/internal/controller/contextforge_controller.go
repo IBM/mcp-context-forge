@@ -96,8 +96,19 @@ func (r *ContextForgeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
-	// Step 5: Gateway
-	if err := reconcileGateway(ctx, r.Client, cf, dbURL, dbSecretName, redisURL); err != nil {
+	// Step 5: Resolve plugins git commit SHA (if configured)
+	var pluginsGitSHA string
+	if cf.Spec.Features != nil && cf.Spec.Features.Plugins != nil && cf.Spec.Features.Plugins.GitSource != nil {
+		sha, err := resolveGitCommitSHA(ctx, r.Client, cf.Spec.Features.Plugins.GitSource, cf.Namespace)
+		if err != nil {
+			logger.Error(err, "failed to resolve plugins git SHA, deployment will proceed without SHA annotation")
+		} else {
+			pluginsGitSHA = sha
+		}
+	}
+
+	// Step 6: Gateway
+	if err := reconcileGateway(ctx, r.Client, cf, dbURL, dbSecretName, redisURL, pluginsGitSHA); err != nil {
 		return r.setFailed(cf, "GatewayFailed", err)
 	}
 	cf.Status.GatewayReady = isDeploymentAvailable(ctx, r.Client, cf.Namespace, nameFor(cf, "gateway"))

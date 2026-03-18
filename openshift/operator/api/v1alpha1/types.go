@@ -60,6 +60,23 @@ type GatewaySpec struct {
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 
+	// SessionPoolEnabled enables MCP session pooling.
+	// +kubebuilder:default=true
+	// +optional
+	SessionPoolEnabled *bool `json:"sessionPoolEnabled,omitempty"`
+
+	// StreamableHTTPMaxEventsPerStream sets the maximum events per streamable HTTP stream.
+	// +optional
+	StreamableHTTPMaxEventsPerStream *int32 `json:"streamableHTTPMaxEventsPerStream,omitempty"`
+
+	// HTTPXMaxConnections sets the maximum number of HTTPX client connections.
+	// +optional
+	HTTPXMaxConnections *int32 `json:"httpxMaxConnections,omitempty"`
+
+	// HTTPXMaxKeepaliveConnections sets the maximum number of HTTPX keepalive connections.
+	// +optional
+	HTTPXMaxKeepaliveConnections *int32 `json:"httpxMaxKeepaliveConnections,omitempty"`
+
 	// Env is a list of additional environment variables to inject.
 	// +optional
 	Env []corev1.EnvVar `json:"env,omitempty"`
@@ -213,9 +230,9 @@ type FeaturesSpec struct {
 	// +optional
 	A2A *bool `json:"a2a,omitempty"`
 
-	// Plugins enables the plugin framework.
+	// Plugins configures the plugin framework.
 	// +optional
-	Plugins *bool `json:"plugins,omitempty"`
+	Plugins *PluginsSpec `json:"plugins,omitempty"`
 
 	// Catalog enables the MCP catalog.
 	// +kubebuilder:default=true
@@ -227,11 +244,73 @@ type FeaturesSpec struct {
 	RustRuntime *RustRuntimeSpec `json:"rustRuntime,omitempty"`
 }
 
+type PluginsSpec struct {
+	// Enabled toggles the plugin framework on or off.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// ConfigFile is the path to the plugins configuration YAML inside the container.
+	// Defaults to /plugins/config.yaml when gitSource is configured.
+	// +optional
+	ConfigFile string `json:"configFile,omitempty"`
+
+	// ConfigMapRef references a ConfigMap whose key "config.yaml" is mounted as the
+	// plugins configuration file. When set, this overrides the config.yaml from
+	// gitSource and takes precedence over configFile.
+	// +optional
+	ConfigMapRef *corev1.LocalObjectReference `json:"configMapRef,omitempty"`
+
+	// CanOverrideAuthHeaders allows plugins to override authentication headers.
+	// +optional
+	CanOverrideAuthHeaders *bool `json:"canOverrideAuthHeaders,omitempty"`
+
+	// GitSource clones a git repository into an emptyDir and mounts it as the
+	// plugins directory. The operator resolves the ref to a commit SHA on each
+	// reconciliation and triggers a rolling restart when it changes.
+	// +optional
+	GitSource *GitSourceSpec `json:"gitSource,omitempty"`
+
+	// VolumeMounts defines additional volume mounts for plugin directories.
+	// Used only when gitSource is not configured.
+	// +optional
+	VolumeMounts []corev1.VolumeMount `json:"volumeMounts,omitempty"`
+
+	// Volumes defines additional volumes for plugin data.
+	// Used only when gitSource is not configured.
+	// +optional
+	Volumes []corev1.Volume `json:"volumes,omitempty"`
+}
+
+type GitSourceSpec struct {
+	// URL is the HTTPS clone URL of the git repository.
+	URL string `json:"url"`
+
+	// Ref is the branch, tag, or commit to checkout.
+	// +kubebuilder:default="main"
+	// +optional
+	Ref string `json:"ref,omitempty"`
+
+	// Directory is the subdirectory within the repo to use as the plugins root.
+	// If empty, the entire repo root is used.
+	// +optional
+	Directory string `json:"directory,omitempty"`
+
+	// SecretRef references a Secret containing git credentials.
+	// Supported keys: "token" (Bearer token) or "username"+"password" (Basic auth).
+	// +optional
+	SecretRef *corev1.LocalObjectReference `json:"secretRef,omitempty"`
+}
+
 type RustRuntimeSpec struct {
 	// Mode controls how the Rust runtime participates: off, shadow, edge, full.
 	// +kubebuilder:validation:Enum=off;shadow;edge;full
 	// +kubebuilder:default="off"
 	Mode string `json:"mode,omitempty"`
+
+	// LogPath sets the file path for Rust runtime logs inside the container.
+	// +optional
+	LogPath string `json:"logPath,omitempty"`
 }
 
 // ---------- Testing ----------
@@ -255,6 +334,24 @@ type TestingSpec struct {
 	// A2AEchoAgent deploys the A2A echo agent.
 	// +optional
 	A2AEchoAgent *bool `json:"a2aEchoAgent,omitempty"`
+
+	// Locust configures Locust load testing infrastructure.
+	// +optional
+	Locust *LocustSpec `json:"locust,omitempty"`
+}
+
+type LocustSpec struct {
+	// Enabled deploys the Locust load testing pods.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Locustfile is the name of the locustfile to use.
+	// +optional
+	Locustfile string `json:"locustfile,omitempty"`
+
+	// Env is a list of additional environment variables for Locust pods.
+	// +optional
+	Env []corev1.EnvVar `json:"env,omitempty"`
 }
 
 // ---------- Status ----------
