@@ -1749,27 +1749,34 @@ class PromptService(BaseService):
                         payload = pre_result.modified_payload
                         arguments = payload.args
 
-                # Find prompt by name first (MCP spec), then by ID for backward compatibility (active prompts only)
+                # ═══════════════════════════════════════════════════════════════════════════
+                # SECURITY: Apply team scoping BEFORE lookup to prevent multi-tenant conflicts
+                # This ensures users only see prompts they have access to, matching list_prompts()
+                # ═══════════════════════════════════════════════════════════════════════════
                 search_key = str(prompt_id)
-                prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.name == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
+
+                # Build base query with team scoping applied FIRST
+                base_query = select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.enabled)
+                scoped_query = await self._apply_access_control(base_query, db, user, token_teams, team_id=None)
+
+                # Find prompt by name first (MCP spec), then by ID for backward compatibility (active prompts only)
+                prompt = db.execute(scoped_query.where(DbPrompt.name == prompt_id)).scalar_one_or_none()
                 if not prompt:
-                    prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
+                    prompt = db.execute(scoped_query.where(DbPrompt.id == prompt_id)).scalar_one_or_none()
+
+                # If not found in active prompts, check inactive prompts (with team scoping)
                 if not prompt:
-                    inactive_prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.name == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
-                    # Check if an inactive prompt exists
+                    inactive_base_query = select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(not_(DbPrompt.enabled))
+                    inactive_scoped_query = await self._apply_access_control(inactive_base_query, db, user, token_teams, team_id=None)
+
+                    # Name first, then ID fallback for inactive prompts too
+                    inactive_prompt = db.execute(inactive_scoped_query.where(DbPrompt.name == prompt_id)).scalar_one_or_none()
                     if not inactive_prompt:
-                        inactive_prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
+                        inactive_prompt = db.execute(inactive_scoped_query.where(DbPrompt.id == prompt_id)).scalar_one_or_none()
 
                     if inactive_prompt:
                         raise PromptNotFoundError(f"Prompt '{search_key}' exists but is inactive")
 
-                    raise PromptNotFoundError(f"Prompt not found: {search_key}")
-
-                # ═══════════════════════════════════════════════════════════════════════════
-                # SECURITY: Check prompt access based on visibility and team membership
-                # ═══════════════════════════════════════════════════════════════════════════
-                if not await self._check_prompt_access(db, prompt, user, token_teams):
-                    # Don't reveal prompt existence - return generic "not found"
                     raise PromptNotFoundError(f"Prompt not found: {search_key}")
 
                 # ═══════════════════════════════════════════════════════════════════════════

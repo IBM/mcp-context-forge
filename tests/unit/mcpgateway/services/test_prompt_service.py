@@ -449,6 +449,8 @@ class TestPromptService:
 
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
         test_db.commit = Mock()
+        # Mock _apply_access_control to return the query unchanged (simulates access granted)
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
 
         remote_result = PromptResult(
             messages=[
@@ -654,8 +656,9 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_get_prompt_access_denied_raises_generic_not_found(self, prompt_service, test_db):
         db_prompt = _build_db_prompt(template="Hello!")
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
-        prompt_service._check_prompt_access = AsyncMock(return_value=False)
+        # Mock _apply_access_control to return query that finds nothing (simulates access denial)
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q.where(False))
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
 
         with patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf:
             mock_get_buf.record_prompt_metric = Mock()
@@ -717,6 +720,9 @@ class TestPromptService:
         server_match_result.first.return_value = ("ok",)
 
         test_db.execute = Mock(side_effect=[_make_execute_result(scalar=db_prompt), server_match_result])
+        # Mock _apply_access_control to return query unchanged
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+
 
         plugin_mgr = MagicMock()
         plugin_mgr.has_hooks_for.side_effect = lambda hook: hook in {PromptHookType.PROMPT_PRE_FETCH, PromptHookType.PROMPT_POST_FETCH}
