@@ -8918,17 +8918,26 @@ function showTab(tabName) {
                     const serversList = safeGetElement("servers-table");
                     if (serversList) {
                         const hasLoadingMessage =
-                            serversList.innerHTML.includes("Loading servers...");
+                            serversList.innerHTML.includes(
+                                "Loading servers...",
+                            );
                         if (hasLoadingMessage) {
                             if (window.htmx && window.htmx.trigger) {
                                 window.htmx.trigger(serversList, "load");
                             }
                         } else {
-                            const catalogConfig = getPanelSearchConfig("catalog");
+                            const catalogConfig =
+                                getPanelSearchConfig("catalog");
                             if (catalogConfig) {
-                                const searchState = getPanelSearchStateFromUrl(catalogConfig.tableName);
-                                const tagInput = document.getElementById(catalogConfig.tagInputId);
-                                const searchInput = document.getElementById(catalogConfig.searchInputId);
+                                const searchState = getPanelSearchStateFromUrl(
+                                    catalogConfig.tableName,
+                                );
+                                const tagInput = document.getElementById(
+                                    catalogConfig.tagInputId,
+                                );
+                                const searchInput = document.getElementById(
+                                    catalogConfig.searchInputId,
+                                );
                                 if (tagInput && searchState.tags) {
                                     tagInput.value = searchState.tags;
                                 }
@@ -20056,10 +20065,12 @@ function extractAvailableTags(entityType) {
     const tags = new Set();
 
     if (entityType === "catalog") {
-        document.querySelectorAll("#servers-table-body [data-tag]").forEach((el) => {
-            const t = el.getAttribute("data-tag").trim();
-            if (t && t.length >= 1 && t.length <= 50) tags.add(t);
-        });
+        document
+            .querySelectorAll("#servers-table-body [data-tag]")
+            .forEach((el) => {
+                const t = el.getAttribute("data-tag").trim();
+                if (t && t.length >= 1 && t.length <= 50) tags.add(t);
+            });
         return Array.from(tags).sort();
     }
 
@@ -20152,8 +20163,14 @@ function addTagToFilter(entityType, tag) {
         filterInput.value = currentTags.join(", ");
         const panelConfig = getPanelSearchConfig(entityType);
         if (panelConfig) {
-            const searchInput = document.getElementById(panelConfig.searchInputId);
-            updatePanelSearchStateInUrl(panelConfig.tableName, searchInput?.value || "", filterInput.value);
+            const searchInput = document.getElementById(
+                panelConfig.searchInputId,
+            );
+            updatePanelSearchStateInUrl(
+                panelConfig.tableName,
+                searchInput?.value || "",
+                filterInput.value,
+            );
             queueSearchablePanelReload(entityType, 0);
         } else {
             filterEntitiesByTags(entityType, filterInput.value);
