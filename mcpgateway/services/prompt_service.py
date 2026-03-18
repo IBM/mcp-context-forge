@@ -1632,7 +1632,7 @@ class PromptService(BaseService):
 
         Args:
             db: Database session
-            prompt_id: ID of the prompt to retrieve
+            prompt_id: Name or ID of the prompt to retrieve. Name-based lookup is prioritized per MCP spec, with ID fallback for backward compatibility.
             arguments: Optional arguments for rendering
             user: Optional user email for authorization checks
             tenant_id: Optional tenant identifier for plugin context
@@ -1749,17 +1749,16 @@ class PromptService(BaseService):
                         payload = pre_result.modified_payload
                         arguments = payload.args
 
-                # Find prompt by ID first, then by name (active prompts only)
+                # Find prompt by name first (MCP spec), then by ID for backward compatibility (active prompts only)
                 search_key = str(prompt_id)
-                prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
+                prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.name == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
                 if not prompt:
-                    prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.name == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
-
+                    prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
                 if not prompt:
+                    inactive_prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.name == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
                     # Check if an inactive prompt exists
-                    inactive_prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
                     if not inactive_prompt:
-                        inactive_prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.name == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
+                        inactive_prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
 
                     if inactive_prompt:
                         raise PromptNotFoundError(f"Prompt '{search_key}' exists but is inactive")
