@@ -332,31 +332,40 @@ def test_tool_metrics_summary_sql_path(monkeypatch):
     tool = db.Tool()
     tool.id = "test-tool-id"
 
-    # Mock the session and query result for full aggregation
-    # (count, sum_success, min_rt, max_rt, avg_rt, max_timestamp)
+    # Mock the session and query results for TWO queries (hourly + uncovered raw)
     mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [5, 3, 1.0, 5.0, 2.5, mock_timestamp][i]
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Hourly query result: (sum_total, sum_success, min_rt, max_rt, weighted_sum_rt, max_hour_start)
+    mock_hourly_result = MagicMock()
+    mock_hourly_result.__getitem__ = lambda self, i: [3, 2, 2.0, 5.0, 8.5, mock_timestamp][i]
+
+    # Raw query result (metrics after hourly coverage): (count, sum_success, min_rt, max_rt, sum_rt, max_timestamp)
+    mock_raw_result = MagicMock()
+    mock_raw_result.__getitem__ = lambda self, i: [2, 1, 1.0, 3.0, 4.0, mock_timestamp][i]
+
+    mock_hourly_query = MagicMock()
+    mock_hourly_query.filter.return_value = mock_hourly_query
+    mock_hourly_query.one.return_value = mock_hourly_result
+
+    mock_raw_query = MagicMock()
+    mock_raw_query.filter.return_value = mock_raw_query
+    mock_raw_query.one.return_value = mock_raw_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [mock_hourly_query, mock_raw_query]
 
-    # Patch object_session where it's imported (in sqlalchemy.orm)
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = tool.metrics_summary
 
+    # Expected: hourly(3,2) + raw(2,1) = total(5,3)
     assert summary["total_executions"] == 5
     assert summary["successful_executions"] == 3
     assert summary["failed_executions"] == 2
     assert summary["failure_rate"] == 0.4
-    assert summary["min_response_time"] == 1.0
-    assert summary["max_response_time"] == 5.0
-    assert summary["avg_response_time"] == 2.5
+    assert summary["min_response_time"] == 1.0  # min(2.0, 1.0)
+    assert summary["max_response_time"] == 5.0  # max(5.0, 3.0)
+    assert summary["avg_response_time"] == 2.5  # (8.5 + 4.0) / 5
     assert summary["last_execution_time"] == mock_timestamp
 
 
@@ -448,27 +457,38 @@ def test_resource_metrics_summary_sql_path(monkeypatch):
     resource.id = "test-resource-id"
 
     mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [6, 4, 0.5, 3.0, 1.5, mock_timestamp][i]
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Hourly query result: (sum_total, sum_success, min_rt, max_rt, weighted_sum_rt, max_hour_start)
+    mock_hourly_result = MagicMock()
+    mock_hourly_result.__getitem__ = lambda self, i: [4, 3, 1.0, 3.0, 6.0, mock_timestamp][i]
+
+    # Raw query result (after hourly coverage): (count, sum_success, min_rt, max_rt, sum_rt, max_timestamp)
+    mock_raw_result = MagicMock()
+    mock_raw_result.__getitem__ = lambda self, i: [2, 1, 0.5, 2.0, 3.0, mock_timestamp][i]
+
+    mock_hourly_query = MagicMock()
+    mock_hourly_query.filter.return_value = mock_hourly_query
+    mock_hourly_query.one.return_value = mock_hourly_result
+
+    mock_raw_query = MagicMock()
+    mock_raw_query.filter.return_value = mock_raw_query
+    mock_raw_query.one.return_value = mock_raw_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [mock_hourly_query, mock_raw_query]
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = resource.metrics_summary
 
+    # Expected: hourly(4,3) + raw(2,1) = total(6,4)
     assert summary["total_executions"] == 6
     assert summary["successful_executions"] == 4
     assert summary["failed_executions"] == 2
     assert summary["failure_rate"] == pytest.approx(0.333, rel=0.01)
-    assert summary["min_response_time"] == 0.5
-    assert summary["max_response_time"] == 3.0
-    assert summary["avg_response_time"] == 1.5
+    assert summary["min_response_time"] == 0.5  # min(1.0, 0.5)
+    assert summary["max_response_time"] == 3.0  # max(3.0, 2.0)
+    assert summary["avg_response_time"] == 1.5  # (6.0 + 3.0) / 6
     assert summary["last_execution_time"] == mock_timestamp
 
 
@@ -560,27 +580,38 @@ def test_prompt_metrics_summary_sql_path(monkeypatch):
     prompt.id = "test-prompt-id"
 
     mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [10, 8, 0.2, 4.0, 2.0, mock_timestamp][i]
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Hourly query result: (sum_total, sum_success, min_rt, max_rt, weighted_sum_rt, max_hour_start)
+    mock_hourly_result = MagicMock()
+    mock_hourly_result.__getitem__ = lambda self, i: [7, 6, 0.5, 4.0, 14.0, mock_timestamp][i]
+
+    # Raw query result (after hourly coverage): (count, sum_success, min_rt, max_rt, sum_rt, max_timestamp)
+    mock_raw_result = MagicMock()
+    mock_raw_result.__getitem__ = lambda self, i: [3, 2, 0.2, 3.0, 6.0, mock_timestamp][i]
+
+    mock_hourly_query = MagicMock()
+    mock_hourly_query.filter.return_value = mock_hourly_query
+    mock_hourly_query.one.return_value = mock_hourly_result
+
+    mock_raw_query = MagicMock()
+    mock_raw_query.filter.return_value = mock_raw_query
+    mock_raw_query.one.return_value = mock_raw_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [mock_hourly_query, mock_raw_query]
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = prompt.metrics_summary
 
+    # Expected: hourly(7,6) + raw(3,2) = total(10,8)
     assert summary["total_executions"] == 10
     assert summary["successful_executions"] == 8
     assert summary["failed_executions"] == 2
     assert summary["failure_rate"] == 0.2
-    assert summary["min_response_time"] == 0.2
-    assert summary["max_response_time"] == 4.0
-    assert summary["avg_response_time"] == 2.0
+    assert summary["min_response_time"] == 0.2  # min(0.5, 0.2)
+    assert summary["max_response_time"] == 4.0  # max(4.0, 3.0)
+    assert summary["avg_response_time"] == 2.0  # (14.0 + 6.0) / 10
     assert summary["last_execution_time"] == mock_timestamp
 
 
@@ -672,27 +703,38 @@ def test_server_metrics_summary_sql_path(monkeypatch):
     server.id = "test-server-id"
 
     mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [20, 18, 0.1, 6.0, 3.0, mock_timestamp][i]
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Hourly query result: (sum_total, sum_success, min_rt, max_rt, weighted_sum_rt, max_hour_start)
+    mock_hourly_result = MagicMock()
+    mock_hourly_result.__getitem__ = lambda self, i: [15, 14, 0.5, 6.0, 45.0, mock_timestamp][i]
+
+    # Raw query result (after hourly coverage): (count, sum_success, min_rt, max_rt, sum_rt, max_timestamp)
+    mock_raw_result = MagicMock()
+    mock_raw_result.__getitem__ = lambda self, i: [5, 4, 0.1, 4.0, 15.0, mock_timestamp][i]
+
+    mock_hourly_query = MagicMock()
+    mock_hourly_query.filter.return_value = mock_hourly_query
+    mock_hourly_query.one.return_value = mock_hourly_result
+
+    mock_raw_query = MagicMock()
+    mock_raw_query.filter.return_value = mock_raw_query
+    mock_raw_query.one.return_value = mock_raw_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [mock_hourly_query, mock_raw_query]
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = server.metrics_summary
 
+    # Expected: hourly(15,14) + raw(5,4) = total(20,18)
     assert summary["total_executions"] == 20
     assert summary["successful_executions"] == 18
     assert summary["failed_executions"] == 2
     assert summary["failure_rate"] == 0.1
-    assert summary["min_response_time"] == 0.1
-    assert summary["max_response_time"] == 6.0
-    assert summary["avg_response_time"] == 3.0
+    assert summary["min_response_time"] == 0.1  # min(0.5, 0.1)
+    assert summary["max_response_time"] == 6.0  # max(6.0, 4.0)
+    assert summary["avg_response_time"] == 3.0  # (45.0 + 15.0) / 20
     assert summary["last_execution_time"] == mock_timestamp
 
 

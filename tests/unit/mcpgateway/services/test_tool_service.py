@@ -1366,6 +1366,39 @@ class TestToolService:
         assert captured_tools[0]["team_id"] == "team-123"
 
     @pytest.mark.asyncio
+    async def test_list_server_tools_with_include_metrics_true(self):
+        """Test that list_server_tools eager loads metrics when include_metrics=True.
+
+        This test ensures that when include_metrics=True, the query includes
+        selectinload for both metrics and metrics_hourly relationships to prevent N+1 queries.
+        Regression test for PR #3649 performance optimization.
+        """
+        mock_db = Mock()
+        mock_tool = Mock(enabled=True, team_id=None, team=None)
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_tool]
+
+        service = ToolService()
+        service.convert_tool_to_read = Mock(return_value="converted_tool_with_metrics")
+
+        # Call with include_metrics=True to trigger eager loading code path
+        tools = await service.list_server_tools(
+            mock_db,
+            server_id="server123",
+            include_metrics=True
+        )
+
+        assert tools == ["converted_tool_with_metrics"]
+        # Verify convert_tool_to_read was called with include_metrics=True
+        service.convert_tool_to_read.assert_called_once_with(
+            mock_tool,
+            include_metrics=True,  # This exercises the eager loading code path
+            include_auth=False,
+            requesting_user_email=None,
+            requesting_user_is_admin=False,
+            requesting_user_team_roles=None
+        )
+
+    @pytest.mark.asyncio
     async def test_get_tool(self, tool_service, mock_tool, test_db):
         """Test getting a tool by ID."""
         # Mock DB get to return tool

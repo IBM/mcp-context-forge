@@ -7290,7 +7290,7 @@ async def test_send_with_capture_registration_failure_logged(monkeypatch, caplog
     with (
         patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool),
         patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"),
-        caplog.at_level("WARNING"),
+        caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"),
     ):
         await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
 
