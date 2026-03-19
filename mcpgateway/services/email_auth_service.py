@@ -554,7 +554,10 @@ class EmailAuthService:
             granted_by: Email of user creating this user (for role assignment audit trail)
             skip_onboarding: Skip personal team creation, role assignment, and
                 success-path registration event logging (for service accounts /
-                synthetic users).  Failure-path audit events are always recorded.
+                synthetic users).  Unexpected-failure audit events (the
+                ``except Exception`` path) are always recorded regardless of
+                this flag.  Duplicate-user rejections (``UserExistsError``,
+                ``IntegrityError``) are not audited by design.
 
         Returns:
             EmailUser: The created user object
@@ -717,7 +720,7 @@ class EmailAuthService:
             auth_provider: Authentication provider
             granted_by: Email of creating user (for audit trail)
             skip_onboarding: Skip personal team, role assignment, and success-path
-                audit events (failure auditing is always recorded)
+                audit events (unexpected-failure auditing is always recorded)
 
         Returns:
             Tuple of (user, created) where created is True if the user was newly created.
