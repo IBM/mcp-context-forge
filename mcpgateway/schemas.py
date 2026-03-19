@@ -2547,7 +2547,7 @@ class TransportType(str, Enum):
     STREAMABLEHTTP = "STREAMABLEHTTP"
 
 
-class GatewayCreate(BaseModel):
+class GatewayCreate(BaseModelWithConfigDict):
     """
     Schema for creating a new gateway.
 

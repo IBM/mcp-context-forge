@@ -1254,3 +1254,92 @@ class TestSchemaValidators:
             ResourceSubscription(uri="resource://one", subscriber_id=long_subscriber)
 
         assert "Subscriber ID exceeds maximum length" in str(exc_info.value)
+
+
+class TestGatewayCreateCamelCase:
+    """Verify GatewayCreate accepts camelCase input and serializes to camelCase output.
+
+    Regression tests for #3577 — GatewayCreate previously extended BaseModel
+    directly, missing alias_generator and populate_by_name from
+    BaseModelWithConfigDict, so camelCase fields were silently ignored.
+    """
+
+    def test_accepts_camel_case_fields(self):
+        """GatewayCreate must accept camelCase field names."""
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(
+            name="test-gw",
+            url="https://example.com",
+            authType="bearer",
+            authToken="tok123",
+            passthroughHeaders=["X-Request-Id"],
+            gatewayMode="direct_proxy",
+            refreshIntervalSeconds=120,
+            oneTimeAuth=True,
+            caCertificate="PEM-DATA",
+        )
+        assert gw.auth_type == "bearer"
+        assert gw.auth_token == "tok123"
+        assert gw.passthrough_headers == ["X-Request-Id"]
+        assert gw.gateway_mode == "direct_proxy"
+        assert gw.refresh_interval_seconds == 120
+        assert gw.one_time_auth is True
+        assert gw.ca_certificate == "PEM-DATA"
+
+    def test_accepts_snake_case_fields(self):
+        """GatewayCreate must still accept snake_case field names."""
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(
+            name="test-gw",
+            url="https://example.com",
+            auth_type="basic",
+            auth_username="user",
+            auth_password="pass",
+            passthrough_headers=["Authorization"],
+            gateway_mode="cache",
+        )
+        assert gw.auth_type == "basic"
+        assert gw.auth_username == "user"
+        assert gw.auth_password == "pass"
+        assert gw.passthrough_headers == ["Authorization"]
+        assert gw.gateway_mode == "cache"
+
+    def test_serializes_to_camel_case(self):
+        """GatewayCreate.model_dump(by_alias=True) must use camelCase keys."""
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(
+            name="test-gw",
+            url="https://example.com",
+            auth_type="bearer",
+            auth_token="tok",
+            passthrough_headers=["X-Foo"],
+            gateway_mode="direct_proxy",
+            refresh_interval_seconds=300,
+        )
+        data = gw.model_dump(by_alias=True)
+        assert "authType" in data
+        assert "authToken" in data
+        assert "passthroughHeaders" in data
+        assert "gatewayMode" in data
+        assert "refreshIntervalSeconds" in data
+        # snake_case keys must NOT appear in aliased output
+        assert "auth_type" not in data
+        assert "passthrough_headers" not in data
+
+    def test_consistent_with_gateway_update(self):
+        """GatewayCreate and GatewayUpdate must both accept camelCase."""
+        from mcpgateway.schemas import GatewayCreate, GatewayUpdate
+
+        create = GatewayCreate(name="gw", url="https://example.com", authType="bearer", authToken="t")
+        update = GatewayUpdate(authType="basic", authUsername="u", authPassword="p")
+        assert create.auth_type == "bearer"
+        assert update.auth_type == "basic"
+
+        # Both must serialize identically for shared fields
+        create_keys = set(create.model_dump(by_alias=True).keys())
+        update_keys = set(update.model_dump(by_alias=True, exclude_none=True).keys())
+        for key in update_keys:
+            assert key in create_keys, f"GatewayUpdate alias '{key}' missing from GatewayCreate"
