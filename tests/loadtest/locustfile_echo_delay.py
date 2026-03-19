@@ -138,6 +138,7 @@ def _generate_jwt_token(user_email: str, tenant_id: str) -> str | None:
         "aud": "mcpgateway-api",
         "sub": user_email,
         "exp": now + 86400,
+        "jti": uuid.uuid4().hex,
         "woTenantId": tenant_id,
     }
     try:
