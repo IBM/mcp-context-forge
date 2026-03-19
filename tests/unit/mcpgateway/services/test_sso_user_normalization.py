@@ -245,10 +245,7 @@ class TestEntraIDNormalization:
 
         normalized = sso_service._normalize_user_info(entra_provider, user_data)
 
-        assert "email_verified" not in normalized, (
-            "email_verified must not be injected when Entra ID omits it; "
-            "_is_email_verified_claim treats absence as pass-through"
-        )
+        assert "email_verified" not in normalized, "email_verified must not be injected when Entra ID omits it; " "_is_email_verified_claim treats absence as pass-through"
         assert normalized["email"] == "user@company.com"
         assert normalized["provider"] == "entra"
 
@@ -849,10 +846,7 @@ class TestGenericOIDCNormalization:
 
         normalized = sso_service._normalize_user_info(generic_provider, user_data)
 
-        assert "email_verified" not in normalized, (
-            "email_verified must not be injected when the OIDC provider omits it; "
-            "_is_email_verified_claim treats absence as pass-through"
-        )
+        assert "email_verified" not in normalized, "email_verified must not be injected when the OIDC provider omits it; " "_is_email_verified_claim treats absence as pass-through"
 
     def test_generic_oidc_explicit_false_email_verified_is_preserved(self, sso_service):
         """When a generic OIDC provider explicitly marks email_verified=False the user must be blocked."""
