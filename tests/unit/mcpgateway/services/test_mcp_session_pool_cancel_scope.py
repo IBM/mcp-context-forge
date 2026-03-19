@@ -449,9 +449,60 @@ class TestPromptPooledRegression:
 
     @pytest.mark.asyncio
     async def test_pooled_get_prompt_fallback_when_pool_unavailable(self):
-        """get_mcp_session_pool() raising RuntimeError should be handled by callers."""
-        from mcpgateway.services.mcp_session_pool import get_mcp_session_pool
+        """PromptService should fall back to non-pooled path when pool raises RuntimeError.
 
-        # When pool is not initialized, get_mcp_session_pool raises RuntimeError
-        with pytest.raises(RuntimeError, match="not initialized"):
-            get_mcp_session_pool()
+        Exercises the actual fallback branch at prompt_service.py:312-316
+        where get_mcp_session_pool() raises and pool is set to None,
+        causing PromptService to use sse_client/streamablehttp_client directly.
+        """
+        from mcpgateway.services.prompt_service import PromptService
+
+        service = PromptService.__new__(PromptService)
+
+        # Mock the gateway and prompt objects
+        mock_gateway = MagicMock()
+        mock_gateway.url = "http://test:8080/sse"
+        mock_gateway.transport = "sse"
+        mock_gateway.id = "gw-1"
+        mock_gateway.auth_type = None
+        mock_gateway.auth_value = None
+
+        mock_prompt = MagicMock()
+        mock_prompt.name = "test-prompt"
+        mock_prompt.description = "A test prompt"
+        mock_prompt.gateway = mock_gateway
+
+        # Mock remote result
+        mock_remote_result = MagicMock()
+        mock_message = MagicMock()
+        mock_message.model_dump.return_value = {"role": "user", "content": {"type": "text", "text": "hello"}}
+        mock_remote_result.messages = [mock_message]
+        mock_remote_result.description = "remote desc"
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+        mock_session.initialize = AsyncMock(return_value=None)
+        mock_session.get_prompt = AsyncMock(return_value=mock_remote_result)
+
+        mock_transport = MagicMock()
+        mock_transport.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        mock_transport.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("mcpgateway.services.prompt_service.settings") as mock_settings:
+            mock_settings.mcp_session_pool_enabled = True
+            mock_settings.health_check_timeout = 5.0
+            # Pool raises RuntimeError → falls back to non-pooled path
+            with patch("mcpgateway.services.prompt_service.get_mcp_session_pool", side_effect=RuntimeError("not initialized")):
+                with patch("mcpgateway.services.prompt_service.sse_client", return_value=mock_transport):
+                    with patch("mcpgateway.services.prompt_service.ClientSession", return_value=mock_session):
+                        result = await service._fetch_gateway_prompt_result(
+                            prompt=mock_prompt,
+                            arguments={"arg1": "val1"},
+                            user_identity="test-user",
+                        )
+
+        # Verify the non-pooled SSE path was used (not the pool path)
+        mock_session.initialize.assert_awaited_once()
+        mock_session.get_prompt.assert_awaited_once()
+        assert result is not None
