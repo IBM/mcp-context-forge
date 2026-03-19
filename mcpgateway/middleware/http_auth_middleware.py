@@ -158,7 +158,7 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         request_id = get_correlation_id()
         if not request_id:
             request_id = generate_correlation_id()
-            logger.debug(f"Correlation ID not found, generated fallback: {request_id}")
+            logger.debug("Correlation ID not found, generated fallback: %s", request_id)
 
         request.state.request_id = request_id
 
@@ -224,7 +224,7 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
                     modified_response_headers = post_result.modified_payload.root
                     for header_name, header_value in modified_response_headers.items():
                         response.headers[header_name] = header_value
-                    logger.debug(f"Post-request hook modified response headers: {list(modified_response_headers.keys())}")
+                    logger.debug("Post-request hook modified response headers: %s", list(modified_response_headers.keys()))
 
             except Exception as e:
                 logger.warning(f"HTTP_POST_REQUEST hook failed: {e}", exc_info=True)

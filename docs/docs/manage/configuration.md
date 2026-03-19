@@ -1070,6 +1070,25 @@ settings split in code.
 - See [Plugin Configuration Reference](configuration-plugins.md) for all
   `PLUGINS_*` settings and aliases.
 
+#### Gateway-Level Plugin Security Overrides
+
+These settings control how much authority plugins have over gateway security
+decisions. They are part of the core gateway `Settings` (not the plugin
+framework's `PluginsSettings`) and require a **server restart** to take effect.
+
+Both default to `false` (secure by default). Only enable them when all loaded
+plugins are fully trusted.
+
+| Setting                              | Description                                                                                                           | Default | Options |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------- | ------- |
+| `PLUGINS_CAN_OVERRIDE_RBAC`         | Allow `HTTP_AUTH_CHECK_PERMISSION` plugin hooks to short-circuit built-in RBAC grants. When disabled, plugin grant decisions are audit-only. | `false` | bool    |
+| `PLUGINS_CAN_OVERRIDE_AUTH_HEADERS`  | Allow pre-request plugin hooks to override auth-sensitive headers (`Authorization`, `Cookie`, `X-Api-Key`, `Proxy-Authorization`) that the client already sent. Required for plugin-driven token exchange workflows (e.g. WXO auth). | `false` | bool    |
+
+!!! danger "Security Impact"
+    Enabling `PLUGINS_CAN_OVERRIDE_AUTH_HEADERS` allows a plugin to rewrite the
+    `Authorization` header, effectively impersonating any user. Only enable when
+    all loaded plugins are fully trusted and the deployment specifically requires
+    plugin-driven token exchange.
 
 #### Plugin Framework (Standalone) Settings
 
