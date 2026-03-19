@@ -121,6 +121,41 @@ def _build_db_prompt(
     p.gateway_id = None
     p.gateway = None
     p.metrics = metrics or []
+
+    # Mock metrics_summary property to match the new implementation
+    # Calculate summary from provided metrics
+    if metrics:
+        total = len(metrics)
+        successful = sum(1 for m in metrics if m.is_success)
+        failed = total - successful
+        failure_rate = failed / total if total > 0 else 0.0
+        min_rt = min((m.response_time for m in metrics), default=None)
+        max_rt = max((m.response_time for m in metrics), default=None)
+        avg_rt = sum(m.response_time for m in metrics) / total if total > 0 else None
+        last_time = max((m.timestamp for m in metrics), default=None)
+
+        p.metrics_summary = {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failure_rate,
+            "min_response_time": min_rt,
+            "max_response_time": max_rt,
+            "avg_response_time": avg_rt,
+            "last_execution_time": last_time,
+        }
+    else:
+        p.metrics_summary = {
+            "total_executions": 0,
+            "successful_executions": 0,
+            "failed_executions": 0,
+            "failure_rate": 0.0,
+            "min_response_time": None,
+            "max_response_time": None,
+            "avg_response_time": None,
+            "last_execution_time": None,
+        }
+
     # validate_arguments: accept anything
     p.validate_arguments = Mock()
     return p
@@ -2110,6 +2145,36 @@ class TestListServerPrompts:
 
         result = await prompt_service.list_server_prompts(db, "server-1")
         assert result == ["converted"]
+
+    @pytest.mark.asyncio
+    async def test_list_server_prompts_with_include_metrics_true(self, prompt_service):
+        """Test that list_server_prompts eager loads metrics when include_metrics=True.
+
+        This test ensures that when include_metrics=True, the query includes
+        selectinload for both metrics and metrics_hourly relationships to prevent N+1 queries.
+        Regression test for PR #3649 performance optimization.
+        """
+        db = MagicMock()
+        mock_prompt = MagicMock()
+        mock_prompt.enabled = True
+        mock_prompt.team_id = None
+        mock_prompt.team = None
+
+        prompt_result = MagicMock()
+        prompt_result.scalars.return_value.all.return_value = [mock_prompt]
+        db.execute = MagicMock(return_value=prompt_result)
+        db.commit = MagicMock()
+
+        prompt_service.convert_prompt_to_read = MagicMock(return_value="converted_prompt_with_metrics")
+
+        # Call with include_metrics=True to trigger eager loading code path
+        prompts = await prompt_service.list_server_prompts(db, server_id="server-1", include_metrics=True)
+
+        assert prompts == ["converted_prompt_with_metrics"]
+        # Verify convert_prompt_to_read was called with include_metrics=True
+        prompt_service.convert_prompt_to_read.assert_called_once_with(
+            mock_prompt, include_metrics=True
+        )
 
     @pytest.mark.asyncio
     async def test_include_inactive_true_skips_enabled_filter(self, prompt_service):
