@@ -1935,7 +1935,16 @@ class ToolService(BaseService):
             converter_is_default = False
 
         if cursor is None and user_email is None and token_teams is None and page is None and converter_is_default:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit)
+            # Include visibility in the cache hash so admin requests that include
+            # an explicit visibility filter don't get served stale results from
+            # a previously cached unfiltered admin request.
+            filters_hash = cache.hash_filters(
+                include_inactive=include_inactive,
+                tags=sorted(tags) if tags else None,
+                gateway_id=gateway_id,
+                limit=limit,
+                visibility=visibility,
+            )
             cached = await cache.get("tools", filters_hash)
             if cached is not None:
                 # Reconstruct ToolRead objects from cached dicts
