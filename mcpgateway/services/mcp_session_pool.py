@@ -118,6 +118,8 @@ class PooledSession:
     last_used: float = field(default_factory=time.time)
     use_count: int = 0
     _closed: bool = field(default=False, repr=False)
+    _owner_task: Optional[asyncio.Task] = field(default=None, repr=False)
+    _shutdown_event: Optional[asyncio.Event] = field(default=None, repr=False)
 
     @property
     def age_seconds(self) -> float:
@@ -139,16 +141,50 @@ class PooledSession:
 
     @property
     def is_closed(self) -> bool:
-        """Return whether this session has been closed.
+        """Return whether this session has been closed or its transport is broken.
+
+        Checks both the internal closed flag and the underlying transport stream
+        state to detect sessions broken by server restarts or network drops before
+        they raise ClosedResourceError at the call site.
 
         Returns:
-            bool: True if session is closed, False otherwise.
+            bool: True if session is closed or transport is broken, False otherwise.
         """
-        return self._closed
+        if self._closed:
+            return True
+        # Check if the owner background task has died
+        if self._owner_task is not None and self._owner_task.done():
+            return True
+        # Detect externally-broken transport (e.g. server restart, network drop).
+        # MCP's BaseSession stores the write stream as _write_stream. Check it with
+        # getattr fallbacks so this degrades gracefully if MCP internals change.
+        try:
+            write_stream = getattr(self.session, "_write_stream", None)
+            if write_stream is not None:
+                if getattr(write_stream, "_closed", False) is True:
+                    return True
+                state = getattr(write_stream, "_state", None)
+                if state is not None:
+                    open_rx = getattr(state, "open_receive_channels", 1)
+                    if isinstance(open_rx, int) and open_rx == 0:
+                        return True
+        except Exception:  # nosec B110 - Graceful degradation if MCP internals change
+            pass
+        return False
 
     def mark_closed(self) -> None:
         """Mark this session as closed."""
         self._closed = True
+
+    @property
+    def owner_task(self) -> "Optional[asyncio.Task]":
+        """Return the background owner task, if any."""
+        return self._owner_task
+
+    @property
+    def shutdown_event(self) -> Optional[asyncio.Event]:
+        """Return the shutdown event for the owner task, if any."""
+        return self._shutdown_event
 
 
 # Type aliases
@@ -849,9 +885,10 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 (e.g. ``ClosedResourceError``) to prevent recycling a
                 broken session.
         """
+        # Treat already-closed sessions (e.g. dead owner task) as discards —
+        # still need to remove from _active and release the semaphore slot.
         if pooled.is_closed:
-            logger.warning("Attempted to release already-closed session")
-            return
+            discard = True
 
         # Pool key includes transport type, user identity, and gateway_id
         # Re-compute user hash from stored raw identity (full hash for collision resistance)
@@ -1029,19 +1066,23 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         for method in self._health_check_methods:
             try:
                 if method == "ping":
-                    await asyncio.wait_for(pooled.session.send_ping(), timeout=self._health_check_timeout)
+                    with anyio.fail_after(self._health_check_timeout):
+                        await pooled.session.send_ping()
                     logger.debug(f"Health check passed: ping (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "list_tools":
-                    await asyncio.wait_for(pooled.session.list_tools(), timeout=self._health_check_timeout)
+                    with anyio.fail_after(self._health_check_timeout):
+                        await pooled.session.list_tools()
                     logger.debug(f"Health check passed: list_tools (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "list_prompts":
-                    await asyncio.wait_for(pooled.session.list_prompts(), timeout=self._health_check_timeout)
+                    with anyio.fail_after(self._health_check_timeout):
+                        await pooled.session.list_prompts()
                     logger.debug(f"Health check passed: list_prompts (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "list_resources":
-                    await asyncio.wait_for(pooled.session.list_resources(), timeout=self._health_check_timeout)
+                    with anyio.fail_after(self._health_check_timeout):
+                        await pooled.session.list_resources()
                     logger.debug(f"Health check passed: list_resources (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "skip":
@@ -1060,7 +1101,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 self._health_check_failures += 1
                 return False
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.debug(f"Health check '{method}' timed out after {self._health_check_timeout}s, trying next")
                 continue
 
@@ -1074,6 +1115,68 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         self._health_check_failures += 1
         return False
 
+    async def _session_owner_coro(
+        self,
+        url: str,
+        transport_type: TransportType,
+        merged_headers: Dict[str, str],
+        httpx_client_factory: Optional[HttpxClientFactory],
+        timeout: Optional[float],
+        gateway_id: Optional[str],
+        ready_future: "asyncio.Future[Tuple[ClientSession, Any]]",
+        shutdown_event: asyncio.Event,
+    ) -> None:
+        """Background task that owns the transport and session lifecycle.
+
+        Runs transport and session inside proper ``async with`` blocks so that
+        anyio cancel scopes are bound to THIS task, not the request handler.
+        Signals readiness via *ready_future*, then blocks on *shutdown_event*
+        until the pool requests cleanup.
+        """
+        try:
+            # Build transport context
+            if transport_type == TransportType.SSE:
+                if httpx_client_factory:
+                    transport_ctx = sse_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory, timeout=timeout)
+                else:
+                    transport_ctx = sse_client(url=url, headers=merged_headers, timeout=timeout)
+            else:  # STREAMABLE_HTTP
+                if httpx_client_factory:
+                    transport_ctx = streamablehttp_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory, timeout=timeout)
+                else:
+                    transport_ctx = streamablehttp_client(url=url, headers=merged_headers, timeout=timeout)
+
+            async with transport_ctx as streams:
+                if transport_type == TransportType.SSE:
+                    read_stream, write_stream = streams[0], streams[1]
+                else:
+                    read_stream, write_stream = streams[0], streams[1]
+
+                # Create message handler if factory is configured
+                message_handler = None
+                if self._message_handler_factory:
+                    try:
+                        message_handler = self._message_handler_factory(url, gateway_id)
+                        logger.debug(f"Created message handler for session {sanitize_url_for_logging(url)} (gateway={SecurityValidator.sanitize_log_message(gateway_id)})")
+                    except Exception as e:
+                        logger.warning(f"Failed to create message handler for {sanitize_url_for_logging(url)}: {e}")
+
+                async with ClientSession(read_stream, write_stream, message_handler=message_handler) as session:
+                    await session.initialize()
+                    # Signal the session is ready for use
+                    if not ready_future.done():
+                        ready_future.set_result((session, transport_ctx))
+                    logger.info(f"Created new MCP session for {sanitize_url_for_logging(url)} (transport={transport_type.value})")
+                    # Block here until the pool asks us to shut down
+                    await shutdown_event.wait()
+                # async with ClientSession exits: session.__aexit__ unwinds properly
+            # async with transport_ctx exits: transport.__aexit__ unwinds properly
+
+        except BaseException as exc:
+            if not ready_future.done():
+                ready_future.set_exception(RuntimeError(f"Failed to create MCP session for {url}: {exc}"))
+            # Let the task finish; the pool will detect _owner_task.done()
+
     async def _create_session(
         self,
         url: str,
@@ -1084,7 +1187,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         gateway_id: Optional[str] = None,
     ) -> PooledSession:
         """
-        Create a new initialized MCP session.
+        Create a new initialized MCP session via a dedicated background task.
+
+        The transport and session contexts are entered inside a background
+        ``asyncio.Task`` so that their anyio cancel scopes are bound to that
+        task, not to the HTTP request handler.  This prevents child-task
+        failures in the transport's TaskGroup from cancelling the request.
 
         Args:
             url: Server URL.
@@ -1107,129 +1215,103 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             merged_headers.update(headers)
 
         # Strip gateway-internal session affinity headers before sending to upstream
-        # x-mcp-session-id is our internal representation, mcp-session-id is the MCP protocol header
-        # Neither should be forwarded to upstream servers
         keys_to_remove = [k for k in merged_headers if k.lower() in ("x-mcp-session-id", "mcp-session-id")]
         for k in keys_to_remove:
             del merged_headers[k]
 
         identity_key = self._compute_identity_hash(headers)
-        transport_ctx = None
-        session = None
+        shutdown_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        ready_future: asyncio.Future[Tuple[ClientSession, Any]] = loop.create_future()
+
+        owner_task = asyncio.create_task(
+            self._session_owner_coro(url, transport_type, merged_headers, httpx_client_factory, timeout, gateway_id, ready_future, shutdown_event),
+            name=f"mcp-session-owner-{sanitize_url_for_logging(url)}",
+        )
+
         success = False
-
         try:
-            # Create transport context
-            if transport_type == TransportType.SSE:
-                if httpx_client_factory:
-                    transport_ctx = sse_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory, timeout=timeout)
-                else:
-                    transport_ctx = sse_client(url=url, headers=merged_headers, timeout=timeout)
-                # pylint: disable=unnecessary-dunder-call,no-member
-                streams = await transport_ctx.__aenter__()  # noqa: PLC2801 - Must call directly for manual lifecycle management
-                read_stream, write_stream = streams[0], streams[1]
-            else:  # STREAMABLE_HTTP
-                if httpx_client_factory:
-                    transport_ctx = streamablehttp_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory, timeout=timeout)
-                else:
-                    transport_ctx = streamablehttp_client(url=url, headers=merged_headers, timeout=timeout)
-                # pylint: disable=unnecessary-dunder-call,no-member
-                read_stream, write_stream, _ = await transport_ctx.__aenter__()  # noqa: PLC2801 - Must call directly for manual lifecycle management
-
-            # Create message handler if factory is configured
-            message_handler = None
-            if self._message_handler_factory:
-                try:
-                    message_handler = self._message_handler_factory(url, gateway_id)
-                    logger.debug(f"Created message handler for session {sanitize_url_for_logging(url)} (gateway={SecurityValidator.sanitize_log_message(gateway_id)})")
-                except Exception as e:
-                    logger.warning(f"Failed to create message handler for {sanitize_url_for_logging(url)}: {e}")
-
-            # Create and initialize session
-            session = ClientSession(read_stream, write_stream, message_handler=message_handler)
-            # pylint: disable=unnecessary-dunder-call
-            await session.__aenter__()  # noqa: PLC2801 - Must call directly for manual lifecycle management
-            await session.initialize()
-
-            logger.info(f"Created new MCP session for {sanitize_url_for_logging(url)} (transport={transport_type.value})")
+            session, transport_ctx = await asyncio.wait_for(ready_future, timeout=self._session_create_timeout)
             success = True
-
-            return PooledSession(
-                session=session,
-                transport_context=transport_ctx,
-                url=url,
-                transport_type=transport_type,
-                headers=merged_headers,
-                identity_key=identity_key,
-                gateway_id=gateway_id or "",
-            )
-
-        except asyncio.CancelledError:  # pylint: disable=try-except-raise
-            # Re-raise CancelledError after cleanup (handled in finally)
-            raise
-
-        except Exception as e:
-            raise RuntimeError(f"Failed to create MCP session for {url}: {e}") from e
-
         finally:
-            # Clean up on ANY failure (Exception, CancelledError, etc.)
-            # Only clean up if we didn't succeed
-            # Use anyio.move_on_after instead of asyncio.wait_for to properly propagate
-            # cancellation through anyio's cancel scope system (prevents orphaned spinning tasks)
+            # Clean up owner task on ANY failure (TimeoutError, Exception, CancelledError)
             if not success:
+                shutdown_event.set()
+                owner_task.cancel()
                 cleanup_timeout = _get_cleanup_timeout()
-                if session is not None:
-                    with anyio.move_on_after(cleanup_timeout):
-                        try:
-                            await session.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
-                        except Exception:  # nosec B110 - Best effort cleanup on connection failure
-                            pass
-                if transport_ctx is not None:
-                    with anyio.move_on_after(cleanup_timeout):
-                        try:
-                            await transport_ctx.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
-                        except Exception:  # nosec B110 - Best effort cleanup on connection failure
-                            pass
+                with anyio.move_on_after(cleanup_timeout):
+                    try:
+                        await owner_task
+                    except BaseException:  # nosec B110 - Best effort cleanup
+                        pass
+
+        return PooledSession(
+            session=session,
+            transport_context=transport_ctx,
+            url=url,
+            transport_type=transport_type,
+            headers=merged_headers,
+            identity_key=identity_key,
+            gateway_id=gateway_id or "",
+            _owner_task=owner_task,
+            _shutdown_event=shutdown_event,
+        )
 
     async def _close_session(self, pooled: PooledSession) -> None:
         """
         Close a session and its transport.
 
-        Uses timeouts to prevent indefinite blocking if session/transport tasks
-        don't respond to cancellation. This prevents CPU spin loops in anyio's
-        _deliver_cancellation which can occur when async iterators or blocking
-        operations don't properly handle CancelledError.
+        For sessions with a background owner task, signals the task to shut down
+        and waits for it to complete (which unwinds the ``async with`` contexts
+        naturally).  Falls back to manual ``__aexit__`` for legacy sessions
+        without an owner task.
 
         Args:
             pooled: The session to close.
         """
-        if pooled.is_closed:
+        if pooled.is_closed and pooled.shutdown_event is None:
+            # Truly closed (legacy path, no owner task) — nothing to clean up
             return
 
         pooled.mark_closed()
-
-        # Use anyio's move_on_after instead of asyncio.wait_for to properly propagate
-        # cancellation through anyio's cancel scope system. asyncio.wait_for() creates
-        # orphaned anyio tasks that keep spinning in _deliver_cancellation.
         cleanup_timeout = _get_cleanup_timeout()
 
-        # Close session with anyio timeout
-        with anyio.move_on_after(cleanup_timeout) as session_scope:
-            try:
-                await pooled.session.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
-            except Exception as e:
-                logger.debug(f"Error closing session: {e}")
-        if session_scope.cancelled_caught:
-            logger.warning(f"Session cleanup timed out for {sanitize_url_for_logging(pooled.url)} - proceeding anyway")
+        if pooled.shutdown_event is not None and pooled.owner_task is not None:
+            # Signal the owner task to shut down gracefully
+            pooled.shutdown_event.set()
 
-        # Close transport with anyio timeout
-        with anyio.move_on_after(cleanup_timeout) as transport_scope:
-            try:
-                await pooled.transport_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
-            except Exception as e:
-                logger.debug(f"Error closing transport: {e}")
-        if transport_scope.cancelled_caught:
-            logger.warning(f"Transport cleanup timed out for {sanitize_url_for_logging(pooled.url)} - proceeding anyway")
+            if not pooled.owner_task.done():
+                # Wait for graceful exit
+                with anyio.move_on_after(cleanup_timeout) as scope:
+                    try:
+                        await pooled.owner_task
+                    except (asyncio.CancelledError, Exception):  # nosec B110
+                        pass
+                if scope.cancelled_caught:
+                    logger.warning(f"Session owner cleanup timed out for {sanitize_url_for_logging(pooled.url)} - force cancelling")
+                    pooled.owner_task.cancel()
+                    try:
+                        await pooled.owner_task
+                    except (asyncio.CancelledError, Exception):  # nosec B110
+                        pass
+        else:
+            # Legacy path: manual __aexit__ for sessions without owner task
+            with anyio.move_on_after(cleanup_timeout) as session_scope:
+                try:
+                    await pooled.session.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
+                except Exception as e:
+                    logger.debug(f"Error closing session: {e}")
+            if session_scope.cancelled_caught:
+                logger.warning(f"Session cleanup timed out for {sanitize_url_for_logging(pooled.url)} - proceeding anyway")
+
+            if pooled.transport_context is not None:
+                with anyio.move_on_after(cleanup_timeout) as transport_scope:
+                    try:
+                        await pooled.transport_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
+                    except Exception as e:
+                        logger.debug(f"Error closing transport: {e}")
+                if transport_scope.cancelled_caught:
+                    logger.warning(f"Transport cleanup timed out for {sanitize_url_for_logging(pooled.url)} - proceeding anyway")
 
         logger.debug(f"Closed session for {sanitize_url_for_logging(pooled.url)} (uses={pooled.use_count})")
 
