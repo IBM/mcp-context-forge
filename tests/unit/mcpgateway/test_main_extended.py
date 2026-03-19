@@ -619,6 +619,45 @@ class TestInternalTrustedMcpTransportBridge:
         assert auth_context["is_authenticated"] is True
 
     @pytest.mark.asyncio
+    async def test_run_internal_mcp_authentication_runs_pre_request_hooks(self, monkeypatch):
+        """HTTP_PRE_REQUEST plugin hooks should transform headers before auth runs."""
+        # First-Party
+        import mcpgateway.main as main_mod
+        from mcpgateway.plugins.framework import HttpHookType
+
+        async def _fake_streamable_http_auth(_scope, _receive, _send):
+            user_context_var.set({"email": "hook-user@example.com", "teams": [], "is_authenticated": True})
+            return True
+
+        monkeypatch.setattr("mcpgateway.main.settings.email_auth_enabled", False)
+        monkeypatch.setattr("mcpgateway.main.streamable_http_auth", _fake_streamable_http_auth)
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda ht: ht == HttpHookType.HTTP_PRE_REQUEST)
+        monkeypatch.setattr(main_mod, "plugin_manager", mock_pm)
+
+        transformed_headers = {"authorization": "Bearer exchanged-token", "x-injected": "value"}
+        original_headers = {"authorization": "Bearer original-token"}
+
+        mock_run_hooks = AsyncMock(return_value=(transformed_headers, None, None))
+        monkeypatch.setattr("mcpgateway.main.run_pre_request_hooks", mock_run_hooks)
+
+        error_response, auth_context = await _run_internal_mcp_authentication(
+            method="POST",
+            path="/mcp",
+            query_string="",
+            headers=original_headers,
+            client_ip="203.0.113.10",
+        )
+
+        assert error_response is None
+        assert auth_context["email"] == "hook-user@example.com"
+        mock_pm.has_hooks_for.assert_called()
+        # Verify run_pre_request_hooks was actually invoked with original headers
+        mock_run_hooks.assert_awaited_once()
+        assert mock_run_hooks.call_args.kwargs["headers"] == original_headers
+
+    @pytest.mark.asyncio
     async def test_handle_internal_mcp_authenticate_returns_auth_context(self, monkeypatch):
         """Trusted Rust authenticate requests should return the derived auth context."""
         request = MagicMock(spec=Request)
@@ -10057,6 +10096,7 @@ class TestRemainingCoverageGaps:
     async def test_list_tools_and_get_tool_jsonpath_modifier(self, monkeypatch):
         # Third-Party
         import orjson
+
 
         # First-Party
         import mcpgateway.main as main_mod
