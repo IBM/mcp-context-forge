@@ -20,7 +20,6 @@ import pytest
 # First-Party
 from mcpgateway.services.sso_service import SSOService
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -340,8 +339,16 @@ class TestAuthFlow:
         assert sso_service._is_email_verified_claim({"email_verified": "no"}) is False
         assert sso_service._is_email_verified_claim({"email_verified": object()}) is False
 
-    def test_is_email_verified_claim_missing_claim_defaults_to_false(self, sso_service):
-        assert sso_service._is_email_verified_claim({"email": "user@example.com"}) is False
+    def test_is_email_verified_claim_none_value_is_rejected(self, sso_service):
+        # Explicit None (JSON null) is distinct from absent key: key IS present,
+        # so the absent-means-pass-through branch does not fire.  None falls
+        # through all isinstance checks and returns False — blocking login.
+        assert sso_service._is_email_verified_claim({"email_verified": None}) is False
+
+    def test_is_email_verified_claim_missing_claim_is_pass_through(self, sso_service):
+        # Absent claim (e.g. Entra ID, GitHub work accounts) must NOT block login.
+        assert sso_service._is_email_verified_claim({"email": "user@example.com"}) is True
+        assert sso_service._is_email_verified_claim({}) is True
 
 
 # ---------------------------------------------------------------------------
@@ -681,8 +688,7 @@ class TestGetUserInfo:
 
         provider = _make_provider()
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_github_admin_orgs = ["my-org"]
             result = await sso_service._get_user_info(provider, "access_token")
@@ -705,8 +711,7 @@ class TestGetUserInfo:
 
         provider = _make_provider()
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_github_admin_orgs = ["my-org"]
             result = await sso_service._get_user_info(provider, "access_token")
@@ -718,7 +723,10 @@ class TestGetUserInfo:
     @pytest.mark.asyncio
     async def test_get_user_info_entra_with_id_token(self, sso_service):
         """Entra ID provider extracts groups/roles from id_token."""
+        # Standard
         import base64
+
+        # Third-Party
         import orjson
 
         user_response = MagicMock()
@@ -737,8 +745,7 @@ class TestGetUserInfo:
 
         token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_github_admin_orgs = []
             result = await sso_service._get_user_info(provider, "at", token_data)
@@ -821,8 +828,7 @@ class TestGetUserInfo:
 
         provider = _make_provider()
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_github_admin_orgs = ["my-org"]
             result = await sso_service._get_user_info(provider, "access_token")
@@ -833,7 +839,10 @@ class TestGetUserInfo:
     @pytest.mark.asyncio
     async def test_get_user_info_entra_group_overage(self, sso_service):
         """Entra ID group overage detection (>200 groups)."""
+        # Standard
         import base64
+
+        # Third-Party
         import orjson
 
         user_response = MagicMock()
@@ -856,8 +865,7 @@ class TestGetUserInfo:
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
         token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_entra_graph_api_enabled = True
@@ -874,7 +882,10 @@ class TestGetUserInfo:
     @pytest.mark.asyncio
     async def test_get_user_info_entra_group_overage_hasgroups_marker(self, sso_service):
         """Entra overage fallback should trigger for hasgroups marker."""
+        # Standard
         import base64
+
+        # Third-Party
         import orjson
 
         user_response = MagicMock()
@@ -896,8 +907,7 @@ class TestGetUserInfo:
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
         token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_entra_graph_api_enabled = True
@@ -913,7 +923,10 @@ class TestGetUserInfo:
     @pytest.mark.asyncio
     async def test_get_user_info_entra_group_overage_groups_src_marker(self, sso_service):
         """Entra overage fallback should trigger for groups:srcN marker."""
+        # Standard
         import base64
+
+        # Third-Party
         import orjson
 
         user_response = MagicMock()
@@ -935,8 +948,7 @@ class TestGetUserInfo:
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
         token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_entra_graph_api_enabled = True
@@ -958,8 +970,7 @@ class TestGetUserInfo:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=graph_response)
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_entra_graph_api_enabled = True
             mock_settings.sso_entra_graph_api_timeout = 10
@@ -977,8 +988,7 @@ class TestGetUserInfo:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=graph_response)
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_entra_graph_api_enabled = True
             mock_settings.sso_entra_graph_api_timeout = 10
@@ -996,8 +1006,7 @@ class TestGetUserInfo:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=graph_response)
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_entra_graph_api_enabled = True
             mock_settings.sso_entra_graph_api_timeout = 10
@@ -1016,8 +1025,7 @@ class TestGetUserInfo:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=graph_response)
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_entra_graph_api_enabled = True
             mock_settings.sso_entra_graph_api_timeout = 10
@@ -1036,8 +1044,7 @@ class TestGetUserInfo:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=graph_response)
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_entra_graph_api_enabled = True
             mock_settings.sso_entra_graph_api_timeout = 10
@@ -1056,8 +1063,7 @@ class TestGetUserInfo:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=graph_response)
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_entra_graph_api_enabled = True
             mock_settings.sso_entra_graph_api_timeout = 10
@@ -1076,8 +1082,7 @@ class TestGetUserInfo:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=graph_response)
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_entra_graph_api_enabled = True
             mock_settings.sso_entra_graph_api_timeout = 10
@@ -1089,8 +1094,7 @@ class TestGetUserInfo:
     @pytest.mark.asyncio
     async def test_fetch_entra_groups_from_graph_api_disabled(self, sso_service):
         """Disabled Graph fallback should skip network calls."""
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_settings.sso_entra_graph_api_enabled = False
             mock_settings.sso_entra_graph_api_timeout = 10
             mock_settings.sso_entra_graph_api_max_groups = 0
@@ -1105,8 +1109,7 @@ class TestGetUserInfo:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=TimeoutError("request timed out"))
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_entra_graph_api_enabled = True
             mock_settings.sso_entra_graph_api_timeout = 1
@@ -1118,8 +1121,7 @@ class TestGetUserInfo:
     @pytest.mark.asyncio
     async def test_fetch_entra_groups_from_graph_api_respects_provider_metadata_override(self, sso_service):
         """Provider metadata should override global Graph fallback defaults."""
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_settings.sso_entra_graph_api_enabled = True
             mock_settings.sso_entra_graph_api_timeout = 10
             mock_settings.sso_entra_graph_api_max_groups = 0
@@ -1135,8 +1137,7 @@ class TestGetUserInfo:
     @pytest.mark.asyncio
     async def test_fetch_entra_groups_from_graph_api_respects_string_bool_override(self, sso_service):
         """String provider metadata values should be parsed for graph_api_enabled."""
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_settings.sso_entra_graph_api_enabled = True
             mock_settings.sso_entra_graph_api_timeout = 10
             mock_settings.sso_entra_graph_api_max_groups = 0
@@ -1152,7 +1153,10 @@ class TestGetUserInfo:
     @pytest.mark.asyncio
     async def test_get_user_info_entra_group_overage_graph_fallback_failure(self, sso_service):
         """Overage with failed Graph fallback should continue with safe defaults."""
+        # Standard
         import base64
+
+        # Third-Party
         import orjson
 
         user_response = MagicMock()
@@ -1173,8 +1177,7 @@ class TestGetUserInfo:
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
         token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_entra_graph_api_enabled = True
@@ -1189,7 +1192,10 @@ class TestGetUserInfo:
     @pytest.mark.asyncio
     async def test_get_user_info_keycloak_with_id_token(self, sso_service):
         """Keycloak extracts realm_access, resource_access, groups from id_token."""
+        # Standard
         import base64
+
+        # Third-Party
         import orjson
 
         user_response = MagicMock()
@@ -1200,7 +1206,9 @@ class TestGetUserInfo:
         mock_client.get = AsyncMock(return_value=user_response)
 
         provider = _make_provider(
-            id="keycloak", name="keycloak", provider_type="oidc",
+            id="keycloak",
+            name="keycloak",
+            provider_type="oidc",
             provider_metadata={"map_realm_roles": True, "map_client_roles": True},
         )
 
@@ -1209,8 +1217,7 @@ class TestGetUserInfo:
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
         token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_github_admin_orgs = []
             result = await sso_service._get_user_info(provider, "at", token_data)
@@ -1223,7 +1230,10 @@ class TestGetUserInfo:
     @pytest.mark.asyncio
     async def test_get_user_info_keycloak_falls_back_to_id_token_when_userinfo_fails(self, sso_service):
         """Keycloak should use id_token claims when userinfo endpoint returns 401."""
+        # Standard
         import base64
+
+        # Third-Party
         import orjson
 
         fail_response = MagicMock()
@@ -1254,8 +1264,7 @@ class TestGetUserInfo:
         fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
         token_data = {"access_token": "at", "id_token": fake_id_token, "_verified_id_token_claims": orjson.loads(payload)}
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
-             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_get_client.return_value = mock_client
             mock_settings.sso_github_admin_orgs = []
             result = await sso_service._get_user_info(provider, "at", token_data)
@@ -1275,63 +1284,97 @@ class TestGetUserInfo:
 class TestNormalization:
     def test_normalize_github(self, sso_service):
         provider = _make_provider(id="github")
-        result = sso_service._normalize_user_info(provider, {
-            "login": "ghuser", "email": "gh@test.com", "name": "GH User",
-            "avatar_url": "https://avatar", "id": 123, "organizations": ["org1"],
-        })
+        result = sso_service._normalize_user_info(
+            provider,
+            {
+                "login": "ghuser",
+                "email": "gh@test.com",
+                "name": "GH User",
+                "avatar_url": "https://avatar",
+                "id": 123,
+                "organizations": ["org1"],
+            },
+        )
         assert result["provider"] == "github"
         assert result["username"] == "ghuser"
         assert result["organizations"] == ["org1"]
 
     def test_normalize_google(self, sso_service):
         provider = _make_provider(id="google", name="google")
-        result = sso_service._normalize_user_info(provider, {
-            "email": "user@gmail.com", "name": "Google User",
-            "picture": "https://pic", "sub": "google-123",
-        })
+        result = sso_service._normalize_user_info(
+            provider,
+            {
+                "email": "user@gmail.com",
+                "name": "Google User",
+                "picture": "https://pic",
+                "sub": "google-123",
+            },
+        )
         assert result["provider"] == "google"
         assert result["username"] == "user"
         assert result["provider_id"] == "google-123"
 
     def test_normalize_entra(self, sso_service):
         provider = _make_provider(id="entra", name="entra", provider_metadata={})
-        result = sso_service._normalize_user_info(provider, {
-            "email": "user@contoso.com", "name": "Entra User",
-            "sub": "entra-oid", "groups": ["grp1"], "roles": ["role1"],
-        })
+        result = sso_service._normalize_user_info(
+            provider,
+            {
+                "email": "user@contoso.com",
+                "name": "Entra User",
+                "sub": "entra-oid",
+                "groups": ["grp1"],
+                "roles": ["role1"],
+            },
+        )
         assert result["provider"] == "entra"
         assert "grp1" in result["groups"]
         assert "role1" in result["groups"]
 
     def test_normalize_generic(self, sso_service):
         provider = _make_provider(id="custom", name="custom")
-        result = sso_service._normalize_user_info(provider, {
-            "email": "user@custom.com", "name": "Custom User", "sub": "c123",
-        })
+        result = sso_service._normalize_user_info(
+            provider,
+            {
+                "email": "user@custom.com",
+                "name": "Custom User",
+                "sub": "c123",
+            },
+        )
         assert result["provider"] == "custom"
         assert result["email"] == "user@custom.com"
 
     def test_normalize_okta(self, sso_service):
         provider = _make_provider(id="okta", name="okta")
-        result = sso_service._normalize_user_info(provider, {
-            "email": "user@okta.com", "name": "Okta User",
-            "preferred_username": "oktauser", "sub": "okta-123",
-        })
+        result = sso_service._normalize_user_info(
+            provider,
+            {
+                "email": "user@okta.com",
+                "name": "Okta User",
+                "preferred_username": "oktauser",
+                "sub": "okta-123",
+            },
+        )
         assert result["provider"] == "okta"
         assert result["username"] == "oktauser"
 
     def test_normalize_keycloak(self, sso_service):
         provider = _make_provider(
-            id="keycloak", name="keycloak",
+            id="keycloak",
+            name="keycloak",
             provider_metadata={"map_realm_roles": True, "map_client_roles": True},
         )
-        result = sso_service._normalize_user_info(provider, {
-            "email": "user@kc.com", "name": "KC User",
-            "preferred_username": "kcuser", "sub": "kc-123",
-            "realm_access": {"roles": ["admin", "user"]},
-            "resource_access": {"my-app": {"roles": ["editor"]}},
-            "groups": ["/team-a"],
-        })
+        result = sso_service._normalize_user_info(
+            provider,
+            {
+                "email": "user@kc.com",
+                "name": "KC User",
+                "preferred_username": "kcuser",
+                "sub": "kc-123",
+                "realm_access": {"roles": ["admin", "user"]},
+                "resource_access": {"my-app": {"roles": ["editor"]}},
+                "groups": ["/team-a"],
+            },
+        )
         assert result["provider"] == "keycloak"
         assert "admin" in result["groups"]
         assert "my-app:editor" in result["groups"]
@@ -1346,6 +1389,7 @@ class TestNormalization:
 class TestOidcMetadataAndJwksHelpers:
     @pytest.mark.asyncio
     async def test_get_oidc_provider_metadata_returns_fresh_cached_value(self, sso_service):
+        # Standard
         import time
 
         sso_service._oidc_config_cache["https://issuer.example.com"] = (time.monotonic(), {"jwks_uri": "https://issuer.example.com/jwks"})
@@ -1358,6 +1402,7 @@ class TestOidcMetadataAndJwksHelpers:
 
     @pytest.mark.asyncio
     async def test_get_oidc_provider_metadata_expires_cache_and_handles_non_200(self, sso_service):
+        # Standard
         import time
 
         sso_service._oidc_config_cache["https://issuer.example.com"] = (
@@ -1515,8 +1560,12 @@ class TestVerifyOidcIdToken:
 
 class TestDecodeJWTClaims:
     def test_valid_jwt(self, sso_service):
+        # Standard
         import base64
+
+        # Third-Party
         import orjson
+
         payload = orjson.dumps({"sub": "123", "groups": ["admin"]})
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.signature"
@@ -1566,9 +1615,7 @@ class TestShouldUserBeAdmin:
             mock_settings.sso_github_admin_orgs = ["my-org"]
             mock_settings.sso_google_admin_domains = []
             mock_settings.sso_entra_admin_groups = []
-            result = sso_service._should_user_be_admin(
-                "user@github.com", {"organizations": ["my-org"]}, provider
-            )
+            result = sso_service._should_user_be_admin("user@github.com", {"organizations": ["my-org"]}, provider)
         assert result is True
 
     def test_admin_by_entra_group(self, sso_service):
@@ -1578,9 +1625,7 @@ class TestShouldUserBeAdmin:
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
             mock_settings.sso_entra_admin_groups = ["admin-group-id"]
-            result = sso_service._should_user_be_admin(
-                "user@contoso.com", {"groups": ["admin-group-id"]}, provider
-            )
+            result = sso_service._should_user_be_admin("user@contoso.com", {"groups": ["admin-group-id"]}, provider)
         assert result is True
 
     def test_admin_by_google_domain(self, sso_service):
@@ -1590,9 +1635,7 @@ class TestShouldUserBeAdmin:
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = ["google-admin.com"]
             mock_settings.sso_entra_admin_groups = []
-            result = sso_service._should_user_be_admin(
-                "user@google-admin.com", {}, provider
-            )
+            result = sso_service._should_user_be_admin("user@google-admin.com", {}, provider)
         assert result is True
 
 
@@ -1627,8 +1670,7 @@ class TestMapGroupsToRoles:
     @pytest.mark.asyncio
     async def test_role_mapping_with_admin_shorthand(self, sso_service):
         provider = _make_provider(provider_metadata={"role_mappings": {"super-group": "admin"}})
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.role_service.RoleService") as mock_role_svc:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as mock_role_svc:
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {}
@@ -1641,8 +1683,7 @@ class TestMapGroupsToRoles:
         mock_role = SimpleNamespace(name="developer", scope="team", id="r1")
         provider = _make_provider(provider_metadata={"role_mappings": {"dev-group": "developer"}})
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {}
@@ -1659,8 +1700,7 @@ class TestMapGroupsToRoles:
         mock_role = SimpleNamespace(name="viewer", scope="global", id="r2")
         provider = _make_provider(id="entra", provider_metadata={})
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_default_role = "viewer"
             mock_settings.sso_entra_role_mappings = {}
@@ -1680,8 +1720,7 @@ class TestMapGroupsToRoles:
             provider_metadata={"default_role": "viewer"},
         )
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {}
@@ -1707,9 +1746,11 @@ class TestMapGroupsToRoles:
             },
         )
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.role_service.RoleService") as MockRoleService, \
-             patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService:
+        with (
+            patch("mcpgateway.services.sso_service.settings") as mock_settings,
+            patch("mcpgateway.services.role_service.RoleService") as MockRoleService,
+            patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService,
+        ):
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {}
@@ -1743,9 +1784,11 @@ class TestMapGroupsToRoles:
         role_dev = SimpleNamespace(name="developer", scope="team", id="r-dev")
         role_view = SimpleNamespace(name="viewer", scope="team", id="r-view")
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.role_service.RoleService") as MockRoleService, \
-             patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService:
+        with (
+            patch("mcpgateway.services.sso_service.settings") as mock_settings,
+            patch("mcpgateway.services.role_service.RoleService") as MockRoleService,
+            patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService,
+        ):
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {}
@@ -1789,9 +1832,11 @@ class TestMapGroupsToRoles:
         )
         role_dev = SimpleNamespace(name="developer", scope="team", id="r-dev")
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.role_service.RoleService") as MockRoleService, \
-             patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService:
+        with (
+            patch("mcpgateway.services.sso_service.settings") as mock_settings,
+            patch("mcpgateway.services.role_service.RoleService") as MockRoleService,
+            patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService,
+        ):
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {}
@@ -1821,9 +1866,11 @@ class TestMapGroupsToRoles:
         )
         role_dev = SimpleNamespace(name="developer", scope="team", id="r-dev")
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.role_service.RoleService") as MockRoleService, \
-             patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService:
+        with (
+            patch("mcpgateway.services.sso_service.settings") as mock_settings,
+            patch("mcpgateway.services.role_service.RoleService") as MockRoleService,
+            patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService,
+        ):
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {}
@@ -1853,9 +1900,11 @@ class TestMapGroupsToRoles:
         )
         role_dev = SimpleNamespace(name="developer", scope="team", id="r-dev")
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.role_service.RoleService") as MockRoleService, \
-             patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService:
+        with (
+            patch("mcpgateway.services.sso_service.settings") as mock_settings,
+            patch("mcpgateway.services.role_service.RoleService") as MockRoleService,
+            patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService,
+        ):
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {}
@@ -1893,8 +1942,13 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_existing_user(self, sso_service, mock_db):
         existing_user = SimpleNamespace(
-            email="user@test.com", full_name="Old Name", auth_provider="local",
-            email_verified=False, last_login=None, is_admin=False, admin_origin=None,
+            email="user@test.com",
+            full_name="Old Name",
+            auth_provider="local",
+            email_verified=False,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
         )
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider()
@@ -1905,32 +1959,45 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_google_admin_domains = []
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_sync_roles_on_login = False
-            result = await sso_service.authenticate_or_create_user({
-                "email": "user@test.com", "full_name": "New Name", "provider": "github",
-            })
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "user@test.com",
+                    "full_name": "New Name",
+                    "provider": "github",
+                }
+            )
 
         assert result is None
 
     @pytest.mark.asyncio
     async def test_existing_user_same_provider_allowed(self, sso_service, mock_db):
         existing_user = SimpleNamespace(
-            email="user@test.com", full_name="Old Name", auth_provider="github",
-            email_verified=False, last_login=None, is_admin=False, admin_origin=None,
+            email="user@test.com",
+            full_name="Old Name",
+            auth_provider="github",
+            email_verified=False,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
         )
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider()
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
             mock_settings.sso_auto_admin_domains = []
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_sync_roles_on_login = False
             mock_jwt.return_value = "jwt-token"
-            result = await sso_service.authenticate_or_create_user({
-                "email": "user@test.com", "full_name": "New Name", "provider": "github", "email_verified": True,
-            })
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "user@test.com",
+                    "full_name": "New Name",
+                    "provider": "github",
+                    "email_verified": True,
+                }
+            )
 
         assert result == "jwt-token"
         assert existing_user.full_name == "New Name"
@@ -2041,29 +2108,35 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_existing_user_calls_apply_team_mapping(self, sso_service, mock_db):
         existing_user = SimpleNamespace(
-            email="user@test.com", full_name="Old Name", auth_provider="github",
-            email_verified=True, last_login=None, is_admin=False, admin_origin=None,
+            email="user@test.com",
+            full_name="Old Name",
+            auth_provider="github",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
         )
         provider = _make_provider(team_mapping={"engineering": "team-1"})
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: provider
         sso_service._apply_team_mapping = AsyncMock()
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
             mock_settings.sso_auto_admin_domains = []
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_sync_roles_on_login = False
             mock_jwt.return_value = "jwt-token"
-            result = await sso_service.authenticate_or_create_user({
-                "email": "user@test.com",
-                "full_name": "New Name",
-                "provider": "github",
-                "email_verified": True,
-                "groups": ["engineering"],
-            })
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "user@test.com",
+                    "full_name": "New Name",
+                    "provider": "github",
+                    "email_verified": True,
+                    "groups": ["engineering"],
+                }
+            )
 
         assert result == "jwt-token"
         sso_service._apply_team_mapping.assert_awaited_once()
@@ -2095,6 +2168,43 @@ class TestAuthenticateOrCreateUser:
         assert existing_user.email_verified is True
 
     @pytest.mark.asyncio
+    async def test_existing_user_absent_email_verified_claim_is_allowed(self, sso_service, mock_db):
+        """Existing-user login must succeed when the provider omits email_verified.
+
+        Regression guard for the same root cause as #3253: providers like Entra ID
+        that omit email_verified should not block returning users either.
+        """
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="Old Name",
+            auth_provider="github",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: _make_provider()
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_sync_roles_on_login = False
+            mock_jwt.return_value = "jwt-token"
+            # No email_verified key — simulates Entra ID / GitHub work accounts
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "user@test.com",
+                    "full_name": "Old Name",
+                    "provider": "github",
+                }
+            )
+
+        assert result == "jwt-token"
+
+    @pytest.mark.asyncio
     async def test_existing_user_untrusted_domain_rejected(self, sso_service, mock_db):
         existing_user = SimpleNamespace(
             email="user@untrusted.com",
@@ -2122,14 +2232,18 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_existing_user_mixed_case_idp_email_uses_canonical_claims(self, sso_service, mock_db):
         existing_user = SimpleNamespace(
-            email="user@test.com", full_name="User Name", auth_provider="github",
-            email_verified=True, last_login=None, is_admin=False, admin_origin=None,
+            email="user@test.com",
+            full_name="User Name",
+            auth_provider="github",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
         )
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider()
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
             mock_settings.sso_auto_admin_domains = []
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
@@ -2229,8 +2343,7 @@ class TestAuthenticateOrCreateUser:
 
         mock_db.commit.side_effect = _commit_side_effect
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
             mock_settings.sso_auto_admin_domains = []
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
@@ -2254,23 +2367,32 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_existing_user_admin_promotion(self, sso_service, mock_db):
         existing_user = SimpleNamespace(
-            email="user@admin.com", full_name="Admin", auth_provider="github",
-            email_verified=True, last_login=None, is_admin=False, admin_origin=None,
+            email="user@admin.com",
+            full_name="Admin",
+            auth_provider="github",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
         )
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider()
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
             mock_settings.sso_auto_admin_domains = ["admin.com"]
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_sync_roles_on_login = False
             mock_jwt.return_value = "jwt-token"
-            result = await sso_service.authenticate_or_create_user({
-                "email": "user@admin.com", "full_name": "Admin", "provider": "github", "email_verified": True,
-            })
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "user@admin.com",
+                    "full_name": "Admin",
+                    "provider": "github",
+                    "email_verified": True,
+                }
+            )
 
         assert existing_user.is_admin is True
         assert existing_user.admin_origin == "sso"
@@ -2278,23 +2400,32 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_existing_user_admin_demotion(self, sso_service, mock_db):
         existing_user = SimpleNamespace(
-            email="user@other.com", full_name="Ex-Admin", auth_provider="github",
-            email_verified=True, last_login=None, is_admin=True, admin_origin="sso",
+            email="user@other.com",
+            full_name="Ex-Admin",
+            auth_provider="github",
+            email_verified=True,
+            last_login=None,
+            is_admin=True,
+            admin_origin="sso",
         )
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider()
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
             mock_settings.sso_auto_admin_domains = []
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_sync_roles_on_login = False
             mock_jwt.return_value = "jwt-token"
-            result = await sso_service.authenticate_or_create_user({
-                "email": "user@other.com", "full_name": "Ex-Admin", "provider": "github", "email_verified": True,
-            })
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "user@other.com",
+                    "full_name": "Ex-Admin",
+                    "provider": "github",
+                    "email_verified": True,
+                }
+            )
 
         assert existing_user.is_admin is False
         assert existing_user.admin_origin is None
@@ -2303,29 +2434,43 @@ class TestAuthenticateOrCreateUser:
     async def test_new_user_auto_create(self, sso_service, mock_db):
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
         new_user = SimpleNamespace(
-            email="new@test.com", full_name="New User", auth_provider="github",
-            is_admin=False, admin_origin=None,
+            email="new@test.com",
+            full_name="New User",
+            auth_provider="github",
+            is_admin=False,
+            admin_origin=None,
         )
         sso_service.auth_service.create_user = AsyncMock(return_value=new_user)
         sso_service.get_provider = lambda _id: _make_provider()
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
             mock_settings.sso_auto_admin_domains = []
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_require_admin_approval = False
             mock_jwt.return_value = "new-jwt"
-            result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
-            })
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "new@test.com",
+                    "full_name": "New User",
+                    "provider": "github",
+                    "email_verified": True,
+                }
+            )
 
         assert result == "new-jwt"
 
     @pytest.mark.asyncio
-    async def test_new_github_user_without_email_verified_claim_is_rejected(self, sso_service, mock_db):
-        """GitHub payloads without email_verified are rejected by secure default."""
+    async def test_new_github_user_without_email_verified_claim_is_allowed(self, sso_service, mock_db):
+        """GitHub payloads without email_verified must NOT be rejected.
+
+        GitHub's /user API does not include email_verified for most accounts.
+        The service normalises the payload without the key so that
+        _is_email_verified_claim treats the absence as a pass-through.
+        Regression guard for https://github.com/IBM/mcp-context-forge/issues/3253
+        (same root cause as Entra ID).
+        """
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
         new_user = SimpleNamespace(
             email="new@test.com",
@@ -2346,8 +2491,7 @@ class TestAuthenticateOrCreateUser:
             },
         )
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
             mock_settings.sso_auto_admin_domains = []
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
@@ -2356,7 +2500,50 @@ class TestAuthenticateOrCreateUser:
             mock_jwt.return_value = "new-jwt"
             result = await sso_service.authenticate_or_create_user(normalized_user_info)
 
-        assert result is None
+        assert result == "new-jwt"
+
+    @pytest.mark.asyncio
+    async def test_new_entra_user_without_email_verified_claim_is_allowed(self, sso_service, mock_db):
+        """First-time Entra ID login must succeed even though email_verified is absent.
+
+        Regression test for https://github.com/IBM/mcp-context-forge/issues/3253:
+        Microsoft Entra ID work/school accounts do not include email_verified in
+        the userinfo response.  Absence of the claim should be treated as a
+        pass-through, not a rejection.
+        """
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        new_user = SimpleNamespace(
+            email="user@company.com",
+            full_name="Entra User",
+            auth_provider="entra",
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service.create_user = AsyncMock(return_value=new_user)
+        sso_service.get_provider = lambda _id: _make_provider(id="entra")
+        normalized_user_info = sso_service._normalize_user_info(
+            _make_provider(id="entra"),
+            {
+                "email": "user@company.com",
+                "name": "Entra User",
+                "preferred_username": "user@company.com",
+                "sub": "entra-sub-123",
+                # No email_verified — typical Microsoft Entra ID response
+            },
+        )
+        # Confirm normalization did not inject the key
+        assert "email_verified" not in normalized_user_info
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_require_admin_approval = False
+            mock_jwt.return_value = "entra-jwt"
+            result = await sso_service.authenticate_or_create_user(normalized_user_info)
+
+        assert result == "entra-jwt"
 
     @pytest.mark.asyncio
     async def test_new_user_with_role_assignments_triggers_sync(self, sso_service, mock_db):
@@ -2375,8 +2562,7 @@ class TestAuthenticateOrCreateUser:
         sso_service._map_groups_to_roles = AsyncMock(return_value=[{"role_name": "developer", "scope": "team", "scope_id": None}])
         sso_service._sync_user_roles = AsyncMock()
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
             mock_settings.sso_auto_admin_domains = []
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
@@ -2439,8 +2625,7 @@ class TestAuthenticateOrCreateUser:
 
         sso_service.auth_service.create_user = AsyncMock(side_effect=_create_user)
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
             mock_settings.sso_auto_admin_domains = []
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
@@ -2465,9 +2650,13 @@ class TestAuthenticateOrCreateUser:
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider(auto_create_users=False)
 
-        result = await sso_service.authenticate_or_create_user({
-            "email": "new@test.com", "full_name": "New User", "provider": "github",
-        })
+        result = await sso_service.authenticate_or_create_user(
+            {
+                "email": "new@test.com",
+                "full_name": "New User",
+                "provider": "github",
+            }
+        )
         assert result is None
 
     @pytest.mark.asyncio
@@ -2475,9 +2664,13 @@ class TestAuthenticateOrCreateUser:
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider(trusted_domains=["trusted.com"])
 
-        result = await sso_service.authenticate_or_create_user({
-            "email": "new@untrusted.com", "full_name": "New User", "provider": "github",
-        })
+        result = await sso_service.authenticate_or_create_user(
+            {
+                "email": "new@untrusted.com",
+                "full_name": "New User",
+                "provider": "github",
+            }
+        )
         assert result is None
 
     @pytest.mark.asyncio
@@ -2487,13 +2680,20 @@ class TestAuthenticateOrCreateUser:
         sso_service.get_provider = lambda _id: _make_provider()
         mock_db.execute.return_value.scalar_one_or_none.return_value = None  # No existing pending
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()) as mock_select, \
-             patch("mcpgateway.services.sso_service.PendingUserApproval"):
+        with (
+            patch("mcpgateway.services.sso_service.settings") as mock_settings,
+            patch("mcpgateway.services.sso_service.select", return_value=MagicMock()) as mock_select,
+            patch("mcpgateway.services.sso_service.PendingUserApproval"),
+        ):
             mock_settings.sso_require_admin_approval = True
-            result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
-            })
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "new@test.com",
+                    "full_name": "New User",
+                    "provider": "github",
+                    "email_verified": True,
+                }
+            )
 
         assert result is None
         mock_db.add.assert_called()  # Pending request created
@@ -2506,12 +2706,16 @@ class TestAuthenticateOrCreateUser:
         pending = SimpleNamespace(status="pending", is_expired=lambda: False)
         mock_db.execute.return_value.scalar_one_or_none.return_value = pending
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
             mock_settings.sso_require_admin_approval = True
-            result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
-            })
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "new@test.com",
+                    "full_name": "New User",
+                    "provider": "github",
+                    "email_verified": True,
+                }
+            )
 
         assert result is None
 
@@ -2534,12 +2738,16 @@ class TestAuthenticateOrCreateUser:
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = pending
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
             mock_settings.sso_require_admin_approval = True
-            result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
-            })
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "new@test.com",
+                    "full_name": "New User",
+                    "provider": "github",
+                    "email_verified": True,
+                }
+            )
 
         assert result is None
         assert pending.status == "pending"
@@ -2573,12 +2781,15 @@ class TestAuthenticateOrCreateUser:
         pending = SimpleNamespace(status="rejected", is_expired=lambda: False)
         mock_db.execute.return_value.scalar_one_or_none.return_value = pending
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
             mock_settings.sso_require_admin_approval = True
-            result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github",
-            })
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "new@test.com",
+                    "full_name": "New User",
+                    "provider": "github",
+                }
+            )
 
         assert result is None
 
@@ -2589,8 +2800,7 @@ class TestAuthenticateOrCreateUser:
         pending = SimpleNamespace(status="approved", is_expired=lambda: True)
         mock_db.execute.return_value.scalar_one_or_none.return_value = pending
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
             mock_settings.sso_require_admin_approval = True
             result = await sso_service.authenticate_or_create_user(
                 {
@@ -2622,8 +2832,7 @@ class TestAuthenticateOrCreateUser:
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = pending
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
             mock_settings.sso_require_admin_approval = True
             result = await sso_service.authenticate_or_create_user(
                 {
@@ -2649,8 +2858,7 @@ class TestAuthenticateOrCreateUser:
         pending = SimpleNamespace(status="completed", is_expired=lambda: False)
         mock_db.execute.return_value.scalar_one_or_none.return_value = pending
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
             mock_settings.sso_require_admin_approval = True
             result = await sso_service.authenticate_or_create_user(
                 {
@@ -2669,9 +2877,11 @@ class TestAuthenticateOrCreateUser:
         pending = SimpleNamespace(status="mystery", is_expired=lambda: False)
         mock_db.execute.return_value.scalar_one_or_none.return_value = pending
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()), \
-             patch("mcpgateway.services.sso_service.logger") as mock_logger:
+        with (
+            patch("mcpgateway.services.sso_service.settings") as mock_settings,
+            patch("mcpgateway.services.sso_service.select", return_value=MagicMock()),
+            patch("mcpgateway.services.sso_service.logger") as mock_logger,
+        ):
             mock_settings.sso_require_admin_approval = True
             result = await sso_service.authenticate_or_create_user(
                 {
@@ -2690,8 +2900,11 @@ class TestAuthenticateOrCreateUser:
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
         new_user = SimpleNamespace(
-            email="new@test.com", full_name="New User", auth_provider="github",
-            is_admin=False, admin_origin=None,
+            email="new@test.com",
+            full_name="New User",
+            auth_provider="github",
+            is_admin=False,
+            admin_origin=None,
         )
         sso_service.auth_service.create_user = AsyncMock(return_value=new_user)
 
@@ -2699,18 +2912,25 @@ class TestAuthenticateOrCreateUser:
         approved = SimpleNamespace(status="approved", is_expired=lambda: False)
         mock_db.execute.return_value.scalar_one_or_none.side_effect = [approved, approved]
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()), \
-             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+        with (
+            patch("mcpgateway.services.sso_service.settings") as mock_settings,
+            patch("mcpgateway.services.sso_service.select", return_value=MagicMock()),
+            patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt,
+        ):
             mock_settings.sso_require_admin_approval = True
             mock_settings.sso_auto_admin_domains = []
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
             mock_settings.sso_entra_admin_groups = []
             mock_jwt.return_value = "approved-jwt"
-            result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
-            })
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "new@test.com",
+                    "full_name": "New User",
+                    "provider": "github",
+                    "email_verified": True,
+                }
+            )
 
         assert result == "approved-jwt"
 
@@ -2727,9 +2947,14 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
             mock_settings.sso_entra_admin_groups = []
-            result = await sso_service.authenticate_or_create_user({
-                "email": "new@test.com", "full_name": "New User", "provider": "github", "email_verified": True,
-            })
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "new@test.com",
+                    "full_name": "New User",
+                    "provider": "github",
+                    "email_verified": True,
+                }
+            )
 
         assert result is None
 
@@ -2737,24 +2962,34 @@ class TestAuthenticateOrCreateUser:
     async def test_existing_user_with_role_sync(self, sso_service, mock_db):
         """Existing user with provider metadata sync_roles=True triggers role sync."""
         existing_user = SimpleNamespace(
-            email="user@test.com", full_name="Name", auth_provider="github",
-            email_verified=True, last_login=None, is_admin=False, admin_origin=None,
+            email="user@test.com",
+            full_name="Name",
+            auth_provider="github",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
         )
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider(provider_metadata={"sync_roles": True, "role_mappings": {}})
         sso_service._map_groups_to_roles = AsyncMock(return_value=[])
         sso_service._sync_user_roles = AsyncMock()
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
             mock_settings.sso_auto_admin_domains = []
             mock_settings.sso_github_admin_orgs = []
             mock_settings.sso_google_admin_domains = []
             mock_settings.sso_entra_admin_groups = []
             mock_jwt.return_value = "jwt"
-            result = await sso_service.authenticate_or_create_user({
-                "email": "user@test.com", "full_name": "Name", "provider": "github", "email_verified": True, "groups": ["dev"],
-            })
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "user@test.com",
+                    "full_name": "Name",
+                    "provider": "github",
+                    "email_verified": True,
+                    "groups": ["dev"],
+                }
+            )
 
         sso_service._map_groups_to_roles.assert_called_once()
         sso_service._sync_user_roles.assert_called_once()
@@ -2771,7 +3006,10 @@ class TestSyncUserRoles:
         """Roles no longer in desired set are revoked."""
         old_role = SimpleNamespace(
             role=SimpleNamespace(name="old-role", id="r-old"),
-            scope="team", scope_id=None, grant_source="sso", role_id="r-old",
+            scope="team",
+            scope_id=None,
+            grant_source="sso",
+            role_id="r-old",
         )
 
         with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
@@ -2905,8 +3143,7 @@ class TestEntraLegacyRoleMappings:
         mock_role = SimpleNamespace(name="developer", scope="team", id="r1")
         provider = _make_provider(id="entra", provider_metadata={})
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {"dev-group": "developer"}
@@ -2923,8 +3160,7 @@ class TestEntraLegacyRoleMappings:
         """Role mapping to non-existent role logs warning."""
         provider = _make_provider(provider_metadata={"role_mappings": {"grp": "missing-role"}})
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {}
@@ -2940,8 +3176,7 @@ class TestEntraLegacyRoleMappings:
         """Entra admin groups produce platform_admin even without role_mappings."""
         provider = _make_provider(id="entra", provider_metadata={})
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
-             patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
             mock_settings.sso_entra_admin_groups = ["admin-grp"]
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {}
