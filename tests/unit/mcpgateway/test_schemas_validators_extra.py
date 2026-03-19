@@ -857,6 +857,46 @@ class TestMaskOauthConfig:
         assert masked.oauth_config["authorization_server"] == "https://idp.example.com"
 
 
+class TestToolCreateDescriptionValidationStrict:
+    """Tests for issue #3711 — VALIDATION_STRICT gates the forbidden-pattern check.
+
+    ToolCreate.validate_description must raise when validation_strict=True (default)
+    and must only log a warning when validation_strict=False, so that MCP server
+    tools with Markdown-formatted descriptions (e.g. "> blockquote") can register.
+    """
+
+    def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
+        """Descriptions with shell/pipe metacharacters raise ValueError when VALIDATION_STRICT=true."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        for pat in ["&&", ";", "||", "$(", "|", "> ", "< "]:
+            with pytest.raises(ValueError, match="unsafe characters"):
+                ToolCreate.validate_description(f"Valid prefix {pat} suffix")
+
+    def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog):
+        """Descriptions with shell/pipe metacharacters are accepted when VALIDATION_STRICT=false."""
+        monkeypatch.setattr(settings, "validation_strict", False)
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
+            result = ToolCreate.validate_description("Search docs > results")
+        # No exception raised; value is returned (sanitised)
+        assert result is not None
+        assert any("potentially unsafe" in rec.message for rec in caplog.records)
+
+    def test_safe_description_always_accepted(self, monkeypatch):
+        """Safe descriptions pass in both strict and non-strict modes."""
+        for strict in (True, False):
+            monkeypatch.setattr(settings, "validation_strict", strict)
+            result = ToolCreate.validate_description("A perfectly safe description.")
+            assert result == "A perfectly safe description."
+
+    def test_none_description_always_accepted(self, monkeypatch):
+        """None descriptions pass through unchanged in both modes."""
+        for strict in (True, False):
+            monkeypatch.setattr(settings, "validation_strict", strict)
+            assert ToolCreate.validate_description(None) is None
+
+
 def test_a2a_agent_read_populates_auth_headers_single():
     """Test A2AAgentRead populates auth_headers from single custom header."""
     auth_value = encode_auth({"X-API-Key": "secret123"})
