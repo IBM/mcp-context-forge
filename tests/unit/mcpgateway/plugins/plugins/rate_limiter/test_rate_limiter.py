@@ -7,6 +7,10 @@ Authors: Mihai Criveti
 Tests for RateLimiterPlugin.
 """
 
+import asyncio
+from typing import Any, Dict
+from unittest.mock import patch
+
 import pytest
 
 from mcpgateway.plugins.framework import (
@@ -15,7 +19,8 @@ from mcpgateway.plugins.framework import (
     PluginContext,
     PromptHookType,
     PromptPrehookPayload,
-    ToolHookType
+    ToolHookType,
+    ToolPreInvokePayload,
 )
 from plugins.rate_limiter.rate_limiter import RateLimiterPlugin, _make_headers, _parse_rate, _select_most_restrictive, _store
 
@@ -599,3 +604,385 @@ async def test_tool_pre_invoke_unlimited_returns_no_headers():
     assert result.http_headers is None
     assert result.metadata is not None
     assert result.metadata.get("limited") is False
+
+
+# ============================================================================
+# Known Gap Tests — document current limitations (expected to fail)
+#
+# Each test is marked xfail(strict=True):
+#   - While the gap exists   → shows as XFAIL  (CI passes, bug documented)
+#   - Once the gap is fixed  → shows as XPASS  (CI fails, forcing marker removal)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_redis_backend_shares_state_across_instances():
+    """
+    With the Redis backend, the rate limit counter is shared across all workers.
+
+    Clearing the local _store (simulating a new process) has no effect —
+    the counter lives in Redis and persists between workers.
+
+    A fake in-process Redis client is injected so the test runs without
+    a live Redis server. The fake client uses its own dict (separate from _store)
+    to simulate shared Redis state.
+    """
+    import time as _time
+
+    class _FakeRedis:
+        """In-process Redis stub: simulates INCR + EXPIRE Lua script semantics."""
+
+        def __init__(self) -> None:
+            self._data: Dict[str, tuple[int, int]] = {}  # key -> (count, expire_at)
+
+        async def eval(self, script: str, numkeys: int, *args: Any) -> list[int]:
+            key = args[0]
+            window_seconds = int(args[1])
+            now = int(_time.time())
+            entry = self._data.get(key)
+            if entry is None or entry[1] <= now:
+                self._data[key] = (1, now + window_seconds)
+                return [1, window_seconds]
+            count, expire_at = entry
+            self._data[key] = (count + 1, expire_at)
+            return [count + 1, max(0, expire_at - now)]
+
+    fake_redis = _FakeRedis()
+    plugin = RateLimiterPlugin(
+        PluginConfig(
+            name="rl",
+            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            hooks=[ToolHookType.TOOL_PRE_INVOKE],
+            config={"by_user": "2/s", "backend": "redis", "redis_url": "redis://localhost:6379/0"},
+        )
+    )
+    plugin._rate_backend._client = fake_redis  # inject fake Redis — no live server needed
+
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    # Worker 1: alice exhausts her limit (2 requests)
+    r1 = await plugin.tool_pre_invoke(payload, ctx)
+    r2 = await plugin.tool_pre_invoke(payload, ctx)
+    assert r1.violation is None
+    assert r2.violation is None
+
+    # Simulate Worker 2 starting fresh — clear local _store (has no effect on Redis counter)
+    _store.clear()
+
+    # Worker 2 shares the same Redis — alice's counter is still 2, next request is blocked
+    r3 = await plugin.tool_pre_invoke(payload, ctx)
+    assert r3.violation is not None, (
+        "alice made 3 requests total (limit is 2). With Redis backend, clearing "
+        "_store has no effect — the counter persists in Redis across all workers."
+    )
+    assert r3.violation.http_status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_store_evicts_expired_windows():
+    """
+    After a rate limit window expires, the background TTL sweep removes its entry from _store.
+
+    MemoryBackend starts a background asyncio task on first use that sweeps expired
+    windows every 0.5s. Entries for users who never return are evicted automatically,
+    bounding memory growth to active windows only.
+    """
+    plugin = _mk("5/s")
+    UNIQUE_USERS = 100
+
+    # Each unique user creates one entry in _store
+    for i in range(UNIQUE_USERS):
+        ctx = PluginContext(global_context=GlobalContext(request_id=f"r{i}", user=f"user_{i}"))
+        payload = ToolPreInvokePayload(name="test_tool", arguments={})
+        await plugin.tool_pre_invoke(payload, ctx)
+
+    assert len(_store) == UNIQUE_USERS  # confirm entries were created
+
+    # Wait for all 1-second windows to expire
+    await asyncio.sleep(1.1)
+
+    # Expected: expired entries are evicted, _store is empty (or much smaller)
+    # Actual:   _store still holds all UNIQUE_USERS entries indefinitely
+    assert len(_store) == 0, (
+        f"Expected _store to be empty after all windows expired, "
+        f"but found {len(_store)} stale entries. "
+        f"No eviction mechanism exists — _store grows without bound."
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_requests_respect_limit():
+    """
+    20 concurrent async requests against a limit of 10 — exactly 10 should be allowed.
+
+    This test PASSES under asyncio (single-threaded event loop, no real concurrency).
+    It documents that the asyncio path is safe.
+
+    NOTE: Under gunicorn threaded workers the dict read-modify-write in _allow()
+    is NOT atomic. Two threads can both read count=9, both pass the check, and both
+    increment — allowing more than the configured limit. That scenario cannot be
+    demonstrated in a single-threaded asyncio test.
+    """
+    plugin = _mk("10/s")
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    results = await asyncio.gather(*[
+        plugin.tool_pre_invoke(payload, ctx) for _ in range(20)
+    ])
+
+    allowed = sum(1 for r in results if r.violation is None)
+
+    assert allowed == 10, (
+        f"Expected exactly 10 allowed requests (the limit), got {allowed}. "
+        f"Under asyncio this should be deterministic. "
+        f"Under threaded workers this assertion can fail due to dict race conditions."
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Gap: fixed window allows 2× the limit at a window boundary. "
+        "N requests at end of W1 + N requests at start of W2 all succeed."
+    ),
+)
+@pytest.mark.asyncio
+async def test_fixed_window_burst_at_boundary():
+    """
+    A user can burst at a window boundary: N requests at the end of window W1
+    and N requests at the start of W2 both succeed, giving 2× the limit in practice.
+
+    Example with limit=5/s:
+      t=1000: requests 1-5 → allowed (window W1, count=5)
+      t=1001: requests 6-10 → allowed (window W2 resets, count=1..5)
+      Total = 10 requests in ~1 second against a limit of 5/s.
+
+    Fix: use a sliding window or token bucket algorithm.
+    """
+    plugin = _mk("5/s")
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    allowed_total = 0
+
+    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+        # Window W1: fill the limit exactly
+        mock_time.time.return_value = 1000
+        for _ in range(5):
+            r = await plugin.tool_pre_invoke(payload, ctx)
+            if r.violation is None:
+                allowed_total += 1
+
+        # Window W2: new window starts — limit resets
+        mock_time.time.return_value = 1001
+        for _ in range(5):
+            r = await plugin.tool_pre_invoke(payload, ctx)
+            if r.violation is None:
+                allowed_total += 1
+
+    # Expected: a sliding window would cap total at ~5-6 across the boundary
+    # Actual:   fixed window allows all 10 (5 in W1 + 5 in W2)
+    assert allowed_total <= 5, (
+        f"Fixed window burst: {allowed_total} requests allowed across the window "
+        f"boundary. Configured limit is 5/s. "
+        f"Fix: replace fixed window with a sliding window or token bucket."
+    )
+
+
+@pytest.mark.asyncio
+async def test_prompt_pre_fetch_enforces_by_tool_config():
+    """
+    by_tool limits are enforced by prompt_pre_fetch using prompt_id as the key.
+
+    When a prompt_id matches a key in by_tool, that rate limit is applied alongside
+    by_user and by_tenant — the most restrictive wins.
+    """
+    plugin = RateLimiterPlugin(
+        PluginConfig(
+            name="rl",
+            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            hooks=[PromptHookType.PROMPT_PRE_FETCH],
+            config={
+                "by_user": "100/s",          # High — will not trigger
+                "by_tool": {"search": "2/s"},  # Low — should trigger on 3rd call
+            },
+        )
+    )
+
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = PromptPrehookPayload(prompt_id="search", args={})
+
+    r1 = await plugin.prompt_pre_fetch(payload, ctx)
+    r2 = await plugin.prompt_pre_fetch(payload, ctx)
+    r3 = await plugin.prompt_pre_fetch(payload, ctx)  # should be blocked by by_tool
+
+    assert r1.violation is None
+    assert r2.violation is None
+    # Expected: blocked because by_tool["search"] = 2/s is exhausted
+    # Actual:   allowed — prompt_pre_fetch never reads by_tool
+    assert r3.violation is not None, (
+        "Expected 3rd prompt_pre_fetch call to be blocked by by_tool limit (2/s). "
+        "prompt_pre_fetch does not check by_tool — tool-level limits only apply "
+        "to tool_pre_invoke."
+    )
+
+
+# ============================================================================
+# Edge Case Tests
+#
+# Tests that PASS document correct behaviour at boundaries.
+# Tests marked xfail document gaps in input validation and error handling.
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_empty_string_user_falls_back_to_anonymous():
+    """
+    An empty string user identity is falsy — falls back to 'anonymous'.
+    All empty-identity requests share one bucket, correctly rate limited together.
+    """
+    plugin = _mk("2/s")
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user=""))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    r1 = await plugin.tool_pre_invoke(payload, ctx)
+    r2 = await plugin.tool_pre_invoke(payload, ctx)
+    r3 = await plugin.tool_pre_invoke(payload, ctx)
+
+    assert r1.violation is None
+    assert r2.violation is None
+    assert r3.violation is not None  # anonymous bucket exhausted
+    assert r3.violation.http_status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_none_tenant_falls_back_to_default_bucket():
+    """
+    None tenant_id falls back to 'default'. Multiple users with no tenant
+    share the same tenant bucket — they can exhaust each other's tenant limit.
+    """
+    plugin = RateLimiterPlugin(
+        PluginConfig(
+            name="rl",
+            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            hooks=[ToolHookType.TOOL_PRE_INVOKE],
+            config={"by_user": "100/s", "by_tenant": "2/s"},
+        )
+    )
+
+    ctx_alice = PluginContext(global_context=GlobalContext(request_id="r1", user="alice", tenant_id=None))
+    ctx_bob = PluginContext(global_context=GlobalContext(request_id="r2", user="bob", tenant_id=None))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    r1 = await plugin.tool_pre_invoke(payload, ctx_alice)
+    r2 = await plugin.tool_pre_invoke(payload, ctx_bob)
+    r3 = await plugin.tool_pre_invoke(payload, ctx_alice)  # tenant "default" exhausted
+
+    assert r1.violation is None
+    assert r2.violation is None
+    assert r3.violation is not None  # both users share "default" tenant bucket
+    assert r3.violation.http_status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_unicode_user_id_is_rate_limited_correctly():
+    """
+    Unicode user identities (non-ASCII email, CJK, emoji) are valid dict keys.
+    Rate limiting works correctly for unicode identities.
+    """
+    plugin = _mk("2/s")
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    for user in ["用户@example.com", "ユーザー@test.jp", "مستخدم@example.com", "user🎉@example.com"]:
+        _store.clear()
+        ctx = PluginContext(global_context=GlobalContext(request_id="r1", user=user))
+
+        r1 = await plugin.tool_pre_invoke(payload, ctx)
+        r2 = await plugin.tool_pre_invoke(payload, ctx)
+        r3 = await plugin.tool_pre_invoke(payload, ctx)
+
+        assert r1.violation is None, f"First request failed for user: {user}"
+        assert r2.violation is None, f"Second request failed for user: {user}"
+        assert r3.violation is not None, f"Third request not blocked for user: {user}"
+
+
+@pytest.mark.asyncio
+async def test_very_large_user_pool_all_share_separate_buckets():
+    """
+    1000 distinct users each get their own independent bucket.
+    No user should be affected by another user's requests.
+    """
+    plugin = _mk("1/s")
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    for i in range(1000):
+        ctx = PluginContext(global_context=GlobalContext(request_id=f"r{i}", user=f"user_{i}@example.com"))
+        result = await plugin.tool_pre_invoke(payload, ctx)
+        assert result.violation is None, f"user_{i} should not be blocked by other users"
+
+
+def test_malformed_rate_count_raises_at_init():
+    """
+    A non-numeric count in the rate string (e.g. 'abc/m') now raises ValueError
+    at plugin initialisation, not silently at request time.
+
+    _validate_config() parses all rate strings in __init__ and raises immediately,
+    giving a clear error at startup rather than a confusing failure mid-request.
+    """
+    with pytest.raises(ValueError, match="RateLimiterPlugin config errors"):
+        RateLimiterPlugin(
+            PluginConfig(
+                name="rl",
+                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                hooks=[ToolHookType.TOOL_PRE_INVOKE],
+                config={"by_user": "abc/m"},  # invalid count
+            )
+        )
+
+
+def test_unsupported_rate_unit_raises_at_init():
+    """
+    An unsupported time unit (e.g. '60/d' for days) now raises ValueError
+    at plugin initialisation via _validate_config().
+
+    This ensures operators discover misconfigured rate strings at startup
+    rather than when the first request hits the bad code path.
+    """
+    with pytest.raises(ValueError, match="RateLimiterPlugin config errors"):
+        RateLimiterPlugin(
+            PluginConfig(
+                name="rl",
+                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                hooks=[ToolHookType.TOOL_PRE_INVOKE],
+                config={"by_user": "60/d"},  # unsupported unit
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_graceful_degradation_unexpected_runtime_error_does_not_crash_caller():
+    """
+    If an unexpected runtime error occurs inside a hook (e.g. a bug in _allow()),
+    the exception is caught, logged, and a permissive result is returned.
+
+    The gateway request is NOT crashed by a plugin error.
+    This is tested by patching _allow to raise a RuntimeError mid-hook.
+    """
+    plugin = RateLimiterPlugin(
+        PluginConfig(
+            name="rl",
+            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            hooks=[ToolHookType.TOOL_PRE_INVOKE],
+            config={"by_user": "10/s"},
+        )
+    )
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    with patch("plugins.rate_limiter.rate_limiter._allow", side_effect=RuntimeError("simulated internal error")):
+        result = await plugin.tool_pre_invoke(payload, ctx)
+
+    assert result is not None, "Plugin should return a result even when _allow() raises unexpectedly"
+    assert result.violation is None, "Permissive degradation: unexpected errors allow the request through"

@@ -214,14 +214,13 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
-    mode: "disabled"
+    mode: "enforce"
     priority: 20
     conditions: []
     config:
-      by_user: "60/m"
-      by_tenant: "600/m"
-      by_tool:
-        search: "10/m"
+      by_user: "30/m"
+      by_tenant: "3000/m"
+      by_tool: {}
 
   # Schema guard for tool args/results (subset JSONSchema)
   - name: "SchemaGuardPlugin"
