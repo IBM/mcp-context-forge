@@ -83,8 +83,8 @@ class TestImport:
             pytest.skip("Export not available")
         export_data = export_resp.json()
 
-        # Import endpoint expects body wrapped in import_data
-        resp = admin_api.post("/import?dry_run=true&conflict_strategy=skip", data={"import_data": export_data})
+        # All import parameters belong in the JSON body
+        resp = admin_api.post("/import", data={"import_data": export_data, "dry_run": True, "conflict_strategy": "skip"})
         assert resp.status == 200
         result = resp.json()
         assert "status" in result or "results" in result
@@ -96,7 +96,7 @@ class TestImport:
             pytest.skip("Export not available")
         export_data = export_resp.json()
 
-        resp = admin_api.post("/import?conflict_strategy=skip", data={"import_data": export_data})
+        resp = admin_api.post("/import", data={"import_data": export_data, "conflict_strategy": "skip"})
         assert resp.status == 200
 
     def test_import_status_list(self, admin_api: APIRequestContext):
