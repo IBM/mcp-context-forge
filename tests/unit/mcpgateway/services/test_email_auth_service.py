@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.services.email_auth_service import EmailAuthService
+from mcpgateway.services.email_auth_service import EmailAuthService, UserExistsError
 
 
 @pytest.fixture
@@ -22,7 +22,7 @@ def mock_db():
     # Mock add/commit/refresh to handle user creation
     def mock_refresh(obj):
         """Mock refresh that sets an id if not present."""
-        if not hasattr(obj, 'id') or obj.id is None:
+        if not hasattr(obj, "id") or obj.id is None:
             obj.id = "test-user-id"
 
     db.refresh.side_effect = mock_refresh
@@ -138,10 +138,12 @@ async def test_create_user_admin_team_admin_role_assignment(email_auth_service, 
             team_admin_role = SimpleNamespace(id="role2", name="team_admin", is_active=True)
 
             mock_role_service = MagicMock()
-            mock_role_service.get_role_by_name = AsyncMock(side_effect=[
-                platform_admin_role,  # First call for platform_admin
-                team_admin_role,      # Second call for team_admin
-            ])
+            mock_role_service.get_role_by_name = AsyncMock(
+                side_effect=[
+                    platform_admin_role,  # First call for platform_admin
+                    team_admin_role,  # Second call for team_admin
+                ]
+            )
             mock_role_service.assign_role_to_user = AsyncMock()
 
             with patch("mcpgateway.services.personal_team_service.PersonalTeamService", return_value=mock_personal_team_service):
@@ -178,10 +180,12 @@ async def test_create_user_admin_team_admin_role_not_found(email_auth_service, m
             platform_admin_role = SimpleNamespace(id="role1", name="platform_admin", is_active=True)
 
             mock_role_service = MagicMock()
-            mock_role_service.get_role_by_name = AsyncMock(side_effect=[
-                platform_admin_role,  # First call for platform_admin
-                None,                 # Second call for team_admin (not found)
-            ])
+            mock_role_service.get_role_by_name = AsyncMock(
+                side_effect=[
+                    platform_admin_role,  # First call for platform_admin
+                    None,  # Second call for team_admin (not found)
+                ]
+            )
             mock_role_service.assign_role_to_user = AsyncMock()
 
             with patch("mcpgateway.services.personal_team_service.PersonalTeamService", return_value=mock_personal_team_service):
@@ -253,10 +257,12 @@ async def test_create_user_non_admin_team_admin_role_assignment(email_auth_servi
             team_admin_role = SimpleNamespace(id="role2", name="team_admin", is_active=True)
 
             mock_role_service = MagicMock()
-            mock_role_service.get_role_by_name = AsyncMock(side_effect=[
-                platform_viewer_role,  # First call for platform_viewer
-                team_admin_role,       # Second call for team_admin
-            ])
+            mock_role_service.get_role_by_name = AsyncMock(
+                side_effect=[
+                    platform_viewer_role,  # First call for platform_viewer
+                    team_admin_role,  # Second call for team_admin
+                ]
+            )
             mock_role_service.assign_role_to_user = AsyncMock()
 
             with patch("mcpgateway.services.personal_team_service.PersonalTeamService", return_value=mock_personal_team_service):
@@ -293,10 +299,12 @@ async def test_create_user_non_admin_team_admin_role_not_found(email_auth_servic
             platform_viewer_role = SimpleNamespace(id="role1", name="platform_viewer", is_active=True)
 
             mock_role_service = MagicMock()
-            mock_role_service.get_role_by_name = AsyncMock(side_effect=[
-                platform_viewer_role,  # First call for platform_viewer
-                None,                  # Second call for team_admin (not found)
-            ])
+            mock_role_service.get_role_by_name = AsyncMock(
+                side_effect=[
+                    platform_viewer_role,  # First call for platform_viewer
+                    None,  # Second call for team_admin (not found)
+                ]
+            )
             mock_role_service.assign_role_to_user = AsyncMock()
 
             with patch("mcpgateway.services.personal_team_service.PersonalTeamService", return_value=mock_personal_team_service):
@@ -307,9 +315,9 @@ async def test_create_user_non_admin_team_admin_role_not_found(email_auth_servic
                         is_admin=False,
                     )
 
-                assert user is not None
-                # Should only be called once for platform_viewer
-                assert mock_role_service.assign_role_to_user.call_count == 1
+                    assert user is not None
+                    # Should only be called once for platform_viewer
+                    assert mock_role_service.assign_role_to_user.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -337,10 +345,12 @@ async def test_create_user_admin_team_owner_role_assignment_fails(email_auth_ser
             team_admin_role = SimpleNamespace(id="role2", name="team_admin", is_active=True)
 
             mock_role_service = MagicMock()
-            mock_role_service.get_role_by_name = AsyncMock(side_effect=[
-                platform_admin_role,  # First call for platform_admin
-                team_admin_role,      # Second call for team_admin
-            ])
+            mock_role_service.get_role_by_name = AsyncMock(
+                side_effect=[
+                    platform_admin_role,  # First call for platform_admin
+                    team_admin_role,  # Second call for team_admin
+                ]
+            )
             mock_role_service.assign_role_to_user = AsyncMock(side_effect=ValueError("Team role assignment failed"))
 
             with patch("mcpgateway.services.personal_team_service.PersonalTeamService", return_value=mock_personal_team_service):
@@ -384,3 +394,205 @@ async def test_create_user_role_assignment_exception(email_auth_service, mock_db
                 # db.add is called twice: once for user, once for registration event
                 assert mock_db.add.call_count == 2
                 mock_db.commit.assert_called()
+
+
+# ---------- skip_onboarding Tests ----------
+
+
+@pytest.mark.asyncio
+async def test_create_user_skip_onboarding_no_personal_team(email_auth_service, mock_db):
+    """create_user(skip_onboarding=True) must not create a personal team."""
+    mock_personal_team_service = MagicMock()
+    mock_personal_team_service.create_personal_team = AsyncMock()
+
+    with patch.object(email_auth_service, "get_user_by_email", return_value=None):
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_min_length = 8
+            mock_settings.auto_create_personal_teams = True
+
+            with patch(
+                "mcpgateway.services.personal_team_service.PersonalTeamService",
+                return_value=mock_personal_team_service,
+            ):
+                user = await email_auth_service.create_user(
+                    email="synth@wxo.system",
+                    password="",
+                    skip_password_validation=True,
+                    skip_onboarding=True,
+                )
+
+                assert user is not None
+                mock_personal_team_service.create_personal_team.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_user_skip_onboarding_no_role_assignment(email_auth_service, mock_db):
+    """create_user(skip_onboarding=True) must not assign roles."""
+    mock_role_service = MagicMock()
+    mock_role_service.assign_role_to_user = AsyncMock()
+    mock_role_service.get_role_by_name = AsyncMock()
+
+    with patch.object(email_auth_service, "get_user_by_email", return_value=None):
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_min_length = 8
+
+            # Inject mock role service to detect if it gets called
+            email_auth_service._role_service = mock_role_service
+
+            user = await email_auth_service.create_user(
+                email="synth@wxo.system",
+                password="",
+                skip_password_validation=True,
+                skip_onboarding=True,
+            )
+
+            assert user is not None
+            mock_role_service.get_role_by_name.assert_not_called()
+            mock_role_service.assign_role_to_user.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_user_skip_onboarding_no_registration_event(email_auth_service, mock_db):
+    """create_user(skip_onboarding=True) must not log a registration event."""
+    with patch.object(email_auth_service, "get_user_by_email", return_value=None):
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_min_length = 8
+
+            user = await email_auth_service.create_user(
+                email="synth@wxo.system",
+                password="",
+                skip_password_validation=True,
+                skip_onboarding=True,
+            )
+
+            assert user is not None
+            # Only 1 commit for the user row, not 2 (user + event)
+            assert mock_db.commit.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_create_user_skip_onboarding_still_logs_failed_registration_event(email_auth_service, mock_db):
+    """create_user(skip_onboarding=True) MUST still log a failed registration event on unexpected errors.
+
+    Service-account creation failures are system issues that should always be audited,
+    even when success-path onboarding events are skipped.
+    """
+    with patch.object(email_auth_service, "get_user_by_email", return_value=None):
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_min_length = 8
+
+            # First commit (user row) raises; second commit (failed event) succeeds
+            mock_db.commit.side_effect = [RuntimeError("db down"), None]
+
+            with pytest.raises(RuntimeError):
+                await email_auth_service.create_user(
+                    email="synth@wxo.system",
+                    password="",
+                    skip_password_validation=True,
+                    skip_onboarding=True,
+                )
+
+            # Should have added 2 objects: user row + failed registration event
+            assert mock_db.add.call_count == 2
+
+
+# ---------- ensure_user_exists Tests ----------
+
+
+@pytest.mark.asyncio
+async def test_ensure_user_exists_creates_new_user(email_auth_service):
+    """ensure_user_exists creates user when not found."""
+    mock_user = MagicMock()
+    mock_user.email = "new@example.com"
+
+    with patch.object(email_auth_service, "get_user_by_email", return_value=None):
+        with patch.object(email_auth_service, "create_user", return_value=mock_user) as mock_create:
+            user, created = await email_auth_service.ensure_user_exists(
+                email="new@example.com",
+                full_name="New User",
+            )
+            assert created is True
+            assert user == mock_user
+            mock_create.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_ensure_user_exists_returns_existing(email_auth_service):
+    """ensure_user_exists returns existing user without creating."""
+    mock_user = MagicMock()
+    mock_user.email = "existing@example.com"
+
+    with patch.object(email_auth_service, "get_user_by_email", return_value=mock_user):
+        with patch.object(email_auth_service, "create_user") as mock_create:
+            user, created = await email_auth_service.ensure_user_exists(
+                email="existing@example.com",
+            )
+            assert created is False
+            assert user == mock_user
+            mock_create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ensure_user_exists_handles_race_condition(email_auth_service):
+    """ensure_user_exists handles UserExistsError from concurrent creation."""
+    mock_user = MagicMock()
+    mock_user.email = "race@example.com"
+
+    with patch.object(email_auth_service, "get_user_by_email", side_effect=[None, mock_user]):
+        with patch.object(
+            email_auth_service,
+            "create_user",
+            side_effect=UserExistsError("already exists"),
+        ):
+            user, created = await email_auth_service.ensure_user_exists(
+                email="race@example.com",
+            )
+            assert created is False
+            assert user == mock_user
+
+
+@pytest.mark.asyncio
+async def test_ensure_user_exists_passes_skip_onboarding(email_auth_service):
+    """ensure_user_exists forwards skip_onboarding to create_user."""
+    mock_user = MagicMock()
+
+    with patch.object(email_auth_service, "get_user_by_email", return_value=None):
+        with patch.object(email_auth_service, "create_user", return_value=mock_user) as mock_create:
+            await email_auth_service.ensure_user_exists(
+                email="synth@wxo.system",
+                skip_onboarding=True,
+                is_admin=True,
+            )
+            call_kwargs = mock_create.call_args[1]
+            assert call_kwargs["skip_onboarding"] is True
+            assert call_kwargs["skip_password_validation"] is True
+            assert call_kwargs["password"] == ""
+
+
+@pytest.mark.asyncio
+async def test_ensure_user_exists_reraises_when_race_fetch_returns_none(email_auth_service):
+    """ensure_user_exists re-raises UserExistsError when post-race re-fetch returns None."""
+    with patch.object(email_auth_service, "get_user_by_email", side_effect=[None, None]):
+        with patch.object(
+            email_auth_service,
+            "create_user",
+            side_effect=UserExistsError("already exists"),
+        ):
+            with pytest.raises(UserExistsError):
+                await email_auth_service.ensure_user_exists(email="ghost@example.com")
+
+
+@pytest.mark.asyncio
+async def test_ensure_user_exists_normalizes_email(email_auth_service):
+    """ensure_user_exists normalizes email before lookup so whitespace/case doesn't cause false misses."""
+    mock_user = MagicMock()
+    mock_user.email = "user@example.com"
+
+    with patch.object(email_auth_service, "get_user_by_email", return_value=mock_user) as mock_get:
+        user, created = await email_auth_service.ensure_user_exists(
+            email="  User@Example.COM  ",
+        )
+        assert created is False
+        assert user == mock_user
+        # Should be called with the normalized email
+        mock_get.assert_called_once_with("user@example.com")
