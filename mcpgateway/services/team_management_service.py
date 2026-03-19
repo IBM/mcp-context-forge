@@ -347,6 +347,12 @@ class TeamManagementService:
                 if self._get_user_team_count(created_by) >= max_teams:
                     raise ValueError(f"User has reached the maximum team limit of {max_teams}")
 
+            # Enforce max_members cap for non-admins (only when explicitly provided)
+            if not skip_limits and max_members is not None:
+                max_limit = getattr(settings, "max_members_per_team", 100)
+                if max_members > max_limit:
+                    raise ValueError(f"max_members cannot exceed the configured limit of {max_limit}")
+
             # Apply default max members from settings
             if max_members is None:
                 max_members = getattr(settings, "max_members_per_team", 100)
@@ -469,7 +475,14 @@ class TeamManagementService:
             return None
 
     async def update_team(
-        self, team_id: str, name: Optional[str] = None, description: Optional[str] = None, visibility: Optional[str] = None, max_members: Optional[int] = None, updated_by: Optional[str] = None
+        self,
+        team_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        visibility: Optional[str] = None,
+        max_members: Optional[int] = None,
+        updated_by: Optional[str] = None,
+        skip_limits: bool = False,
     ) -> bool:
         """Update team information.
 
@@ -480,6 +493,7 @@ class TeamManagementService:
             visibility: New visibility setting
             max_members: New maximum member limit
             updated_by: Email of user making the update
+            skip_limits: Skip the max_members_per_team cap check (platform admins only)
 
         Returns:
             bool: True if update succeeded, False otherwise
@@ -520,6 +534,10 @@ class TeamManagementService:
                 team.visibility = visibility
 
             if max_members is not None:
+                if not skip_limits:
+                    max_limit = getattr(settings, "max_members_per_team", 100)
+                    if max_members > max_limit:
+                        raise ValueError(f"max_members cannot exceed the configured limit of {max_limit}")
                 team.max_members = max_members
 
             team.updated_at = utc_now()

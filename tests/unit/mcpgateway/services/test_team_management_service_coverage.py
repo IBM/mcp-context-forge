@@ -278,7 +278,7 @@ class TestUpdateTeamEdge:
     async def test_update_max_members(self, svc, db):
         team = _mock_team()
         with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)):
-            result = await svc.update_team("t1", max_members=200)
+            result = await svc.update_team("t1", max_members=200, skip_limits=True)
         assert result is True
         assert team.max_members == 200
 
@@ -1385,3 +1385,139 @@ class TestCreateJoinRequestMaxTeamsLimit:
                 mock_settings.max_teams_per_user = 50
                 with pytest.raises(ValueError, match="maximum team limit"):
                     await svc.create_join_request("t1", "u@t.com")
+
+
+# ===========================================================================
+# max_members cap enforcement — create_team and update_team
+# ===========================================================================
+
+
+class TestMaxMembersCapEnforcement:
+    """Backend enforcement of max_members <= settings.max_members_per_team for non-admins."""
+
+    # ---- create_team -------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_create_non_admin_exceeds_cap_rejected(self, svc, db):
+        """Non-admin create with max_members > limit raises ValueError."""
+        mock_query = MagicMock()
+        mock_filter = MagicMock()
+        mock_filter.first = MagicMock(return_value=None)
+        mock_query.filter = MagicMock(return_value=mock_filter)
+        db.query = MagicMock(return_value=mock_query)
+
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.max_teams_per_user = 50
+            mock_settings.max_members_per_team = 100
+            with pytest.raises(ValueError, match="cannot exceed the configured limit"):
+                await svc.create_team("Team", "desc", "u@t.com", "public", max_members=150, skip_limits=False)
+
+    @pytest.mark.asyncio
+    async def test_create_non_admin_at_cap_allowed(self, svc, db):
+        """Non-admin create with max_members == limit is allowed."""
+        mock_query = MagicMock()
+        mock_filter = MagicMock()
+        mock_filter.first = MagicMock(return_value=None)
+        mock_query.filter = MagicMock(return_value=mock_filter)
+        db.query = MagicMock(return_value=mock_query)
+
+        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin, patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_cache.invalidate_user_teams = AsyncMock()
+            mock_cache.invalidate_team_membership = AsyncMock()
+            mock_cache.invalidate_user_role = AsyncMock()
+            mock_admin.invalidate_teams = AsyncMock()
+            mock_settings.max_teams_per_user = 50
+            mock_settings.max_members_per_team = 100
+
+            result = await svc.create_team("Team", "desc", "u@t.com", "public", max_members=100, skip_limits=False)
+
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_create_admin_exceeds_cap_allowed(self, svc, db):
+        """Admin create with max_members > limit is allowed (skip_limits=True)."""
+        mock_query = MagicMock()
+        mock_filter = MagicMock()
+        mock_filter.first = MagicMock(return_value=None)
+        mock_query.filter = MagicMock(return_value=mock_filter)
+        db.query = MagicMock(return_value=mock_query)
+
+        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin, patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_cache.invalidate_user_teams = AsyncMock()
+            mock_cache.invalidate_team_membership = AsyncMock()
+            mock_cache.invalidate_user_role = AsyncMock()
+            mock_admin.invalidate_teams = AsyncMock()
+            mock_settings.max_teams_per_user = 50
+            mock_settings.max_members_per_team = 100
+
+            result = await svc.create_team("Team", "desc", "admin@t.com", "public", max_members=500, skip_limits=True)
+
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_create_with_none_max_members_uses_default(self, svc, db):
+        """Create with max_members=None uses the configured default without raising."""
+        mock_query = MagicMock()
+        mock_filter = MagicMock()
+        mock_filter.first = MagicMock(return_value=None)
+        mock_query.filter = MagicMock(return_value=mock_filter)
+        db.query = MagicMock(return_value=mock_query)
+
+        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin, patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_cache.invalidate_user_teams = AsyncMock()
+            mock_cache.invalidate_team_membership = AsyncMock()
+            mock_cache.invalidate_user_role = AsyncMock()
+            mock_admin.invalidate_teams = AsyncMock()
+            mock_settings.max_teams_per_user = 50
+            mock_settings.max_members_per_team = 100
+
+            result = await svc.create_team("Team", "desc", "u@t.com", "public", max_members=None, skip_limits=False)
+
+        assert result is not None
+
+    # ---- update_team -------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_update_non_admin_exceeds_cap_rejected(self, svc, db):
+        """Non-admin update with max_members > limit raises ValueError."""
+        team = _mock_team()
+
+        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)), patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.max_members_per_team = 100
+            with pytest.raises(ValueError, match="cannot exceed the configured limit"):
+                await svc.update_team("t1", max_members=200, skip_limits=False)
+
+    @pytest.mark.asyncio
+    async def test_update_non_admin_at_cap_allowed(self, svc, db):
+        """Non-admin update with max_members == limit succeeds."""
+        team = _mock_team()
+
+        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)), patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.max_members_per_team = 100
+            result = await svc.update_team("t1", max_members=100, skip_limits=False)
+
+        assert result is True
+        assert team.max_members == 100
+
+    @pytest.mark.asyncio
+    async def test_update_admin_exceeds_cap_allowed(self, svc, db):
+        """Admin update with max_members > limit is allowed (skip_limits=True)."""
+        team = _mock_team()
+
+        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)), patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.max_members_per_team = 100
+            result = await svc.update_team("t1", max_members=500, skip_limits=True)
+
+        assert result is True
+        assert team.max_members == 500
+
+    @pytest.mark.asyncio
+    async def test_update_with_none_max_members_preserves_existing(self, svc, db):
+        """Update with max_members=None leaves the existing value unchanged."""
+        team = _mock_team(max_members=75)
+
+        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)):
+            result = await svc.update_team("t1", max_members=None, skip_limits=False)
+
+        assert result is True
+        assert team.max_members == 75  # unchanged
