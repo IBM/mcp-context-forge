@@ -56,6 +56,7 @@ from urllib.parse import urlparse, urlunparse
 import uuid
 
 # Third-Party
+import anyio
 from filelock import FileLock, Timeout
 import httpx
 from mcp import ClientSession
@@ -3336,10 +3337,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 # Optional explicit RPC verification (off by default for performance).
                                 # Pool's internal staleness check handles health via _validate_session.
                                 if settings.mcp_session_pool_explicit_health_rpc:
-                                    await asyncio.wait_for(
-                                        pooled.session.list_tools(),
-                                        timeout=settings.health_check_timeout,
-                                    )
+                                    with anyio.fail_after(settings.health_check_timeout):
+                                        await pooled.session.list_tools()
                         else:
                             async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
                                 read_stream,
