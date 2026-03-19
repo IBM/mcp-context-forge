@@ -2400,6 +2400,55 @@ fn validate_jwt_token(token: &str, secret: &str) -> Result<serde_json::Value, St
     Ok(token_data.claims)
 }
 
+/// Attempts to authenticate using a Bearer token from the Authorization header.
+///
+/// If a valid Bearer token is found in the Authorization header, validates it using JWT
+/// and creates an auth context header. Returns `Some(Ok(...))` with the modified headers
+/// if authentication succeeds, or `None` if no Bearer token is present (in which case
+/// the caller should fall back to backend auth).
+///
+/// # Arguments
+///
+/// * `incoming_headers` - The HTTP headers containing the Authorization header (mutated if auth succeeds)
+/// * `public_path` - The public path to return in the success case
+/// * `jwt_secret_key` - The secret key for JWT validation
+///
+/// # Returns
+///
+/// * `Some(Ok((HeaderMap, String)))` - Bearer token was valid, returns modified headers and path
+/// * `None` - No Bearer token found or invalid, caller should use backend authentication
+#[allow(clippy::result_large_err)]
+fn try_bearer_token_auth(
+    incoming_headers: &mut HeaderMap,
+    public_path: &str,
+    jwt_secret_key: &str,
+) -> Option<(HeaderMap, String)> {
+    let auth_header = incoming_headers.get("authorization")?;
+    let auth_str = auth_header.to_str().ok()?;
+    let token = auth_str.strip_prefix("Bearer ")?;
+
+    // Validate JWT token
+    let claims = validate_jwt_token(token, jwt_secret_key).ok()?;
+
+    // Token valid - create auth context
+    let auth_context = json!({
+        "email": claims["sub"],
+        "is_authenticated": true,
+        "is_admin": claims["is_admin"].as_bool().unwrap_or(false),
+    });
+
+    // Encode and insert auth context header
+    let encoded = URL_SAFE_NO_PAD.encode(&auth_context.to_string());
+    let h_value = HeaderValue::from_str(&encoded).ok()?;
+    incoming_headers.insert(
+        HeaderName::from_static("x-contextforge-auth-context"),
+        h_value,
+    );
+
+    // Clone headers and path for return
+    Some((incoming_headers.clone(), public_path.to_string()))
+}
+
 #[allow(clippy::result_large_err)]
 fn encode_internal_auth_context_header(auth_context: &Value) -> Result<HeaderValue, Response> {
     let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(auth_context).map_err(|err| {
@@ -2479,29 +2528,14 @@ async fn authenticate_public_request_if_needed(
                 .record_session_auth_reuse_miss(SessionAuthReuseMissReason::NoSession);
         }
     }
-    if let Some(auth_header) = incoming_headers.get("authorization") {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                // Quick JWT validation using jsonwebtoken crate
-                if let Ok(claims) = validate_jwt_token(token, &state.jwt_secret_key) {
-                    // Token valid - create auth context
-                    let auth_context = json!({
-                        "email": claims["sub"],
-                        "is_authenticated": true,
-                        "is_admin": claims["is_admin"].as_bool().unwrap_or(false),
-                    });
 
-                    let encoded = URL_SAFE_NO_PAD.encode(&auth_context.to_string());
-                    if let Ok(h_value) = HeaderValue::from_str(&encoded) {
-                        incoming_headers.insert(
-                            HeaderName::from_static("x-contextforge-auth-context"),
-                            h_value,
-                        );
-                    }
-                    return Ok((incoming_headers, public_path));
-                }
-            }
-        }
+    // Try Bearer token authentication
+    if let Some((headers, path)) = try_bearer_token_auth(
+        &mut incoming_headers,
+        &public_path,
+        &state.jwt_secret_key,
+    ) {
+        return Ok((headers, path));
     }
 
     state
@@ -10785,5 +10819,118 @@ mod unit_tests {
             .await,
             None
         );
+    }
+
+    #[test]
+    fn test_try_bearer_token_auth_no_auth_header() {
+        use super::try_bearer_token_auth;
+
+        // Test with no Authorization header - should return None
+        let mut headers = HeaderMap::new();
+        let result = try_bearer_token_auth(&mut headers, "/mcp", "test-secret");
+        assert!(result.is_none(), "Should return None when no Authorization header present");
+    }
+
+    #[test]
+    fn test_try_bearer_token_auth_invalid_token() {
+        use super::try_bearer_token_auth;
+
+        // Test with invalid JWT token - should return None
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", HeaderValue::from_static("Bearer invalid-token"));
+        let result = try_bearer_token_auth(&mut headers, "/mcp", "test-secret");
+        assert!(result.is_none(), "Should return None when JWT token is invalid");
+    }
+
+    #[test]
+    fn test_try_bearer_token_auth_valid_token() {
+        use super::try_bearer_token_auth;
+        use jsonwebtoken::{encode, EncodingKey, Header};
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Debug, Serialize, Deserialize)]
+        struct Claims {
+            sub: String,
+            is_admin: bool,
+            exp: u64,
+        }
+
+        // Create a valid JWT token
+        let secret = "test-secret-key";
+        let claims = Claims {
+            sub: "test@example.com".to_string(),
+            is_admin: true,
+            exp: (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 3600), // 1 hour from now
+        };
+
+        let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(secret.as_bytes()))
+            .expect("Failed to create JWT token");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        );
+
+        let result = try_bearer_token_auth(&mut headers, "/mcp", secret);
+
+        assert!(result.is_some(), "Should return Some when JWT token is valid");
+        let (new_headers, path) = result.unwrap();
+        assert_eq!(path, "/mcp", "Path should be preserved");
+        assert!(
+            new_headers.contains_key("x-contextforge-auth-context"),
+            "Should contain auth context header"
+        );
+    }
+
+    #[test]
+    fn test_try_bearer_token_auth_non_bearer_scheme() {
+        use super::try_bearer_token_auth;
+
+        // Test with non-Bearer authorization scheme - should return None
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", HeaderValue::from_static("Basic dXNlcjpwYXNz"));
+        let result = try_bearer_token_auth(&mut headers, "/mcp", "test-secret");
+        assert!(result.is_none(), "Should return None for non-Bearer auth scheme");
+    }
+
+    #[test]
+    fn test_try_bearer_token_auth_expires_token() {
+        use super::try_bearer_token_auth;
+        use jsonwebtoken::{encode, EncodingKey, Header};
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Debug, Serialize, Deserialize)]
+        struct Claims {
+            sub: String,
+            is_admin: bool,
+            exp: u64,
+        }
+
+        // Create an expired JWT token
+        let secret = "test-secret-key";
+        let claims = Claims {
+            sub: "test@example.com".to_string(),
+            is_admin: false,
+            exp: 0, // Already expired
+        };
+
+        let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(secret.as_bytes()))
+            .expect("Failed to create JWT token");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        );
+
+        let result = try_bearer_token_auth(&mut headers, "/mcp", secret);
+
+        // Token is expired, so validation should fail
+        assert!(result.is_none(), "Should return None for expired JWT token");
     }
 }
