@@ -3,7 +3,7 @@
 > Author: Mihai Criveti
 > Version: 0.1.0
 
-Enforces fixed-window rate limits per user, tenant, and tool across `tool_pre_invoke` and `prompt_pre_fetch` hooks. Supports an in-process memory backend (single-instance) and a Redis backend (shared across all gateway instances).
+Enforces rate limits per user, tenant, and tool across `tool_pre_invoke` and `prompt_pre_fetch` hooks. Supports pluggable counting algorithms (fixed window, sliding window, token bucket), an in-process memory backend (single-instance), and a Redis backend (shared across all gateway instances).
 
 ## Hooks
 
@@ -32,6 +32,9 @@ If any configured dimension is exceeded, the plugin returns a violation with HTT
       search: "10/m"
       summarise: "5/m"
 
+    # Algorithm — choose one (default: fixed_window)
+    algorithm: "fixed_window"    # fixed_window | sliding_window | token_bucket
+
     # Backend — choose one
     backend: "memory"    # default: single-process, resets on restart
     # backend: "redis"   # shared across all gateway instances
@@ -49,6 +52,7 @@ If any configured dimension is exceeded, the plugin returns a violation with HTT
 | `by_user` | string | `null` | Per-user rate limit, e.g. `"60/m"` |
 | `by_tenant` | string | `null` | Per-tenant rate limit, e.g. `"600/m"` |
 | `by_tool` | dict | `{}` | Per-tool overrides, e.g. `{"search": "10/m"}` |
+| `algorithm` | string | `"fixed_window"` | Counting algorithm: `"fixed_window"`, `"sliding_window"`, or `"token_bucket"` |
 | `backend` | string | `"memory"` | `"memory"` or `"redis"` |
 | `redis_url` | string | `null` | Redis connection URL (required when `backend: redis`) |
 | `redis_key_prefix` | string | `"rl"` | Prefix for all Redis keys |
@@ -69,6 +73,30 @@ Every request (allowed or blocked) includes:
 | `X-RateLimit-Reset` | Unix timestamp when the current window resets |
 | `Retry-After` | Seconds until the window resets (blocked requests only) |
 
+## Algorithms
+
+Three counting algorithms are available, selected via the `algorithm` config field.
+
+| Algorithm | Config value | Best for | Trade-off |
+|---|---|---|---|
+| Fixed window | `fixed_window` | General use, lowest overhead | Up to 2× the limit at window boundaries |
+| Sliding window | `sliding_window` | Smooth enforcement, no boundary burst | Higher memory: stores one timestamp per request per key |
+| Token bucket | `token_bucket` | Bursty workloads — allows short spikes up to capacity | Redis not supported; falls back to memory automatically |
+
+### Fixed window (default)
+
+Counts requests in a fixed time slot (e.g. "minute 14:03"). Resets at the slot boundary. Simple and fast. The 2× burst at a boundary (N requests at the end of slot T, N requests at the start of T+1) is a known trade-off; use `by_user` with headroom if this matters.
+
+### Sliding window
+
+Stores a timestamp for every request in the current window. At each check, expired timestamps are discarded and the remaining count is compared against the limit. Prevents boundary bursts entirely. Memory usage grows with request volume — roughly one float per request per active key.
+
+### Token bucket
+
+Each identity (user, tenant, tool) has a bucket that holds up to `count` tokens. Tokens refill at a steady rate of `count/window`. A request consumes one token. Bursts up to the bucket capacity are allowed; sustained rate above `count/window` is rejected. Useful for APIs where short spikes are acceptable but sustained overload is not.
+
+**Note:** `token_bucket` with `backend: redis` is not currently supported. The plugin logs a warning and automatically falls back to the in-process memory backend when this combination is configured.
+
 ## Backends
 
 ### Memory backend (default)
@@ -80,7 +108,9 @@ Every request (allowed or blocked) includes:
 
 ### Redis backend
 
-- Counters are stored in Redis using an atomic Lua `INCR`+`EXPIRE` script — a single Redis call per check with no race condition
+- `fixed_window`: atomic Lua `INCR`+`EXPIRE` — one Redis round-trip per check, no race condition
+- `sliding_window`: atomic Lua `ZADD`+`ZREMRANGEBYSCORE`+`ZCARD`+`EXPIRE` — one round-trip, no race condition
+- `token_bucket`: not supported with Redis; falls back to memory automatically with a logged warning
 - All gateway instances share the same counter — the configured limit is the true cluster-wide limit
 - Requires `redis_url` to be set
 - If `redis_fallback: true` (default) and Redis is unavailable, the plugin falls back to the in-process `MemoryBackend` automatically — requests are never blocked due to Redis downtime
@@ -111,6 +141,23 @@ config:
     search: "10/m"
 ```
 
+### Sliding window (no boundary bursts)
+
+```yaml
+config:
+  algorithm: "sliding_window"
+  by_user: "30/m"
+  by_tenant: "300/m"
+```
+
+### Token bucket (allow bursts, throttle sustained rate)
+
+```yaml
+config:
+  algorithm: "token_bucket"
+  by_user: "30/m"   # bucket holds 30 tokens, refills at 30/min
+```
+
 ### Permissive mode (observe without blocking)
 
 ```yaml
@@ -126,7 +173,10 @@ In `permissive` mode the plugin records violations and emits `X-RateLimit-*` hea
 | Limitation | Severity | Status |
 |---|---|---|
 | Memory backend not shared across processes | HIGH | Use Redis backend for multi-instance deployments |
-| Fixed window allows up to 2× limit at window boundary | LOW | Deferred — use `by_user` with headroom as a workaround |
+| `token_bucket` + Redis not supported | MEDIUM | Falls back to memory automatically; fix deferred |
+| Fixed window allows up to 2× limit at window boundary | LOW | Use `sliding_window` algorithm, or use `by_user` with headroom |
+| `by_tool` matching is case-sensitive | LOW | `search` and `Search` are treated as different tools; normalise tool names as a workaround |
+| Whitespace-only user identity bypasses anonymous bucket | LOW | Documented gap; strip identities before passing to hooks |
 | No per-server limits (`server_id` dimension missing) | LOW | Not implemented |
 | No config hot-reload — rate string changes require restart | LOW | Not implemented |
 | Memory backend not safe under threaded workers (gunicorn `--threads`) | LOW | asyncio.Lock is loop-safe; use async workers (`-k uvicorn`) |

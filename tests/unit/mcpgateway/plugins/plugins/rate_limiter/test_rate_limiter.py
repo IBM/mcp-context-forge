@@ -27,24 +27,42 @@ from mcpgateway.plugins.framework.base import HookRef, PluginRef
 from mcpgateway.plugins.framework.errors import PluginViolationError
 from mcpgateway.plugins.framework.manager import PluginExecutor
 from mcpgateway.plugins.framework.models import PluginMode
-from plugins.rate_limiter.rate_limiter import RateLimiterPlugin, _make_headers, _parse_rate, _select_most_restrictive, _store
+from plugins.rate_limiter.rate_limiter import (
+    ALGORITHM_FIXED_WINDOW,
+    ALGORITHM_SLIDING_WINDOW,
+    ALGORITHM_TOKEN_BUCKET,
+    FixedWindowAlgorithm,
+    MemoryBackend,
+    RateLimiterPlugin,
+    SlidingWindowAlgorithm,
+    TokenBucketAlgorithm,
+    _make_headers,
+    _parse_rate,
+    _select_most_restrictive,
+)
+
+
+def _clear_plugin(plugin: RateLimiterPlugin) -> None:
+    """Clear the algorithm store for a plugin instance."""
+    backend = plugin._rate_backend
+    if isinstance(backend, MemoryBackend):
+        backend._algorithm._store.clear()
 
 
 @pytest.fixture(autouse=True)
 def clear_rate_limit_store():
-    """Clear the rate limiter store before each test to ensure test isolation."""
-    _store.clear()
+    """No-op: each test creates its own plugin instance with a fresh store.
+    Individual tests call _clear_plugin() when sharing a plugin across steps."""
     yield
-    _store.clear()
 
 
-def _mk(rate: str) -> RateLimiterPlugin:
+def _mk(rate: str, algorithm: str = ALGORITHM_FIXED_WINDOW) -> RateLimiterPlugin:
     return RateLimiterPlugin(
         PluginConfig(
             name="rl",
             kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_PRE_INVOKE],
-            config={"by_user": rate},
+            config={"by_user": rate, "algorithm": algorithm},
         )
     )
 
@@ -672,14 +690,16 @@ async def test_redis_backend_shares_state_across_instances():
     assert r1.violation is None
     assert r2.violation is None
 
-    # Simulate Worker 2 starting fresh — clear local _store (has no effect on Redis counter)
-    _store.clear()
+    # Simulate Worker 2 starting fresh — clearing the local memory store has no effect
+    # on the Redis counter (the fake Redis client uses its own dict, not the plugin store)
+    if isinstance(plugin._rate_backend, MemoryBackend):
+        plugin._rate_backend._algorithm._store.clear()
 
     # Worker 2 shares the same Redis — alice's counter is still 2, next request is blocked
     r3 = await plugin.tool_pre_invoke(payload, ctx)
     assert r3.violation is not None, (
         "alice made 3 requests total (limit is 2). With Redis backend, clearing "
-        "_store has no effect — the counter persists in Redis across all workers."
+        "local state has no effect — the counter persists in Redis across all workers."
     )
     assert r3.violation.http_status_code == 429
 
@@ -694,25 +714,23 @@ async def test_store_evicts_expired_windows():
     bounding memory growth to active windows only.
     """
     plugin = _mk("5/s")
+    store = plugin._rate_backend._algorithm._store
     UNIQUE_USERS = 100
 
-    # Each unique user creates one entry in _store
+    # Each unique user creates one entry in the algorithm store
     for i in range(UNIQUE_USERS):
         ctx = PluginContext(global_context=GlobalContext(request_id=f"r{i}", user=f"user_{i}"))
         payload = ToolPreInvokePayload(name="test_tool", arguments={})
         await plugin.tool_pre_invoke(payload, ctx)
 
-    assert len(_store) == UNIQUE_USERS  # confirm entries were created
+    assert len(store) == UNIQUE_USERS  # confirm entries were created
 
-    # Wait for all 1-second windows to expire
+    # Wait for all 1-second windows to expire and the sweep to run
     await asyncio.sleep(1.1)
 
-    # Expected: expired entries are evicted, _store is empty (or much smaller)
-    # Actual:   _store still holds all UNIQUE_USERS entries indefinitely
-    assert len(_store) == 0, (
-        f"Expected _store to be empty after all windows expired, "
-        f"but found {len(_store)} stale entries. "
-        f"No eviction mechanism exists — _store grows without bound."
+    assert len(store) == 0, (
+        f"Expected store to be empty after all windows expired, "
+        f"but found {len(store)} stale entries. "
     )
 
 
@@ -901,7 +919,7 @@ async def test_unicode_user_id_is_rate_limited_correctly():
     payload = ToolPreInvokePayload(name="test_tool", arguments={})
 
     for user in ["用户@example.com", "ユーザー@test.jp", "مستخدم@example.com", "user🎉@example.com"]:
-        _store.clear()
+        _clear_plugin(plugin)
         ctx = PluginContext(global_context=GlobalContext(request_id="r1", user=user))
 
         r1 = await plugin.tool_pre_invoke(payload, ctx)
@@ -986,7 +1004,7 @@ async def test_graceful_degradation_unexpected_runtime_error_does_not_crash_call
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
     payload = ToolPreInvokePayload(name="test_tool", arguments={})
 
-    with patch("plugins.rate_limiter.rate_limiter._allow", side_effect=RuntimeError("simulated internal error")):
+    with patch.object(plugin._rate_backend, "allow", side_effect=RuntimeError("simulated internal error")):
         result = await plugin.tool_pre_invoke(payload, ctx)
 
     assert result is not None, "Plugin should return a result even when _allow() raises unexpectedly"
@@ -1634,3 +1652,302 @@ async def test_bypass_different_tenants_are_intentionally_independent():
         "Tenant identity comes from the JWT and is controlled by the auth layer, "
         "not bypassable by request content."
     )
+
+
+# ============================================================================
+# Algorithm Strategy Tests
+#
+# Tests that are specific to each algorithm: sliding_window and token_bucket.
+# fixed_window behaviour is already covered by all existing tests above.
+# ============================================================================
+
+
+# ---------------------------------------------------------------------------
+# Algorithm selection and validation
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_algorithm_raises_at_init():
+    """An unrecognised algorithm name must raise ValueError at startup."""
+    with pytest.raises(ValueError, match="RateLimiterPlugin config errors"):
+        RateLimiterPlugin(
+            PluginConfig(
+                name="rl",
+                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                hooks=[ToolHookType.TOOL_PRE_INVOKE],
+                config={"by_user": "10/s", "algorithm": "leaky_bucket"},
+            )
+        )
+
+
+def test_default_algorithm_is_fixed_window():
+    """When algorithm is not specified, fixed_window is used."""
+    plugin = RateLimiterPlugin(
+        PluginConfig(
+            name="rl",
+            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            hooks=[ToolHookType.TOOL_PRE_INVOKE],
+            config={"by_user": "10/s"},
+        )
+    )
+    assert isinstance(plugin._rate_backend._algorithm, FixedWindowAlgorithm)
+
+
+def test_sliding_window_algorithm_instantiated():
+    """sliding_window config results in a SlidingWindowAlgorithm backend."""
+    plugin = _mk("10/s", algorithm=ALGORITHM_SLIDING_WINDOW)
+    assert isinstance(plugin._rate_backend._algorithm, SlidingWindowAlgorithm)
+
+
+def test_token_bucket_algorithm_instantiated():
+    """token_bucket config results in a TokenBucketAlgorithm backend."""
+    plugin = _mk("10/s", algorithm=ALGORITHM_TOKEN_BUCKET)
+    assert isinstance(plugin._rate_backend._algorithm, TokenBucketAlgorithm)
+
+
+# ---------------------------------------------------------------------------
+# Sliding window correctness
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_basic_enforcement():
+    """Sliding window enforces the limit correctly under steady traffic."""
+    plugin = _mk("3/s", algorithm=ALGORITHM_SLIDING_WINDOW)
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    r1 = await plugin.tool_pre_invoke(payload, ctx)
+    r2 = await plugin.tool_pre_invoke(payload, ctx)
+    r3 = await plugin.tool_pre_invoke(payload, ctx)
+    r4 = await plugin.tool_pre_invoke(payload, ctx)  # should be blocked
+
+    assert r1.violation is None
+    assert r2.violation is None
+    assert r3.violation is None
+    assert r4.violation is not None
+    assert r4.violation.http_status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_prevents_burst_at_boundary():
+    """
+    Sliding window does NOT allow 2× the limit at a window boundary.
+
+    Unlike fixed window, the sliding window tracks exact timestamps. When
+    requests straddle a boundary, old timestamps are still within the window
+    and count against the limit — no burst is possible.
+    """
+    plugin = _mk("5/s", algorithm=ALGORITHM_SLIDING_WINDOW)
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    allowed_total = 0
+
+    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+        # End of window W1: fill the limit
+        mock_time.time.return_value = 1000.9
+        for _ in range(5):
+            r = await plugin.tool_pre_invoke(payload, ctx)
+            if r.violation is None:
+                allowed_total += 1
+
+        # Start of window W2: timestamps from W1 are still within the 1s window
+        mock_time.time.return_value = 1001.1
+        for _ in range(5):
+            r = await plugin.tool_pre_invoke(payload, ctx)
+            if r.violation is None:
+                allowed_total += 1
+
+    # Sliding window: only requests older than 1s are evicted
+    # At t=1001.1, cutoff = 1000.1 — all 5 requests at t=1000.9 are still inside
+    assert allowed_total <= 6, (
+        f"Sliding window should prevent boundary burst. Got {allowed_total} allowed "
+        f"(fixed window would allow 10, sliding window should block most of W2)."
+    )
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_allows_after_window_passes():
+    """After the full window duration passes, the sliding window resets naturally."""
+    plugin = _mk("2/s", algorithm=ALGORITHM_SLIDING_WINDOW)
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    # Exhaust the limit
+    await plugin.tool_pre_invoke(payload, ctx)
+    await plugin.tool_pre_invoke(payload, ctx)
+    blocked = await plugin.tool_pre_invoke(payload, ctx)
+    assert blocked.violation is not None
+
+    # Wait for the window to pass
+    await asyncio.sleep(1.1)
+
+    # Should be allowed again
+    r = await plugin.tool_pre_invoke(payload, ctx)
+    assert r.violation is None, "Requests should be allowed after the sliding window passes"
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_returns_429_and_headers():
+    """Sliding window violations return HTTP 429 with rate limit headers."""
+    plugin = _mk("1/s", algorithm=ALGORITHM_SLIDING_WINDOW)
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    await plugin.tool_pre_invoke(payload, ctx)
+    result = await plugin.tool_pre_invoke(payload, ctx)
+
+    assert result.violation is not None
+    assert result.violation.http_status_code == 429
+    assert result.violation.code == "RATE_LIMIT"
+    assert "X-RateLimit-Limit" in result.violation.http_headers
+    assert "Retry-After" in result.violation.http_headers
+
+
+# ---------------------------------------------------------------------------
+# Token bucket correctness
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_token_bucket_basic_enforcement():
+    """Token bucket enforces the limit — once tokens are exhausted requests are blocked."""
+    plugin = _mk("3/s", algorithm=ALGORITHM_TOKEN_BUCKET)
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    r1 = await plugin.tool_pre_invoke(payload, ctx)
+    r2 = await plugin.tool_pre_invoke(payload, ctx)
+    r3 = await plugin.tool_pre_invoke(payload, ctx)
+    r4 = await plugin.tool_pre_invoke(payload, ctx)  # bucket empty
+
+    assert r1.violation is None
+    assert r2.violation is None
+    assert r3.violation is None
+    assert r4.violation is not None
+    assert r4.violation.http_status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_token_bucket_allows_burst_up_to_capacity():
+    """
+    Token bucket allows an immediate burst up to the full bucket capacity.
+
+    A user who has been idle accumulates tokens. When they send a burst of
+    requests they can use all accumulated tokens at once — this is intentional
+    token_bucket behaviour, unlike fixed or sliding window which always enforce
+    a per-window ceiling.
+    """
+    plugin = _mk("5/s", algorithm=ALGORITHM_TOKEN_BUCKET)
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    # Send all 5 requests immediately (burst from a full bucket)
+    results = []
+    for _ in range(5):
+        r = await plugin.tool_pre_invoke(payload, ctx)
+        results.append(r)
+
+    allowed = sum(1 for r in results if r.violation is None)
+    assert allowed == 5, (
+        f"Token bucket should allow a burst of 5 from a full bucket, got {allowed} allowed"
+    )
+
+    # 6th request: bucket is now empty
+    r6 = await plugin.tool_pre_invoke(payload, ctx)
+    assert r6.violation is not None, "Bucket should be empty after a full burst"
+
+
+@pytest.mark.asyncio
+async def test_token_bucket_refills_over_time():
+    """Tokens refill at the configured rate — requests are allowed again after waiting."""
+    plugin = _mk("5/s", algorithm=ALGORITHM_TOKEN_BUCKET)
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    # Drain the bucket
+    for _ in range(5):
+        await plugin.tool_pre_invoke(payload, ctx)
+
+    blocked = await plugin.tool_pre_invoke(payload, ctx)
+    assert blocked.violation is not None, "Bucket should be empty"
+
+    # Wait for at least 1 token to refill (5 tokens/s → 1 token per 0.2s)
+    await asyncio.sleep(0.3)
+
+    r = await plugin.tool_pre_invoke(payload, ctx)
+    assert r.violation is None, "At least 1 token should have refilled after 0.3s"
+
+
+@pytest.mark.asyncio
+async def test_token_bucket_returns_429_and_headers():
+    """Token bucket violations return HTTP 429 with rate limit headers."""
+    plugin = _mk("1/s", algorithm=ALGORITHM_TOKEN_BUCKET)
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    await plugin.tool_pre_invoke(payload, ctx)
+    result = await plugin.tool_pre_invoke(payload, ctx)
+
+    assert result.violation is not None
+    assert result.violation.http_status_code == 429
+    assert result.violation.code == "RATE_LIMIT"
+    assert "X-RateLimit-Limit" in result.violation.http_headers
+    assert "Retry-After" in result.violation.http_headers
+
+
+# ---------------------------------------------------------------------------
+# Algorithm isolation — each instance gets its own independent store
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_two_plugin_instances_different_algorithms_independent():
+    """Two plugin instances using different algorithms have completely independent stores."""
+    plugin_fw = _mk("2/s", algorithm=ALGORITHM_FIXED_WINDOW)
+    plugin_sw = _mk("2/s", algorithm=ALGORITHM_SLIDING_WINDOW)
+    plugin_tb = _mk("2/s", algorithm=ALGORITHM_TOKEN_BUCKET)
+
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+    # Exhaust fixed window
+    await plugin_fw.tool_pre_invoke(payload, ctx)
+    await plugin_fw.tool_pre_invoke(payload, ctx)
+    blocked_fw = await plugin_fw.tool_pre_invoke(payload, ctx)
+    assert blocked_fw.violation is not None, "fixed_window alice should be blocked"
+
+    # sliding_window and token_bucket instances are completely unaffected
+    r_sw = await plugin_sw.tool_pre_invoke(payload, ctx)
+    r_tb = await plugin_tb.tool_pre_invoke(payload, ctx)
+    assert r_sw.violation is None, "sliding_window has its own store — should not be blocked"
+    assert r_tb.violation is None, "token_bucket has its own store — should not be blocked"
+
+
+# ---------------------------------------------------------------------------
+# Redis + token_bucket fallback to memory
+# ---------------------------------------------------------------------------
+
+
+def test_token_bucket_with_redis_backend_falls_back_to_memory():
+    """
+    token_bucket is not supported with the Redis backend.
+    The plugin must fall back to MemoryBackend and log a warning rather than crashing.
+    """
+    plugin = RateLimiterPlugin(
+        PluginConfig(
+            name="rl",
+            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            hooks=[ToolHookType.TOOL_PRE_INVOKE],
+            config={
+                "by_user": "10/s",
+                "algorithm": "token_bucket",
+                "backend": "redis",
+                "redis_url": "redis://localhost:6379/0",
+            },
+        )
+    )
+    # Should have fallen back to MemoryBackend with TokenBucketAlgorithm
+    assert isinstance(plugin._rate_backend, MemoryBackend)
+    assert isinstance(plugin._rate_backend._algorithm, TokenBucketAlgorithm)
