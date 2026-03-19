@@ -1133,3 +1133,160 @@ describe("_navigateAdmin pagination state preservation (#3389)", () => {
         expect(params.get("include_inactive")).toBe("false");
     });
 });
+
+// ---------------------------------------------------------------------------
+// Alpine.js reinit on OOB-swapped pagination controls (#3039)
+//
+// After HTMX settles an OOB swap of a pagination-controls div, Alpine.js
+// may not automatically detect and initialise the new x-data component
+// (race with MutationObserver). The htmx:afterSettle listener in
+// initializeTabState() calls Alpine.initTree() on any uninitialized
+// pagination controls.
+// ---------------------------------------------------------------------------
+describe("Alpine.js reinit on OOB-swapped pagination controls (#3039)", () => {
+    /** Dispatch a synthetic htmx:afterSettle event on document.body. */
+    function fireAfterSettle() {
+        const event = new win.Event("htmx:afterSettle", { bubbles: true });
+        doc.body.dispatchEvent(event);
+    }
+
+    /** Create a pagination-controls div with an x-data child, optionally pre-initialized. */
+    function createPaginationDiv(id, { initialized = false } = {}) {
+        const container = doc.createElement("div");
+        container.id = id;
+        const xDataEl = doc.createElement("div");
+        xDataEl.setAttribute("x-data", "{ currentPage: 1 }");
+        if (initialized) {
+            xDataEl._x_dataStack = [{ currentPage: 1 }];
+        }
+        container.appendChild(xDataEl);
+        doc.body.appendChild(container);
+        return container;
+    }
+
+    beforeEach(() => {
+        // Clear any previous Alpine mock
+        delete win.Alpine;
+    });
+
+    test("calls Alpine.initTree on uninitialized pagination controls", () => {
+        const initTreeCalls = [];
+        win.Alpine = {
+            initTree: (el) => initTreeCalls.push(el),
+        };
+
+        const div = createPaginationDiv("tools-pagination-controls");
+
+        fireAfterSettle();
+
+        expect(initTreeCalls).toHaveLength(1);
+        expect(initTreeCalls[0]).toBe(div);
+    });
+
+    test("skips already-initialized pagination controls", () => {
+        const initTreeCalls = [];
+        win.Alpine = {
+            initTree: (el) => initTreeCalls.push(el),
+        };
+
+        createPaginationDiv("tools-pagination-controls", {
+            initialized: true,
+        });
+
+        fireAfterSettle();
+
+        expect(initTreeCalls).toHaveLength(0);
+    });
+
+    test("handles multiple pagination controls, only inits uninitialized ones", () => {
+        const initTreeCalls = [];
+        win.Alpine = {
+            initTree: (el) => initTreeCalls.push(el),
+        };
+
+        createPaginationDiv("servers-pagination-controls", {
+            initialized: true,
+        });
+        const uninitDiv = createPaginationDiv("tools-pagination-controls");
+        createPaginationDiv("gateways-pagination-controls", {
+            initialized: true,
+        });
+
+        fireAfterSettle();
+
+        expect(initTreeCalls).toHaveLength(1);
+        expect(initTreeCalls[0]).toBe(uninitDiv);
+    });
+
+    test("does not error when Alpine is not loaded", () => {
+        // Alpine is undefined (deleted in beforeEach)
+        createPaginationDiv("tools-pagination-controls");
+
+        expect(() => fireAfterSettle()).not.toThrow();
+    });
+
+    test("does not error when Alpine.initTree is not a function", () => {
+        win.Alpine = { version: "3.x" }; // no initTree
+
+        createPaginationDiv("tools-pagination-controls");
+
+        expect(() => fireAfterSettle()).not.toThrow();
+    });
+
+    test("does not call initTree when pagination div has no x-data child", () => {
+        const initTreeCalls = [];
+        win.Alpine = {
+            initTree: (el) => initTreeCalls.push(el),
+        };
+
+        // Create a div with the right ID but no x-data child
+        const container = doc.createElement("div");
+        container.id = "tools-pagination-controls";
+        doc.body.appendChild(container);
+
+        fireAfterSettle();
+
+        expect(initTreeCalls).toHaveLength(0);
+    });
+
+    test("matches metrics top-performers pagination-controls-visible IDs", () => {
+        const initTreeCalls = [];
+        win.Alpine = {
+            initTree: (el) => initTreeCalls.push(el),
+        };
+
+        // Metrics partials use IDs like "top-tools-pagination-controls-visible"
+        // which contain "-pagination-controls" but don't end with it.
+        const metricsDiv = createPaginationDiv(
+            "top-tools-pagination-controls-visible",
+        );
+
+        fireAfterSettle();
+
+        expect(initTreeCalls).toHaveLength(1);
+        expect(initTreeCalls[0]).toBe(metricsDiv);
+    });
+
+    test("still enables disabled toggles alongside Alpine reinit", () => {
+        win.Alpine = { initTree: () => {} };
+
+        // Create a target element for the toggle
+        const target = doc.createElement("div");
+        target.id = "tools-table";
+        doc.body.appendChild(target);
+
+        // Create a disabled toggle
+        const toggle = doc.createElement("input");
+        toggle.type = "checkbox";
+        toggle.className = "show-inactive-toggle";
+        toggle.disabled = true;
+        toggle.setAttribute("hx-target", "#tools-table");
+        doc.body.appendChild(toggle);
+
+        createPaginationDiv("tools-pagination-controls");
+
+        fireAfterSettle();
+
+        expect(toggle.disabled).toBe(false);
+    });
+});
