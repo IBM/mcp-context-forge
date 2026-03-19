@@ -2168,6 +2168,43 @@ class TestAuthenticateOrCreateUser:
         assert existing_user.email_verified is True
 
     @pytest.mark.asyncio
+    async def test_existing_user_absent_email_verified_claim_is_allowed(self, sso_service, mock_db):
+        """Existing-user login must succeed when the provider omits email_verified.
+
+        Regression guard for the same root cause as #3253: providers like Entra ID
+        that omit email_verified should not block returning users either.
+        """
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="Old Name",
+            auth_provider="github",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: _make_provider()
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_sync_roles_on_login = False
+            mock_jwt.return_value = "jwt-token"
+            # No email_verified key — simulates Entra ID / GitHub work accounts
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "user@test.com",
+                    "full_name": "Old Name",
+                    "provider": "github",
+                }
+            )
+
+        assert result == "jwt-token"
+
+    @pytest.mark.asyncio
     async def test_existing_user_untrusted_domain_rejected(self, sso_service, mock_db):
         existing_user = SimpleNamespace(
             email="user@untrusted.com",
