@@ -477,7 +477,7 @@ class RateLimiterPlugin(Plugin):
                     continue_processing=False,
                     violation=PluginViolation(
                         reason="Rate limit exceeded",
-                        description=f"Rate limit exceeded for prompt {prompt}, user {user}, or tenant {tenant}",
+                        description=f"Rate limit exceeded for prompt '{prompt}'",
                         code="RATE_LIMIT",
                         details=meta,
                         http_status_code=429,
@@ -534,7 +534,7 @@ class RateLimiterPlugin(Plugin):
                     continue_processing=False,
                     violation=PluginViolation(
                         reason="Rate limit exceeded",
-                        description=f"Rate limit exceeded for tool {tool}, user {user}, or tenant {tenant}",
+                        description=f"Rate limit exceeded for tool '{tool}'",
                         code="RATE_LIMIT",
                         details=meta,
                         http_status_code=429,
