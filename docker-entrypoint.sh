@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# s390x: Force protobuf to use pure-Python implementation.
+# The UPB C extension (google._upb._message) segfaults on s390x when
+# importing OpenTelemetry protobuf definitions.
+if [ "$(uname -m)" = "s390x" ]; then
+    export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
+fi
+
 HTTP_SERVER="${HTTP_SERVER:-gunicorn}"
 RUST_MCP_MODE="${RUST_MCP_MODE:-off}"
 RUST_MCP_LOG="${RUST_MCP_LOG:-warn}"
