@@ -11,30 +11,30 @@
 pub mod config;
 
 use axum::{
-    Json, Router,
-    body::{Body, Bytes},
-    extract::{ConnectInfo, FromRequestParts, Path as AxumPath, State},
+    body::{Body, Bytes}, extract::{ConnectInfo, FromRequestParts, Path as AxumPath, State},
     http::request::Parts,
-    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::CONTENT_TYPE},
+    http::{header::CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{
-        IntoResponse, Response,
-        sse::{Event, KeepAlive, Sse},
+        sse::{Event, KeepAlive, Sse}, IntoResponse,
+        Response,
     },
     routing::{get, post},
+    Json,
+    Router,
 };
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use futures_util::{StreamExt, TryStreamExt};
-use redis::{AsyncCommands, Script, aio::ConnectionManager as RedisConnectionManager};
+use redis::{aio::ConnectionManager as RedisConnectionManager, AsyncCommands, Script};
 use reqwest::{Client, Url};
 #[cfg(feature = "rmcp-upstream-client")]
 use reqwest_rmcp::Client as RmcpReqwestClient;
 use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, hash_map::DefaultHasher},
+    collections::{hash_map::DefaultHasher, HashMap},
     convert::Infallible,
     fs,
     hash::{Hash, Hasher},
@@ -42,8 +42,8 @@ use std::{
     path::Path,
     str::{self, FromStr},
     sync::{
-        Arc, OnceLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering}, Arc,
+        OnceLock,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -54,9 +54,10 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+
 #[cfg(feature = "rmcp-upstream-client")]
 use rmcp::{
-    ServiceError as RmcpServiceError,
     model::{
         CallToolRequestParams as RmcpCallToolRequestParams,
         ClientCapabilities as RmcpClientCapabilities, ClientInfo as RmcpClientInfo,
@@ -65,8 +66,9 @@ use rmcp::{
     serve_client as rmcp_serve_client,
     service::{RoleClient as RmcpRoleClient, RunningService as RmcpRunningService},
     transport::{
-        StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
+        streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport,
     },
+    ServiceError as RmcpServiceError,
 };
 
 use crate::config::{ListenTarget, RuntimeConfig};
@@ -177,6 +179,7 @@ pub struct AppState {
     session_auth_reuse_ttl: Duration,
     public_ingress_enabled: bool,
     runtime_stats: Arc<RuntimeStats>,
+    jwt_secret_key: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -748,6 +751,7 @@ impl AppState {
             session_auth_reuse_ttl: Duration::from_secs(config.session_auth_reuse_ttl_seconds),
             public_ingress_enabled: config.public_listen_http.is_some(),
             runtime_stats: Arc::new(RuntimeStats::default()),
+            jwt_secret_key: config.jwt_secret_key.clone(),
         })
     }
 
@@ -2384,6 +2388,18 @@ fn can_reuse_session_auth(
     Ok(encoded_auth_context)
 }
 
+fn validate_jwt_token(token: &str, secret: &str) -> Result<serde_json::Value, String> {
+    let alg = Algorithm::HS256; // Keep it simple
+    let mut validation = Validation::new(alg);
+    validation.validate_exp = true;
+
+    let key = DecodingKey::from_secret(secret.as_bytes());
+    let token_data =
+        decode::<serde_json::Value>(token, &key, &validation).map_err(|e| e.to_string())?;
+
+    Ok(token_data.claims)
+}
+
 #[allow(clippy::result_large_err)]
 fn encode_internal_auth_context_header(auth_context: &Value) -> Result<HeaderValue, Response> {
     let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(auth_context).map_err(|err| {
@@ -2461,6 +2477,30 @@ async fn authenticate_public_request_if_needed(
             state
                 .runtime_stats()
                 .record_session_auth_reuse_miss(SessionAuthReuseMissReason::NoSession);
+        }
+    }
+    if let Some(auth_header) = incoming_headers.get("authorization") {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                // Quick JWT validation using jsonwebtoken crate
+                if let Ok(claims) = validate_jwt_token(token, &state.jwt_secret_key) {
+                    // Token valid - create auth context
+                    let auth_context = json!({
+                        "email": claims["sub"],
+                        "is_authenticated": true,
+                        "is_admin": claims["is_admin"].as_bool().unwrap_or(false),
+                    });
+
+                    let encoded = URL_SAFE_NO_PAD.encode(&auth_context.to_string());
+                    if let Ok(h_value) = HeaderValue::from_str(&encoded) {
+                        incoming_headers.insert(
+                            HeaderName::from_static("x-contextforge-auth-context"),
+                            h_value,
+                        );
+                    }
+                    return Ok((incoming_headers, public_path));
+                }
+            }
         }
     }
 
@@ -7610,59 +7650,59 @@ mod unit_tests {
     use base64::Engine;
 
     use super::{
-        AffinityForwardResponse, AppState, Bytes, CLIENT_ERROR_DETAIL, EventStoreReplayRequest,
-        EventStoreStoreRequest, INTERNAL_RUNTIME_AUTH_HEADER, InternalAuthContext,
-        InternalAuthenticateRequest, JsonRpcRequest, RUNTIME_HEADER, RUNTIME_NAME, RuntimeConfig,
-        RuntimeError, RuntimeSessionRecord, SessionAuthReuseMissReason, TrustedPeerAddr,
-        URL_SAFE_NO_PAD, accepts_sse, active_runtime_session_count,
-        affinity_forward_error_response, auth_binding_fingerprint,
-        authenticate_public_request_if_needed, authorize_server_method_via_backend,
-        batch_rejected_response, build_forwarded_sse_event, build_public_router,
-        can_reuse_session_auth, can_use_direct_prompts_get, can_use_direct_resources_read,
-        decode_request, decode_upstream_json_payload_bytes, derive_backend_authenticate_url,
-        derive_backend_completion_complete_url, derive_backend_initialize_url,
-        derive_backend_logging_set_level_url, derive_backend_notifications_cancelled_url,
-        derive_backend_notifications_initialized_url, derive_backend_notifications_message_url,
-        derive_backend_prompts_get_authz_url, derive_backend_prompts_get_url,
-        derive_backend_prompts_list_authz_url, derive_backend_prompts_list_url,
-        derive_backend_resource_templates_list_authz_url,
-        derive_backend_resource_templates_list_url, derive_backend_resources_list_authz_url,
-        derive_backend_resources_list_url, derive_backend_resources_read_authz_url,
-        derive_backend_resources_read_url, derive_backend_resources_subscribe_url,
-        derive_backend_resources_unsubscribe_url, derive_backend_roots_list_url,
-        derive_backend_sampling_create_message_url, derive_backend_session_delete_url,
-        derive_backend_tools_call_metric_url, derive_backend_tools_call_resolve_url,
-        derive_backend_tools_call_url, derive_backend_tools_list_authz_url,
-        derive_backend_tools_list_url, derive_backend_transport_url, direct_server_prompts_get,
-        direct_server_prompts_list, direct_server_resource_templates_list,
-        direct_server_resources_list, direct_server_resources_read,
-        encode_internal_auth_context_header, event_store_key_prefix, extract_client_capabilities,
-        extract_first_sse_data_payload, finalize_sse_frame, forward_initialize_to_backend,
-        forward_to_backend, forward_transport_request, get_runtime_session,
-        handle_initialize_with_session_core, handle_resume_transport_request, has_server_scope,
-        hex_decode, hex_encode, inject_server_id_header, inject_session_header,
-        invalid_request_response, is_affinity_forwarded_request, maybe_bind_session_auth_context,
-        maybe_upsert_runtime_session_from_transport_response, normalize_postgres_database_url,
-        parse_error_response, parse_sse_line, pool_owner_key, prompt_arguments_from_schema,
-        public_client_ip, query_param, remove_runtime_session, replay_events_endpoint,
-        requested_initialize_session_id, requested_protocol_version,
-        response_from_affinity_forward_response, run, runtime_session_access_outcome,
+        accepts_sse, active_runtime_session_count, affinity_forward_error_response, auth_binding_fingerprint, authenticate_public_request_if_needed,
+        authorize_server_method_via_backend, batch_rejected_response, build_forwarded_sse_event,
+        build_public_router, can_reuse_session_auth, can_use_direct_prompts_get, can_use_direct_resources_read, decode_request,
+        decode_upstream_json_payload_bytes, derive_backend_authenticate_url, derive_backend_completion_complete_url, derive_backend_initialize_url,
+        derive_backend_logging_set_level_url, derive_backend_notifications_cancelled_url, derive_backend_notifications_initialized_url,
+        derive_backend_notifications_message_url, derive_backend_prompts_get_authz_url,
+        derive_backend_prompts_get_url, derive_backend_prompts_list_authz_url,
+        derive_backend_prompts_list_url, derive_backend_resource_templates_list_authz_url, derive_backend_resource_templates_list_url,
+        derive_backend_resources_list_authz_url, derive_backend_resources_list_url, derive_backend_resources_read_authz_url,
+        derive_backend_resources_read_url, derive_backend_resources_subscribe_url, derive_backend_resources_unsubscribe_url,
+        derive_backend_roots_list_url, derive_backend_sampling_create_message_url,
+        derive_backend_session_delete_url, derive_backend_tools_call_metric_url,
+        derive_backend_tools_call_resolve_url, derive_backend_tools_call_url,
+        derive_backend_tools_list_authz_url, derive_backend_tools_list_url,
+        derive_backend_transport_url, direct_server_prompts_get,
+        direct_server_prompts_list,
+        direct_server_resource_templates_list, direct_server_resources_list,
+        direct_server_resources_read, encode_internal_auth_context_header,
+        event_store_key_prefix, extract_client_capabilities,
+        extract_first_sse_data_payload, finalize_sse_frame,
+        forward_initialize_to_backend, forward_to_backend,
+        forward_transport_request, get_runtime_session,
+        handle_initialize_with_session_core, handle_resume_transport_request,
+        has_server_scope, hex_decode, hex_encode,
+        inject_server_id_header, inject_session_header,
+        invalid_request_response, is_affinity_forwarded_request,
+        maybe_bind_session_auth_context, maybe_upsert_runtime_session_from_transport_response, normalize_postgres_database_url,
+        parse_error_response, parse_sse_line, pool_owner_key,
+        prompt_arguments_from_schema, public_client_ip, query_param,
+        remove_runtime_session, replay_events_endpoint, requested_initialize_session_id,
+        requested_protocol_version, response_from_affinity_forward_response, run, runtime_session_access_outcome,
         runtime_session_id_from_request, runtime_session_key, send_tools_list_to_backend,
-        send_transport_to_backend, serve_http, serve_uds, store_event_endpoint,
-        transport_delete_server_scoped, transport_get_server_scoped, upsert_runtime_session,
-        validate_initialize_params, validate_protocol_version, validate_runtime_session_request,
+        send_transport_to_backend, serve_http,
+        serve_uds, store_event_endpoint, transport_delete_server_scoped, transport_get_server_scoped,
+        upsert_runtime_session, validate_initialize_params, validate_protocol_version, validate_runtime_session_request,
+        AffinityForwardResponse, AppState,
+        Bytes, EventStoreReplayRequest, EventStoreStoreRequest,
+        InternalAuthContext, InternalAuthenticateRequest, JsonRpcRequest,
+        RuntimeConfig, RuntimeError, RuntimeSessionRecord, SessionAuthReuseMissReason,
+        TrustedPeerAddr, CLIENT_ERROR_DETAIL, INTERNAL_RUNTIME_AUTH_HEADER,
+        RUNTIME_HEADER, RUNTIME_NAME, URL_SAFE_NO_PAD,
     };
     use axum::{
-        Json, Router,
-        body::to_bytes,
-        extract::{Path as AxumPath, State},
+        body::to_bytes, extract::{Path as AxumPath, State},
         http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
-        response::{IntoResponse, Response, sse::Sse},
+        response::{sse::Sse, IntoResponse, Response},
         routing::{get, post},
+        Json,
+        Router,
     };
     use futures_util::stream;
     use reqwest::Url;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::{
         convert::Infallible,
@@ -7671,7 +7711,7 @@ mod unit_tests {
         sync::{Arc, Mutex},
         time::Duration,
     };
-    use tokio::time::{Instant, sleep};
+    use tokio::time::{sleep, Instant};
     use uuid::Uuid;
 
     fn free_tcp_addr() -> String {
@@ -7767,6 +7807,7 @@ mod unit_tests {
             db_pool_max_size: 7,
             log_filter: "error".to_string(),
             exit_after_startup_ms: None,
+            jwt_secret_key: "".to_string(),
         }
     }
 

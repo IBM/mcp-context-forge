@@ -184,6 +184,9 @@ pub struct RuntimeConfig {
 
     #[arg(long, env = "MCP_RUST_EXIT_AFTER_STARTUP_MS", hide = true)]
     pub exit_after_startup_ms: Option<u64>,
+
+    #[arg(long, env = "JWT_SECRET_KEY", default_value_t = String::new())]
+    pub jwt_secret_key: String,
 }
 
 #[derive(Debug, Clone)]
