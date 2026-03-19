@@ -184,8 +184,8 @@ def test_compute_metrics_summary_last_time_from_hourly(test_db, test_tool):
     _ = len(test_tool.metrics)  # Trigger lazy load to use in-memory path
     summary = test_tool.metrics_summary
 
-    # Last time should be end of the hourly bucket (hour_start + 1 hour)
-    expected_last_time = hour_start + timedelta(hours=1)
+    # Last time should be hour_start (consistent with aggregate_metrics_combined)
+    expected_last_time = hour_start
     # Compare timestamps ignoring timezone differences
     assert summary["last_execution_time"].replace(tzinfo=None) == expected_last_time.replace(tzinfo=None)
 
@@ -334,8 +334,13 @@ def test_server_metrics_summary_attributeerror(test_db, test_server):
         assert summary["total_executions"] == 1
 
 
-def test_metrics_summary_old_raw_metrics_skipped(test_db, test_tool):
-    """Test that raw metrics from completed hours are explicitly skipped (line 961)."""
+def test_metrics_summary_old_raw_metrics_counted_when_no_hourly(test_db, test_tool):
+    """Test that raw metrics from hours without hourly aggregates ARE counted.
+
+    When rollup hasn't happened (delayed, disabled, or failed), raw metrics from
+    completed hours must still be visible. Only raw metrics from hours that HAVE
+    corresponding hourly aggregates are skipped to prevent double-counting.
+    """
     now = datetime.now(timezone.utc)
     current_hour_start = now.replace(minute=0, second=0, microsecond=0)
 
@@ -355,13 +360,13 @@ def test_metrics_summary_old_raw_metrics_skipped(test_db, test_tool):
     _ = len(test_tool.metrics)  # Trigger lazy load
     summary = test_tool.metrics_summary
 
-    # All metrics should be skipped because they're before current hour
-    assert summary["total_executions"] == 0
-    assert summary["successful_executions"] == 0
-    assert summary["failed_executions"] == 0
-    assert summary["min_response_time"] is None
-    assert summary["max_response_time"] is None
-    assert summary["avg_response_time"] is None
+    # Metrics should be counted because their hour has no hourly aggregate
+    assert summary["total_executions"] == 3
+    assert summary["successful_executions"] == 2
+    assert summary["failed_executions"] == 1
+    assert summary["min_response_time"] == 0.1
+    assert summary["max_response_time"] == 0.3
+    assert abs(summary["avg_response_time"] - 0.2) < 0.01
 
 
 def test_metrics_summary_timezone_naive_timestamps(test_db, test_tool):

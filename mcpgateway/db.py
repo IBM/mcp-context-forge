@@ -907,17 +907,13 @@ def _compute_metrics_summary(
 ) -> Dict[str, Any]:
     """Compute aggregated metrics from both raw and hourly tables without double-counting.
 
-    This function prevents double-counting by only including raw metrics from the current
-    incomplete hour. Metrics from completed hours are aggregated in the hourly table.
+    This function prevents double-counting by including raw metrics only from hours
+    that have no corresponding hourly aggregate. This correctly handles:
+    - Normal operation (hourly rollup complete, raw data retained or deleted)
+    - Rollup lag (completed hour not yet rolled up)
+    - Rollup disabled or failed
 
-    Time Partitioning Strategy:
-    ┌─────────────┬─────────────┬─────────────┐
-    │ Completed   │ Completed   │  Current    │
-    │ Hour 1      │ Hour 2      │  Hour 3     │
-    ├─────────────┼─────────────┼─────────────┤
-    │ Query:      │ Query:      │ Query: Raw  │
-    │ Hourly only │ Hourly only │ (>=hour_start)│
-    └─────────────┴─────────────┴─────────────┘
+    The approach mirrors ``aggregate_metrics_combined()`` in metrics_query_service.py.
 
     Args:
         raw_metrics: List of raw metric objects loaded in memory (or None if using session)
@@ -935,7 +931,6 @@ def _compute_metrics_summary(
     Raises:
         ValueError: If both in-memory and SQL query parameters are incomplete
     """
-    # Calculate current hour boundary
     now = datetime.now(timezone.utc)
     current_hour_start = now.replace(minute=0, second=0, microsecond=0)
 
@@ -946,6 +941,13 @@ def _compute_metrics_summary(
         # ============================================================
         # IN-MEMORY PATH: Iterate over loaded objects
         # ============================================================
+
+        # Build set of hours already covered by hourly aggregates
+        covered_hours: set[datetime] = set()
+        for h in hourly_metrics:
+            hs = h.hour_start if h.hour_start.tzinfo is not None else h.hour_start.replace(tzinfo=timezone.utc)
+            covered_hours.add(hs)
+
         total = 0
         successful = 0
         min_rt: Optional[float] = None
@@ -953,12 +955,12 @@ def _compute_metrics_summary(
         sum_rt = 0.0
         last_time: Optional[datetime] = None
 
-        # Process raw metrics from current hour only
+        # Include raw metrics only from hours NOT covered by hourly aggregates
         for m in raw_metrics:
-            # Make timestamps comparable by ensuring both are timezone-aware
             metric_ts = m.timestamp if m.timestamp.tzinfo is not None else m.timestamp.replace(tzinfo=timezone.utc)
-            if metric_ts < current_hour_start:
-                continue  # Skip completed hours (already in hourly aggregates)
+            metric_hour = metric_ts.replace(minute=0, second=0, microsecond=0)
+            if metric_hour in covered_hours:
+                continue  # Already counted in hourly aggregates
 
             total += 1
             if m.is_success:
@@ -984,10 +986,9 @@ def _compute_metrics_summary(
                     max_rt = h.max_response_time
             if h.avg_response_time is not None and h.total_count > 0:
                 sum_rt += h.avg_response_time * h.total_count
-            # Hourly bucket represents start of hour
-            hourly_end = h.hour_start + timedelta(hours=1)
-            if last_time is None or hourly_end > last_time:
-                last_time = hourly_end
+            hs = h.hour_start if h.hour_start.tzinfo is not None else h.hour_start.replace(tzinfo=timezone.utc)
+            if last_time is None or hs > last_time:
+                last_time = hs
 
         failed = total - successful
         return {
@@ -1002,7 +1003,7 @@ def _compute_metrics_summary(
         }
 
     # ============================================================
-    # SQL QUERY PATH: Query both tables with time partitioning
+    # SQL QUERY PATH: hourly aggregates + uncovered raw metrics
     # ============================================================
     if session is None or entity_id is None or raw_metric_class is None or hourly_metric_class is None:
         raise ValueError("For SQL query path, must provide: session, entity_id, raw_metric_class, hourly_metric_class")
@@ -1011,7 +1012,6 @@ def _compute_metrics_summary(
     from sqlalchemy import case  # pylint: disable=import-outside-toplevel
 
     # Determine the foreign key column name (tool_id, resource_id, etc.)
-    # Use the class name to infer: ToolMetric -> tool_id, ResourceMetric -> resource_id
     class_name = raw_metric_class.__name__
     if class_name.endswith("Metric"):
         entity_type = class_name[:-6].lower()  # ToolMetric -> tool
@@ -1022,22 +1022,7 @@ def _compute_metrics_summary(
     fk_column_raw = getattr(raw_metric_class, fk_column_name)
     fk_column_hourly = getattr(hourly_metric_class, fk_column_name)
 
-    # Query raw metrics from current hour only (not yet rolled up)
-    raw_result = (
-        session.query(
-            func.count(raw_metric_class.id),  # pylint: disable=not-callable
-            func.sum(case((raw_metric_class.is_success.is_(True), 1), else_=0)),
-            func.min(raw_metric_class.response_time),  # pylint: disable=not-callable
-            func.max(raw_metric_class.response_time),  # pylint: disable=not-callable
-            func.sum(raw_metric_class.response_time),  # pylint: disable=not-callable
-            func.max(raw_metric_class.timestamp),  # pylint: disable=not-callable
-        )
-        .filter(fk_column_raw == entity_id)
-        .filter(raw_metric_class.timestamp >= current_hour_start)  # Only current hour
-        .one()
-    )
-
-    # Query hourly aggregated metrics (historical data)
+    # Query 1: All hourly aggregates for this entity (includes max hour_start)
     hourly_result = (
         session.query(
             func.sum(hourly_metric_class.total_count),  # pylint: disable=not-callable
@@ -1051,14 +1036,6 @@ def _compute_metrics_summary(
         .one()
     )
 
-    # Combine raw and hourly metrics
-    raw_total = raw_result[0] or 0
-    raw_successful = raw_result[1] or 0
-    raw_min_rt = raw_result[2]
-    raw_max_rt = raw_result[3]
-    raw_sum_rt = raw_result[4] or 0.0
-    raw_last_time = raw_result[5]
-
     hourly_total = hourly_result[0] or 0
     hourly_successful = hourly_result[1] or 0
     hourly_min_rt = hourly_result[2]
@@ -1066,12 +1043,41 @@ def _compute_metrics_summary(
     hourly_weighted_sum_rt = hourly_result[4] or 0.0
     hourly_last_bucket = hourly_result[5]
 
+    # Query 2: Raw metrics from hours NOT covered by hourly aggregates.
+    # Use max_hour_start to determine the boundary: hourly data covers
+    # up to max_hour_start + 1h, raw data covers everything after that.
+    # When no hourly data exists, all raw metrics are counted.
+    raw_query = (
+        session.query(
+            func.count(raw_metric_class.id),  # pylint: disable=not-callable
+            func.sum(case((raw_metric_class.is_success.is_(True), 1), else_=0)),
+            func.min(raw_metric_class.response_time),  # pylint: disable=not-callable
+            func.max(raw_metric_class.response_time),  # pylint: disable=not-callable
+            func.sum(raw_metric_class.response_time),  # pylint: disable=not-callable
+            func.max(raw_metric_class.timestamp),  # pylint: disable=not-callable
+        )
+        .filter(fk_column_raw == entity_id)
+    )
+    if hourly_last_bucket is not None:
+        # Only include raw metrics from after the last rolled-up hour
+        hourly_coverage_end = hourly_last_bucket + timedelta(hours=1)
+        raw_query = raw_query.filter(raw_metric_class.timestamp >= hourly_coverage_end)
+
+    raw_result = raw_query.one()
+
+    raw_total = raw_result[0] or 0
+    raw_successful = raw_result[1] or 0
+    raw_min_rt = raw_result[2]
+    raw_max_rt = raw_result[3]
+    raw_sum_rt = raw_result[4] or 0.0
+    raw_last_time = raw_result[5]
+
     # Aggregate totals
-    total = raw_total + hourly_total
-    successful = raw_successful + hourly_successful
+    total = hourly_total + raw_total
+    successful = hourly_successful + raw_successful
     failed = total - successful
 
-    # Compute min/max response times across both sources
+    # Min/max across both sources
     min_rt = None
     if raw_min_rt is not None and hourly_min_rt is not None:
         min_rt = min(raw_min_rt, hourly_min_rt)
@@ -1091,19 +1097,16 @@ def _compute_metrics_summary(
     # Weighted average response time
     avg_rt = None
     if total > 0:
-        total_sum_rt = raw_sum_rt + hourly_weighted_sum_rt
-        avg_rt = total_sum_rt / total
+        avg_rt = (hourly_weighted_sum_rt + raw_sum_rt) / total
 
-    # Last execution time: most recent between raw metrics and hourly buckets
+    # Last execution time: most recent (use hour_start for hourly, consistent with aggregate_metrics_combined)
     last_time = None
     if raw_last_time is not None and hourly_last_bucket is not None:
-        # Hourly bucket represents the START of the hour
-        hourly_end = hourly_last_bucket + timedelta(hours=1)
-        last_time = max(raw_last_time, hourly_end)
+        last_time = max(raw_last_time, hourly_last_bucket)
     elif raw_last_time is not None:
         last_time = raw_last_time
     elif hourly_last_bucket is not None:
-        last_time = hourly_last_bucket + timedelta(hours=1)
+        last_time = hourly_last_bucket
 
     return {
         "total_executions": total,
