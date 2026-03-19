@@ -931,9 +931,6 @@ def _compute_metrics_summary(
     Raises:
         ValueError: If both in-memory and SQL query parameters are incomplete
     """
-    now = datetime.now(timezone.utc)
-    current_hour_start = now.replace(minute=0, second=0, microsecond=0)
-
     # Determine if we're using in-memory or SQL query path
     use_memory = raw_metrics is not None and hourly_metrics is not None
 
@@ -1047,17 +1044,14 @@ def _compute_metrics_summary(
     # Use max_hour_start to determine the boundary: hourly data covers
     # up to max_hour_start + 1h, raw data covers everything after that.
     # When no hourly data exists, all raw metrics are counted.
-    raw_query = (
-        session.query(
-            func.count(raw_metric_class.id),  # pylint: disable=not-callable
-            func.sum(case((raw_metric_class.is_success.is_(True), 1), else_=0)),
-            func.min(raw_metric_class.response_time),  # pylint: disable=not-callable
-            func.max(raw_metric_class.response_time),  # pylint: disable=not-callable
-            func.sum(raw_metric_class.response_time),  # pylint: disable=not-callable
-            func.max(raw_metric_class.timestamp),  # pylint: disable=not-callable
-        )
-        .filter(fk_column_raw == entity_id)
-    )
+    raw_query = session.query(
+        func.count(raw_metric_class.id),  # pylint: disable=not-callable
+        func.sum(case((raw_metric_class.is_success.is_(True), 1), else_=0)),
+        func.min(raw_metric_class.response_time),  # pylint: disable=not-callable
+        func.max(raw_metric_class.response_time),  # pylint: disable=not-callable
+        func.sum(raw_metric_class.response_time),  # pylint: disable=not-callable
+        func.max(raw_metric_class.timestamp),  # pylint: disable=not-callable
+    ).filter(fk_column_raw == entity_id)
     if hourly_last_bucket is not None:
         # Only include raw metrics from after the last rolled-up hour
         hourly_coverage_end = hourly_last_bucket + timedelta(hours=1)
