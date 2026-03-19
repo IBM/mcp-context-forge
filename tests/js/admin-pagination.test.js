@@ -1249,6 +1249,24 @@ describe("Alpine.js reinit on OOB-swapped pagination controls (#3039)", () => {
         expect(initTreeCalls).toHaveLength(0);
     });
 
+    test("matches metrics top-performers pagination-controls-visible IDs", () => {
+        const initTreeCalls = [];
+        win.Alpine = {
+            initTree: (el) => initTreeCalls.push(el),
+        };
+
+        // Metrics partials use IDs like "top-tools-pagination-controls-visible"
+        // which contain "-pagination-controls" but don't end with it.
+        const metricsDiv = createPaginationDiv(
+            "top-tools-pagination-controls-visible",
+        );
+
+        fireAfterSettle();
+
+        expect(initTreeCalls).toHaveLength(1);
+        expect(initTreeCalls[0]).toBe(metricsDiv);
+    });
+
     test("still enables disabled toggles alongside Alpine reinit", () => {
         win.Alpine = { initTree: () => {} };
 

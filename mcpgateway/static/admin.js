@@ -19591,7 +19591,7 @@ function initializeTabState() {
         // settle.
         if (window.Alpine && typeof window.Alpine.initTree === "function") {
             document
-                .querySelectorAll('[id$="-pagination-controls"]')
+                .querySelectorAll('[id*="-pagination-controls"]')
                 .forEach(function (el) {
                     // Only act on elements that contain an uninitialised
                     // Alpine component (i.e. x-data present but no
