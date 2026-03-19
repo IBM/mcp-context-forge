@@ -280,7 +280,7 @@ services:
       # JWT Configuration - Choose ONE approach:
       # Option 1: HMAC (Default - Simple deployments)
       - JWT_ALGORITHM=HS256
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
       # Option 2: RSA (Production - Asymmetric, uncomment and generate certs)
       # - JWT_ALGORITHM=RS256
       # - JWT_PUBLIC_KEY_PATH=/app/certs/jwt/public.pem
@@ -394,6 +394,8 @@ services:
       # Uncomment to enable plugins
       - PLUGINS_ENABLED=true
       - PLUGINS_CONFIG_FILE=${PLUGINS_CONFIG_FILE:-plugins/config.yaml}
+      - PLUGINS_CAN_OVERRIDE_AUTH_HEADERS=${PLUGINS_CAN_OVERRIDE_AUTH_HEADERS:-false}
+      - STREAMABLE_HTTP_MAX_EVENTS_PER_STREAM=${STREAMABLE_HTTP_MAX_EVENTS_PER_STREAM:-100}
       # Uncomment to enable catalog
       - MCPGATEWAY_CATALOG_ENABLED=true
       - MCPGATEWAY_CATALOG_FILE=/app/mcp-catalog.yml
@@ -466,8 +468,8 @@ services:
       # ═══════════════════════════════════════════════════════════════════════════
       # Shared HTTP client for all outbound requests (federation, health checks,
       # A2A, SSO, catalog). Provides ~20x better performance than per-request clients.
-      - HTTPX_MAX_CONNECTIONS=500           # Total connections in pool (increased from 200 for high concurrency)
-      - HTTPX_MAX_KEEPALIVE_CONNECTIONS=300 # Keepalive connections (increased from 100)
+      - HTTPX_MAX_CONNECTIONS=${HTTPX_MAX_CONNECTIONS:-500}
+      - HTTPX_MAX_KEEPALIVE_CONNECTIONS=${HTTPX_MAX_KEEPALIVE_CONNECTIONS:-300}
       - HTTPX_KEEPALIVE_EXPIRY=30.0         # Idle connection expiry (seconds)
       - HTTPX_CONNECT_TIMEOUT=5.0           # TCP connection timeout (seconds)
       - HTTPX_READ_TIMEOUT=120.0            # Response read timeout (seconds, high for slow tools)
@@ -1101,13 +1103,16 @@ services:
     user: "0"
     volumes:
       - prometheus_token:/tokens
+    environment:
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -eu
         TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token \
           --username prometheus@monitoring --exp 0 \
-          --secret my-test-key --algo HS256 2>/dev/null)
+          --secret $$JWT_SECRET_KEY \
+          --algo HS256 2>/dev/null)
         printf "%s" "$$TOKEN" > /tokens/gateway.jwt
         echo "✅ Prometheus scrape token written to /tokens/gateway.jwt"
     profiles: ["monitoring"]
@@ -1341,7 +1346,8 @@ services:
       fast_time_server:
         condition: service_started
     environment:
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+
     # This is a one-shot container that exits after registration
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
@@ -1396,9 +1402,9 @@ services:
 
         echo "Generating JWT token..."
         echo "Environment: JWT_SECRET_KEY=$$JWT_SECRET_KEY"
-        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key --algo HS256"
+        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256"
         # Only capture stdout (the token), let warnings go to stderr
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
         echo "Generated token: $$MCPGATEWAY_BEARER_TOKEN"
 
         # Decode the token to verify it has expiration
@@ -1595,7 +1601,7 @@ services:
       register_fast_time:
         condition: service_completed_successfully
     environment:
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -1604,7 +1610,7 @@ services:
         echo "Registering fast_time_server SSE transport with gateway..."
 
         # Generate JWT token
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
 
         python3 -c "
         import json
@@ -1767,7 +1773,7 @@ services:
       slow_time_server:
         condition: service_healthy
     environment:
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -1775,7 +1781,7 @@ services:
         echo "Registering slow_time_server with gateway..."
 
         # Generate JWT token
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
 
         python3 -c "
         import urllib.request
@@ -1857,11 +1863,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 1G
+          cpus: '4'
+          memory: 2G
         reservations:
-          cpus: '0.5'
-          memory: 128M
+          cpus: '1'
+          memory: 512M
     profiles: ["testing", "monitoring", "sso"]
 
   ###############################################################################
@@ -1876,7 +1882,7 @@ services:
       fast_test_server:
         condition: service_healthy
     environment:
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -1884,7 +1890,7 @@ services:
         echo "Registering fast_test_server with gateway..."
 
         # Generate JWT token
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
 
         # Register using Python
         python3 -c "
@@ -2063,7 +2069,7 @@ services:
       a2a_echo_agent:
         condition: service_healthy
     environment:
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -2071,7 +2077,7 @@ services:
         echo "Registering a2a_echo_agent with gateway..."
 
         # Generate JWT token (stdout only)
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
 
         python3 -c "
         import json
@@ -2133,12 +2139,14 @@ services:
     user: "0"
     volumes:
       - locust_token:/tokens
+    environment:
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -eu
         echo "Generating JWT token for Locust..."
-        TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
         printf "%s" "$$TOKEN" > /tokens/gateway.jwt
         echo ""
         echo "✅ Token written to /tokens/gateway.jwt"
@@ -2202,6 +2210,7 @@ services:
       - LOCUST_USERS=${LOCUST_USERS:-100}
       - LOCUST_SPAWN_RATE=${LOCUST_SPAWN_RATE:-10}
       - LOCUST_RUN_TIME=${LOCUST_RUN_TIME:-5m}
+      - LOCUST_WXO_AUTH_ENABLED=${LOCUST_WXO_AUTH_ENABLED:-false}
     deploy:
       resources:
         limits:
@@ -2238,6 +2247,7 @@ services:
     environment:
       - HOME=/tmp
       - LOCUST_LOCUSTFILE=${LOCUST_LOCUSTFILE:-locustfile.py}
+      - LOCUST_WXO_AUTH_ENABLED=${LOCUST_WXO_AUTH_ENABLED:-false}
     deploy:
       resources:
         limits:
@@ -2300,7 +2310,7 @@ services:
       benchmark_server:
         condition: service_started
     environment:
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
       - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
       - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
     restart: "no"
@@ -2314,7 +2324,7 @@ services:
         sleep 5
 
         # Generate JWT token
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
 
         # Register benchmark servers using environment variables
         python3 -c "
@@ -2520,7 +2530,8 @@ services:
 #
 #  Generate a JWT token:
 #    python -m mcpgateway.utils.create_jwt_token \
-#      --username admin@example.com --exp 10080 --secret my-test-key --algo HS256
+#      --username admin@example.com --exp 10080 \
+#      --secret my-test-key-but-now-longer-than-32-bytes --algo HS256
 ###############################################################################
 
   mcp_inspector:
