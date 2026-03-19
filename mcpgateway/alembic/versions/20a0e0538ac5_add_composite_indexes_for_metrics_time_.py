@@ -1,3 +1,4 @@
+# pylint: disable=no-member
 """add_composite_indexes_for_metrics_time_partitioning
 
 Revision ID: 20a0e0538ac5
@@ -29,7 +30,7 @@ from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision: str = "20a0e0538ac5"
-down_revision: Union[str, Sequence[str], None] = "64acf94cb7f2"
+down_revision: Union[str, Sequence[str], None] = "abf8ac3b6008"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
