@@ -72,3 +72,59 @@ describe("handleFetchError", () => {
         expect(result).toContain("operation");
     });
 });
+
+// ---------------------------------------------------------------------------
+// handleDeleteUserError
+// ---------------------------------------------------------------------------
+describe("handleDeleteUserError", () => {
+    const f = () => win.handleDeleteUserError;
+
+    test("shows toast with extracted text on failed delete", () => {
+        const event = {
+            detail: {
+                successful: false,
+                xhr: {
+                    responseText:
+                        '<div class="text-red-500">Cannot delete your own account</div>',
+                },
+            },
+        };
+        f()(event);
+        const toast = win.document.querySelector(".fixed.top-4.right-4");
+        expect(toast).not.toBeNull();
+        expect(toast.textContent).toBe("Cannot delete your own account");
+    });
+
+    test("uses fallback message when responseText is empty", () => {
+        const event = {
+            detail: {
+                successful: false,
+                xhr: { responseText: "" },
+            },
+        };
+        f()(event);
+        const toasts = win.document.querySelectorAll(".fixed.top-4.right-4");
+        const last = toasts[toasts.length - 1];
+        expect(last.textContent).toBe("Error deleting user");
+    });
+
+    test("does nothing on successful request", () => {
+        const before = win.document.querySelectorAll(
+            ".fixed.top-4.right-4",
+        ).length;
+        const event = {
+            detail: {
+                successful: true,
+                xhr: {
+                    responseText:
+                        '<div class="text-red-500">Error deleting user</div>',
+                },
+            },
+        };
+        f()(event);
+        const after = win.document.querySelectorAll(
+            ".fixed.top-4.right-4",
+        ).length;
+        expect(after).toBe(before);
+    });
+});
