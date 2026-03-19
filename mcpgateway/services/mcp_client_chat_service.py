@@ -2898,6 +2898,9 @@ class MCPChatService:
                 await self.history_manager.append_message(self.user_id, "user", message)
                 await self.history_manager.append_message(self.user_id, "assistant", full_response)
 
+        except (ConnectionError, TimeoutError) as e:
+            logger.error(f"Error in chat_events: {e}")
+            raise
         except Exception as e:
             logger.error(f"Error in chat_events: {e}")
             raise RuntimeError(f"Chat processing error: {e}") from e

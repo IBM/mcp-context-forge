@@ -965,7 +965,9 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
         async for part in sse("error", error_event):
             yield part
     except RuntimeError as re:
-        error_event = {"type": "error", "error": f"Service error: {str(re)}", "recoverable": False}
+        # RuntimeError from chat_events wraps tool/parsing/model errors —
+        # the session is still valid, only ConnectionError is non-recoverable.
+        error_event = {"type": "error", "error": f"Service error: {str(re)}", "recoverable": True}
         async for part in sse("error", error_event):
             yield part
     except Exception as e:
