@@ -8075,7 +8075,7 @@ class MiscEndpointsUser(BaseUser):
         """POST /import - Import configuration (empty)."""
         with self.client.post(
             "/import",
-            json={"tools": [], "servers": []},
+            json={"import_data": {"tools": [], "servers": []}, "conflict_strategy": "update", "dry_run": True},
             headers={**self.auth_headers, "Content-Type": "application/json"},
             name="/import",
             catch_response=True,
