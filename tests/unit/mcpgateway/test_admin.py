@@ -19409,6 +19409,22 @@ class TestAdminTokensPartialSearch:
                 response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
                 assert "server_error" in response.headers["location"]
 
+    def test_render_user_card_html_delete_button_has_error_handler(self):
+        """Delete button includes hx-on::after-request error handler."""
+        user_obj = SimpleNamespace(
+            email="deletable@test.com",
+            full_name="Deletable User",
+            auth_provider="local",
+            created_at=datetime(2025, 1, 1),
+            is_admin=False,
+            is_active=True,
+            password_change_required=False,
+            is_account_locked=lambda: False,
+        )
+        html_output = _render_user_card_html(user_obj, "other@test.com", admin_count=2, root_path="")
+        assert "hx-on::after-request" in html_output
+        assert "handleDeleteUserError" in html_output
+
     def test_render_user_card_html_locked_user_shows_locked_badge_and_unlock_action(self):
         """Locked users render lock badge and unlock action."""
         locked_user = SimpleNamespace(
