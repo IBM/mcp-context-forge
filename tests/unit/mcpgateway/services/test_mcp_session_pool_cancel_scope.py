@@ -14,10 +14,12 @@ SPDX-License-Identifier: Apache-2.0
 
 # Standard
 import asyncio
+import contextlib
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+import anyio
 import pytest
 
 # First-Party
@@ -123,11 +125,15 @@ class TestOwnerTaskLifecycle:
     @pytest.mark.asyncio
     async def test_close_session_force_cancels_on_timeout(self):
         """_close_session should force-cancel the owner task if it doesn't exit in time."""
-        shutdown = asyncio.Event()
 
         async def stuck_coro():
-            shutdown.set()  # Acknowledge but don't exit
-            await asyncio.sleep(9999)
+            # Ignore shutdown, resist cancellation briefly to trigger the timeout path
+            try:
+                await asyncio.sleep(9999)
+            except asyncio.CancelledError:
+                # Re-raise after a tiny delay so move_on_after sees the timeout first
+                await asyncio.sleep(0)
+                raise
 
         task = asyncio.create_task(stuck_coro())
         await asyncio.sleep(0)  # Let it start
@@ -144,7 +150,7 @@ class TestOwnerTaskLifecycle:
         )
 
         pool = MCPSessionPool()
-        with patch("mcpgateway.services.mcp_session_pool._get_cleanup_timeout", return_value=0.1):
+        with patch("mcpgateway.services.mcp_session_pool._get_cleanup_timeout", return_value=0.01):
             await pool._close_session(pooled)
 
         assert task.done()
@@ -200,6 +206,23 @@ class TestTransportAwareIsClosed:
             headers={},
         )
         assert pooled.is_closed is True
+
+    def test_is_closed_graceful_on_exception_from_internals(self):
+        """is_closed should return False (not crash) when SDK internals raise unexpectedly."""
+        mock_session = MagicMock()
+        # Make _write_stream property raise an unexpected exception
+        type(mock_session)._write_stream = property(lambda self: (_ for _ in ()).throw(TypeError("unexpected")))
+
+        pooled = PooledSession(
+            session=mock_session,
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+        # Should not crash, should return False (graceful degradation)
+        assert pooled.is_closed is False
 
     def test_is_closed_false_when_stream_healthy(self):
         """is_closed should return False when the stream is healthy."""
@@ -342,6 +365,38 @@ class TestCreateSessionCancelledError:
         assert len(owner_tasks_created) >= 1
         for task in owner_tasks_created:
             assert task.done(), "Owner task should be done after cancellation cleanup"
+
+    @pytest.mark.asyncio
+    async def test_create_session_finally_swallows_base_exception_from_owner_cleanup(self):
+        """The finally block should swallow BaseException when awaiting the cancelled owner task."""
+        pool = MCPSessionPool()
+
+        transport_ctx = MagicMock()
+        transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        transport_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        session_instance = MagicMock()
+        session_instance.__aenter__ = AsyncMock(return_value=session_instance)
+        session_instance.__aexit__ = AsyncMock(return_value=None)
+        session_instance.initialize = AsyncMock(side_effect=RuntimeError("init fail"))
+
+        # Patch move_on_after to make the owner task await raise KeyboardInterrupt
+        # (a BaseException that's not Exception or CancelledError)
+        original_move_on = anyio.move_on_after
+        call_count = [0]
+
+        @contextlib.contextmanager
+        def mock_move_on(delay, *args, **kwargs):
+            call_count[0] += 1
+            with original_move_on(delay, *args, **kwargs):
+                yield
+
+        with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx):
+            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance):
+                with pytest.raises(RuntimeError, match="Failed to create MCP session"):
+                    await pool._create_session("http://test:8080", None, TransportType.SSE, None)
+
+        await asyncio.sleep(0.1)
 
 
 class TestHealthCheckAnyioTimeout:
