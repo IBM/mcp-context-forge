@@ -129,7 +129,7 @@ catalog_servers:
   - id: neon
     name: "Neon"
     category: "Software Development"
-    url: "https://mcp.neon.tech/sse"
+    url: "https://mcp.neon.tech/mcp"
     auth_type: "OAuth2.1"
     provider: "Neon"
     description: "Serverless Postgres database"
@@ -149,7 +149,7 @@ catalog_servers:
   - id: sentry
     name: "Sentry"
     category: "Software Development"
-    url: "https://mcp.sentry.dev/sse"
+    url: "https://mcp.sentry.dev/mcp"
     auth_type: "OAuth2.1"
     provider: "Sentry"
     description: "Application monitoring and error tracking"
@@ -185,6 +185,27 @@ catalog_servers:
     description: "Global network testing and monitoring"
     requires_api_key: false
     tags: ["networking", "monitoring", "testing"]
+
+  - id: supabase
+    name: "Supabase"
+    category: "Database"
+    url: "https://mcp.supabase.com/mcp"
+    auth_type: "OAuth2.1"
+    provider: "Supabase"
+    description: "Open source Firebase alternative with Postgres"
+    requires_api_key: false
+    tags: ["database", "postgres", "backend", "auth"]
+
+  - id: cortex
+    name: "Cortex"
+    category: "Software Development"
+    url: "https://mcp.cortex.io/mcp"
+    auth_type: "API Key"
+    provider: "Cortex"
+    transport: "SSE"
+    description: "Internal developer portal and service catalog"
+    requires_api_key: true
+    tags: ["developer-portal", "service-catalog", "development"]
 
   # Payments
   - id: stripe
@@ -247,6 +268,16 @@ catalog_servers:
     description: "Payment solutions for Latin America"
     requires_api_key: true
     tags: ["payments", "latam", "e-commerce"]
+
+  - id: ramp
+    name: "Ramp"
+    category: "Payments"
+    url: "https://ramp-mcp-remote.ramp.com/mcp"
+    auth_type: "OAuth2.1"
+    provider: "Ramp"
+    description: "Corporate card and spend management platform"
+    requires_api_key: false
+    tags: ["payments", "finance", "expense-management"]
 
   # CRM
   - id: close-crm
@@ -383,6 +414,16 @@ catalog_servers:
     requires_api_key: false
     tags: ["knowledge", "memory", "notes"]
 
+  - id: mypromind
+    name: "myProMind"
+    category: "Productivity"
+    url: "https://www.mypromind.com/interface/mcp"
+    auth_type: "OAuth2.1"
+    provider: "myProMind"
+    description: "AI-powered professional productivity tools"
+    requires_api_key: false
+    tags: ["ai", "productivity", "professional"]
+
   # Design & Content
   - id: canva
     name: "Canva"
@@ -403,6 +444,16 @@ catalog_servers:
     description: "Video creation and editing platform"
     requires_api_key: false
     tags: ["video", "editing", "content-creation"]
+
+  - id: vibemarketing
+    name: "VibeMarketing"
+    category: "Marketing"
+    url: "https://vibemarketing.ninja/mcp"
+    auth_type: "OAuth2.1"
+    provider: "VibeMarketing"
+    description: "AI-powered marketing content creation"
+    requires_api_key: false
+    tags: ["marketing", "content-creation", "ai"]
 
   # CMS
   - id: webflow
@@ -436,16 +487,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["phone", "calling", "communication"]
 
-  - id: telnyx
-    name: "Telnyx"
-    category: "Communication"
-    url: "https://api.telnyx.com/v2/mcp"
-    auth_type: "API Key"
-    provider: "Telnyx"
-    description: "Voice, messaging, and connectivity APIs"
-    requires_api_key: true
-    tags: ["telecom", "voice", "sms", "api"]
-
   # Analytics & Data
   - id: thoughtspot
     name: "ThoughtSpot"
@@ -467,15 +508,15 @@ catalog_servers:
     requires_api_key: false
     tags: ["ai", "evaluation", "testing", "ml"]
 
-  - id: llm-text
-    name: "LLM Text"
-    category: "Data Analysis"
-    url: "https://mcp.llmtxt.dev/sse"
-    auth_type: "Open"
-    provider: "LLM Text"
-    description: "Text analysis with large language models"
+  - id: morningstar
+    name: "MorningStar"
+    category: "Data Analytics"
+    url: "https://mcp.morningstar.com/mcp"
+    auth_type: "OAuth2.1"
+    provider: "MorningStar"
+    description: "Investment research and financial data analytics"
     requires_api_key: false
-    tags: ["ai", "nlm", "text-analysis"]
+    tags: ["finance", "analytics", "investment", "data"]
 
   # RAG & AI Services
   - id: onecontext
@@ -511,7 +552,7 @@ catalog_servers:
   - id: deepwiki
     name: "DeepWiki"
     category: "RAG-as-a-Service"
-    url: "https://mcp.deepwiki.com/sse"
+    url: "https://mcp.deepwiki.com/mcp"
     auth_type: "Open"
     provider: "Devin"
     description: "Knowledge base with deep learning integration"
@@ -528,17 +569,17 @@ catalog_servers:
     requires_api_key: true
     tags: ["rag", "chatbot", "ai", "custom"]
 
-  # Documentation
-  - id: kollektiv
-    name: "Kollektiv"
-    category: "Documentation"
-    url: "https://mcp.thekollektiv.ai/sse"
-    auth_type: "OAuth2.1"
-    provider: "Kollektiv"
-    description: "Collaborative documentation platform"
+  - id: exa-search
+    name: "Exa Search"
+    category: "RAG-as-a-Service"
+    url: "https://mcp.exa.ai/mcp"
+    auth_type: "Open"
+    provider: "Exa"
+    description: "AI-powered search engine for retrieving web content"
     requires_api_key: false
-    tags: ["documentation", "collaboration", "knowledge"]
+    tags: ["search", "rag", "ai", "web"]
 
+  # Documentation
   - id: cloudflare-docs
     name: "Cloudflare Docs"
     category: "Documentation"
@@ -568,16 +609,6 @@ catalog_servers:
     description: "Git integration for MCP"
     requires_api_key: false
     tags: ["git", "version-control", "development"]
-
-  - id: javadocs
-    name: "Javadocs"
-    category: "Software Development"
-    url: "https://www.javadocs.dev/mcp"
-    auth_type: "Open"
-    provider: "Javadocs.dev"
-    description: "Java API documentation browser"
-    requires_api_key: false
-    tags: ["java", "documentation", "api", "reference"]
 
   # Web Scraping & Automation
   - id: simplescraper
@@ -625,7 +656,7 @@ catalog_servers:
   - id: stytch
     name: "Stytch"
     category: "Authentication"
-    url: "http://mcp.stytch.dev/mcp"
+    url: "https://mcp.stytch.dev/mcp"
     auth_type: "OAuth2.1"
     provider: "Stytch"
     description: "User authentication and authorization platform"
@@ -635,7 +666,7 @@ catalog_servers:
   - id: zenable
     name: "Zenable"
     category: "Security"
-    url: "https://mcp.www.zenable.app/"
+    url: "https://mcp.zenable.app/"
     auth_type: "OAuth2.1"
     provider: "Zenable"
     description: "Security and compliance automation"
@@ -649,6 +680,7 @@ catalog_servers:
     url: "https://api.findadomain.dev/mcp"
     auth_type: "Open"
     provider: "Find-A-Domain"
+    transport: "SSE"
     description: "Domain name search and availability checker"
     requires_api_key: false
     tags: ["domains", "dns", "search"]
@@ -713,6 +745,47 @@ catalog_servers:
     requires_api_key: false
     tags: ["automation", "integration", "workflow"]
 
+  - id: indeed
+    name: "Indeed"
+    category: "Recruitment"
+    url: "https://mcp.indeed.com/claude/mcp"
+    auth_type: "OAuth2.1"
+    provider: "Indeed"
+    description: "Job search and recruitment platform"
+    requires_api_key: false
+    tags: ["jobs", "recruitment", "hiring"]
+
+  - id: peek
+    name: "Peek"
+    category: "Travel"
+    url: "https://mcp.peek.com"
+    auth_type: "Open"
+    provider: "Peek"
+    transport: "SSE"
+    description: "Activities and experiences booking platform"
+    requires_api_key: false
+    tags: ["travel", "booking", "activities"]
+
+  - id: ferryhopper
+    name: "Ferryhopper"
+    category: "Travel"
+    url: "https://mcp.ferryhopper.com/mcp"
+    auth_type: "Open"
+    provider: "Ferryhopper"
+    description: "Ferry ticket booking and route planning"
+    requires_api_key: false
+    tags: ["travel", "ferries", "booking"]
+
+  - id: subwayinfo-nyc
+    name: "SubwayInfo NYC"
+    category: "Travel"
+    url: "https://subwayinfo.nyc/mcp"
+    auth_type: "Open"
+    provider: "SubwayInfo"
+    description: "New York City subway information and schedules"
+    requires_api_key: false
+    tags: ["transit", "nyc", "subway"]
+
   # OpenAI & AI Platforms
   - id: hugging-face
     name: "Hugging Face"
@@ -727,8 +800,8 @@ catalog_servers:
   - id: semgrep
     name: "Semgrep"
     category: "Software Development"
-    url: "https://mcp.semgrep.ai/sse"
-    auth_type: "Open"
+    url: "https://mcp.semgrep.ai/mcp"
+    auth_type: "OAuth2.1"
     provider: "Semgrep"
     description: "Static code analysis and security scanning"
     requires_api_key: false
@@ -755,16 +828,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["directory", "discovery", "mcp"]
 
-  - id: openmesh
-    name: "OpenMesh"
-    category: "Service Discovery"
-    url: "https://api.openmesh.dev/mcp"
-    auth_type: "Open"
-    provider: "OpenMesh"
-    description: "Decentralized service mesh and discovery"
-    requires_api_key: false
-    tags: ["service-mesh", "discovery", "infrastructure"]
-
   - id: context-awesome
     name: "Context Awesome"
     category: "Specialised Dataset"
@@ -774,6 +837,16 @@ catalog_servers:
     description: "Curated datasets for context-aware applications"
     requires_api_key: false
     tags: ["datasets", "context", "ai", "data"]
+
+  - id: port-io
+    name: "Port"
+    category: "Software Development"
+    url: "https://mcp.port.io/v1"
+    auth_type: "OAuth2.1"
+    provider: "Port"
+    description: "Internal developer portal for microservices"
+    requires_api_key: false
+    tags: ["developer-portal", "infrastructure", "microservices"]
 
   # Smart Contracts & Blockchain
   - id: openzeppelin-cairo
@@ -816,18 +889,519 @@ catalog_servers:
     requires_api_key: false
     tags: ["blockchain", "smart-contracts", "stylus", "arbitrum"]
 
-  # Prediction Markets
+  # Cloud Platforms
+  - id: aws-knowledge
+    name: "AWS Knowledge"
+    category: "Cloud"
+    url: "https://knowledge-mcp.global.api.aws"
+    auth_type: "Open"
+    provider: "AWS"
+    transport: "STREAMABLEHTTP"
+    description: "AWS documentation and knowledge base"
+    requires_api_key: false
+    tags: ["cloud", "aws", "documentation", "knowledge"]
+
+  - id: google-maps
+    name: "Google Maps"
+    category: "Maps & Location"
+    url: "https://mapstools.googleapis.com/mcp"
+    auth_type: "API Key"
+    provider: "Google"
+    description: "Maps, geocoding, and location services"
+    requires_api_key: true
+    tags: ["maps", "location", "geocoding", "google"]
+
+  - id: google-bigquery
+    name: "Google BigQuery"
+    category: "Data Analytics"
+    url: "https://bigquery.googleapis.com/mcp"
+    auth_type: "API Key"
+    provider: "Google"
+    description: "Serverless data warehouse for analytics"
+    requires_api_key: true
+    tags: ["data", "analytics", "warehouse", "google"]
+
+  - id: google-gke
+    name: "Google GKE"
+    category: "Cloud"
+    url: "https://container.googleapis.com/mcp"
+    auth_type: "API Key"
+    provider: "Google"
+    description: "Google Kubernetes Engine container management"
+    requires_api_key: true
+    tags: ["kubernetes", "containers", "cloud", "google"]
+
+  - id: google-compute-engine
+    name: "Google Compute Engine"
+    category: "Cloud"
+    url: "https://compute.googleapis.com/mcp"
+    auth_type: "API Key"
+    provider: "Google"
+    description: "Virtual machine instances on Google Cloud"
+    requires_api_key: true
+    tags: ["compute", "vm", "cloud", "google"]
+
+  # Search & Data Services
+  - id: searchapi
+    name: "SearchAPI"
+    category: "Search"
+    url: "https://www.searchapi.io/mcp"
+    auth_type: "API Key"
+    provider: "SearchAPI"
+    description: "Real-time search engine results API"
+    requires_api_key: true
+    tags: ["search", "api", "data"]
+
+  - id: ean-search
+    name: "EAN-Search"
+    category: "Product Data"
+    url: "https://www.ean-search.org/mcp"
+    auth_type: "OAuth2.1"
+    provider: "EAN-Search.org"
+    description: "Barcode and product information lookup"
+    requires_api_key: false
+    tags: ["barcode", "products", "ean", "data"]
+
+  - id: webzum
+    name: "WebZum"
+    category: "Search"
+    url: "https://webzum.com/api/mcp"
+    auth_type: "Open"
+    provider: "WebZum"
+    description: "Business search and local data platform"
+    requires_api_key: false
+    tags: ["search", "business", "local-data"]
+
+  - id: zip1
+    name: "zip1.io"
+    category: "Link Shortener"
+    url: "https://zip1.io/mcp"
+    auth_type: "Open"
+    provider: "zip1.io"
+    description: "URL shortener service"
+    requires_api_key: false
+    tags: ["urls", "links", "shortener"]
+
+  # Social Media
+  - id: tweetsave
+    name: "TweetSave"
+    category: "Social Media"
+    url: "https://mcp.tweetsave.org/sse"
+    auth_type: "Open"
+    provider: "TweetSave"
+    description: "Tweet archiving and saving service"
+    requires_api_key: false
+    tags: ["twitter", "social-media", "archive"]
+
+  # Parallel AI
+  - id: parallel-task
+    name: "Parallel Task"
+    category: "AI Services"
+    url: "https://task-mcp.parallel.ai/mcp"
+    auth_type: "OAuth2.1"
+    provider: "Parallel"
+    description: "AI-powered task execution and automation"
+    requires_api_key: false
+    tags: ["ai", "tasks", "automation"]
+
+  - id: parallel-search
+    name: "Parallel Search"
+    category: "AI Services"
+    url: "https://search-mcp.parallel.ai/mcp"
+    auth_type: "OAuth2.1"
+    provider: "Parallel"
+    description: "AI-powered search and information retrieval"
+    requires_api_key: false
+    tags: ["ai", "search", "retrieval"]
+
+  - id: metro-mcp
+    name: "Metro MCP"
+    category: "Software Development"
+    url: "https://metro-mcp.anuragd.me/sse"
+    auth_type: "OAuth2.1"
+    provider: "Metro MCP"
+    description: "Metro bundler integration for React Native"
+    requires_api_key: false
+    tags: ["react-native", "metro", "bundler", "development"]
+
+  # CRM (additional)
+  - id: attio
+    name: "Attio"
+    category: "CRM"
+    url: "https://mcp.attio.com/mcp"
+    auth_type: "OAuth2.1"
+    provider: "Attio"
+    description: "Next-generation CRM with flexible data modeling and real-time collaboration"
+    requires_api_key: false
+    tags: ["crm", "sales", "customer-management"]
+
+  # Software Development (additional)
+  - id: stack-overflow
+    name: "Stack Overflow"
+    category: "Software Development"
+    url: "https://mcp.stackoverflow.com"
+    auth_type: "OAuth2.1"
+    provider: "Stack Overflow"
+    description: "Developer Q&A platform — search and access programming knowledge"
+    requires_api_key: false
+    tags: ["development", "q-and-a", "knowledge"]
+
+  - id: javadocs
+    name: "Javadocs"
+    category: "Documentation"
+    url: "https://www.javadocs.dev/mcp"
+    auth_type: "Open"
+    provider: "Javadocs"
+    description: "Java API documentation search and reference"
+    requires_api_key: false
+    tags: ["documentation", "java", "api-reference"]
+
+  # Communication (additional)
+  - id: telnyx
+    name: "Telnyx"
+    category: "Communication"
+    url: "https://api.telnyx.com/v2/mcp"
+    auth_type: "API Key"
+    provider: "Telnyx"
+    description: "Cloud communications platform — voice, messaging, and networking APIs"
+    requires_api_key: true
+    tags: ["communication", "voice", "messaging", "telecom"]
+
+  # Data & Research
   - id: manifold
     name: "Manifold"
-    category: "Forecasting"
+    category: "Data Analytics"
     url: "https://api.manifold.markets/v0/mcp"
     auth_type: "Open"
     provider: "Manifold"
-    description: "Prediction market platform"
+    description: "Prediction market platform — access forecasts and market data"
     requires_api_key: false
-    tags: ["prediction-markets", "forecasting", "betting"]
+    tags: ["forecasting", "prediction-markets", "data"]
 
-  # Local Development Servers
+  - id: bgpt
+    name: "BGPT"
+    category: "Data Analytics"
+    url: "https://bgpt.pro/mcp/sse"
+    auth_type: "Open"
+    provider: "BGPT"
+    description: "Scientific research data access and analysis"
+    requires_api_key: false
+    tags: ["science", "research", "data"]
+
+  - id: llm-text
+    name: "LLM Text"
+    category: "Data Analytics"
+    url: "https://mcp.llmtxt.dev/sse"
+    auth_type: "Open"
+    provider: "LLM Text"
+    description: "Access llms.txt files from any domain for LLM-optimized site content"
+    requires_api_key: false
+    tags: ["data", "llm", "text", "content"]
+
+  # Service Discovery (additional)
+  - id: openmesh
+    name: "OpenMesh"
+    category: "MCP Directory"
+    url: "https://api.openmesh.dev/mcp"
+    auth_type: "Open"
+    provider: "OpenMesh"
+    description: "Decentralized service discovery and data infrastructure"
+    requires_api_key: false
+    tags: ["discovery", "infrastructure", "decentralized"]
+
+  # Documentation (additional)
+  - id: kollektiv
+    name: "Kollektiv"
+    category: "Documentation"
+    url: "https://mcp.thekollektiv.ai/sse"
+    auth_type: "OAuth2.1"
+    provider: "Kollektiv"
+    description: "AI-powered documentation search and knowledge management"
+    requires_api_key: false
+    tags: ["documentation", "knowledge", "ai", "search"]
+
+  # Microsoft Cloud Services
+  - id: microsoft-foundry
+    name: "Microsoft Foundry"
+    category: "AI Services"
+    url: "https://mcp.ai.azure.com"
+    auth_type: "OAuth2.1"
+    provider: "Microsoft"
+    description: "Unified toolkit for Azure AI — models, knowledge, evaluation, and more through a single MCP endpoint"
+    requires_api_key: false
+    repo: "https://github.com/microsoft/mcp"
+    tags: ["ai", "azure", "models", "evaluation", "microsoft"]
+
+  - id: sentinel-data-exploration
+    name: "Microsoft Sentinel"
+    category: "Security"
+    url: "https://sentinel.microsoft.com/mcp/data-exploration"
+    auth_type: "OAuth2.1"
+    provider: "Microsoft"
+    description: "Search for relevant tables and retrieve data from Microsoft Sentinel's data lake using natural language"
+    requires_api_key: false
+    tags: ["security", "siem", "azure", "sentinel", "microsoft"]
+
+  - id: power-bi
+    name: "Power BI"
+    category: "Data Analytics"
+    url: "https://api.fabric.microsoft.com/v1/mcp/powerbi"
+    auth_type: "OAuth2.1"
+    provider: "Microsoft"
+    description: "Query Power BI semantic models — AI agents connect to hosted analytics without running a local server"
+    requires_api_key: false
+    tags: ["analytics", "bi", "power-bi", "fabric", "microsoft"]
+
+  # Microsoft Agent 365 (Frontier Preview — requires M365 + Entra OAuth)
+  # URL pattern: https://agent365.svc.cloud.microsoft/agents/servers/<server_id>
+  - id: agent365-outlook-mail
+    name: "Agent 365 Outlook Mail"
+    category: "Communication"
+    url: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools"
+    auth_type: "OAuth2.1"
+    provider: "Microsoft"
+    description: "Create, send, search, reply, and manage Outlook emails via Microsoft Graph"
+    requires_api_key: false
+    tags: ["email", "outlook", "microsoft-365", "microsoft"]
+
+  - id: agent365-outlook-calendar
+    name: "Agent 365 Outlook Calendar"
+    category: "Productivity"
+    url: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_CalendarTools"
+    auth_type: "OAuth2.1"
+    provider: "Microsoft"
+    description: "Create, list, update, and delete calendar events — accept, decline, and resolve conflicts"
+    requires_api_key: false
+    tags: ["calendar", "outlook", "microsoft-365", "microsoft"]
+
+  - id: agent365-teams
+    name: "Agent 365 Teams"
+    category: "Communication"
+    url: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_TeamsTools"
+    auth_type: "OAuth2.1"
+    provider: "Microsoft"
+    description: "Create chats, add members, post messages, and manage Teams channels"
+    requires_api_key: false
+    tags: ["teams", "chat", "microsoft-365", "microsoft"]
+
+  - id: agent365-sharepoint-onedrive
+    name: "Agent 365 SharePoint & OneDrive"
+    category: "Document Management"
+    url: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_ODSPRemoteServer"
+    auth_type: "OAuth2.1"
+    provider: "Microsoft"
+    description: "Upload files, search, manage lists, get metadata across SharePoint and OneDrive"
+    requires_api_key: false
+    tags: ["sharepoint", "onedrive", "documents", "microsoft-365", "microsoft"]
+
+  - id: agent365-sharepoint-lists
+    name: "Agent 365 SharePoint Lists"
+    category: "Document Management"
+    url: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_SharepointListsTools"
+    auth_type: "OAuth2.1"
+    provider: "Microsoft"
+    description: "Create, read, update, and delete SharePoint list items"
+    requires_api_key: false
+    tags: ["sharepoint", "lists", "microsoft-365", "microsoft"]
+
+  - id: agent365-word
+    name: "Agent 365 Word"
+    category: "Document Management"
+    url: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_WordTools"
+    auth_type: "OAuth2.1"
+    provider: "Microsoft"
+    description: "Create and read Word documents, add and reply to comments"
+    requires_api_key: false
+    tags: ["word", "documents", "microsoft-365", "microsoft"]
+
+  - id: agent365-user-profile
+    name: "Agent 365 User Profile"
+    category: "Productivity"
+    url: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_UserProfile"
+    auth_type: "OAuth2.1"
+    provider: "Microsoft"
+    description: "Get manager, direct reports, profile info, and search users in Microsoft 365"
+    requires_api_key: false
+    tags: ["identity", "users", "microsoft-365", "microsoft"]
+
+  - id: agent365-admin-center
+    name: "Agent 365 Admin Center"
+    category: "Productivity"
+    url: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_M365AdminCenter"
+    auth_type: "OAuth2.1"
+    provider: "Microsoft"
+    description: "Microsoft 365 administration — manage users, licenses, and tenant settings"
+    requires_api_key: false
+    tags: ["admin", "management", "microsoft-365", "microsoft"]
+
+  - id: agent365-copilot-search
+    name: "Agent 365 Copilot Search"
+    category: "Search"
+    url: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_M365Copilot"
+    auth_type: "OAuth2.1"
+    provider: "Microsoft"
+    description: "Search across Microsoft 365 — SharePoint, OneDrive, emails, Teams chats, and connected content"
+    requires_api_key: false
+    tags: ["search", "copilot", "microsoft-365", "microsoft"]
+
+  # Documentation
+  - id: microsoft-learn-docs
+    name: "Microsoft Learn Docs"
+    category: "Documentation"
+    url: "https://learn.microsoft.com/api/mcp"
+    auth_type: "Open"
+    provider: "Microsoft"
+    description: "Real-time semantic search across Microsoft Learn, Azure, Microsoft 365, .NET, and C# documentation — always up to date with the latest releases and best practices"
+    requires_api_key: false
+    repo: "https://github.com/MicrosoftDocs/microsoft-learn-mcp"
+    tags: ["documentation", "microsoft", "azure", "dotnet", "csharp"]
+
+  # Self-Hosted / Local Servers
+  - id: markitdown
+    name: "MarkItDown"
+    category: "Document Management"
+    url: "http://localhost:8103/sse"
+    auth_type: "Open"
+    provider: "Microsoft"
+    description: "Convert 29+ file formats to Markdown — Office docs, PDFs, images (OCR), audio (transcription), HTML, CSV, JSON, XML, EPub, Jupyter notebooks, Outlook messages, and more"
+    requires_api_key: false
+    repo: "https://github.com/microsoft/markitdown"
+    install: "markitdown-mcp"
+    tags: ["markdown", "conversion", "documents", "office", "pdf", "self-hosted"]
+
+  - id: azure-mcp
+    name: "Azure MCP"
+    category: "Cloud"
+    url: "http://localhost:8104/sse"
+    auth_type: "Open"
+    provider: "Microsoft"
+    description: "All Azure MCP tools in a single server — manage Azure resources, deployments, and services from AI agents"
+    requires_api_key: false
+    repo: "https://github.com/microsoft/mcp"
+    tags: ["azure", "cloud", "infrastructure", "microsoft", "self-hosted"]
+
+  - id: azure-devops-mcp
+    name: "Azure DevOps"
+    category: "Software Development"
+    url: "http://localhost:8105/sse"
+    auth_type: "Open"
+    provider: "Microsoft"
+    description: "Azure DevOps integration — work items, pipelines, repos, and pull requests from AI agents"
+    requires_api_key: false
+    repo: "https://github.com/microsoft/azure-devops-mcp"
+    install: "npx -y @azure-devops/mcp"
+    tags: ["devops", "ci-cd", "azure", "microsoft", "self-hosted"]
+
+  - id: aks-mcp
+    name: "AKS MCP"
+    category: "Cloud"
+    url: "http://localhost:8106/sse"
+    auth_type: "Open"
+    provider: "Microsoft"
+    description: "Bridge AI tools with Azure Kubernetes Service — cluster operations, deployments, and diagnostics"
+    requires_api_key: false
+    repo: "https://github.com/Azure/aks-mcp"
+    tags: ["kubernetes", "aks", "azure", "containers", "microsoft", "self-hosted"]
+
+  - id: microsoft-clarity
+    name: "Microsoft Clarity"
+    category: "Data Analytics"
+    url: "http://localhost:8107/sse"
+    auth_type: "Open"
+    provider: "Microsoft"
+    description: "Fetch Clarity web analytics data — heatmaps, session recordings, and user behavior insights for AI analysis"
+    requires_api_key: false
+    repo: "https://github.com/microsoft/clarity-mcp-server"
+    tags: ["analytics", "web-analytics", "microsoft", "self-hosted"]
+
+  - id: playwright-mcp
+    name: "Playwright MCP"
+    category: "Software Development"
+    url: "http://localhost:8108/sse"
+    auth_type: "Open"
+    provider: "Microsoft"
+    description: "LLMs interact with web pages through structured accessibility snapshots — browser automation and testing"
+    requires_api_key: false
+    repo: "https://github.com/microsoft/playwright-mcp"
+    install: "npx @playwright/mcp@latest"
+    tags: ["browser", "testing", "automation", "playwright", "microsoft", "self-hosted"]
+
+  - id: microsoft-sql-mcp
+    name: "Microsoft SQL"
+    category: "Database"
+    url: "http://localhost:8109/sse"
+    auth_type: "Open"
+    provider: "Microsoft"
+    description: "Chat with business data using natural language — connect to any SQL database, discover tables, run queries"
+    requires_api_key: false
+    tags: ["database", "sql", "mssql", "microsoft", "self-hosted"]
+
+  - id: microsoft-devbox
+    name: "Microsoft Dev Box"
+    category: "Software Development"
+    url: "http://localhost:8110/sse"
+    auth_type: "Open"
+    provider: "Microsoft"
+    description: "Natural language interactions for Dev Box management — create, configure, and manage developer workstations"
+    requires_api_key: false
+    install: "npx -y @microsoft/devbox-mcp@latest"
+    tags: ["devbox", "development", "azure", "microsoft", "self-hosted"]
+
+  - id: nuget-mcp
+    name: "NuGet MCP"
+    category: "Software Development"
+    url: "http://localhost:8111/sse"
+    auth_type: "Open"
+    provider: "Microsoft"
+    description: "Advanced NuGet package management — search, inspect, and manage .NET dependencies from AI agents"
+    requires_api_key: false
+    repo: "https://github.com/NuGet/Home"
+    tags: ["nuget", "dotnet", "packages", "microsoft", "self-hosted"]
+
+  - id: fabric-rti-mcp
+    name: "Fabric Real-Time Intelligence"
+    category: "Data Analytics"
+    url: "http://localhost:8112/sse"
+    auth_type: "Open"
+    provider: "Microsoft"
+    description: "AI agents interact with Microsoft Fabric Real-Time Intelligence services — streaming data and analytics"
+    requires_api_key: false
+    install: "uvx microsoft-fabric-rti-mcp"
+    tags: ["fabric", "real-time", "analytics", "azure", "microsoft", "self-hosted"]
+
+  - id: microsoft-dataverse
+    name: "Microsoft Dataverse"
+    category: "Database"
+    url: "http://localhost:8113/sse"
+    auth_type: "Open"
+    provider: "Microsoft"
+    description: "Chat over business data using natural language — discover tables, run queries, retrieve, insert, and update records"
+    requires_api_key: false
+    tags: ["dataverse", "power-platform", "dynamics", "microsoft", "self-hosted"]
+
+  - id: microsoft-365-agents
+    name: "Microsoft 365 Agents"
+    category: "Productivity"
+    url: "http://localhost:8114/sse"
+    auth_type: "Open"
+    provider: "Microsoft"
+    description: "Connect AI agents with Microsoft 365 — build apps for Teams, Outlook, and the M365 ecosystem"
+    requires_api_key: false
+    repo: "https://github.com/OfficeDev/microsoft-365-agents-toolkit"
+    tags: ["microsoft-365", "teams", "outlook", "productivity", "microsoft", "self-hosted"]
+
+  - id: office-powerpoint
+    name: "Office PowerPoint"
+    category: "Document Management"
+    url: "http://localhost:8102/sse"
+    auth_type: "Open"
+    provider: "GongRzhe"
+    description: "PowerPoint manipulation via python-pptx — 34 tools for creating, editing, and manipulating presentations (slides, text, images, tables, charts, themes, templates, transitions)"
+    requires_api_key: false
+    repo: "https://github.com/GongRzhe/Office-PowerPoint-MCP-Server"
+    install: "uvx --from office-powerpoint-mcp-server ppt_mcp_server"
+    tags: ["powerpoint", "presentations", "office", "documents", "self-hosted"]
+
   - id: fast-time-server
     name: "Fast Time Server"
     category: "Time Services"
@@ -853,9 +1427,10 @@ categories:
   - CMS
   - Outbound Phone Calls
   - Communication
+  - Forecasting
+  - Scientific Research
   - Data Analytics
   - AI Evaluation
-  - Data Analysis
   - RAG-as-a-Service
   - Memory
   - Documentation
@@ -872,12 +1447,19 @@ categories:
   - Airlines
   - Other
   - MCP Directory
-  - Service Discovery
   - Specialised Dataset
-  - Forecasting
   - Database
   - Observability
   - Time Services
+  - Recruitment
+  - Travel
+  - Cloud
+  - Maps & Location
+  - Search
+  - Product Data
+  - Social Media
+  - AI Services
+  - Marketing
 
 # Auth types for filtering
 auth_types:

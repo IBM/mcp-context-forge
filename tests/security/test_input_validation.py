@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Comprehensive security tests for MCP Gateway input validation.
+Comprehensive security tests for ContextForge input validation.
 This module tests all input validation functions across the gateway schemas
 to ensure proper security measures are in place against various attack vectors.
 
@@ -15,7 +15,7 @@ pytest test_input_validation.py -v
 pytest test_input_validation.py::TestSecurityValidation -v
 
 # Run with coverage
-pytest test_input_validation.py --cov=mcpgateway.schemas --cov=mcpgateway.validators
+pytest test_input_validation.py --cov=mcpgateway.schemas --cov=mcpgateway.common.validators
 
 # Run specific attack category
 pytest test_input_validation.py::TestSpecificAttackVectors -v
@@ -24,9 +24,11 @@ TODO: this test bails out on the first failed validation pattern, need to fix th
 """
 
 # Standard
+import ast
 from datetime import datetime
 import json
 import logging
+from pathlib import Path
 from unittest.mock import patch
 
 # Third-Party
@@ -379,7 +381,7 @@ class TestSecurityValidation:
             "tool[name]",
             "tool|name",
             "tool\\name",
-            "tool/name",
+            # "tool/name",      # slash allowed per SEP-986
             "tool<name>",
             "tool>name>",
             "tool?name",
@@ -391,7 +393,7 @@ class TestSecurityValidation:
             "\n",  # newline
             "\t",  # tab
             "a" * 256,  # too long
-            "1tool",  # must start with a letter
+            "-tool",  # must start with letter, number, or underscore (hyphen not allowed)
         ]
         for name in invalid_names:
             logger.debug("Testing invalid tool name: %r", name)
@@ -1179,16 +1181,52 @@ class TestSecurityValidation:
             "%{7*7}",
             "{{''.class.mro[2].subclasses()}}",
             "{{request.application.__globals__.__builtins__.__import__('os').popen('id').read()}}",
+            # Unterminated expressions should fail closed
+            "{{",
+            # Payloads with single delimiter chars before dangerous keywords
+            "{{ '}' + self.__class__ }}",
+            "{% set x='%' ~ __import__('os') %}",
+            "{{ '}' ~ config }}",
+            "{{ x if '}' else self }}",
+            # Payloads with closing delimiter sequences inside quoted strings
+            '{{ "}}" ~ self.__class__ }}',
+            '{% set x = "%}" ~ __import__("os") %}',
+            '{{ "}}" ~ config }}',
+            '{{ "}}" ~ 7*7 }}',
+            # String-based attribute access (attr filter and bracket notation)
+            "{{ ''|attr('__class__') }}",
+            '{{ ""["__class__"] }}',
+            "{{ ''|attr('__import__') }}",
+            "{{ ''['__globals__'] }}",
+            # Escaped quote bypasses
+            '{{ "a\\"}}b" ~ self.__class__ }}',
+            "{{ 'a\\'}}b' ~ self.__class__ }}",
+            # String concatenation bypasses (building dunder names dynamically)
+            "{{ ''|attr('__' ~ 'class__') }}",
+            "{{ ''['__' ~ 'class__'] }}",
+            # Jinja filter bypasses (filters that take attribute names as strings)
+            "{{ users|map(attribute='__class__') }}",
+            "{{ users|selectattr('__class__') }}",
+            "{{ users|sort(attribute='__class__') }}",
+            # Additional dangerous dunder methods
+            "{{ ''|attr('__base__') }}",
+            "{{ ''|attr('__getattribute__') }}",
         ]
 
         for i, payload in enumerate(ssti_payloads):
             logger.debug(f"Testing SSTI payload: {payload[:50]}...")
             must_fail(payload, f"SSTI #{i + 1} ({payload[:20]}...)")
 
+    @pytest.mark.timeout(30)
     def test_regex_dos_prevention(self):
-        """Test prevention of ReDoS attacks."""
+        """Test prevention of ReDoS attacks.
+
+        Uses pytest-timeout for deterministic timeout instead of wall-clock assertions.
+        If this test times out, it indicates a ReDoS vulnerability in the regex patterns.
+        """
         logger.debug("Testing ReDoS prevention")
 
+        # Test 1: User-provided patterns in schemas
         redos_patterns = [
             "(a+)+$",
             "([a-zA-Z]+)*",
@@ -1205,6 +1243,30 @@ class TestSecurityValidation:
             tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, input_schema=schema)
             # Input schema might have defaults
             assert tool.input_schema is not None
+
+        # Test 2: SSTI validation patterns should not be vulnerable to ReDoS
+        # The SSTI patterns previously used .* which could cause catastrophic backtracking
+        logger.debug("Testing SSTI ReDoS prevention")
+
+        # Pathological inputs that would trigger catastrophic backtracking with .*
+        # These have opening delimiters but no closing ones, with many repetitions
+        redos_payloads = [
+            "{{" + "a" * 10000,  # Jinja2 double braces without closing
+            "{%" + "b" * 10000,  # Jinja2 tags without closing
+            "${" + "c" * 10000,  # Template expression without closing
+            "#{" + "d" * 10000,  # ERB/Hash without closing
+            "%{" + "e" * 10000,  # Apache/Velocity without closing
+        ]
+
+        for i, payload in enumerate(redos_payloads):
+            logger.debug(f"Testing SSTI ReDoS payload {i + 1}: {payload[:20]}... (length: {len(payload)})")
+            try:
+                # This should either reject quickly or accept (doesn't match dangerous patterns)
+                # If patterns are vulnerable to ReDoS, this will hang and pytest-timeout will fail the test
+                PromptCreate(name="test_prompt", template=payload)
+                logger.debug(f"  Payload {i + 1} accepted (no dangerous pattern matched)")
+            except ValidationError:
+                logger.debug(f"  Payload {i + 1} rejected (validation failed)")
 
     @pytest.mark.skip(reason="Currently not applicable, XML parsing not used")
     def test_billion_laughs_attack(self):
@@ -1299,6 +1361,170 @@ class TestSpecificAttackVectors:
                     logger.debug(f"URL allowed: {url}")
                 except ValidationError as e:
                     logger.debug(f"URL rejected: {e}")
+
+    def test_ssrf_cloud_metadata_always_blocked(self):
+        """Test that cloud metadata endpoints are ALWAYS blocked regardless of SSRF settings."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        # These should ALWAYS be blocked (default blocked networks)
+        always_blocked_urls = [
+            "http://169.254.169.254/latest/meta-data/",  # AWS/GCP/Azure metadata
+            "http://169.254.169.123/ntp",  # AWS NTP
+            "https://169.254.169.254/",  # HTTPS variant
+        ]
+
+        for url in always_blocked_urls:
+            with pytest.raises(ValueError) as exc_info:
+                SecurityValidator.validate_url(url, "URL")
+            assert "SSRF protection" in str(exc_info.value) or "blocked" in str(exc_info.value).lower()
+            logger.debug(f"Cloud metadata URL blocked: {url}")
+
+    def test_ssrf_blocked_hostnames(self):
+        """Test that configured blocked hostnames are blocked."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        blocked_hostnames = [
+            "http://metadata.google.internal/computeMetadata/v1/",
+            "http://METADATA.GOOGLE.INTERNAL/",  # Case insensitive
+            "http://metadata.google.internal./",  # Trailing dot (FQDN)
+        ]
+
+        for url in blocked_hostnames:
+            with pytest.raises(ValueError) as exc_info:
+                SecurityValidator.validate_url(url, "URL")
+            assert "blocked hostname" in str(exc_info.value).lower() or "SSRF" in str(exc_info.value)
+            logger.debug(f"Blocked hostname URL rejected: {url}")
+
+    def test_ssrf_localhost_allowed_by_default(self):
+        """Test that localhost is allowed with default settings (dev-friendly)."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.config import settings
+
+        # Only run if default settings (localhost allowed)
+        if settings.ssrf_allow_localhost:
+            # These should be allowed with default settings
+            localhost_urls = [
+                "http://localhost:8080/api",
+                "http://127.0.0.1:4444/health",
+            ]
+
+            for url in localhost_urls:
+                # Should not raise
+                result = SecurityValidator.validate_url(url, "URL")
+                assert result == url
+                logger.debug(f"Localhost URL allowed (default): {url}")
+
+    def test_ssrf_private_networks_allowed_by_default(self):
+        """Test that private networks are allowed with default settings (dev-friendly)."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.config import settings
+
+        # Only run if default settings (private networks allowed)
+        if settings.ssrf_allow_private_networks:
+            private_urls = [
+                "http://10.0.0.1/api",
+                "http://172.16.0.1/api",
+                "http://192.168.1.1/api",
+            ]
+
+            for url in private_urls:
+                # Should not raise
+                result = SecurityValidator.validate_url(url, "URL")
+                assert result == url
+                logger.debug(f"Private network URL allowed (default): {url}")
+
+    def test_ssrf_strict_mode_blocks_localhost(self):
+        """Test that strict mode blocks localhost when configured."""
+        from unittest.mock import patch, MagicMock
+        from mcpgateway.common.validators import SecurityValidator
+
+        mock_settings = MagicMock()
+        mock_settings.ssrf_protection_enabled = True
+        mock_settings.ssrf_allow_localhost = False  # Strict mode
+        mock_settings.ssrf_allow_private_networks = True
+        mock_settings.ssrf_allowed_networks = []
+        mock_settings.ssrf_blocked_networks = ["169.254.169.254/32"]
+        mock_settings.ssrf_blocked_hosts = []
+        mock_settings.ssrf_dns_fail_closed = False
+
+        with patch("mcpgateway.common.validators.settings", mock_settings):
+            with pytest.raises(ValueError) as exc_info:
+                SecurityValidator._validate_ssrf("127.0.0.1", "URL")
+            assert "localhost" in str(exc_info.value).lower()
+            logger.debug("Strict mode: localhost blocked")
+
+    def test_ssrf_strict_mode_blocks_private_networks(self):
+        """Test that strict mode blocks private networks when configured."""
+        from unittest.mock import patch, MagicMock
+        from mcpgateway.common.validators import SecurityValidator
+
+        mock_settings = MagicMock()
+        mock_settings.ssrf_protection_enabled = True
+        mock_settings.ssrf_allow_localhost = True
+        mock_settings.ssrf_allow_private_networks = False  # Strict mode
+        mock_settings.ssrf_allowed_networks = []
+        mock_settings.ssrf_blocked_networks = ["169.254.169.254/32"]
+        mock_settings.ssrf_blocked_hosts = []
+        mock_settings.ssrf_dns_fail_closed = False
+
+        with patch("mcpgateway.common.validators.settings", mock_settings):
+            for ip in ["10.0.0.1", "172.16.0.1", "192.168.1.1"]:
+                with pytest.raises(ValueError) as exc_info:
+                    SecurityValidator._validate_ssrf(ip, "URL")
+                assert "private network" in str(exc_info.value).lower()
+                logger.debug(f"Strict mode: private IP {ip} blocked")
+
+    def test_ssrf_dns_fail_closed_rejects_unresolvable(self):
+        """Test that DNS fail-closed mode rejects unresolvable hostnames."""
+        from unittest.mock import patch, MagicMock
+        import socket
+        from mcpgateway.common.validators import SecurityValidator
+
+        mock_settings = MagicMock()
+        mock_settings.ssrf_protection_enabled = True
+        mock_settings.ssrf_allow_localhost = True
+        mock_settings.ssrf_allow_private_networks = True
+        mock_settings.ssrf_allowed_networks = []
+        mock_settings.ssrf_blocked_networks = []
+        mock_settings.ssrf_blocked_hosts = []
+        mock_settings.ssrf_dns_fail_closed = True  # Fail closed
+
+        # Mock getaddrinfo to raise DNS error
+        def mock_getaddrinfo(*args, **kwargs):
+            raise socket.gaierror("DNS resolution failed")
+
+        with patch("mcpgateway.common.validators.settings", mock_settings):
+            with patch("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo):
+                with pytest.raises(ValueError) as exc_info:
+                    SecurityValidator._validate_ssrf("nonexistent.invalid.hostname.test", "URL")
+                assert "DNS resolution failed" in str(exc_info.value)
+                assert "SSRF_DNS_FAIL_CLOSED" in str(exc_info.value)
+                logger.debug("DNS fail-closed: unresolvable hostname rejected")
+
+    def test_ssrf_dns_fail_open_allows_unresolvable(self):
+        """Test that DNS fail-open mode (default) allows unresolvable hostnames."""
+        from unittest.mock import patch, MagicMock
+        import socket
+        from mcpgateway.common.validators import SecurityValidator
+
+        mock_settings = MagicMock()
+        mock_settings.ssrf_protection_enabled = True
+        mock_settings.ssrf_allow_localhost = True
+        mock_settings.ssrf_allow_private_networks = True
+        mock_settings.ssrf_allowed_networks = []
+        mock_settings.ssrf_blocked_networks = []
+        mock_settings.ssrf_blocked_hosts = []
+        mock_settings.ssrf_dns_fail_closed = False  # Fail open (default)
+
+        # Mock getaddrinfo to raise DNS error
+        def mock_getaddrinfo(*args, **kwargs):
+            raise socket.gaierror("DNS resolution failed")
+
+        with patch("mcpgateway.common.validators.settings", mock_settings):
+            with patch("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo):
+                # Should NOT raise - fail open allows unresolvable hostnames
+                SecurityValidator._validate_ssrf("nonexistent.invalid.hostname.test", "URL")
+                logger.debug("DNS fail-open: unresolvable hostname allowed")
 
     def test_open_redirect_prevention(self):
         """Test open redirect vulnerability prevention."""
@@ -1878,6 +2104,120 @@ class TestSecurityBestPractices:
 
         ratio = max(valid_median, invalid_median) / min(valid_median, invalid_median)
         assert ratio < 1.5, f"Timing difference too large: {ratio:.2f}x"
+
+
+class TestSensitiveLoggingRegressions:
+    """Prevent regressions where raw credentials/tokens are logged."""
+
+    SENSITIVE_IDENTIFIERS = {
+        "access_token",
+        "refresh_token",
+        "client_secret",
+        "id_token",
+        "registration_access_token",
+        "auth_value",
+        "auth_token",
+        "authorization",
+        "password",
+        "token",
+    }
+
+    SAFE_TOKEN_OBJECT_FIELDS = {"id", "jti", "name", "token_hash"}
+
+    @classmethod
+    def _is_safe_token_attribute(cls, expression: ast.AST) -> bool:
+        """Allow non-secret token metadata logs (e.g. token.id, token.name)."""
+        return (
+            isinstance(expression, ast.Attribute)
+            and isinstance(expression.value, ast.Name)
+            and expression.value.id == "token"
+            and expression.attr in cls.SAFE_TOKEN_OBJECT_FIELDS
+        )
+
+    @classmethod
+    def _contains_sensitive_identifier(cls, expression: ast.AST) -> bool:
+        """Detect direct logging of sensitive variables or attributes."""
+        if cls._is_safe_token_attribute(expression):
+            return False
+
+        for node in ast.walk(expression):
+            if isinstance(node, ast.Name) and node.id in cls.SENSITIVE_IDENTIFIERS:
+                return True
+            if isinstance(node, ast.Attribute) and node.attr in cls.SENSITIVE_IDENTIFIERS:
+                return True
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "credentials" and node.attr == "credentials":
+                return True
+
+        return False
+
+    def test_contains_sensitive_identifier_detects_name(self):
+        """Name nodes for sensitive identifiers are flagged."""
+        expr = ast.parse("token").body[0].value
+        assert self._contains_sensitive_identifier(expr) is True
+
+    def test_contains_sensitive_identifier_detects_sensitive_attribute(self):
+        """Attribute nodes for sensitive identifiers are flagged."""
+        expr = ast.parse("ctx.access_token").body[0].value
+        assert self._contains_sensitive_identifier(expr) is True
+
+    def test_contains_sensitive_identifier_detects_credentials_attribute(self):
+        """Special-case credentials.credentials is treated as sensitive."""
+        expr = ast.parse("credentials.credentials").body[0].value
+        assert self._contains_sensitive_identifier(expr) is True
+
+    def test_runtime_logger_scan_reports_sensitive_interpolation(self, tmp_path, monkeypatch):
+        """Scanner should fail when a runtime logger call interpolates token data."""
+        bad_file = tmp_path / "bad_runtime_log.py"
+        bad_file.write_text(
+            "import logging\n"
+            "logger = logging.getLogger(__name__)\n"
+            "def f(token):\n"
+            "    logger.info(f'bad {token}')\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(Path, "rglob", lambda _self, _pattern: [bad_file])
+
+        with pytest.raises(AssertionError, match="Potential sensitive value logging detected"):
+            self.test_runtime_logger_calls_do_not_embed_sensitive_values()
+
+    def test_runtime_logger_calls_do_not_embed_sensitive_values(self):
+        """Scan runtime logger calls to ensure sensitive values are not interpolated."""
+        source_root = Path(__file__).resolve().parents[2] / "mcpgateway"
+        violations = []
+
+        for file_path in source_root.rglob("*.py"):
+            source = file_path.read_text(encoding="utf-8")
+            if "logger." not in source:
+                continue
+            tree = ast.parse(source, filename=str(file_path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if not isinstance(node.func, ast.Attribute):
+                    continue
+                if node.func.attr not in {"debug", "info", "warning", "error", "exception", "critical"}:
+                    continue
+                if not isinstance(node.func.value, ast.Name) or node.func.value.id != "logger":
+                    continue
+
+                expressions_to_check = []
+
+                if node.args:
+                    message_expr = node.args[0]
+                    if isinstance(message_expr, ast.JoinedStr):
+                        for value in message_expr.values:
+                            if isinstance(value, ast.FormattedValue):
+                                expressions_to_check.append(value.value)
+                    # %-style / positional log args
+                    expressions_to_check.extend(node.args[1:])
+
+                for expr in expressions_to_check:
+                    if self._contains_sensitive_identifier(expr):
+                        violations.append(f"{file_path}:{node.lineno}")
+                        break
+
+        assert not violations, "Potential sensitive value logging detected:\n" + "\n".join(sorted(violations))
 
 
 if __name__ == "__main__":

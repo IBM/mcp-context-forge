@@ -27,13 +27,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import get_current_user
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     CursorPaginatedTeamsResponse,
-    EmailUserResponse,
     PaginatedTeamMembersResponse,
     SuccessResponse,
     TeamCreateRequest,
@@ -43,6 +42,7 @@ from mcpgateway.schemas import (
     TeamJoinRequest,
     TeamJoinRequestResponse,
     TeamListResponse,
+    TeamMemberAddRequest,
     TeamMemberResponse,
     TeamMemberUpdateRequest,
     TeamResponse,
@@ -50,7 +50,16 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_invitation_service import TeamInvitationService
-from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.team_management_service import (
+    InvalidRoleError,
+    MemberAlreadyExistsError,
+    TeamManagementError,
+    TeamManagementService,
+    TeamMemberAddError,
+    TeamMemberLimitExceededError,
+    TeamNotFoundError,
+    UserNotFoundError,
+)
 
 # Initialize logging
 logging_service = LoggingService()
@@ -67,12 +76,13 @@ teams_router = APIRouter()
 
 @teams_router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("teams.create")
-async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions)) -> TeamResponse:
+async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamResponse:
     """Create a new team.
 
     Args:
         request: Team creation request data
         current_user_ctx: Currently authenticated user context
+        db: Database session
 
     Returns:
         TeamResponse: Created team data
@@ -86,11 +96,21 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
         True
     """
     try:
-        db = current_user_ctx["db"]
-        service = TeamManagementService(db)
-        team = await service.create_team(name=request.name, description=request.description, created_by=current_user_ctx["email"], visibility=request.visibility, max_members=request.max_members)
+        if not settings.allow_team_creation and not current_user_ctx.get("is_admin"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team creation is currently disabled")
 
-        return TeamResponse(
+        service = TeamManagementService(db)
+        team = await service.create_team(
+            name=request.name,
+            description=request.description,
+            created_by=current_user_ctx["email"],
+            visibility=request.visibility,
+            max_members=request.max_members,
+            skip_limits=bool(current_user_ctx.get("is_admin")),
+        )
+
+        # Build response BEFORE closing session to avoid lazy-load issues with get_member_count()
+        response = TeamResponse(
             id=team.id,
             name=team.name,
             slug=team.slug,
@@ -104,6 +124,11 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
             updated_at=team.updated_at,
             is_active=team.is_active,
         )
+        db.commit()
+        db.close()
+        return response
+    except HTTPException:
+        raise
     except ValueError as e:
         logger.error(f"Team creation failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -116,10 +141,11 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
 @require_permission("teams.read")
 async def list_teams(
     skip: int = Query(0, ge=0, description="Number of teams to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Number of teams to return"),
+    limit: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Number of teams to return"),
     cursor: Optional[str] = Query(None, description="Pagination cursor"),
     include_pagination: bool = Query(False, description="Include pagination metadata (cursor)"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ) -> Union[TeamListResponse, CursorPaginatedTeamsResponse]:
     """List teams visible to the caller.
 
@@ -132,6 +158,7 @@ async def list_teams(
         cursor: Pagination cursor
         include_pagination: Include pagination metadata
         current_user_ctx: Current user context with permissions and database session
+        db: Database session
 
     Returns:
         Union[TeamListResponse, CursorPaginatedTeamsResponse]: List of teams
@@ -140,7 +167,6 @@ async def list_teams(
         HTTPException: If there's an error listing teams
     """
     try:
-        db = current_user_ctx["db"]
         service = TeamManagementService(db)
 
         teams_data = []
@@ -190,6 +216,10 @@ async def list_teams(
             for team in teams_data
         ]
 
+        # Release transaction before response serialization
+        db.commit()
+        db.close()
+
         if include_pagination:
             return CursorPaginatedTeamsResponse(teams=team_responses, nextCursor=next_cursor)
 
@@ -199,14 +229,72 @@ async def list_teams(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list teams")
 
 
+@teams_router.get("/discover", response_model=List[TeamDiscoveryResponse])
+@require_permission("teams.read")
+async def discover_public_teams(
+    skip: int = Query(0, ge=0, description="Number of teams to skip"),
+    limit: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Number of teams to return"),
+    current_user_ctx: dict = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> List[TeamDiscoveryResponse]:
+    """Discover public teams that can be joined.
+
+    Returns public teams that are discoverable to all authenticated users.
+    Only shows teams where the current user is not already a member.
+
+    Args:
+        skip: Number of teams to skip for pagination
+        limit: Maximum number of teams to return
+        current_user_ctx: Current user context with permissions and database session
+        db: Database session
+
+    Returns:
+        List[TeamDiscoveryResponse]: List of discoverable public teams
+
+    Raises:
+        HTTPException: If there's an error discovering teams
+    """
+    try:
+        team_service = TeamManagementService(db)
+
+        # Get public teams where user is not already a member
+        public_teams = await team_service.discover_public_teams(current_user_ctx["email"], skip=skip, limit=limit)
+
+        # Batch fetch member counts with caching (N+1 elimination)
+        team_ids = [str(team.id) for team in public_teams]
+        member_counts = await team_service.get_member_counts_batch_cached(team_ids)
+
+        discovery_responses = []
+        for team in public_teams:
+            discovery_responses.append(
+                TeamDiscoveryResponse(
+                    id=team.id,
+                    name=team.name,
+                    description=team.description,
+                    member_count=member_counts.get(str(team.id), 0),
+                    created_at=team.created_at,
+                    is_joinable=True,  # All returned teams are joinable
+                )
+            )
+
+        # Release transaction before response serialization
+        db.commit()
+        db.close()
+
+        return discovery_responses
+    except Exception as e:
+        logger.error(f"Error discovering public teams: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to discover teams")
+
+
 @teams_router.get("/{team_id}", response_model=TeamResponse)
 @require_permission("teams.read")
-async def get_team(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> TeamResponse:
+async def get_team(team_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamResponse:
     """Get a specific team by ID.
 
     Args:
         team_id: Team UUID
-        current_user: Currently authenticated user
+        current_user: Authenticated user context dict with email and permissions
         db: Database session
 
     Returns:
@@ -223,12 +311,13 @@ async def get_team(team_id: str, current_user: EmailUserResponse = Depends(get_c
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
         # Check if user has access to the team
-        user_role = await service.get_user_role_in_team(current_user.email, team_id)
+        user_role = await service.get_user_role_in_team(current_user["email"], team_id)
         if not user_role:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         team_obj = cast(Any, team)
-        return TeamResponse(
+        # Build response BEFORE closing session to avoid lazy-load issues with get_member_count()
+        response = TeamResponse(
             id=team_obj.id,
             name=team_obj.name,
             slug=team_obj.slug,
@@ -242,22 +331,25 @@ async def get_team(team_id: str, current_user: EmailUserResponse = Depends(get_c
             updated_at=team_obj.updated_at,
             is_active=team_obj.is_active,
         )
+        db.commit()
+        db.close()
+        return response
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting team {team_id}: {e}")
+        logger.error(f"Error getting team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get team")
 
 
 @teams_router.put("/{team_id}", response_model=TeamResponse)
 @require_permission("teams.update")
-async def update_team(team_id: str, request: TeamUpdateRequest, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> TeamResponse:
+async def update_team(team_id: str, request: TeamUpdateRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamResponse:
     """Update a team.
 
     Args:
         team_id: Team UUID
         request: Team update request data
-        current_user: Currently authenticated user
+        current_user: Authenticated user context dict with email and permissions
         db: Database session
 
     Returns:
@@ -270,17 +362,23 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: Em
         service = TeamManagementService(db)
 
         # Check if user is team owner
-        role = await service.get_user_role_in_team(current_user.email, team_id)
+        role = await service.get_user_role_in_team(current_user["email"], team_id)
         if role != "owner":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
-        team = await service.update_team(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members)
+        success = await service.update_team(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members)
 
+        if not success:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found or update failed")
+
+        # Fetch the updated team to build the response
+        team = await service.get_team_by_id(team_id)
         if not team:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found after update")
 
         team_obj = cast(Any, team)
-        return TeamResponse(
+        # Build response BEFORE closing session to avoid lazy-load issues with get_member_count()
+        response = TeamResponse(
             id=team_obj.id,
             name=team_obj.name,
             slug=team_obj.slug,
@@ -294,24 +392,27 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: Em
             updated_at=team_obj.updated_at,
             is_active=team_obj.is_active,
         )
+        db.commit()
+        db.close()
+        return response
     except HTTPException:
         raise
     except ValueError as e:
         logger.error(f"Team update failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error updating team {team_id}: {e}")
+        logger.error(f"Error updating team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update team")
 
 
 @teams_router.delete("/{team_id}", response_model=SuccessResponse)
 @require_permission("teams.delete")
-async def delete_team(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> SuccessResponse:
+async def delete_team(team_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> SuccessResponse:
     """Delete a team.
 
     Args:
         team_id: Team UUID
-        current_user: Currently authenticated user
+        current_user: Authenticated user context dict with email and permissions
         db: Database session
 
     Returns:
@@ -324,19 +425,21 @@ async def delete_team(team_id: str, current_user: EmailUserResponse = Depends(ge
         service = TeamManagementService(db)
 
         # Check if user is team owner
-        role = await service.get_user_role_in_team(current_user.email, team_id)
+        role = await service.get_user_role_in_team(current_user["email"], team_id)
         if role != "owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team owners can delete teams")
 
-        success = await service.delete_team(team_id, current_user.email)
+        success = await service.delete_team(team_id, current_user["email"])
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
+        db.commit()
+        db.close()
         return SuccessResponse(message="Team deleted successfully")
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting team {team_id}: {e}")
+        logger.error(f"Error deleting team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete team")
 
 
@@ -352,7 +455,7 @@ async def list_team_members(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: Optional[int] = Query(None, ge=1, le=settings.pagination_max_page_size, description="Maximum number of members to return (default: 50)"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
-    current_user: EmailUserResponse = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> Union[PaginatedTeamMembersResponse, List[TeamMemberResponse]]:
     """List team members with cursor-based pagination.
@@ -362,7 +465,7 @@ async def list_team_members(
         cursor: Pagination cursor for fetching the next set of results
         limit: Maximum number of members to return (default: 50)
         include_pagination: Whether to include cursor pagination metadata in the response (default: false)
-        current_user: Currently authenticated user
+        current_user: Authenticated user context dict with email and permissions
         db: Database session
 
     Returns:
@@ -376,9 +479,9 @@ async def list_team_members(
         service = TeamManagementService(db)
 
         # Check if user has access to the team
-        user_role = await service.get_user_role_in_team(current_user.email, team_id)
+        user_role = await service.get_user_role_in_team(current_user["email"], team_id)
         if not user_role:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         # Get members - service returns different types based on parameters:
         # - cursor=None, limit=None: List[Tuple] (backward compat)
@@ -410,6 +513,8 @@ async def list_team_members(
             )
 
         # Return with pagination metadata if requested
+        db.commit()
+        db.close()
         if include_pagination:
             return PaginatedTeamMembersResponse(members=member_responses, nextCursor=next_cursor)
 
@@ -417,14 +522,66 @@ async def list_team_members(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error listing team members for team {team_id}: {e}")
+        logger.error(f"Error listing team members for team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list team members")
+
+
+@teams_router.post("/{team_id}/members", response_model=TeamMemberResponse, status_code=status.HTTP_201_CREATED)
+@require_permission("teams.manage_members")
+async def add_team_member(team_id: str, request: TeamMemberAddRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamMemberResponse:
+    """Add a new member to a team.
+
+    Args:
+        team_id: Team UUID
+        request: Member add request data with email and role
+        current_user: Authenticated user context dict with email and permissions
+        db: Database session
+
+    Returns:
+        TeamMemberResponse: New member data
+
+    Raises:
+        HTTPException: If team not found, access denied, or add fails
+    """
+    try:
+        service = TeamManagementService(db)
+
+        # Check if user is team owner
+        role = await service.get_user_role_in_team(current_user["email"], team_id)
+        if role != "owner":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+        # Add member to team and get the created member directly
+        member = await service.add_member_to_team(team_id, request.email, request.role, invited_by=current_user["email"])
+
+        db.commit()
+        db.close()
+        return TeamMemberResponse.model_validate(member)
+    except HTTPException:
+        raise
+    except InvalidRoleError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except TeamNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except UserNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except MemberAlreadyExistsError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except TeamMemberLimitExceededError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except TeamMemberAddError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    except TeamManagementError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error adding team member {SecurityValidator.sanitize_log_message(request.email)} to team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to add team member")
 
 
 @teams_router.put("/{team_id}/members/{user_email}", response_model=TeamMemberResponse)
 @require_permission("teams.manage_members")
 async def update_team_member(
-    team_id: str, user_email: str, request: TeamMemberUpdateRequest, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)
+    team_id: str, user_email: str, request: TeamMemberUpdateRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
 ) -> TeamMemberResponse:
     """Update a team member's role.
 
@@ -432,7 +589,7 @@ async def update_team_member(
         team_id: Team UUID
         user_email: Email of the member to update
         request: Member update request data
-        current_user: Currently authenticated user
+        current_user: Authenticated user context dict with email and permissions
         db: Database session
 
     Returns:
@@ -445,35 +602,41 @@ async def update_team_member(
         service = TeamManagementService(db)
 
         # Check if user is team owner
-        role = await service.get_user_role_in_team(current_user.email, team_id)
+        role = await service.get_user_role_in_team(current_user["email"], team_id)
         if role != "owner":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
-        member = await service.update_member_role(team_id, user_email, request.role)
+        success = await service.update_member_role(team_id, user_email, request.role)
+        if not success:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team member not found or update failed")
+
+        # Fetch the updated member to build the response
+        member = await service.get_member(team_id, user_email)
         if not member:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team member not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team member not found after update")
 
-        mm = cast(Any, member)
-        return TeamMemberResponse(id=mm.id, team_id=mm.team_id, user_email=mm.user_email, role=mm.role, joined_at=mm.joined_at, invited_by=mm.invited_by, is_active=mm.is_active)
+        db.commit()
+        db.close()
+        return TeamMemberResponse.model_validate(member)
     except HTTPException:
         raise
     except ValueError as e:
         logger.error(f"Member update failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error updating team member {user_email} in team {team_id}: {e}")
+        logger.error(f"Error updating team member {SecurityValidator.sanitize_log_message(user_email)} in team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update team member")
 
 
 @teams_router.delete("/{team_id}/members/{user_email}", response_model=SuccessResponse)
 @require_permission("teams.manage_members")
-async def remove_team_member(team_id: str, user_email: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> SuccessResponse:
+async def remove_team_member(team_id: str, user_email: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> SuccessResponse:
     """Remove a team member.
 
     Args:
         team_id: Team UUID
         user_email: Email of the member to remove
-        current_user: Currently authenticated user
+        current_user: Authenticated user context dict with email and permissions
         db: Database session
 
     Returns:
@@ -486,19 +649,21 @@ async def remove_team_member(team_id: str, user_email: str, current_user: EmailU
         service = TeamManagementService(db)
 
         # Users can remove themselves, or owners can remove others
-        current_user_role = await service.get_user_role_in_team(current_user.email, team_id)
-        if current_user.email != user_email and current_user_role != "owner":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        current_user_role = await service.get_user_role_in_team(current_user["email"], team_id)
+        if current_user["email"] != user_email and current_user_role != "owner":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         success = await service.remove_member_from_team(team_id, user_email)
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team member not found")
 
+        db.commit()
+        db.close()
         return SuccessResponse(message="Team member removed successfully")
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error removing team member {user_email} from team {team_id}: {e}")
+        logger.error(f"Error removing team member {SecurityValidator.sanitize_log_message(user_email)} from team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to remove team member")
 
 
@@ -509,13 +674,13 @@ async def remove_team_member(team_id: str, user_email: str, current_user: EmailU
 
 @teams_router.post("/{team_id}/invitations", response_model=TeamInvitationResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("teams.manage_members")
-async def invite_team_member(team_id: str, request: TeamInviteRequest, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> TeamInvitationResponse:
+async def invite_team_member(team_id: str, request: TeamInviteRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamInvitationResponse:
     """Invite a user to join a team.
 
     Args:
         team_id: Team UUID
         request: Invitation request data
-        current_user: Currently authenticated user
+        current_user: Authenticated user context dict with email and permissions
         db: Database session
 
     Returns:
@@ -525,15 +690,18 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         HTTPException: If team not found, access denied, or invitation fails
     """
     try:
+        if not settings.allow_team_invitations:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team invitations are currently disabled")
+
         team_service = TeamManagementService(db)
         invitation_service = TeamInvitationService(db)
 
         # Check if user is team owner
-        role = await team_service.get_user_role_in_team(current_user.email, team_id)
+        role = await team_service.get_user_role_in_team(current_user["email"], team_id)
         if role != "owner":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
-        invitation = await invitation_service.create_invitation(team_id=team_id, email=str(request.email), role=request.role, invited_by=current_user.email)
+        invitation = await invitation_service.create_invitation(team_id=team_id, email=str(request.email), role=request.role, invited_by=current_user["email"])
         if not invitation:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create invitation")
 
@@ -541,6 +709,8 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         team = await team_service.get_team_by_id(team_id)
         team_name = team.name if team else "Unknown Team"
 
+        db.commit()
+        db.close()
         return TeamInvitationResponse(
             id=invitation.id,
             team_id=invitation.team_id,
@@ -560,18 +730,18 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         logger.error(f"Team invitation failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error creating team invitation for team {team_id}: {e}")
+        logger.error(f"Error creating team invitation for team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create invitation")
 
 
 @teams_router.get("/{team_id}/invitations", response_model=List[TeamInvitationResponse])
 @require_permission("teams.read")
-async def list_team_invitations(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> List[TeamInvitationResponse]:
+async def list_team_invitations(team_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> List[TeamInvitationResponse]:
     """List team invitations.
 
     Args:
         team_id: Team UUID
-        current_user: Currently authenticated user
+        current_user: Authenticated user context dict with email and permissions
         db: Database session
 
     Returns:
@@ -585,9 +755,9 @@ async def list_team_invitations(team_id: str, current_user: EmailUserResponse = 
         invitation_service = TeamInvitationService(db)
 
         # Check if user is team owner
-        role = await team_service.get_user_role_in_team(current_user.email, team_id)
+        role = await team_service.get_user_role_in_team(current_user["email"], team_id)
         if role != "owner":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         invitations = await invitation_service.get_team_invitations(team_id)
 
@@ -613,22 +783,24 @@ async def list_team_invitations(team_id: str, current_user: EmailUserResponse = 
                 )
             )
 
+        db.commit()
+        db.close()
         return invitation_responses
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error listing team invitations for team {team_id}: {e}")
+        logger.error(f"Error listing team invitations for team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list invitations")
 
 
 @teams_router.post("/invitations/{token}/accept", response_model=TeamMemberResponse)
-@require_permission("teams.read")
-async def accept_team_invitation(token: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> TeamMemberResponse:
+@require_permission("teams.join")
+async def accept_team_invitation(token: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamMemberResponse:
     """Accept a team invitation.
 
     Args:
         token: Invitation token
-        current_user: Currently authenticated user
+        current_user: Authenticated user context dict with email and permissions
         db: Database session
 
     Returns:
@@ -640,30 +812,31 @@ async def accept_team_invitation(token: str, current_user: EmailUserResponse = D
     try:
         invitation_service = TeamInvitationService(db)
 
-        member = await invitation_service.accept_invitation(token, current_user.email)
+        member = await invitation_service.accept_invitation(token, current_user["email"])
         if not member or not hasattr(member, "id"):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid or expired invitation")
 
-        mm = cast(Any, member)
-        return TeamMemberResponse(id=mm.id, team_id=mm.team_id, user_email=mm.user_email, role=mm.role, joined_at=mm.joined_at, invited_by=mm.invited_by, is_active=mm.is_active)
+        db.commit()
+        db.close()
+        return TeamMemberResponse.model_validate(member)
     except HTTPException:
         raise
     except ValueError as e:
         logger.error(f"Invitation acceptance failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error accepting invitation {token}: {e}")
+        logger.error("Error accepting invitation: %s", e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to accept invitation")
 
 
 @teams_router.delete("/invitations/{invitation_id}", response_model=SuccessResponse)
 @require_permission("teams.manage_members")
-async def cancel_team_invitation(invitation_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> SuccessResponse:
+async def cancel_team_invitation(invitation_id: str, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> SuccessResponse:
     """Cancel a team invitation.
 
     Args:
         invitation_id: Invitation UUID
-        current_user: Currently authenticated user
+        current_user: Authenticated user context dict with email and permissions
         db: Database session
 
     Returns:
@@ -685,14 +858,16 @@ async def cancel_team_invitation(invitation_id: str, current_user: EmailUserResp
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
 
         # Check if user is team owner or the inviter
-        role = await team_service.get_user_role_in_team(current_user.email, invitation.team_id)
-        if role != "owner" and current_user.email != invitation.invited_by:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        role = await team_service.get_user_role_in_team(current_user["email"], invitation.team_id)
+        if role != "owner" and current_user["email"] != invitation.invited_by:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
-        success = await invitation_service.revoke_invitation(invitation_id, current_user.email)
+        success = await invitation_service.revoke_invitation(invitation_id, current_user["email"])
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
 
+        db.commit()
+        db.close()
         return SuccessResponse(message="Team invitation cancelled successfully")
     except HTTPException:
         raise
@@ -701,64 +876,12 @@ async def cancel_team_invitation(invitation_id: str, current_user: EmailUserResp
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to cancel invitation")
 
 
-@teams_router.get("/discover", response_model=List[TeamDiscoveryResponse])
-@require_permission("teams.read")
-async def discover_public_teams(
-    skip: int = Query(0, ge=0, description="Number of teams to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Number of teams to return"),
-    current_user_ctx: dict = Depends(get_current_user_with_permissions),
-) -> List[TeamDiscoveryResponse]:
-    """Discover public teams that can be joined.
-
-    Returns public teams that are discoverable to all authenticated users.
-    Only shows teams where the current user is not already a member.
-
-    Args:
-        skip: Number of teams to skip for pagination
-        limit: Maximum number of teams to return
-        current_user_ctx: Current user context with permissions and database session
-
-    Returns:
-        List[TeamDiscoveryResponse]: List of discoverable public teams
-
-    Raises:
-        HTTPException: If there's an error discovering teams
-    """
-    try:
-        db = current_user_ctx["db"]
-        team_service = TeamManagementService(db)
-
-        # Get public teams where user is not already a member
-        public_teams = await team_service.discover_public_teams(current_user_ctx["email"], skip=skip, limit=limit)
-
-        # Batch fetch member counts with caching (N+1 elimination)
-        team_ids = [str(team.id) for team in public_teams]
-        member_counts = await team_service.get_member_counts_batch_cached(team_ids)
-
-        discovery_responses = []
-        for team in public_teams:
-            discovery_responses.append(
-                TeamDiscoveryResponse(
-                    id=team.id,
-                    name=team.name,
-                    description=team.description,
-                    member_count=member_counts.get(str(team.id), 0),
-                    created_at=team.created_at,
-                    is_joinable=True,  # All returned teams are joinable
-                )
-            )
-
-        return discovery_responses
-    except Exception as e:
-        logger.error(f"Error discovering public teams: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to discover teams")
-
-
 @teams_router.post("/{team_id}/join", response_model=TeamJoinRequestResponse)
+@require_permission("teams.join")
 async def request_to_join_team(
     team_id: str,
     join_request: TeamJoinRequest,
-    current_user: EmailUserResponse = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> TeamJoinRequestResponse:
     """Request to join a public team.
@@ -779,6 +902,9 @@ async def request_to_join_team(
         HTTPException: If team not found, not public, user already member, or request fails
     """
     try:
+        if not settings.allow_team_join_requests:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team join requests are currently disabled")
+
         team_service = TeamManagementService(db)
 
         # Validate team exists and is public
@@ -790,13 +916,15 @@ async def request_to_join_team(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only request to join public teams")
 
         # Check if user is already a member
-        user_role = await team_service.get_user_role_in_team(current_user.email, team_id)
+        user_role = await team_service.get_user_role_in_team(current_user["email"], team_id)
         if user_role:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User is already a member of this team")
 
         # Create join request
-        join_req = await team_service.create_join_request(team_id=team_id, user_email=current_user.email, message=join_request.message)
+        join_req = await team_service.create_join_request(team_id=team_id, user_email=current_user["email"], message=join_request.message)
 
+        db.commit()
+        db.close()
         return TeamJoinRequestResponse(
             id=join_req.id,
             team_id=join_req.team_id,
@@ -810,14 +938,15 @@ async def request_to_join_team(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error creating join request for team {team_id}: {e}")
+        logger.error(f"Error creating join request for team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create join request")
 
 
 @teams_router.delete("/{team_id}/leave", response_model=SuccessResponse)
+@require_permission("teams.join")
 async def leave_team(
     team_id: str,
-    current_user: EmailUserResponse = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> SuccessResponse:
     """Leave a team.
@@ -849,20 +978,22 @@ async def leave_team(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot leave personal team")
 
         # Check if user is member
-        user_role = await team_service.get_user_role_in_team(current_user.email, team_id)
+        user_role = await team_service.get_user_role_in_team(current_user["email"], team_id)
         if not user_role:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User is not a member of this team")
 
         # Remove user from team
-        success = await team_service.remove_member_from_team(team_id, current_user.email, removed_by=current_user.email)
+        success = await team_service.remove_member_from_team(team_id, current_user["email"], removed_by=current_user["email"])
         if not success:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot leave team - you may be the last owner")
 
+        db.commit()
+        db.close()
         return SuccessResponse(message="Successfully left the team")
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error leaving team {team_id}: {e}")
+        logger.error(f"Error leaving team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to leave team")
 
 
@@ -870,7 +1001,7 @@ async def leave_team(
 @require_permission("teams.manage_members")
 async def list_team_join_requests(
     team_id: str,
-    current_user: EmailUserResponse = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> List[TeamJoinRequestResponse]:
     """List pending join requests for a team.
@@ -879,7 +1010,7 @@ async def list_team_join_requests(
 
     Args:
         team_id: ID of the team
-        current_user: Currently authenticated user
+        current_user: Authenticated user context dict with email and permissions
         db: Database session
 
     Returns:
@@ -896,14 +1027,14 @@ async def list_team_join_requests(
         if not team:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
-        user_role = await team_service.get_user_role_in_team(current_user.email, team_id)
+        user_role = await team_service.get_user_role_in_team(current_user["email"], team_id)
         if user_role != "owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team owners can view join requests")
 
         # Get join requests
         join_requests = await team_service.list_join_requests(team_id)
 
-        return [
+        result = [
             TeamJoinRequestResponse(
                 id=req.id,
                 team_id=req.team_id,
@@ -916,10 +1047,13 @@ async def list_team_join_requests(
             )
             for req in join_requests
         ]
+        db.commit()
+        db.close()
+        return result
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error listing join requests for team {team_id}: {e}")
+        logger.error(f"Error listing join requests for team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list join requests")
 
 
@@ -928,7 +1062,7 @@ async def list_team_join_requests(
 async def approve_join_request(
     team_id: str,
     request_id: str,
-    current_user: EmailUserResponse = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> TeamMemberResponse:
     """Approve a team join request.
@@ -938,7 +1072,7 @@ async def approve_join_request(
     Args:
         team_id: ID of the team
         request_id: ID of the join request
-        current_user: Currently authenticated user
+        current_user: Authenticated user context dict with email and permissions
         db: Database session
 
     Returns:
@@ -955,15 +1089,17 @@ async def approve_join_request(
         if not team:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
-        user_role = await team_service.get_user_role_in_team(current_user.email, team_id)
+        user_role = await team_service.get_user_role_in_team(current_user["email"], team_id)
         if user_role != "owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team owners can approve join requests")
 
         # Approve join request
-        member = await team_service.approve_join_request(request_id, approved_by=current_user.email)
+        member = await team_service.approve_join_request(request_id, approved_by=current_user["email"])
         if not member:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Join request not found")
 
+        db.commit()
+        db.close()
         return TeamMemberResponse(
             id=member.id,
             team_id=member.team_id,
@@ -985,7 +1121,7 @@ async def approve_join_request(
 async def reject_join_request(
     team_id: str,
     request_id: str,
-    current_user: EmailUserResponse = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> SuccessResponse:
     """Reject a team join request.
@@ -995,7 +1131,7 @@ async def reject_join_request(
     Args:
         team_id: ID of the team
         request_id: ID of the join request
-        current_user: Currently authenticated user
+        current_user: Authenticated user context dict with email and permissions
         db: Database session
 
     Returns:
@@ -1012,15 +1148,17 @@ async def reject_join_request(
         if not team:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
-        user_role = await team_service.get_user_role_in_team(current_user.email, team_id)
+        user_role = await team_service.get_user_role_in_team(current_user["email"], team_id)
         if user_role != "owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team owners can reject join requests")
 
         # Reject join request
-        success = await team_service.reject_join_request(request_id, rejected_by=current_user.email)
+        success = await team_service.reject_join_request(request_id, rejected_by=current_user["email"])
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Join request not found")
 
+        db.commit()
+        db.close()
         return SuccessResponse(message="Join request rejected successfully")
     except HTTPException:
         raise

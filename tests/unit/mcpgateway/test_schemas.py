@@ -13,7 +13,7 @@ defined in the models.py module.
 from datetime import datetime, timedelta, timezone
 import json
 import os
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 # Third-Party
 from pydantic import ValidationError
@@ -47,6 +47,7 @@ from mcpgateway.common.models import (
     Tool,
     ToolResult,
 )
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.schemas import (
     AdminGatewayCreate,
     AdminToolCreate,
@@ -61,6 +62,8 @@ from mcpgateway.schemas import (
     StatusToggleResponse,
     TeamCreateRequest,
     TeamUpdateRequest,
+    ToolCreate,
+    ToolUpdate,
 )
 
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
@@ -453,6 +456,18 @@ class TestMCPTypes:
         assert minimal.tools is None
         assert minimal.logging is None
         assert minimal.experimental is None
+
+    def test_server_capabilities_non_boolean_values(self):
+        """Test ServerCapabilities accepts non-boolean values (MCP SDK extra='allow')."""
+        caps = ServerCapabilities(
+            prompts={"listChanged": True, "customField": "string_value"},
+            resources={"subscribe": True, "listChanged": True, "maxSize": 1024},
+            tools={"listChanged": True, "parallelism": 4, "metadata": {"key": "val"}},
+        )
+        assert caps.prompts == {"listChanged": True, "customField": "string_value"}
+        assert caps.resources["maxSize"] == 1024
+        assert caps.tools["parallelism"] == 4
+        assert caps.tools["metadata"] == {"key": "val"}
 
     def test_initialize_request(self):
         """Test InitializeRequest model."""
@@ -966,3 +981,276 @@ class TestTeamXSSValidation:
         """Event handlers in description should be rejected via XSS check."""
         with pytest.raises(ValidationError, match="contains script patterns"):
             TeamCreateRequest(name="Valid Team", description='test onerror="alert(1)"')
+
+
+class TestSchemaValidators:
+    """Targeted validator coverage for tool/resource/global config schemas."""
+
+    def test_tool_create_request_type_by_integration(self):
+        """MCP and A2A integrations should accept only allowed request types."""
+        with pytest.raises(ValidationError, match="Cannot manually create MCP tools"):
+            ToolCreate(name="mcp-tool", integration_type="MCP", request_type="STDIO", url="http://example.com")
+
+        with pytest.raises(ValidationError, match="Cannot manually create A2A tools"):
+            ToolCreate(name="a2a-tool", integration_type="A2A", request_type="POST", url="http://example.com")
+
+        with pytest.raises(ValidationError, match="not allowed"):
+            ToolCreate(name="bad-tool", integration_type="REST", request_type="SSE", url="http://example.com")
+
+    def test_tool_create_auth_assembly(self):
+        """Auth fields should assemble into encoded auth values."""
+        basic_tool = ToolCreate(
+            name="basic-tool",
+            integration_type="REST",
+            request_type="GET",
+            url="http://example.com",
+            auth_type="basic",
+            auth_username="user",
+            auth_password="pass",
+        )
+        assert basic_tool.auth.auth_type == "basic"
+        assert basic_tool.auth.auth_value
+
+        bearer_tool = ToolCreate(
+            name="bearer-tool",
+            integration_type="REST",
+            request_type="GET",
+            url="http://example.com",
+            auth_type="bearer",
+            auth_token="token123",
+        )
+        assert bearer_tool.auth.auth_type == "bearer"
+        assert bearer_tool.auth.auth_value
+
+        headers_tool = ToolCreate(
+            name="headers-tool",
+            integration_type="REST",
+            request_type="GET",
+            url="http://example.com",
+            auth_type="authheaders",
+            auth_header_key="X-Auth",
+            auth_header_value="secret",
+        )
+        assert headers_tool.auth.auth_type == "authheaders"
+        assert headers_tool.auth.auth_value
+
+        empty_headers_tool = ToolCreate(
+            name="headers-tool-empty",
+            integration_type="REST",
+            request_type="GET",
+            url="http://example.com",
+            auth_type="authheaders",
+        )
+        assert empty_headers_tool.auth.auth_type == "authheaders"
+        assert empty_headers_tool.auth.auth_value is None
+
+    def test_tool_create_assemble_auth_debug_extra_does_not_include_sensitive_fields(self):
+        """ToolCreate debug logs should exclude raw secret values."""
+        values = {
+            "auth_type": "basic",
+            "auth_username": "user",
+            "auth_password": "secret-password",
+            "auth_token": "secret-token",
+            "auth_header_key": "X-API-Key",
+            "auth_header_value": "secret-header",
+        }
+
+        with patch("mcpgateway.schemas.logger.debug") as mock_debug:
+            ToolCreate.assemble_auth(values.copy())
+
+        extra = mock_debug.call_args.kwargs["extra"]
+        assert "auth_password" not in extra
+        assert "auth_token" not in extra
+        assert "auth_header_value" not in extra
+        assert extra["auth_type"] == "basic"
+        assert extra["auth_assembled"] is True
+
+    def test_tool_update_assemble_auth_debug_extra_does_not_include_sensitive_fields(self):
+        """ToolUpdate debug logs should exclude raw secret values."""
+        values = {
+            "auth_type": "bearer",
+            "auth_username": "user",
+            "auth_password": "secret-password",
+            "auth_token": "secret-token",
+            "auth_header_key": "X-API-Key",
+            "auth_header_value": "secret-header",
+        }
+
+        with patch("mcpgateway.schemas.logger.debug") as mock_debug:
+            ToolUpdate.assemble_auth(values.copy())
+
+        extra = mock_debug.call_args.kwargs["extra"]
+        assert "auth_password" not in extra
+        assert "auth_token" not in extra
+        assert "auth_header_value" not in extra
+        assert extra["auth_type"] == "bearer"
+        assert extra["auth_assembled"] is True
+
+    def test_tool_create_sets_default_timeout(self):
+        """REST passthrough tools should default timeout_ms when missing."""
+        tool = ToolCreate(name="rest-tool", integration_type="REST", request_type="GET", url="http://example.com")
+        assert tool.timeout_ms == 20000
+
+    def test_tool_update_extracts_base_url_and_path(self):
+        """ToolUpdate should parse URL into base_url and path_template."""
+        update = ToolUpdate(integration_type="REST", url="https://example.com/api/v1")
+        assert update.base_url == "https://example.com"
+        assert update.path_template == "/api/v1"
+
+    def test_tool_update_validation_errors(self):
+        """ToolUpdate validators should reject invalid passthrough configs."""
+        with pytest.raises(ValidationError, match="path_template must start"):
+            ToolUpdate(path_template="no-leading-slash")
+
+        with pytest.raises(ValidationError, match="timeout_ms must be a positive integer"):
+            ToolUpdate(timeout_ms=0)
+
+        with pytest.raises(ValidationError, match="Invalid host/scheme"):
+            ToolUpdate(allowlist=["not a host"])
+
+        with pytest.raises(ValidationError, match="Unknown plugin"):
+            ToolUpdate(plugin_chain_pre=["unknown_plugin"])
+
+    def test_tool_update_validator_helpers(self):
+        """Directly exercise allowlist/plugin validators for edge cases."""
+        assert ToolUpdate.validate_allowlist(None) is None
+        with pytest.raises(ValueError, match="allowlist must be a list"):
+            ToolUpdate.validate_allowlist("not-a-list")
+        with pytest.raises(ValueError, match="Invalid type in allowlist"):
+            ToolUpdate.validate_allowlist([123])
+
+        with pytest.raises(ValueError, match="Unknown plugin"):
+            ToolUpdate.validate_plugin_chain(["unknown_plugin"])
+
+    def test_resource_description_truncation(self):
+        """ResourceCreate should truncate overly long descriptions."""
+        long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 5)
+        resource = ResourceCreate(uri="resource://test", name="resource", description=long_desc, content="data")
+
+    def test_gateway_create_with_valid_gateway_modes(self):
+        """Test GatewayCreate accepts valid gateway_mode values."""
+        from mcpgateway.schemas import GatewayCreate
+
+        # Test with cache mode (default)
+        gateway = GatewayCreate(
+            name="Test Gateway",
+            url="https://example.com",
+            transport="SSE",
+            gateway_mode="cache",
+        )
+        assert gateway.gateway_mode == "cache"
+
+        # Test with direct_proxy mode
+        gateway = GatewayCreate(
+            name="Test Gateway",
+            url="https://example.com",
+            transport="SSE",
+            gateway_mode="direct_proxy",
+        )
+        assert gateway.gateway_mode == "direct_proxy"
+
+        # Test default value
+        gateway = GatewayCreate(
+            name="Test Gateway",
+            url="https://example.com",
+            transport="SSE",
+        )
+        assert gateway.gateway_mode == "cache"
+
+    def test_gateway_create_with_invalid_gateway_mode(self):
+        """Test GatewayCreate rejects invalid gateway_mode values."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(
+                name="Test Gateway",
+                url="https://example.com",
+                transport="SSE",
+                gateway_mode="invalid_mode",
+            )
+
+        # Check that the error mentions the pattern validation
+        assert "gateway_mode" in str(exc_info.value)
+
+    def test_gateway_update_with_valid_gateway_modes(self):
+        """Test GatewayUpdate accepts valid gateway_mode values."""
+        from mcpgateway.schemas import GatewayUpdate
+
+        # Test updating to cache mode
+        update = GatewayUpdate(gateway_mode="cache")
+        assert update.gateway_mode == "cache"
+
+        # Test updating to direct_proxy mode
+        update = GatewayUpdate(gateway_mode="direct_proxy")
+        assert update.gateway_mode == "direct_proxy"
+
+        # Test None (no update)
+        update = GatewayUpdate()
+        assert update.gateway_mode is None
+
+    def test_gateway_update_with_invalid_gateway_mode(self):
+        """Test GatewayUpdate rejects invalid gateway_mode values."""
+        from mcpgateway.schemas import GatewayUpdate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayUpdate(gateway_mode="invalid_mode")
+
+        # Check that the error mentions the pattern validation
+        assert "gateway_mode" in str(exc_info.value)
+
+    def test_gateway_read_includes_gateway_mode(self):
+        """Test GatewayRead includes gateway_mode field with default."""
+        from mcpgateway.schemas import GatewayRead
+
+        # Test with explicit cache mode
+        gateway = GatewayRead(
+            id="gw-123",
+            name="Test Gateway",
+            slug="test-gateway",
+            url="https://example.com",
+            transport="STREAMABLEHTTP",
+            gateway_mode="cache",
+        )
+        assert gateway.gateway_mode == "cache"
+
+        # Test with direct_proxy mode
+        gateway = GatewayRead(
+            id="gw-123",
+            name="Test Gateway",
+            slug="test-gateway",
+            url="https://example.com",
+            transport="STREAMABLEHTTP",
+            gateway_mode="direct_proxy",
+        )
+        assert gateway.gateway_mode == "direct_proxy"
+
+    def test_resource_subscription_rejects_empty_subscriber_id(self):
+        """ResourceSubscription should reject empty subscriber IDs."""
+        from mcpgateway.schemas import ResourceSubscription
+
+        with pytest.raises(ValidationError) as exc_info:
+            ResourceSubscription(uri="resource://one", subscriber_id="")
+
+        assert "Subscriber ID cannot be empty" in str(exc_info.value)
+
+    def test_resource_subscription_rejects_unsafe_email_like_subscriber_id(self):
+        """Email-like IDs should still honor unsafe-character validation pattern."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.schemas import ResourceSubscription
+
+        with patch.object(SecurityValidator, "VALIDATION_UNSAFE_URI_PATTERN", "@"):
+            with pytest.raises(ValidationError) as exc_info:
+                ResourceSubscription(uri="resource://one", subscriber_id="user@example.com")
+
+        assert "Subscriber ID cannot contain HTML special characters" in str(exc_info.value)
+
+    def test_resource_subscription_rejects_too_long_email_like_subscriber_id(self):
+        """Email-like IDs should respect max-length limits."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.schemas import ResourceSubscription
+
+        long_subscriber = "a" * (SecurityValidator.MAX_NAME_LENGTH + 1)
+        with pytest.raises(ValidationError) as exc_info:
+            ResourceSubscription(uri="resource://one", subscriber_id=long_subscriber)
+
+        assert "Subscriber ID exceeds maximum length" in str(exc_info.value)

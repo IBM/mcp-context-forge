@@ -1,6 +1,6 @@
 # Supported Databases
 
-MCP Gateway supports multiple database backends with full feature parity across all supported systems.
+ContextForge supports multiple database backends with full feature parity across all supported systems.
 
 ## Database Support Matrix
 
@@ -32,7 +32,7 @@ DATABASE_URL=mysql+pymysql://mcpuser:mypassword@192.168.1.100:3306/mcp_productio
 
 ### Driver Requirements
 
-The `pymysql` driver is included by default in all MCP Gateway installations:
+The `pymysql` driver is included by default in all ContextForge installations:
 
 ```bash
 # Already included - no additional installation needed
@@ -41,32 +41,36 @@ pip install mcp-contextforge-gateway
 
 ### Database Schema Compatibility
 
-MCP Gateway's database schema is fully compatible with MariaDB/MySQL:
+ContextForge's database schema is fully compatible with MariaDB/MySQL:
 
 - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
 - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
 - Complete feature parity with SQLite and PostgreSQL
-- Supports all MCP Gateway features including federation, caching, and A2A agents
+- Supports all ContextForge features including federation, caching, and A2A agents
 
 ## Known Limitations
 
 ### MariaDB/MySQL Specific Limitations
 
 1. **No Partial JSONPath Index Support**
+
    - MariaDB/MySQL do not support partial indexes on JSON paths
    - Full table scans may occur for complex JSON queries
    - **Workaround**: Use additional indexed columns for frequently queried JSON fields
 
 2. **Foreign Key Length Constraints**
+
    - Foreign key column names are limited to 64 characters
    - Some composite foreign keys may require shorter naming
    - **Impact**: Minimal - affects only internal schema design
 
 3. **Case Sensitivity**
+
    - Table and column names are case-sensitive on Linux, case-insensitive on Windows/macOS
    - **Recommendation**: Use consistent lowercase naming for portability
 
 4. **JSON Data Type Differences**
+
    - MariaDB JSON is stored as LONGTEXT with validation
    - MySQL has native JSON data type with better performance
    - **Impact**: Functional compatibility maintained, performance may vary
@@ -74,10 +78,12 @@ MCP Gateway's database schema is fully compatible with MariaDB/MySQL:
 ### General Database Limitations
 
 1. **SQLite Connection Limits**
+
    - SQLite is limited to 50 connections in pool (vs 200 for other databases)
    - **Recommendation**: Use PostgreSQL or MariaDB for high-concurrency deployments
 
 2. **MongoDB Schema Flexibility**
+
    - MongoDB's schemaless nature may allow invalid data structures
    - **Mitigation**: Application-level validation enforced regardless of backend
 
@@ -108,7 +114,7 @@ CREATE INDEX idx_prompts_team_name ON prompts(team_id, name);
 
 ### PostgreSQL to MariaDB Migration
 
-MariaDB is fully compatible with PostgreSQL schemas used by MCP Gateway. Simply update your `DATABASE_URL` to point to MariaDB:
+MariaDB is fully compatible with PostgreSQL schemas used by ContextForge. Simply update your `DATABASE_URL` to point to MariaDB:
 
 ```bash
 # Change from PostgreSQL

@@ -93,7 +93,7 @@ def create_sample_test_data(new_version: str, output_path: Path):
 
     # Update metadata for new version
     template_data["metadata"]["version"] = new_version
-    template_data["metadata"]["description"] = f"Sample test data for MCP Gateway v{new_version} migration testing"
+    template_data["metadata"]["description"] = f"Sample test data for ContextForge v{new_version} migration testing"
 
     # Update annotations in test data to reflect new version
     for category in ["tools", "servers", "gateways", "resources", "prompts", "a2a_agents"]:

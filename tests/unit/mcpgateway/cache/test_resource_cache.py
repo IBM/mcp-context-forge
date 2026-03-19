@@ -8,13 +8,14 @@ Unit tests for ResourceCache.
 """
 
 # Standard
+import asyncio
 import time
 
 # Third-Party
 import pytest
 
 # First-Party
-from mcpgateway.cache.resource_cache import ResourceCache
+from mcpgateway.cache.resource_cache import CacheEntry, ResourceCache
 
 
 @pytest.fixture
@@ -207,6 +208,38 @@ def test_heap_compaction_preserves_valid_entries():
     assert cache.get("a") == 1
     assert cache.get("b") == 2
     assert cache.get("c") == 3
+
+
+def test_compact_heap_preserves_entries_added_during_compaction():
+    """Ensure _compact_heap keeps newer heap entries via heappush path."""
+    cache = ResourceCache(max_size=5, ttl=60)
+    now = time.time()
+    cache._cache["stable"] = CacheEntry(value=1, expires_at=now + 10)
+    cache._expiry_heap = [(now + 10, "stable"), (now + 20, "new-during-compaction")]
+
+    cache._compact_heap()
+
+    assert any(key == "new-during-compaction" for _exp, key in cache._expiry_heap)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_loop_logs_errors_from_cleanup(monkeypatch, caplog):
+    """Cover cleanup loop exception logging path."""
+    cache = ResourceCache(max_size=3, ttl=1)
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("cleanup-failed")
+
+    async def _stop_once(_seconds: float):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr("mcpgateway.cache.resource_cache.asyncio.to_thread", _boom)
+    monkeypatch.setattr("mcpgateway.cache.resource_cache.asyncio.sleep", _stop_once)
+
+    with pytest.raises(asyncio.CancelledError):
+        await cache._cleanup_loop()
+
+    assert "Cache cleanup error: cleanup-failed" in caplog.text
 
 
 class DummyLogger:

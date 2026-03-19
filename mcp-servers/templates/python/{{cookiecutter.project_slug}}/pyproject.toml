@@ -1,0 +1,55 @@
+[project]
+name = "{{ cookiecutter.dist_name }}"
+version = "{{ cookiecutter.version }}"
+description = "{{ cookiecutter.description }}"
+authors = [
+  { name = "{{ cookiecutter.author_name }}", email = "{{ cookiecutter.author_email }}" }
+]
+license = { text = "{{ cookiecutter.license }}" }
+readme = "README.md"
+requires-python = ">={{ cookiecutter.python_min }}"
+dependencies = [
+  "mcp>=1.0.0",
+  "orjson>=3.11.5",
+  "pydantic>=2.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",
+  "pytest-asyncio>=0.21.0",
+  "pytest-cov>=4.0.0",
+  "black>=23.0.0",
+  "mypy>=1.5.0",
+  "ruff>=0.0.290",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/{{ cookiecutter.package_name }}"]
+
+[project.scripts]
+{{ cookiecutter.package_name }} = "{{ cookiecutter.package_name }}.server:main"
+
+[tool.black]
+line-length = 100
+target-version = ["py{{ cookiecutter.python_min|replace('.', '') }}"]
+
+[tool.mypy]
+python_version = "{{ cookiecutter.python_min }}"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py{{ cookiecutter.python_min|replace('.', '') }}"
+select = ["E", "W", "F", "B", "I", "N", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov={{ cookiecutter.package_name }} --cov-report=term-missing"

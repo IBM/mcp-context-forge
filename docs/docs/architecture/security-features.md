@@ -1,6 +1,6 @@
-# MCP Gateway Security Features
+# ContextForge Security Features
 
-**Current Version: 0.9.0 (Beta)** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
+**Current Version: 1.0.0-RC-2** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
 
 ## Security Posture Overview
 
@@ -13,8 +13,9 @@
 
 ### Core Gateway Authentication
 
-- **HTTP Basic Auth** protects the Admin UI and optionally the OpenAPI docs (`DOCS_ALLOW_BASIC_AUTH=true`). Credentials are defined by `BASIC_AUTH_USER`/`BASIC_AUTH_PASSWORD`, and the config endpoint masks secrets (`mcpgateway/admin.py`).
+- **HTTP Basic Auth** is disabled by default for security. Enable with `API_ALLOW_BASIC_AUTH=true` for API endpoints or `DOCS_ALLOW_BASIC_AUTH=true` for docs. When enabled, credentials use `BASIC_AUTH_USER`/`BASIC_AUTH_PASSWORD`. The Admin UI uses email/password authentication, not Basic auth.
 - **JWT bearer tokens** are required for API access and MCP transports when `MCP_CLIENT_AUTH_ENABLED=true` (default). For reverse proxies you can opt into `TRUST_PROXY_AUTH=true` and provide the authenticated identity through `PROXY_USER_HEADER`.
+- **Per-server OAuth enforcement.** Virtual servers with `oauth_enabled=True` require authentication even when the global `MCP_REQUIRE_AUTH=false` (permissive mode). Unauthenticated requests to these servers receive a 401 with an RFC 9728 `WWW-Authenticate` header for OAuth discovery. If the database is unavailable during this check, the request is rejected with 503 (fail-closed). Enforcement is applied at both the middleware and handler levels as a defense-in-depth measure. See [RFC 9728 Compliance](rfc9728-compliance.md#per-server-oauth-enforcement) for details.
 - **Token issuance tooling.** `python -m mcpgateway.utils.create_jwt_token` produces gateway-signed tokens for automation. The helper respects configured expiry, issuer, and audience claims.
 
 ### JWT Token Management
@@ -25,14 +26,11 @@
 
 #### JWT ID (JTI) Claim
 
-The `jti` (JWT ID) claim is a unique identifier for each JWT token, defined in [RFC 7519 Section 4.1.7](https://www.rfc-editor.org/rfc/rfc7519#section-4.1.7). MCP Gateway uses JTI for:
+The `jti` (JWT ID) claim is a unique identifier for each JWT token, defined in [RFC 7519 Section 4.1.7](https://www.rfc-editor.org/rfc/rfc7519#section-4.1.7). ContextForge uses JTI for:
 
 1. **Token Revocation**: Each token can be individually revoked by its JTI without invalidating all tokens for a user. The `TokenRevocation` table stores revoked JTIs.
-
 2. **Auth Cache Keying**: The authentication cache uses `{email}:{jti}` as the cache key pattern (`mcpgateway/cache/auth_cache.py`). This enables per-token caching and prevents cache collisions when users have multiple active tokens.
-
 3. **Replay Attack Prevention**: JTIs enable detection of token reuse, allowing the gateway to track and limit how many times a specific token is used.
-
 4. **Audit Trails**: Every `TokenUsageLog` entry records the JTI, enabling detailed per-token usage analytics and anomaly detection.
 
 **Token Generation Examples**:
@@ -57,6 +55,7 @@ payload = {
 ```
 
 **Cache Behavior**:
+
 - Tokens **with** JTI: Cache key is `mcpgw:auth:ctx:{email}:{jti-uuid}`
 - Tokens **without** JTI: Cache key is `mcpgw:auth:ctx:{email}:no-jti`
 
@@ -74,20 +73,20 @@ For production deployments, always include JTI in issued tokens to enable proper
 - **Hashed personal and team tokens.** `TokenCatalogService` stores only SHA-256 hashes (`token_hash`) of issued tokens (`EmailApiToken`) and keeps the raw secret in memory just long enough to present it once.
 - **Fine-grained scopes.** Tokens can be confined to a server, a permission list, IP CIDRs, and time-of-day or usage quotas via `TokenScope`.
 - **Usage analytics.** Every request records method, endpoint, IP, user-agent, latency, and block reason in `TokenUsageLog`, supporting anomaly detection.
-- **Immediate revocation.** `TokenRevocation` entries are enforced before gateway execution, guaranteeing revoked tokens cannot be replayed.
+- **Immediate revocation (normal path).** `TokenRevocation` entries are enforced before gateway execution; when the revocation store is unavailable, auth paths currently fail open to preserve availability.
 
 ### OAuth & SSO Federation
 
 - **Multi-provider SSO.** `mcpgateway/services/sso_service.py` supports GitHub, Google, IBM Security Verify, Microsoft Entra ID, Okta, Keycloak, and generic OIDC providers. Secrets are encrypted with a Fernet key derived from `AUTH_ENCRYPTION_SECRET`.
 - **Security-state tracking.** `SSOAuthSession` persists OAuth state tokens, PKCE `code_verifier`, and nonces to prevent CSRF and replay attacks.
-- **Per-user OAuth vault.** `TokenStorageService` encrypts access/refresh tokens using AES-GCM (`oauth_encryption.py`) and keys them by both gateway and gateway user to prevent cross-tenant leakage.
+- **Per-user OAuth vault.** `TokenStorageService` encrypts access/refresh tokens via `EncryptionService` (Argon2id-derived Fernet keys) and keys them by both gateway and gateway user to prevent cross-tenant leakage.
 - **Dynamic Client Registration (DCR).** `DcrService` discovers OAuth metadata (RFC 8414), honours issuer allowlists (`DCR_ALLOWED_ISSUERS`), registers clients, and encrypts the resulting client secrets and registration access tokens before storing them (`RegisteredOAuthClient`).
-- **Tool credential encryption.** The same `AUTH_ENCRYPTION_SECRET` powers `services_auth.encode_auth()` to store upstream tool auth blobs as AES-GCM tokens inside the database.
+- **Tool credential encryption.** The same `AUTH_ENCRYPTION_SECRET` powers `services_auth.encode_auth()` to store upstream tool auth blobs as AES-GCM encrypted values inside the database.
 
 ## Authorization & Access Control
 
 - **Role-Based Access Control (RBAC).** `PermissionService` and `RoleService` implement global/team/personal scopes with caching, inheritance, and audit logging (`PermissionAuditLog`). Admin bypass is explicit, and permission checks default to deny on error.
-- **Multi-tenancy primitives.** Teams, invites, and memberships (`EmailTeam`, `EmailTeamMember`, `TeamInvitationService`) enforce owner-only invitations, configurable expiry, and per-team quotas (`MAX_TEAMS_PER_USER`, `MAX_MEMBERS_PER_TEAM`). Personal teams can be auto-created with `AUTO_CREATE_PERSONAL_TEAMS=true`.
+- **Multi-tenancy primitives.** Teams, invites, and memberships (`EmailTeam`, `EmailTeamMember`, `TeamInvitationService`) enforce owner-only invitations, configurable expiry, and per-team quotas (`MAX_TEAMS_PER_USER`, `MAX_MEMBERS_PER_TEAM`). Personal teams can be auto-created with `AUTO_CREATE_PERSONAL_TEAMS=true`. Operators can disable self-service team creation (`ALLOW_TEAM_CREATION`), join requests (`ALLOW_TEAM_JOIN_REQUESTS`), and invitations (`ALLOW_TEAM_INVITATIONS`).
 - **Resource visibility.** Tools, prompts, resources, and gateways include a `visibility` flag (private/team/public) that PermissionService respects when resolving access.
 - **Feature gating.** Administrative capabilities stay off unless you opt in: `MCPGATEWAY_UI_ENABLED`, `MCPGATEWAY_ADMIN_API_ENABLED`, `MCPGATEWAY_BULK_IMPORT_ENABLED`, `MCPGATEWAY_CATALOG_ENABLED`, and `MCPGATEWAY_A2A_ENABLED` all default to safe values.
 - **Scoped API credentials.** Tokens can be restricted to individual virtual servers, explicit permission strings, and IP ranges; blocked requests are captured via `TokenUsageLog.blocked`.
@@ -127,7 +126,8 @@ For production deployments, always include JTI in issued tokens to enable proper
 ## Production Hardening Checklist
 
 - [ ] **Set production posture.** Run with `ENVIRONMENT=production`, configure `APP_DOMAIN` and explicit `ALLOWED_ORIGINS`, and leave `SKIP_SSL_VERIFY=false`.
-- [ ] **Harden secrets.** Rotate `BASIC_AUTH_PASSWORD`, `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, `PLATFORM_ADMIN_PASSWORD`, and database credentials; enable `REQUIRE_STRONG_SECRETS=true` so weak values stop startup.
+- [ ] **Harden secrets.** Rotate `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, `PLATFORM_ADMIN_PASSWORD`, and database credentials; enable `REQUIRE_STRONG_SECRETS=true` so weak values stop startup.
+- [ ] **Keep Basic auth disabled.** Leave `API_ALLOW_BASIC_AUTH=false` (default) and `DOCS_ALLOW_BASIC_AUTH=false` (default). Use JWT tokens for API access.
 - [ ] **Keep auth mandatory.** Maintain `AUTH_REQUIRED=true`, `MCP_CLIENT_AUTH_ENABLED=true`, and only enable `TRUST_PROXY_AUTH` behind a trusted authentication proxy.
 - [ ] **Disable unused surfaces.** Leave `MCPGATEWAY_UI_ENABLED=false`, `MCPGATEWAY_ADMIN_API_ENABLED=false`, `MCPGATEWAY_BULK_IMPORT_ENABLED=false`, `MCPGATEWAY_A2A_ENABLED=false`, and `MCPGATEWAY_CATALOG_ENABLED=false` unless you actively use them.
 - [ ] **Leave header passthrough off.** `ENABLE_HEADER_PASSTHROUGH=false` (default) should only change after reviewing downstream requirements and allowlists.

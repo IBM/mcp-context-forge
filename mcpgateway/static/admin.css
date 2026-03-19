@@ -166,9 +166,9 @@
     display: none;
 }
 
-/* .hidden {
+.hidden {
   display: none;
-} */
+}
 
 /* Modal z-index to prevent sticky header overlap */
 .fixed.z-10 {
@@ -632,10 +632,10 @@
 
 /* Welcome Message Animations */
 #chat-welcome-message {
-    animation: fade-in 0.5s ease-in;
+    animation: fade-in-welcome 0.5s ease-in;
 }
 
-@keyframes fade-in {
+@keyframes fade-in-welcome {
     from {
         opacity: 0;
     }
@@ -1183,4 +1183,17 @@ nav[class*="-mb-px"]::-webkit-scrollbar-thumb:hover {
     nav[class*="-mb-px"] {
         gap: 0.5rem;
     }
+}
+
+/* Override HTMX's default "show all indicators on any request" behavior
+   This prevents spinners from showing during background /trace requests */
+body.htmx-request .htmx-indicator {
+    visibility: hidden;
+}
+
+/* Only show indicators when explicitly targeted via hx-indicator attribute
+   HTMX adds htmx-request class to the indicator when it's the target.
+   Use higher specificity to override the rule above. */
+body.htmx-request .htmx-indicator.htmx-request {
+    visibility: visible;
 }

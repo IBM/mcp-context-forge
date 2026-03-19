@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 Container management utilities for migration testing.
 
 This module provides comprehensive Docker/Podman container orchestration
-for testing database migrations across different MCP Gateway versions.
+for testing database migrations across different ContextForge versions.
 """
 
 # Standard
@@ -45,7 +45,7 @@ class ContainerManager:
     """Manages Docker/Podman containers for migration testing.
 
     Provides high-level interface for:
-    - Pulling container images for all MCP Gateway versions
+    - Pulling container images for all ContextForge versions
     - Starting SQLite containers for isolated testing
     - Starting docker-compose stacks for PostgreSQL testing
     - Executing Alembic commands within containers
@@ -165,7 +165,7 @@ class ContainerManager:
         """Start SQLite container with mounted test database.
 
         Args:
-            version: MCP Gateway version to use
+            version: ContextForge version to use
             db_file: SQLite database filename
             extra_env: Additional environment variables
             data_dir: Existing data directory to reuse (for migration tests)
@@ -372,7 +372,7 @@ class ContainerManager:
         """Start docker-compose stack for PostgreSQL testing.
 
         Args:
-            version: MCP Gateway version to use
+            version: ContextForge version to use
             compose_file: Path to docker-compose file
 
         Returns:
@@ -386,7 +386,7 @@ class ContainerManager:
         logger.info(f"🔧 Environment variables: {env}")
 
         # Start the stack
-        cmd = [f"{self.runtime}-compose", "-f", compose_file, "up", "-d"]
+        cmd = self._compose_command("-f", compose_file, "up", "-d")
         self._run_command(cmd, env=env)
 
         # Get container IDs for all services
@@ -412,7 +412,7 @@ class ContainerManager:
         Returns:
             Dictionary mapping service names to container IDs
         """
-        cmd = [f"{self.runtime}-compose", "-f", compose_file, "ps", "-q"]
+        cmd = self._compose_command("-f", compose_file, "ps", "-q")
         result = self._run_command(cmd, capture_output=True)
 
         container_ids = result.stdout.strip().split("\n")
@@ -421,7 +421,7 @@ class ContainerManager:
         for container_id in container_ids:
             if container_id:
                 # Get service name for this container
-                inspect_cmd = [self.runtime, "inspect", container_id, "--format", '{{.Config.Labels."com.docker.compose.service"}}']
+                inspect_cmd = [self.runtime, "inspect", container_id, "--format", '{{ index .Config.Labels "com.docker.compose.service" }}']
                 inspect_result = self._run_command(inspect_cmd, capture_output=True)
                 service_name = inspect_result.stdout.strip()
                 containers[service_name] = container_id
@@ -457,6 +457,16 @@ class ContainerManager:
 
         logger.error(f"❌ Timeout waiting for PostgreSQL {container_id[:12]} to be ready")
         raise RuntimeError(f"PostgreSQL failed to become ready within {timeout}s")
+
+    def _compose_command(self, *args: str) -> list[str]:
+        """Build a compose command for the active container runtime.
+
+        Docker uses the Compose v2 plugin (`docker compose`). Podman continues
+        to use the standalone `podman-compose` wrapper.
+        """
+        if self.runtime == "docker":
+            return [self.runtime, "compose", *args]
+        return [f"{self.runtime}-compose", *args]
 
     def exec_alembic_command(self, container_id: str, command: str) -> str:
         """Execute Alembic command in container.

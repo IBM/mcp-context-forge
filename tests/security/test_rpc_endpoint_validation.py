@@ -38,14 +38,14 @@ class TestRPCEndpointValidation:
     """
 
     @pytest.fixture
-    def client(self, app):
+    def client(self, app_with_temp_db):
         """Create a test client for the FastAPI app with mocked security_logger."""
         # Mock security_logger to prevent database access
         mock_sec_logger = MagicMock()
         mock_sec_logger.log_authentication_attempt = MagicMock(return_value=None)
         mock_sec_logger.log_security_event = MagicMock(return_value=None)
         with patch("mcpgateway.middleware.auth_middleware.security_logger", mock_sec_logger):
-            yield TestClient(app)
+            yield TestClient(app_with_temp_db)
 
     @pytest.fixture
     def auth_headers(self):

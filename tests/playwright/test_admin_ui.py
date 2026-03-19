@@ -11,120 +11,139 @@ Test cases for admin UI.
 import re
 
 # Third-Party
-from playwright.sync_api import expect, Page
+from playwright.sync_api import expect
+import pytest
 
 # Local
 from .pages.admin_page import AdminPage
 
 
+@pytest.mark.ui
+@pytest.mark.smoke
 class TestAdminUI:
     """Admin UI test cases."""
 
-    def test_admin_panel_loads(self, page: Page, base_url: str):
+    def test_admin_panel_loads(self, admin_page: AdminPage):
         """Test that admin panel loads successfully."""
-        admin_page = AdminPage(page, base_url)
-        admin_page.navigate()
+        # admin_page fixture already navigated and authenticated
+        # Verify admin panel loaded (no need to navigate again)
+        expect(admin_page.page).to_have_title(re.compile(r"(ContextForge Admin|ContextForge - Gateway Administration)"))
+        expect(admin_page.servers_tab).to_be_visible()
+        expect(admin_page.tools_tab).to_be_visible()
+        expect(admin_page.gateways_tab).to_be_visible()
 
-        # Verify admin panel loaded
-        expect(page).to_have_title("MCP Gateway Admin")
-        assert admin_page.element_exists(admin_page.SERVERS_TAB)
-        assert admin_page.element_exists(admin_page.TOOLS_TAB)
-        assert admin_page.element_exists(admin_page.GATEWAYS_TAB)
-
-    def test_navigate_between_tabs(self, page: Page, base_url: str):
+    def test_navigate_between_tabs(self, admin_page: AdminPage, base_url: str):
         """Test navigation between different tabs."""
-        admin_page = AdminPage(page, base_url)
         admin_page.navigate()
 
         # Test servers tab (it's actually "catalog" in the URL)
         admin_page.click_servers_tab()
         # Accept both with and without trailing slash
-        expect(page).to_have_url(re.compile(f"{re.escape(base_url)}/admin/?#catalog"))
+        expect(admin_page.page).to_have_url(re.compile(f"{re.escape(base_url)}/admin/?#catalog"))
 
         # Test tools tab
         admin_page.click_tools_tab()
-        expect(page).to_have_url(re.compile(f"{re.escape(base_url)}/admin/?#tools"))
+        expect(admin_page.page).to_have_url(re.compile(f"{re.escape(base_url)}/admin/?#tools"))
 
         # Test gateways tab
         admin_page.click_gateways_tab()
-        expect(page).to_have_url(re.compile(f"{re.escape(base_url)}/admin/?#gateways"))
+        expect(admin_page.page).to_have_url(re.compile(f"{re.escape(base_url)}/admin/?#gateways"))
 
-    def test_add_new_server(self, page: Page, base_url: str):
-        """Test adding a new server."""
-        admin_page = AdminPage(page, base_url)
-        admin_page.navigate()
-
-        # Add a test server
-        test_server_name = "Test MCP Server"
-        test_server_icon_url = "http://localhost:9000/icon.png"
-
-        # Fill the form directly instead of using the page object method
-        page.fill('input[name="name"]', test_server_name)
-        page.fill('input[name="icon"]', test_server_icon_url)
-
-        # Submit the form
-        page.click('button[type="submit"][data-testid="add-server-btn"]')
-
-        # Wait for the redirect to complete - the form submission redirects to /admin#catalog
-        page.wait_for_url(re.compile(r".*/admin.*#catalog"), wait_until="networkidle")
-
-        # Now wait for the server list to be visible
-        page.wait_for_selector('[data-testid="server-list"]', state="visible")
-
-        # Verify server was added by checking if the name appears in the table
-        server_rows = page.locator('[data-testid="server-item"]')
-        server_found = False
-
-        # Wait a bit for the table to update
-        page.wait_for_timeout(1000)
-
-        for i in range(server_rows.count()):
-            row_text = server_rows.nth(i).text_content()
-            if test_server_name in row_text:
-                server_found = True
-                break
-
-        assert server_found, f"Server '{test_server_name}' was not found in the server list"
-
-    def test_search_functionality(self, page: Page, base_url: str):
+    def test_search_functionality(self, admin_page: AdminPage):
         """Test search functionality in admin panel."""
-        admin_page = AdminPage(page, base_url)
         admin_page.navigate()
+        admin_page.click_servers_tab()
 
-        # Get initial server count
-        page.wait_for_selector('[data-testid="server-list"]')
+        # Get initial server count (server_list may be empty/hidden, so use attached)
+        admin_page.wait_for_attached(admin_page.server_list)
         initial_count = admin_page.get_server_count()
 
         # Search for non-existent server
         admin_page.search_servers("nonexistentserver123")
-        page.wait_for_timeout(500)
+
+        # Wait for filtering to take effect
+        admin_page.wait_for_count_change(admin_page.server_items, initial_count, timeout=5000)
 
         # Should show no results or fewer results
         search_count = admin_page.get_server_count()
-        assert search_count <= initial_count
+        if initial_count > 0:
+            assert search_count < initial_count
+        else:
+            pytest.skip("No servers available to validate search filtering.")
 
-    def test_responsive_design(self, page: Page, base_url: str):
+    def test_responsive_design(self, admin_page: AdminPage):
         """Test admin panel responsive design."""
-        admin_page = AdminPage(page, base_url)
-
         # Test mobile viewport
-        page.set_viewport_size({"width": 375, "height": 667})
+        admin_page.page.set_viewport_size({"width": 375, "height": 667})
         admin_page.navigate()
 
         # Since there's no mobile menu implementation, let's check if the page is still functional
         # and that key elements are visible
-        expect(page.locator('[data-testid="servers-tab"]')).to_be_visible()
+        expect(admin_page.servers_tab).to_be_visible()
 
         # The tabs should still be accessible even in mobile view
         # Check if the page adapts by verifying the main content area
-        expect(page.locator("#catalog-panel, #tools-panel, #gateways-panel").first).to_be_visible()
+        assert (
+            admin_page.page.locator("#overview-panel:visible").count() > 0
+            or admin_page.catalog_panel.locator(":visible").count() > 0
+            or admin_page.tools_panel.locator(":visible").count() > 0
+            or admin_page.gateways_panel.locator(":visible").count() > 0
+        )
 
         # Test tablet viewport
-        page.set_viewport_size({"width": 768, "height": 1024})
-        page.reload()
-        expect(page.locator('[data-testid="servers-tab"]')).to_be_visible()
+        admin_page.page.set_viewport_size({"width": 768, "height": 1024})
+        admin_page.navigate()
+        expect(admin_page.servers_tab).to_be_visible()
 
         # Test desktop viewport
-        page.set_viewport_size({"width": 1920, "height": 1080})
-        page.reload()
-        expect(page.locator('[data-testid="servers-tab"]')).to_be_visible()
+        admin_page.page.set_viewport_size({"width": 1920, "height": 1080})
+        admin_page.navigate()
+        expect(admin_page.servers_tab).to_be_visible()
+
+    def test_sidebar_visible_after_mobile_collapse_and_resize(self, admin_page: AdminPage):
+        """Test sidebar reappears when resizing from mobile back to desktop (#2947)."""
+        sidebar = admin_page.page.locator("#sidebar")
+
+        # Start at desktop size — sidebar should be visible
+        admin_page.page.set_viewport_size({"width": 1280, "height": 800})
+        admin_page.navigate()
+        expect(sidebar).to_be_visible()
+
+        # Shrink to mobile — hide sidebar via Alpine $dispatch, then verify hamburger toggle
+        admin_page.page.set_viewport_size({"width": 375, "height": 667})
+        admin_page.page.wait_for_timeout(300)
+        # Alpine keeps sidebarOpen=true from desktop; force it closed
+        admin_page.page.evaluate(
+            """() => {
+                const el = document.querySelector('[x-data]');
+                if (!el) return;
+                // Try Alpine v3 _x_dataStack, then v2 __x
+                if (el._x_dataStack) { el._x_dataStack[0].sidebarOpen = false; }
+                else if (el.__x) { el.__x.$data.sidebarOpen = false; }
+            }"""
+        )
+        admin_page.page.wait_for_timeout(500)
+
+        hamburger = admin_page.page.locator("button.lg\\:hidden")
+        expect(hamburger).to_be_visible(timeout=10000)
+
+        # Open sidebar via hamburger (use force to bypass any residual overlay)
+        hamburger.click(force=True, timeout=10000)
+        admin_page.page.wait_for_timeout(500)
+        expect(sidebar).to_be_visible(timeout=10000)
+
+        # Close sidebar again
+        admin_page.page.evaluate(
+            """() => {
+                const el = document.querySelector('[x-data]');
+                if (!el) return;
+                if (el._x_dataStack) { el._x_dataStack[0].sidebarOpen = false; }
+                else if (el.__x) { el.__x.$data.sidebarOpen = false; }
+            }"""
+        )
+        admin_page.page.wait_for_timeout(400)
+
+        # Resize back to desktop — sidebar must reappear without page reload
+        admin_page.page.set_viewport_size({"width": 1280, "height": 800})
+        admin_page.page.wait_for_timeout(300)
+        expect(sidebar).to_be_visible()

@@ -20,6 +20,7 @@ history management via ChatHistoryManager from mcp_client_chat_service.
 # Standard
 import asyncio
 import os
+import time
 from typing import Any, Dict, Optional
 
 # Third-Party
@@ -37,8 +38,9 @@ except ImportError:
     REDIS_AVAILABLE = False
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.middleware.rbac import get_current_user_with_permissions
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_client_chat_service import (
     GatewayConfig,
@@ -48,6 +50,7 @@ from mcpgateway.services.mcp_client_chat_service import (
     MCPServerConfig,
 )
 from mcpgateway.utils.redis_client import get_redis_client
+from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
 # Initialize router
 llmchat_router = APIRouter(prefix="/llmchat", tags=["llmchat"])
@@ -73,7 +76,7 @@ async def init_redis() -> None:
 active_sessions: Dict[str, MCPChatService] = {}
 
 # Store configuration per user
-user_configs: Dict[str, MCPClientConfig] = {}
+user_configs: Dict[str, tuple[bytes, float]] = {}
 
 # Logging
 logging_service = LoggingService()
@@ -322,6 +325,26 @@ SESSION_TTL = settings.llmchat_session_ttl  # seconds for active_session key TTL
 LOCK_TTL = settings.llmchat_session_lock_ttl  # seconds for lock expiry
 LOCK_RETRIES = settings.llmchat_session_lock_retries  # how many times to poll while waiting
 LOCK_WAIT = settings.llmchat_session_lock_wait  # seconds between polls
+USER_CONFIG_TTL = settings.llmchat_session_ttl
+
+_ENCRYPTED_CONFIG_PAYLOAD_KEY = "_encrypted_payload"
+_ENCRYPTED_CONFIG_VERSION_KEY = "_version"
+_ENCRYPTED_CONFIG_VERSION = "1"
+_CONFIG_SENSITIVE_KEYS = frozenset(
+    {
+        "api_key",
+        "auth_token",
+        "authorization",
+        "access_token",
+        "refresh_token",
+        "client_secret",
+        "secret_access_key",
+        "session_token",
+        "credentials_json",
+        "password",
+        "private_key",
+    }
+)
 
 
 # Redis key helpers
@@ -361,6 +384,92 @@ def _lock_key(user_id: str) -> str:
     return f"session_lock:{user_id}"
 
 
+def _serialize_user_config_for_storage(config: MCPClientConfig) -> bytes:
+    """Serialize and encrypt user config for storage backends.
+
+    Args:
+        config: User MCP client configuration.
+
+    Returns:
+        Serialized bytes containing encrypted config envelope.
+    """
+    payload = encode_auth({"config": config.model_dump()})
+    return orjson.dumps(
+        {
+            _ENCRYPTED_CONFIG_VERSION_KEY: _ENCRYPTED_CONFIG_VERSION,
+            _ENCRYPTED_CONFIG_PAYLOAD_KEY: payload,
+        }
+    )
+
+
+def _deserialize_user_config_from_storage(data: bytes | str) -> Optional[MCPClientConfig]:
+    """Deserialize user config from encrypted or legacy plaintext payloads.
+
+    Args:
+        data: Serialized config payload from storage.
+
+    Returns:
+        Parsed ``MCPClientConfig`` when data is valid, otherwise ``None``.
+    """
+    try:
+        parsed = orjson.loads(data)
+    except Exception:
+        logger.warning("Failed to parse stored LLM chat config payload")
+        return None
+
+    # New encrypted envelope
+    if isinstance(parsed, dict) and _ENCRYPTED_CONFIG_PAYLOAD_KEY in parsed:
+        encrypted_payload = parsed.get(_ENCRYPTED_CONFIG_PAYLOAD_KEY)
+        if not encrypted_payload:
+            return None
+        decoded = decode_auth(encrypted_payload)
+        config_data = decoded.get("config") if isinstance(decoded, dict) else None
+        if not isinstance(config_data, dict):
+            logger.warning("Decoded encrypted LLM chat config is invalid")
+            return None
+        return MCPClientConfig(**config_data)
+
+    # Legacy plaintext payload compatibility
+    if isinstance(parsed, dict):
+        return MCPClientConfig(**parsed)
+
+    return None
+
+
+def _is_sensitive_config_key(key: str) -> bool:
+    """Return whether a config key should be masked in responses.
+
+    Args:
+        key: Config field name.
+
+    Returns:
+        ``True`` when key is in the sensitive-key allowlist.
+    """
+    return str(key).strip().lower() in _CONFIG_SENSITIVE_KEYS
+
+
+def _mask_sensitive_config_values(value: Any) -> Any:
+    """Recursively mask sensitive config values in API responses.
+
+    Args:
+        value: Arbitrary nested config value.
+
+    Returns:
+        Value with sensitive fields replaced by configured mask marker.
+    """
+    if isinstance(value, dict):
+        masked: Dict[str, Any] = {}
+        for key, item in value.items():
+            if _is_sensitive_config_key(key):
+                masked[key] = settings.masked_auth_value if item not in (None, "") else item
+            else:
+                masked[key] = _mask_sensitive_config_values(item)
+        return masked
+    if isinstance(value, list):
+        return [_mask_sensitive_config_values(item) for item in value]
+    return value
+
+
 # ---------- CONFIG HELPERS ----------
 
 
@@ -371,10 +480,11 @@ async def set_user_config(user_id: str, config: MCPClientConfig):
         user_id: User identifier.
         config: Complete MCP client configuration.
     """
+    serialized = _serialize_user_config_for_storage(config)
     if redis_client:
-        await redis_client.set(_cfg_key(user_id), orjson.dumps(config.model_dump()))
+        await redis_client.set(_cfg_key(user_id), serialized, ex=USER_CONFIG_TTL)
     else:
-        user_configs[user_id] = config
+        user_configs[user_id] = (serialized, time.monotonic())
 
 
 async def get_user_config(user_id: str) -> Optional[MCPClientConfig]:
@@ -390,8 +500,16 @@ async def get_user_config(user_id: str) -> Optional[MCPClientConfig]:
         data = await redis_client.get(_cfg_key(user_id))
         if not data:
             return None
-        return MCPClientConfig(**orjson.loads(data))
-    return user_configs.get(user_id)
+        return _deserialize_user_config_from_storage(data)
+
+    cached_entry = user_configs.get(user_id)
+    if not cached_entry:
+        return None
+    cached, cached_at = cached_entry
+    if (time.monotonic() - cached_at) > USER_CONFIG_TTL:
+        user_configs.pop(user_id, None)
+        return None
+    return _deserialize_user_config_from_storage(cached)
 
 
 async def delete_user_config(user_id: str):
@@ -445,7 +563,7 @@ async def delete_active_session(user_id: str):
             """
             await redis_client.eval(release_script, 1, _active_key(user_id), WORKER_ID)
         except Exception as e:
-            logger.warning(f"Failed to delete active session for user {user_id}: {e}")
+            logger.warning(f"Failed to delete active session for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
 
 
 async def _try_acquire_lock(user_id: str) -> bool:
@@ -485,7 +603,7 @@ async def _release_lock_safe(user_id: str):
         """
         await redis_client.eval(release_script, 1, _lock_key(user_id), WORKER_ID)
     except Exception as e:
-        logger.warning(f"Failed to release lock for user {user_id}: {e}")
+        logger.warning(f"Failed to release lock for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
 
 
 async def _create_local_session_from_config(user_id: str) -> Optional[MCPChatService]:
@@ -509,7 +627,7 @@ async def _create_local_session_from_config(user_id: str) -> Optional[MCPChatSer
         return chat_service
     except Exception as e:
         # If initialization fails, ensure nothing partial remains
-        logger.error(f"Failed to initialize MCPChatService for {user_id}: {e}", exc_info=True)
+        logger.error(f"Failed to initialize MCPChatService for {SecurityValidator.sanitize_log_message(user_id)}: {e}", exc_info=True)
         # cleanup local state and redis ownership (if we set it)
         await delete_active_session(user_id)
         return None
@@ -550,7 +668,7 @@ async def get_active_session(user_id: str) -> Optional[MCPChatService]:
                 await redis_client.expire(active_key, SESSION_TTL)
             except Exception as e:  # nosec B110
                 # non-fatal if expire fails, just log the error
-                logger.debug(f"Failed to refresh session TTL for {user_id}: {e}")
+                logger.debug(f"Failed to refresh session TTL for {SecurityValidator.sanitize_log_message(user_id)}: {e}")
             return local
 
         # Owner in Redis points to this worker but local session missing (process restart or lost).
@@ -610,6 +728,7 @@ async def get_active_session(user_id: str) -> Optional[MCPChatService]:
 
 
 @llmchat_router.post("/connect")
+@require_permission("llm.invoke")
 async def connect(input_data: ConnectInput, request: Request, user=Depends(get_current_user_with_permissions)):
     """Create or refresh a chat session for a user.
 
@@ -678,6 +797,14 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
         if not user_id or not isinstance(user_id, str):
             raise HTTPException(status_code=400, detail="Invalid user ID provided")
 
+        # Validate user-supplied server URLs with SSRF protections before any outbound connection setup.
+        if input_data.server and input_data.server.url:
+            try:
+                input_data.server.url = SecurityValidator.validate_url(str(input_data.server.url), "MCP server URL")
+            except ValueError as e:
+                logger.warning("LLM chat connect URL validation failed for user %s and URL %s: %s", user_id, input_data.server.url, e)
+                raise HTTPException(status_code=400, detail="Invalid server URL")
+
         # Handle authentication token
         empty_token = ""  # nosec B105
         if input_data.server and (input_data.server.auth_token is None or input_data.server.auth_token == empty_token):
@@ -690,10 +817,10 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
         existing = await get_active_session(user_id)
         if existing:
             try:
-                logger.debug(f"Disconnecting existing session for {user_id} before reconnecting")
+                logger.debug(f"Disconnecting existing session for {SecurityValidator.sanitize_log_message(user_id)} before reconnecting")
                 await existing.shutdown()
             except Exception as shutdown_error:
-                logger.warning(f"Failed to cleanly shutdown existing session for {user_id}: {shutdown_error}")
+                logger.warning(f"Failed to cleanly shutdown existing session for {SecurityValidator.sanitize_log_message(user_id)}: {shutdown_error}")
             finally:
                 # Always remove the session from active sessions, even if shutdown failed
                 await delete_active_session(user_id)
@@ -802,65 +929,6 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
         All exceptions are caught and converted to error events for client handling.
     """
 
-    def json_default(obj):
-        """
-        Default JSON serializer helper for non-serializable Python objects.
-
-        Intended for use as the `default` parameter of `json.dumps`. The
-        function tries common serialization patterns in the following order:
-
-        1. model_dump() for Pydantic v2 models
-        2. dict() for Pydantic v1 models
-        3. __dict__ for plain Python objects
-        4. Fallback to str(obj)
-
-        Args:
-            obj: An object that is not JSON serializable by default.
-
-        Returns:
-            A JSON-serializable representation of ``obj``.
-
-        Examples:
-            >>> class Simple:
-            ...     def __init__(self):
-            ...         self.x = 1
-            ...         self.y = 2
-            ...
-            >>> json_default(Simple())
-            {'x': 1, 'y': 2}
-
-            >>> class WithStr:
-            ...     def __str__(self):
-            ...         return "custom"
-            ...
-            >>> json_default(WithStr())
-            'custom'
-
-            >>> class PydanticV1Like:
-            ...     def dict(self):
-            ...         return {"a": 1}
-            ...
-            >>> json_default(PydanticV1Like())
-            {'a': 1}
-
-            >>> class PydanticV2Like:
-            ...     def model_dump(self):
-            ...         return {"b": 2}
-            ...
-            >>> json_default(PydanticV2Like())
-            {'b': 2}
-        """
-        # Try common patterns first
-        if hasattr(obj, "model_dump"):  # pydantic v2
-            return obj.model_dump()
-        if hasattr(obj, "dict"):  # pydantic v1
-            return obj.dict()
-        if hasattr(obj, "__dict__"):
-            return obj.__dict__
-
-        # Fallback: string representation
-        return str(obj)
-
     async def sse(event_type: str, data: Dict[str, Any]):
         """Format data as Server-Sent Event.
 
@@ -908,6 +976,7 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
 
 
 @llmchat_router.post("/chat")
+@require_permission("llm.invoke")
 async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permissions)):
     """Send a message to the user's active chat session and receive a response.
 
@@ -1019,11 +1088,12 @@ async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permiss
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in chat endpoint for user {user_id}: {e}", exc_info=True)
+        logger.error(f"Unexpected error in chat endpoint for user {SecurityValidator.sanitize_log_message(user_id)}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 
 @llmchat_router.post("/disconnect")
+@require_permission("llm.invoke")
 async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_with_permissions)):
     """End the chat session for a user and clean up resources.
 
@@ -1093,17 +1163,18 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
     try:
         # Clear chat history on disconnect
         await chat_service.clear_history()
-        logger.info(f"Chat session disconnected for {user_id}")
+        logger.info(f"Chat session disconnected for {SecurityValidator.sanitize_log_message(user_id)}")
 
         await chat_service.shutdown()
         return {"status": "disconnected", "user_id": user_id, "message": "Successfully disconnected"}
     except Exception as e:
-        logger.error(f"Error during disconnect for user {user_id}: {e}", exc_info=True)
+        logger.error(f"Error during disconnect for user {SecurityValidator.sanitize_log_message(user_id)}: {e}", exc_info=True)
         # Session already removed, so return success with warning
         return {"status": "disconnected_with_errors", "user_id": user_id, "message": "Disconnected but cleanup encountered errors", "warning": str(e)}
 
 
 @llmchat_router.get("/status/{user_id}")
+@require_permission("llm.read")
 async def status(user_id: str, user=Depends(get_current_user_with_permissions)):
     """Check if an active chat session exists for the specified user.
 
@@ -1149,6 +1220,7 @@ async def status(user_id: str, user=Depends(get_current_user_with_permissions)):
 
 
 @llmchat_router.get("/config/{user_id}")
+@require_permission("llm.read")
 async def get_config(user_id: str, user=Depends(get_current_user_with_permissions)):
     """Retrieve the stored configuration for a user's session.
 
@@ -1204,17 +1276,12 @@ async def get_config(user_id: str, user=Depends(get_current_user_with_permission
     if not config:
         raise HTTPException(status_code=404, detail="No config found for this user.")
 
-    # Sanitize and return config (remove secrets)
     config_dict = config.model_dump()
-
-    if "config" in config_dict.get("llm", {}):
-        config_dict["llm"]["config"].pop("api_key", None)
-        config_dict["llm"]["config"].pop("auth_token", None)
-
-    return config_dict
+    return _mask_sensitive_config_values(config_dict)
 
 
 @llmchat_router.get("/gateway/models")
+@require_permission("llm.read")
 async def get_gateway_models(_user=Depends(get_current_user_with_permissions)):
     """Get available models from configured LLM providers.
 

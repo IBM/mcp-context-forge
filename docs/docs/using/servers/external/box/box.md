@@ -36,9 +36,10 @@ Box MCP uses OAuth 2.1 for secure authentication, providing enhanced security wi
 5. Name your application
 6. Configure OAuth 2.0 settings:
    ```
-   Redirect URI: http://localhost:8080/callback
+   Redirect URI: http://localhost:4444/callback
    Application Scopes: Select required permissions
-   CORS Domains: http://localhost:8080 (for development)
+   CORS Domains: http://localhost:4444 (for development)
+   # If running docker-compose with nginx, use http://localhost:8080 instead.
    ```
 7. Save your `Client ID` and `Client Secret`
 
@@ -167,9 +168,9 @@ class BoxOAuth21Client:
         return response.status_code == 200
 ```
 
-#### Step 3: MCP Gateway Integration
+#### Step 3: ContextForge Integration
 
-Configure Box MCP in your MCP Gateway:
+Configure Box MCP in your ContextForge:
 
 ```yaml
 # config.yaml
@@ -200,13 +201,14 @@ external_servers:
 # .env file
 BOX_CLIENT_ID=your_box_client_id
 BOX_CLIENT_SECRET=your_box_client_secret
-BOX_REDIRECT_URI=http://localhost:8080/callback
+BOX_REDIRECT_URI=http://localhost:4444/callback
+# If running docker-compose with nginx, use http://localhost:8080/callback
 BOX_WEBHOOK_SECRET=your_webhook_secret
 ```
 
 ## Integration Example
 
-### Complete OAuth 2.1 Flow with MCP Gateway
+### Complete OAuth 2.1 Flow with ContextForge
 
 ```python
 import asyncio
@@ -227,7 +229,7 @@ class BoxMCPGatewayClient:
 
     async def authenticate_interactive(self):
         """Interactive OAuth 2.1 authentication flow"""
-        redirect_uri = "http://localhost:8080/callback"
+        redirect_uri = f"{self.gateway_url}/callback"
 
         # Step 1: Generate authorization URL
         auth_url, state = self.oauth_client.get_authorization_url(redirect_uri)
@@ -257,7 +259,7 @@ class BoxMCPGatewayClient:
                 self.tokens = self.oauth_client.exchange_code_for_tokens(code, redirect_uri)
                 self.token_expiry = datetime.now() + timedelta(seconds=self.tokens['expires_in'])
 
-                # Register with MCP Gateway
+                # Register with ContextForge
                 await self.register_with_gateway()
 
                 app['auth_complete'].set()
@@ -279,7 +281,7 @@ class BoxMCPGatewayClient:
         print("Authentication completed successfully!")
 
     async def register_with_gateway(self):
-        """Register Box MCP server with MCP Gateway"""
+        """Register Box MCP server with ContextForge"""
         async with aiohttp.ClientSession() as session:
             # Register the server
             server_data = {
@@ -304,7 +306,7 @@ class BoxMCPGatewayClient:
                 if response.status == 201:
                     result = await response.json()
                     self.gateway_id = result['id']
-                    print(f"Registered with MCP Gateway: {self.gateway_id}")
+                    print(f"Registered with ContextForge: {self.gateway_id}")
                 else:
                     raise Exception(f"Gateway registration failed: {await response.text()}")
 
@@ -325,7 +327,7 @@ class BoxMCPGatewayClient:
             await self.update_gateway_token()
 
     async def update_gateway_token(self):
-        """Update MCP Gateway with refreshed token"""
+        """Update ContextForge with refreshed token"""
         async with aiohttp.ClientSession() as session:
             update_data = {
                 "access_token": self.tokens['access_token'],

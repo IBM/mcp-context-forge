@@ -1,19 +1,19 @@
 <!-- htmlhint doctype-first:false -->
-<div class="stats-grid">
-    <div class="stat-card success">
-        <div class="stat-label">Total Requests</div>
-        <div class="stat-value">{{ stats.total_traces }}<span class="stat-unit"></span></div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+    <div class="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm dark:shadow-gray-900/30 border-l-4 border-emerald-500">
+        <div class="text-sm text-gray-600 dark:text-gray-400 mb-2">Total Requests</div>
+        <div class="text-3xl font-bold text-gray-900 dark:text-gray-100">{{ stats.total_traces }}</div>
     </div>
-    <div class="stat-card success">
-        <div class="stat-label">Success Rate</div>
-        <div class="stat-value">{{ "%.1f"|format(stats.success_count / stats.total_traces * 100 if stats.total_traces > 0 else 0) }}<span class="stat-unit">%</span></div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm dark:shadow-gray-900/30 border-l-4 border-emerald-500">
+        <div class="text-sm text-gray-600 dark:text-gray-400 mb-2">Success Rate</div>
+        <div class="text-3xl font-bold text-gray-900 dark:text-gray-100">{{ "%.1f"|format(stats.success_count / stats.total_traces * 100 if stats.total_traces > 0 else 0) }}<span class="text-base text-gray-600 dark:text-gray-400 ml-1">%</span></div>
     </div>
-    <div class="stat-card error">
-        <div class="stat-label">Error Count</div>
-        <div class="stat-value">{{ stats.error_count }}<span class="stat-unit"></span></div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm dark:shadow-gray-900/30 border-l-4 border-red-500">
+        <div class="text-sm text-gray-600 dark:text-gray-400 mb-2">Error Count</div>
+        <div class="text-3xl font-bold text-gray-900 dark:text-gray-100">{{ stats.error_count }}</div>
     </div>
-    <div class="stat-card warning">
-        <div class="stat-label">Avg Response Time</div>
-        <div class="stat-value">{{ "%.0f"|format(stats.avg_duration_ms) }}<span class="stat-unit">ms</span></div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm dark:shadow-gray-900/30 border-l-4 border-amber-500">
+        <div class="text-sm text-gray-600 dark:text-gray-400 mb-2">Avg Response Time</div>
+        <div class="text-3xl font-bold text-gray-900 dark:text-gray-100">{{ "%.0f"|format(stats.avg_duration_ms) }}<span class="text-base text-gray-600 dark:text-gray-400 ml-1">ms</span></div>
     </div>
 </div>

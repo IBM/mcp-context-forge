@@ -143,16 +143,18 @@ A new `MCP_REQUIRE_AUTH` configuration option provides fine-grained control over
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `MCP_REQUIRE_AUTH` | `false` | When `true`, all `/mcp` requests must include a valid Bearer token. When `false`, unauthenticated requests are allowed but can only access public tools, resources, and prompts. |
+| `MCP_REQUIRE_AUTH` | `false` | When `true`, all `/mcp` requests must include a valid Bearer token. When `false`, unauthenticated requests are allowed but can only access public tools, resources, and prompts — except for servers with `oauth_enabled=True`, which always require authentication. |
 
 ### Behavior Matrix
 
 | `AUTH_REQUIRED` | `MCP_REQUIRE_AUTH` | REST API | MCP Endpoints |
 |-----------------|-------------------|----------|---------------|
-| `true` | `false` (default) | Auth required | Public-only access without token |
+| `true` | `false` (default) | Auth required | Public-only access without token* |
 | `true` | `true` | Auth required | Auth required |
-| `false` | `false` | No auth | Public-only access without token |
+| `false` | `false` | No auth | Public-only access without token* |
 | `false` | `true` | No auth | Auth required |
+
+*\*Per-server override: virtual servers with `oauth_enabled=True` always require authentication, even when `MCP_REQUIRE_AUTH=false`. Unauthenticated requests to these servers receive a 401 with a `WWW-Authenticate` header containing the RFC 9728 resource metadata URL.*
 
 ### Use Cases
 
@@ -161,6 +163,7 @@ A new `MCP_REQUIRE_AUTH` configuration option provides fine-grained control over
 - Suitable for public MCP services offering public tools
 - Unauthenticated clients can discover and invoke public tools only
 - Team-scoped and private tools require authentication
+- Servers with `oauth_enabled=True` require authentication regardless (per-server override)
 
 **Strict Mode (`MCP_REQUIRE_AUTH=true`):**
 
@@ -171,6 +174,8 @@ A new `MCP_REQUIRE_AUTH` configuration option provides fine-grained control over
 ### Security Considerations
 
 - When `MCP_REQUIRE_AUTH=false`, unauthenticated requests receive an empty team list (`teams=[]`), restricting access to `visibility=public` items only
+- **Per-server OAuth enforcement**: servers with `oauth_enabled=True` reject unauthenticated requests with 401 even in permissive mode, with a `WWW-Authenticate` header pointing to the RFC 9728 resource metadata URL for OAuth discovery
+- **Fail-closed on infrastructure errors**: if the database is unavailable during per-server OAuth enforcement, the request is rejected with 503 rather than silently allowed
 - Private and team-scoped tools, resources, and prompts are never exposed to unauthenticated users
 - The service layer enforces access control regardless of this setting
 
@@ -187,3 +192,57 @@ When `MCP_CLIENT_AUTH_ENABLED=false`:
 - Access control relies on `MCP_REQUIRE_AUTH` + tool/resource visibility only
 - Team membership validation is skipped (no JWT to extract teams from)
 - Use `TRUST_PROXY_AUTH=true` with a reverse proxy for user identification
+
+---
+
+## Update: API Basic Authentication Disabled by Default
+
+- *Date:* 2026-01-28
+- *Status:* Extended
+- *Enhancement By:* Core Engineering Team
+
+### Security Enhancement Overview
+
+Basic authentication for API endpoints is now **disabled by default** to improve security posture. This change follows security best practices by preferring JWT tokens for programmatic API access.
+
+### Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `API_ALLOW_BASIC_AUTH` | `false` | Enable Basic auth for API endpoints (`/api/metrics/*`). Disabled by default for security. |
+| `DOCS_ALLOW_BASIC_AUTH` | `false` | Enable Basic auth for documentation endpoints (`/docs`, `/redoc`). Independent of API setting. |
+
+### Behavior Changes
+
+| Component | Before | After |
+|-----------|--------|-------|
+| **Admin UI** | Basic auth (broken - validated but not passed to routes) | Email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`) |
+| **API Endpoints** | Basic auth allowed | Basic auth **disabled by default**. Set `API_ALLOW_BASIC_AUTH=true` to enable. |
+| **Documentation** | Basic auth configurable | Unchanged - controlled by `DOCS_ALLOW_BASIC_AUTH` |
+| **CLI Tools** | Basic auth fallback | Only uses Basic auth if `API_ALLOW_BASIC_AUTH=true` |
+
+### Migration Guide
+
+**For API access:**
+```bash
+# Recommended: Use JWT tokens
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+    --username admin@example.com --exp 10080 --secret $JWT_SECRET_KEY)
+
+# If Basic auth is required (development only):
+export API_ALLOW_BASIC_AUTH=true
+```
+
+**For Admin UI:**
+```bash
+# Use email/password authentication
+PLATFORM_ADMIN_EMAIL=admin@example.com
+PLATFORM_ADMIN_PASSWORD=your-secure-password
+```
+
+### Security Rationale
+
+- **JWT tokens are more secure**: They have expiration, can be revoked, and don't transmit passwords on every request
+- **Basic auth sends credentials on every request**: Higher risk of credential exposure
+- **Separation of concerns**: Admin UI authentication is now clearly separate from API authentication
+- **Defense in depth**: Disabled by default reduces attack surface

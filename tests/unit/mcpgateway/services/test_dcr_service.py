@@ -5,9 +5,14 @@ This test suite validates the DCR service implementation following TDD Red Phase
 Tests will FAIL until implementation is complete.
 """
 
-import pytest
+# Standard
 from unittest.mock import AsyncMock, MagicMock, patch
-from mcpgateway.services.dcr_service import DcrService, DcrError
+
+# Third-Party
+import pytest
+
+# First-Party
+from mcpgateway.services.dcr_service import DcrError, DcrService
 
 
 class TestDiscoverASMetadata:
@@ -45,6 +50,7 @@ class TestDiscoverASMetadata:
     async def test_discover_as_metadata_tries_rfc8414_first(self):
         """Test that RFC 8414 path is tried first."""
         # Clear cache to ensure test isolation
+        # First-Party
         from mcpgateway.services.dcr_service import _metadata_cache
 
         _metadata_cache.clear()
@@ -66,9 +72,76 @@ class TestDiscoverASMetadata:
             assert "/.well-known/oauth-authorization-server" in first_call_url
 
     @pytest.mark.asyncio
+    async def test_discover_as_metadata_normalizes_trailing_slash(self):
+        """Test that trailing slashes are normalized for discovery and validation.
+
+        This tests the fix for MCP Python SDK issue #1919 where Pydantic's AnyHttpUrl
+        adds trailing slashes to bare hostnames, causing issuer mismatch errors.
+        """
+        # Clear cache
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+
+        dcr_service = DcrService()
+
+        # Server returns issuer WITHOUT trailing slash (common behavior)
+        mock_metadata = {"issuer": "https://as.example.com"}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value=mock_metadata)
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            # Call with trailing slash (simulating MCP SDK behavior)
+            result = await dcr_service.discover_as_metadata("https://as.example.com/")
+
+            # Should succeed without raising issuer mismatch error
+            assert result["issuer"] == "https://as.example.com"
+
+            # Verify the discovery URL was constructed correctly (no double slashes)
+            call_url = mock_client.get.call_args_list[0][0][0]
+            assert call_url == "https://as.example.com/.well-known/oauth-authorization-server"
+            assert "//.well-known" not in call_url
+
+    @pytest.mark.asyncio
+    async def test_discover_as_metadata_cache_uses_normalized_issuer(self):
+        """Test that cache lookup uses normalized issuer to avoid cache misses."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+
+        dcr_service = DcrService()
+
+        mock_metadata = {"issuer": "https://as.example.com"}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value=mock_metadata)
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            # First call with trailing slash
+            await dcr_service.discover_as_metadata("https://as.example.com/")
+
+            # Second call without trailing slash should hit cache
+            await dcr_service.discover_as_metadata("https://as.example.com")
+
+            # Should only have made one HTTP request (second call used cache)
+            assert mock_client.get.call_count == 1
+
+    @pytest.mark.asyncio
     async def test_discover_as_metadata_falls_back_to_oidc(self):
         """Test fallback to OIDC discovery if RFC 8414 fails."""
         # Clear cache
+        # First-Party
         from mcpgateway.services.dcr_service import _metadata_cache
 
         _metadata_cache.clear()
@@ -107,6 +180,7 @@ class TestDiscoverASMetadata:
     async def test_discover_as_metadata_not_found(self):
         """Test when metadata endpoints return 404."""
         # Clear cache
+        # First-Party
         from mcpgateway.services.dcr_service import _metadata_cache
 
         _metadata_cache.clear()
@@ -128,6 +202,7 @@ class TestDiscoverASMetadata:
     async def test_discover_as_metadata_caches_result(self):
         """Test that metadata is cached to avoid repeated requests."""
         # Clear cache first
+        # First-Party
         from mcpgateway.services.dcr_service import _metadata_cache
 
         _metadata_cache.clear()
@@ -158,6 +233,7 @@ class TestDiscoverASMetadata:
     async def test_discover_as_metadata_validates_issuer(self):
         """Test that discovered metadata validates issuer matches."""
         # Clear cache
+        # First-Party
         from mcpgateway.services.dcr_service import _metadata_cache
 
         _metadata_cache.clear()
@@ -179,6 +255,138 @@ class TestDiscoverASMetadata:
         with patch.object(dcr_service, "_get_client", return_value=mock_client):
             with pytest.raises(DcrError, match="issuer mismatch"):
                 await dcr_service.discover_as_metadata("https://as.example.com")
+
+    @pytest.mark.asyncio
+    async def test_discover_as_metadata_rfc8414_path_construction(self):
+        """Test correct RFC 8414 URL construction for issuers with path components.
+
+        Per RFC 8414 Section 3.1, the well-known suffix MUST be inserted between
+        the host and the path.
+        """
+        # Clear cache
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+
+        dcr_service = DcrService()
+
+        # Issuer with a path
+        issuer = "https://as.example.com/tenant1"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"issuer": issuer})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            await dcr_service.discover_as_metadata(issuer)
+
+            # Verify the discovery URL was constructed correctly (suffix between host and path)
+            call_url = mock_client.get.call_args_list[0][0][0]
+            expected_url = "https://as.example.com/.well-known/oauth-authorization-server/tenant1"
+            assert call_url == expected_url
+
+    @pytest.mark.asyncio
+    async def test_discover_as_metadata_rfc8414_multi_level_path(self):
+        """Test RFC 8414 URL construction for issuers with multi-level paths."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+
+        dcr_service = DcrService()
+        issuer = "https://as.example.com/tenant1/realm1"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"issuer": issuer})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            await dcr_service.discover_as_metadata(issuer)
+
+            call_url = mock_client.get.call_args_list[0][0][0]
+            expected_url = "https://as.example.com/.well-known/oauth-authorization-server/tenant1/realm1"
+            assert call_url == expected_url
+
+    @pytest.mark.asyncio
+    async def test_discover_as_metadata_rfc8414_path_with_semicolon_params(self):
+        """Test RFC 8414 URL preserves semicolon path parameters.
+
+        urlparse() strips ;params from the last path segment into a separate
+        attribute, losing data. urlsplit() preserves the full path.
+        """
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+
+        dcr_service = DcrService()
+        issuer = "https://as.example.com/tenant;v=1"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"issuer": issuer})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            await dcr_service.discover_as_metadata(issuer)
+
+            call_url = mock_client.get.call_args_list[0][0][0]
+            expected_url = "https://as.example.com/.well-known/oauth-authorization-server/tenant;v=1"
+            assert call_url == expected_url
+
+    @pytest.mark.asyncio
+    async def test_discover_as_metadata_oidc_fallback_appends_for_path_issuer(self):
+        """Test that OIDC fallback appends (not inserts) for path-based issuers.
+
+        RFC 8414 inserts between host and path, but OIDC Discovery 1.0 Section 4.1
+        appends to the issuer. Verify both URLs are constructed correctly when the
+        RFC 8414 attempt fails and falls back to OIDC.
+        """
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+
+        dcr_service = DcrService()
+        issuer = "https://as.example.com/tenant1"
+
+        mock_response_404 = MagicMock()
+        mock_response_404.status_code = 404
+
+        mock_response_200 = MagicMock()
+        mock_response_200.status_code = 200
+        mock_response_200.json = MagicMock(return_value={"issuer": issuer})
+
+        call_count = [0]
+
+        async def get_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return mock_response_404
+            return mock_response_200
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=get_side_effect)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            await dcr_service.discover_as_metadata(issuer)
+
+            calls = mock_client.get.call_args_list
+            assert len(calls) == 2
+
+            # RFC 8414: inserted between host and path
+            assert calls[0][0][0] == "https://as.example.com/.well-known/oauth-authorization-server/tenant1"
+            # OIDC: appended to issuer
+            assert calls[1][0][0] == "https://as.example.com/tenant1/.well-known/openid-configuration"
 
 
 class TestRegisterClient:
@@ -234,6 +442,7 @@ class TestRegisterClient:
         """Test that registration request has correct RFC 7591 fields."""
         dcr_service = DcrService()
 
+        # AS does not advertise refresh_token support
         mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
 
         mock_response = MagicMock()
@@ -254,11 +463,145 @@ class TestRegisterClient:
             call_kwargs = mock_client.post.call_args[1]
             request_json = call_kwargs["json"]
 
-            assert request_json["client_name"] == "MCP Gateway (Test Gateway)"
+            assert request_json["client_name"] == "ContextForge (Test Gateway)"
             assert request_json["redirect_uris"] == ["http://localhost:4444/callback"]
+            # Only authorization_code when AS doesn't advertise refresh_token support
             assert request_json["grant_types"] == ["authorization_code"]
             assert request_json["response_types"] == ["code"]
             assert request_json["scope"] == "mcp:read"
+
+    @pytest.mark.asyncio
+    async def test_register_client_includes_refresh_token_when_supported(self, test_db):
+        """Test that refresh_token is included when AS advertises support."""
+        dcr_service = DcrService()
+
+        # AS advertises refresh_token support
+        mock_metadata = {
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "test", "redirect_uris": []})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            await dcr_service.register_client(
+                gateway_id="test-gw-refresh", gateway_name="Test Gateway", issuer="https://as.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
+            )
+
+            # Verify request payload includes refresh_token
+            call_kwargs = mock_client.post.call_args[1]
+            request_json = call_kwargs["json"]
+
+            assert request_json["grant_types"] == ["authorization_code", "refresh_token"]
+
+    @pytest.mark.asyncio
+    async def test_register_client_stores_requested_grant_types_as_fallback(self, test_db):
+        """Test that requested grant_types are stored when AS response omits them."""
+        dcr_service = DcrService()
+
+        mock_metadata = {
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+        }
+
+        # AS response omits grant_types
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "test-fallback", "redirect_uris": []})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            result = await dcr_service.register_client(
+                gateway_id="test-gw-fallback", gateway_name="Test Gateway", issuer="https://as.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
+            )
+
+            # Stored grant_types should be the requested ones, not hardcoded fallback
+            # Third-Party
+            import orjson
+
+            stored_grant_types = orjson.loads(result.grant_types)
+            assert stored_grant_types == ["authorization_code", "refresh_token"]
+
+    @pytest.mark.asyncio
+    async def test_register_client_handles_null_grant_types_supported(self, test_db):
+        """Test that explicit null grant_types_supported doesn't cause TypeError.
+
+        Some AS servers return {"grant_types_supported": null} instead of omitting the field.
+        This should be handled gracefully without raising TypeError.
+        """
+        dcr_service = DcrService()
+
+        # AS returns explicit null for grant_types_supported
+        mock_metadata = {
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": None,  # Explicit null, not missing
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "test-null", "redirect_uris": []})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            # Should not raise TypeError
+            result = await dcr_service.register_client(
+                gateway_id="test-gw-null", gateway_name="Test", issuer="https://as.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
+            )
+
+            # Should only request authorization_code (strict mode)
+            call_kwargs = mock_client.post.call_args[1]
+            request_json = call_kwargs["json"]
+            assert request_json["grant_types"] == ["authorization_code"]
+
+    @pytest.mark.asyncio
+    async def test_register_client_permissive_refresh_token_mode(self, test_db):
+        """Test that permissive mode requests refresh_token when AS omits grant_types_supported."""
+        dcr_service = DcrService()
+
+        # AS omits grant_types_supported entirely
+        mock_metadata = {
+            "registration_endpoint": "https://as.example.com/register",
+            # No grant_types_supported field
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "test-permissive", "redirect_uris": []})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        # Enable permissive mode
+        with (
+            patch.object(dcr_service.settings, "dcr_request_refresh_token_when_unsupported", True),
+            patch.object(dcr_service, "discover_as_metadata") as mock_discover,
+            patch.object(dcr_service, "_get_client", return_value=mock_client),
+        ):
+            mock_discover.return_value = mock_metadata
+
+            result = await dcr_service.register_client(
+                gateway_id="test-gw-permissive", gateway_name="Test", issuer="https://as.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
+            )
+
+            # Should request both authorization_code and refresh_token in permissive mode
+            call_kwargs = mock_client.post.call_args[1]
+            request_json = call_kwargs["json"]
+            assert request_json["grant_types"] == ["authorization_code", "refresh_token"]
 
     @pytest.mark.asyncio
     async def test_register_client_no_registration_endpoint(self, test_db):
@@ -340,7 +683,8 @@ class TestGetOrRegisterClient:
         dcr_service = DcrService()
 
         # Mock existing client in database
-        from mcpgateway.db import RegisteredOAuthClient, Gateway
+        # First-Party
+        from mcpgateway.db import Gateway, RegisteredOAuthClient
 
         # Add gateway first
         gateway = Gateway(id="test-gw-existing", name="Test", slug="test", url="http://test.example.com", description="Test", capabilities={})
@@ -373,6 +717,7 @@ class TestGetOrRegisterClient:
         dcr_service = DcrService()
 
         with patch.object(dcr_service, "register_client") as mock_register:
+            # First-Party
             from mcpgateway.db import RegisteredOAuthClient
 
             mock_register.return_value = RegisteredOAuthClient(
@@ -405,12 +750,14 @@ class TestUpdateClientRegistration:
     @pytest.mark.asyncio
     async def test_update_client_registration_success(self, test_db):
         """Test successful client registration update."""
-        from mcpgateway.services.encryption_service import get_encryption_service
+        # First-Party
         from mcpgateway.config import get_settings
+        from mcpgateway.services.encryption_service import get_encryption_service
 
         dcr_service = DcrService()
 
-        from mcpgateway.db import RegisteredOAuthClient, Gateway
+        # First-Party
+        from mcpgateway.db import Gateway, RegisteredOAuthClient
 
         # Add gateway first
         gateway = Gateway(id="test-gw-update", name="Test", slug="test-update", url="http://test-update.example.com", description="Test", capabilities={})
@@ -452,12 +799,14 @@ class TestUpdateClientRegistration:
     @pytest.mark.asyncio
     async def test_update_client_registration_uses_access_token(self, test_db):
         """Test that update uses registration_access_token."""
-        from mcpgateway.services.encryption_service import get_encryption_service
+        # First-Party
         from mcpgateway.config import get_settings
+        from mcpgateway.services.encryption_service import get_encryption_service
 
         dcr_service = DcrService()
 
-        from mcpgateway.db import RegisteredOAuthClient, Gateway
+        # First-Party
+        from mcpgateway.db import Gateway, RegisteredOAuthClient
 
         # Add gateway first
         gateway = Gateway(id="test-gw-update-auth", name="Test", slug="test-update-auth", url="http://test-update-auth.example.com", description="Test", capabilities={})
@@ -497,6 +846,42 @@ class TestUpdateClientRegistration:
             assert "Authorization" in call_kwargs["headers"]
             assert call_kwargs["headers"]["Authorization"].startswith("Bearer ")
 
+    @pytest.mark.asyncio
+    async def test_update_client_registration_decryption_failure(self, test_db):
+        """Test that update raises DcrError when token decryption fails."""
+        # First-Party
+        from mcpgateway.config import get_settings
+        from mcpgateway.services.encryption_service import EncryptionService
+
+        dcr_service = DcrService()
+
+        # First-Party
+        from mcpgateway.db import Gateway, RegisteredOAuthClient
+
+        # Add gateway first
+        gateway = Gateway(id="test-gw-update-decrypt-fail", name="Test", slug="test-update-decrypt-fail", url="http://test-update-decrypt-fail.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        client_record = RegisteredOAuthClient(
+            id="client-id-decrypt-fail",
+            gateway_id="test-gw-update-decrypt-fail",
+            issuer="https://as-update-decrypt-fail.example.com",
+            client_id="test-client-decrypt-fail",
+            client_secret_encrypted="encrypted",
+            registration_client_uri="https://as-update-decrypt-fail.example.com/register/test-client",
+            registration_access_token_encrypted="v2:{invalid_json}",  # Will fail decryption
+            redirect_uris="[]",
+            grant_types="[]",
+        )
+        test_db.add(client_record)
+        test_db.commit()
+
+        # Mock decrypt to return None (failure)
+        with patch.object(EncryptionService, "decrypt_secret_async", return_value=None):
+            with pytest.raises(DcrError, match="Failed to decrypt registration access token for update operation"):
+                await dcr_service.update_client_registration(client_record, test_db)
+
 
 class TestDeleteClientRegistration:
     """Test deleting/revoking client registration (RFC 7591 section 4.3)."""
@@ -506,6 +891,7 @@ class TestDeleteClientRegistration:
         """Test successful client deletion."""
         dcr_service = DcrService()
 
+        # First-Party
         from mcpgateway.db import RegisteredOAuthClient
 
         client_record = RegisteredOAuthClient(
@@ -536,6 +922,7 @@ class TestDeleteClientRegistration:
         """Test that 404 (already deleted) is handled gracefully."""
         dcr_service = DcrService()
 
+        # First-Party
         from mcpgateway.db import RegisteredOAuthClient
 
         client_record = RegisteredOAuthClient(
@@ -562,6 +949,138 @@ class TestDeleteClientRegistration:
 
             assert result is True
 
+    @pytest.mark.asyncio
+    async def test_delete_client_registration_missing_uri(self, test_db):
+        """Test that deletion returns False when registration_client_uri is missing."""
+        dcr_service = DcrService()
+
+        # First-Party
+        from mcpgateway.db import RegisteredOAuthClient
+
+        client_record = RegisteredOAuthClient(
+            id="client-id",
+            gateway_id="test-gw",
+            issuer="https://as.example.com",
+            client_id="test-client",
+            client_secret_encrypted="encrypted",
+            registration_client_uri=None,  # Missing URI
+            registration_access_token_encrypted="encrypted-token",
+            redirect_uris="[]",
+            grant_types="[]",
+        )
+
+        result = await dcr_service.delete_client_registration(client_record, test_db)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_delete_client_registration_missing_token(self, test_db):
+        """Test that deletion returns False when registration_access_token_encrypted is missing."""
+        dcr_service = DcrService()
+
+        # First-Party
+        from mcpgateway.db import RegisteredOAuthClient
+
+        client_record = RegisteredOAuthClient(
+            id="client-id",
+            gateway_id="test-gw",
+            issuer="https://as.example.com",
+            client_id="test-client",
+            client_secret_encrypted="encrypted",
+            registration_client_uri="https://as.example.com/register/test-client",
+            registration_access_token_encrypted=None,  # Missing token
+            redirect_uris="[]",
+            grant_types="[]",
+        )
+
+        result = await dcr_service.delete_client_registration(client_record, test_db)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_delete_client_registration_decryption_failure(self, test_db):
+        """Test that deletion returns False when token decryption fails."""
+        dcr_service = DcrService()
+
+        # First-Party
+        from mcpgateway.db import RegisteredOAuthClient
+        from mcpgateway.services.encryption_service import EncryptionService
+
+        client_record = RegisteredOAuthClient(
+            id="client-id",
+            gateway_id="test-gw",
+            issuer="https://as.example.com",
+            client_id="test-client",
+            client_secret_encrypted="encrypted",
+            registration_client_uri="https://as.example.com/register/test-client",
+            registration_access_token_encrypted="v2:{invalid_json}",  # Will fail decryption
+            redirect_uris="[]",
+            grant_types="[]",
+        )
+
+        # Mock decrypt to return None (failure)
+        with patch.object(EncryptionService, "decrypt_secret_async", return_value=None):
+            result = await dcr_service.delete_client_registration(client_record, test_db)
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_delete_client_registration_unexpected_status(self, test_db):
+        """Test that deletion returns False for unexpected HTTP status."""
+        dcr_service = DcrService()
+
+        # First-Party
+        from mcpgateway.db import RegisteredOAuthClient
+
+        client_record = RegisteredOAuthClient(
+            id="client-id",
+            gateway_id="test-gw",
+            issuer="https://as.example.com",
+            client_id="test-client",
+            client_secret_encrypted="encrypted",
+            registration_client_uri="https://as.example.com/register/test-client",
+            registration_access_token_encrypted="encrypted-token",
+            redirect_uris="[]",
+            grant_types="[]",
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500  # Unexpected status
+
+        mock_client = AsyncMock()
+        mock_client.delete = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            result = await dcr_service.delete_client_registration(client_record, test_db)
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_delete_client_registration_network_error(self, test_db):
+        """Test that deletion returns False on network error."""
+        dcr_service = DcrService()
+
+        # Third-Party
+        import httpx
+
+        # First-Party
+        from mcpgateway.db import RegisteredOAuthClient
+
+        client_record = RegisteredOAuthClient(
+            id="client-id",
+            gateway_id="test-gw",
+            issuer="https://as.example.com",
+            client_id="test-client",
+            client_secret_encrypted="encrypted",
+            registration_client_uri="https://as.example.com/register/test-client",
+            registration_access_token_encrypted="encrypted-token",
+            redirect_uris="[]",
+            grant_types="[]",
+        )
+
+        mock_client = AsyncMock()
+        mock_client.delete = AsyncMock(side_effect=httpx.HTTPError("Network error"))
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            result = await dcr_service.delete_client_registration(client_record, test_db)
+            assert result is False
+
 
 class TestIssuerValidation:
     """Test issuer allowlist validation."""
@@ -571,6 +1090,7 @@ class TestIssuerValidation:
         """Test that empty allowlist allows all issuers."""
         dcr_service = DcrService()
 
+        # First-Party
         from mcpgateway.config import get_settings
 
         with patch.object(get_settings(), "dcr_allowed_issuers", []):
@@ -582,6 +1102,7 @@ class TestIssuerValidation:
         """Test that unauthorized issuer is blocked."""
         dcr_service = DcrService()
 
+        # First-Party
         from mcpgateway.config import get_settings
 
         with patch.object(get_settings(), "dcr_allowed_issuers", ["https://trusted.com"]):
@@ -600,6 +1121,7 @@ class TestIssuerValidation:
         """Test that authorized issuer is allowed."""
         dcr_service = DcrService()
 
+        # First-Party
         from mcpgateway.db import Gateway
 
         # Add gateway first
@@ -624,13 +1146,58 @@ class TestIssuerValidation:
             with patch.object(dcr_service, "_get_client", return_value=mock_client):
                 # Should not raise error
                 result = await dcr_service.register_client(
-                gateway_id="test-gw-issuer-auth",
-                gateway_name="Test",
-                issuer="https://as-issuer-auth.example.com",  # In allowlist
-                redirect_uri="http://localhost:4444/callback",
-                scopes=["mcp:read"],
-                db=test_db,
-            )
+                    gateway_id="test-gw-issuer-auth",
+                    gateway_name="Test",
+                    issuer="https://as-issuer-auth.example.com",  # In allowlist
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
+
+    @pytest.mark.asyncio
+    async def test_issuer_validation_normalizes_trailing_slash(self, test_db):
+        """Test that allowlist comparison normalizes trailing slashes.
+
+        This ensures that issuer with trailing slash (e.g., from MCP SDK's Pydantic AnyHttpUrl)
+        matches an allowlist entry without trailing slash, and vice versa.
+        """
+        dcr_service = DcrService()
+
+        # First-Party
+        from mcpgateway.db import Gateway
+
+        # Add gateway first
+        gateway = Gateway(id="test-gw-issuer-slash", name="Test", slug="test-issuer-slash", url="http://test.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        # Allowlist has NO trailing slash, but issuer has trailing slash (MCP SDK behavior)
+        with (
+            patch.object(dcr_service.settings, "dcr_allowed_issuers", ["https://as-slash.example.com"]),
+            patch.object(dcr_service, "discover_as_metadata") as mock_discover,
+        ):
+            mock_discover.return_value = {"registration_endpoint": "https://as-slash.example.com/register"}
+
+            mock_response = MagicMock()
+            mock_response.status_code = 201
+            mock_response.json = MagicMock(return_value={"client_id": "test-slash", "redirect_uris": []})
+
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+
+            with patch.object(dcr_service, "_get_client", return_value=mock_client):
+                # Should not raise error - trailing slash should be normalized
+                result = await dcr_service.register_client(
+                    gateway_id="test-gw-issuer-slash",
+                    gateway_name="Test",
+                    issuer="https://as-slash.example.com/",  # Has trailing slash
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
+
+                # Verify the stored issuer is normalized (no trailing slash)
+                assert result.issuer == "https://as-slash.example.com"
 
 
 class TestDcrError:

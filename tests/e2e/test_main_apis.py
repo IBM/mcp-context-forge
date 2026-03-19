@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-End-to-end tests for MCP Gateway main APIs.
+End-to-end tests for ContextForge main APIs.
 This module contains comprehensive end-to-end tests for all main API endpoints in main.py.
 These tests are designed to exercise the entire application stack with minimal mocking,
 using only a temporary SQLite database and bypassing authentication.
@@ -45,7 +45,7 @@ import os
 import tempfile
 import time
 from typing import AsyncGenerator
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from unittest.mock import patch as mock_patch
 
 # Third-Party
@@ -55,36 +55,10 @@ from httpx import AsyncClient
 import jwt
 import pytest
 import pytest_asyncio
+from pydantic import SecretStr
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-
-# First-Party
-# Completely replace RBAC decorators with no-op versions
-import mcpgateway.middleware.rbac as rbac_module
-
-# Local
-# Test utilities - must import BEFORE mcpgateway modules
-
-
-def noop_decorator(*args, **kwargs):
-    """No-op decorator that just returns the function unchanged."""
-
-    def decorator(func):
-        return func
-
-    if len(args) == 1 and callable(args[0]) and not kwargs:
-        # Direct decoration: @noop_decorator
-        return args[0]
-    else:
-        # Parameterized decoration: @noop_decorator(params)
-        return decorator
-
-
-# Replace all RBAC decorators with no-ops
-rbac_module.require_permission = noop_decorator  # pyrefly: ignore[bad-assignment]
-rbac_module.require_admin_permission = noop_decorator  # pyrefly: ignore[bad-assignment]
-rbac_module.require_any_permission = noop_decorator  # pyrefly: ignore[bad-assignment]
 
 # Standard
 # Patch bootstrap_db to prevent it from running during tests
@@ -103,17 +77,28 @@ with mock_patch("mcpgateway.bootstrap_db.main"):
 
 
 TEST_USER = "testuser"
-JWT_SECRET = "my-test-key"  # Must match mcpgateway.config.Settings.jwt_secret_key
+JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"  # Must match mcpgateway.config.Settings.jwt_secret_key
 JWT_ALGORITHM = "HS256"  # Must match mcpgateway.config.Settings.jwt_algorithm
 
+# Ensure test tokens use a strong signing key to avoid weak-key warnings.
+if hasattr(settings.jwt_secret_key, "get_secret_value") and callable(getattr(settings.jwt_secret_key, "get_secret_value", None)):
+    settings.jwt_secret_key = SecretStr(JWT_SECRET)
+else:
+    settings.jwt_secret_key = JWT_SECRET
 
-def generate_test_jwt():
+
+def generate_test_jwt(*, is_admin: bool = False, teams=None):
+    if teams is None:
+        teams = []
     payload = {
         "sub": "test_user",
         "exp": int(time.time()) + 3600,
-        "teams": [],  # Empty teams list allows access to public resources and own private resources
+        "teams": teams,
+        "is_admin": is_admin,
     }
-    secret = settings.jwt_secret_key.get_secret_value()
+    secret = settings.jwt_secret_key
+    if hasattr(secret, "get_secret_value") and callable(getattr(secret, "get_secret_value", None)):
+        secret = secret.get_secret_value()
     algorithm = settings.jwt_algorithm
     return jwt.encode(payload, secret, algorithm=algorithm)
 
@@ -153,6 +138,26 @@ async def temp_db():
     # Create session factory
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
 
+    # Seed an admin user so PermissionService admin-bypass works for RBAC-decorated endpoints.
+    # This avoids patching RBAC decorators at import time, which leaks into other test modules.
+    # First-Party
+    from mcpgateway.db import EmailUser
+
+    seed_db = TestSessionLocal()
+    try:
+        seed_db.add(
+            EmailUser(
+                email="testuser@example.com",
+                password_hash="not-a-real-hash",
+                full_name="Test User",
+                is_admin=True,
+                is_active=True,
+            )
+        )
+        seed_db.commit()
+    finally:
+        seed_db.close()
+
     # Override the get_db dependency
     def override_get_db():
         db = TestSessionLocal()
@@ -191,7 +196,8 @@ async def temp_db():
 
     # Create custom user context with real database session
     test_user_context = create_mock_user_context(email="testuser@example.com", full_name="Test User", is_admin=True)
-    test_user_context["db"] = TestSessionLocal()  # Use real database session from this fixture
+    test_user_context_db = TestSessionLocal()
+    test_user_context["db"] = test_user_context_db  # Use real database session from this fixture
 
     # Create a simple mock function for get_current_user_with_permissions
     async def simple_mock_user_with_permissions():
@@ -230,7 +236,9 @@ async def temp_db():
 
     # Cleanup
     sec_patcher.stop()
+    test_user_context_db.close()
     app.dependency_overrides.clear()
+    engine.dispose()
     os.close(db_fd)
     os.unlink(db_path)
 
@@ -286,6 +294,14 @@ def basic_auth_header(username: str, password: str) -> dict:
     return {"Authorization": f"Basic {token}"}
 
 
+def docs_basic_auth_header() -> dict:
+    """Build Basic Auth header for docs endpoints using current runtime settings."""
+    password = settings.basic_auth_password
+    if hasattr(password, "get_secret_value") and callable(getattr(password, "get_secret_value", None)):
+        password = password.get_secret_value()
+    return basic_auth_header(settings.basic_auth_user, password)
+
+
 # -------------------------
 # Test Utility APIs
 # -------------------------
@@ -312,7 +328,7 @@ class TestDocsAndRedoc:
         settings.docs_allow_basic_auth = True
 
         """Test /docs endpoint with Basic Auth (should return 200 if credentials are valid)."""
-        headers = basic_auth_header("admin", "changeme")
+        headers = docs_basic_auth_header()
         response = await client.get("/docs", headers=headers)
         assert response.status_code == 200
 
@@ -321,7 +337,7 @@ class TestDocsAndRedoc:
         # Ensure Basic Auth for docs is allowed
         settings.docs_allow_basic_auth = True
 
-        headers = basic_auth_header("admin", "changeme")
+        headers = docs_basic_auth_header()
         response = await client.get("/redoc", headers=headers)
         assert response.status_code == 200
 
@@ -443,9 +459,16 @@ class TestProtocolAPIs:
         response = await client.post("/protocol/notifications", json={"method": "notifications/initialized"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
-    async def test_notifications_cancelled(self, client: AsyncClient):
-        """Test POST /protocol/notifications - request cancelled."""
+    async def test_notifications_cancelled_denied_for_unknown_run(self, client: AsyncClient):
+        """Test POST /protocol/notifications - unknown run is denied for non-admin token."""
         response = await client.post("/protocol/notifications", json={"method": "notifications/cancelled", "params": {"requestId": "test-request-123"}}, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Not authorized to cancel this run"
+
+    async def test_notifications_cancelled_allowed_for_owner(self, client: AsyncClient):
+        """Test POST /protocol/notifications - owner can cancel."""
+        with patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value={"owner_email": "testuser@example.com", "owner_team_ids": []})):
+            response = await client.post("/protocol/notifications", json={"method": "notifications/cancelled", "params": {"requestId": "test-request-123"}}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
     async def test_notifications_message(self, client: AsyncClient):
@@ -778,11 +801,12 @@ class TestToolAPIs:
         if response.status_code == 422:
             assert "Tool name cannot be empty" in str(response.json())
 
-        # Invalid name format (special characters)
+        # Valid name format with dashes (per MCP spec - hyphens allowed in names)
         response = await client.post("/tools", json={"tool": {"name": "tool-with-dashes", "url": "https://example.com"}}, headers=TEST_AUTH_HEADER)
-        # The name might be normalized instead of rejected
+        # Tool names with hyphens are valid per MCP spec
         if response.status_code == 422:
-            assert "must start with a letter" in str(response.json())
+            # May fail for other reasons (duplicate, etc)
+            assert "must start with a letter, number, or underscore" in str(response.json()) or "already exists" in str(response.json())
         else:
             assert response.status_code == 200
 
@@ -949,7 +973,7 @@ class TestResourceAPIs:
     async def test_create_markdown_resource(self, client: AsyncClient, mock_auth):
         """Test POST /resources - create markdown resource."""
         resource_data = {
-            "resource": {"uri": "docs/readme", "name": "readme", "description": "Project README", "mimeType": "text/markdown", "content": "# MCP Gateway\n\nWelcome to the MCP Gateway!"},
+            "resource": {"uri": "docs/readme", "name": "readme", "description": "Project README", "mimeType": "text/markdown", "content": "# ContextForge\n\nWelcome to ContextForge!"},
             "team_id": None,
             "visibility": "private",
         }
@@ -1211,7 +1235,7 @@ class TestPromptAPIs:
     async def test_create_prompt_no_arguments(self, client: AsyncClient, mock_auth):
         """Test POST /prompts - create prompt without arguments."""
         prompt_data = {
-            "prompt": {"name": "system_summary", "description": "System status summary", "template": "MCP Gateway is running and ready to process requests.", "arguments": []},
+            "prompt": {"name": "system_summary", "description": "System status summary", "template": "ContextForge is running and ready to process requests.", "arguments": []},
             "team_id": None,
             "visibility": "private",
         }
@@ -1561,10 +1585,10 @@ class TestUtilityAPIs:
 # Test Metrics APIs
 # -------------------------
 class TestMetricsAPIs:
-    async def test_metrics_no_auth(self, client: AsyncClient):
-        """Test GET /metrics without auth header (should not error, but may be protected)."""
-        response = await client.get("/metrics")
-        assert response.status_code in [200, 401, 403]
+    async def test_metrics_requires_auth(self, client: AsyncClient):
+        """Test GET /metrics with auth header succeeds."""
+        response = await client.get("/metrics", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
 
     """Test metrics collection endpoints."""
 
@@ -1619,13 +1643,9 @@ class TestMetricsAPIs:
 class TestVersionAndDocs:
     """Test version and documentation endpoints."""
 
-    async def test_get_version(self, client: AsyncClient):
-        """Test GET /version - no auth required."""
-        response = await client.get("/version")
-        # Version endpoint might require auth based on settings
-        if response.status_code == 401:
-            # Try with auth
-            response = await client.get("/version", headers=TEST_AUTH_HEADER)
+    async def test_get_version_with_admin_auth(self, client: AsyncClient):
+        """Test GET /version with admin auth succeeds."""
+        response = await client.get("/version", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         result = response.json()
         assert result["app"]["version"]  # non-empty
@@ -1642,7 +1662,7 @@ class TestVersionAndDocs:
     #     response = await client.get("/openapi.json", headers=TEST_AUTH_HEADER)
     #     assert response.status_code == 200
     #     result = response.json()
-    #     assert result["info"]["title"] == "MCP Gateway"
+    #     assert result["info"]["title"] == "ContextForge"
 
     async def test_docs_requires_auth(self, client: AsyncClient):
         """Test GET /docs requires authentication."""
@@ -1671,13 +1691,12 @@ class TestRootPath:
             # UI is enabled, check redirect
             assert "/admin" in response.headers.get("location", "")
         else:
-            # UI is disabled, check API info
+            # UI is disabled, check API info (no version/admin status exposed)
             assert response.status_code == 200
             result = response.json()
             assert "name" in result
-            assert "version" in result
-            assert result["ui_enabled"] is False
-            assert result["admin_api_enabled"] is False
+            assert "version" not in result
+            assert "admin_api_enabled" not in result
 
 
 # -------------------------

@@ -68,7 +68,7 @@
   {{- end }}
 
 🏗️ **Infrastructure Stack**
-  - MCP Gateway    : {{ .Values.mcpContextForge.replicaCount }} replica(s) - {{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}
+  - ContextForge    : {{ .Values.mcpContextForge.replicaCount }} replica(s) - {{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}
   {{- if .Values.mcpFastTimeServer.enabled }}
   - Fast Time Srv  : {{ .Values.mcpFastTimeServer.replicaCount }} replica(s) - {{ .Values.mcpFastTimeServer.image.repository }}:{{ .Values.mcpFastTimeServer.image.tag }}
   {{- end }}
@@ -134,8 +134,8 @@
   - To enable: `helm upgrade {{ .Release.Name }} --set migration.enabled=true -n {{ $ns }}`
 {{- end }}
 
-{{- /* ════════════  MCP Gateway  ════════════ */}}
-🔗 **MCP Gateway**
+{{- /* ════════════  ContextForge  ════════════ */}}
+🔗 **ContextForge**
 {{- if .Values.mcpContextForge.ingress.enabled }}
   - Primary URL    : https://{{ .Values.mcpContextForge.ingress.host }}{{ .Values.mcpContextForge.ingress.path | default "/" }}
   - Health Check   : https://{{ .Values.mcpContextForge.ingress.host }}/health
@@ -201,6 +201,12 @@
 {{- if .Values.redis.enabled }}
 🔑 **Redis Cache**
   - Host / Port  : {{ $redisSvc }}.{{ $ns }}.svc.cluster.local:{{ $redisPort }}
+  {{- if .Values.redis.auth.enabled }}
+  - Auth         : Enabled (password from Secret)
+      (kubectl  = `kubectl -n {{ $ns }} get secret {{ include "mcp-stack.redisSecretName" . }} -o jsonpath="{.data.{{ .Values.redis.auth.passwordKey | default "REDIS_PASSWORD" }}}" | base64 -d`)
+  {{- else }}
+  - Auth         : Disabled
+  {{- end }}
   - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $redisSvc }} 6379:{{ $redisPort }}`
 {{- end }}
 

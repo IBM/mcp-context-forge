@@ -1,10 +1,10 @@
 # IBM Security Verify Setup Tutorial
 
-This tutorial walks you through setting up IBM Security Verify (formerly IBM Cloud Identity) SSO authentication for MCP Gateway, enabling enterprise-grade identity management.
+This tutorial walks you through setting up IBM Security Verify (formerly IBM Cloud Identity) SSO authentication for ContextForge, enabling enterprise-grade identity management.
 
 ## Prerequisites
 
-- MCP Gateway installed and running
+- ContextForge installed and running
 - IBM Security Verify tenant with admin access
 - Access to your gateway's environment configuration
 
@@ -13,7 +13,9 @@ This tutorial walks you through setting up IBM Security Verify (formerly IBM Clo
 ### 1.1 Access IBM Security Verify Admin Console
 
 1. Navigate to your IBM Security Verify admin console
+
    - URL format: `https://[tenant-name].verify.ibm.com`
+
 2. Log in with your administrator credentials
 3. Go to **Applications** in the left sidebar
 
@@ -27,9 +29,10 @@ This tutorial walks you through setting up IBM Security Verify (formerly IBM Clo
 
 **General Settings**:
 
-- **Application name**: `MCP Gateway`
+- **Application name**: `ContextForge`
 - **Description**: `Model Context Protocol Gateway SSO Authentication`
 - **Application URL**: Your gateway's public URL
+
   - Example: `https://gateway.yourcompany.com`
 
 **Sign-on Settings**:
@@ -37,6 +40,7 @@ This tutorial walks you through setting up IBM Security Verify (formerly IBM Clo
 - **Application type**: `Web`
 - **Grant types**: Select `Authorization Code`
 - **Redirect URIs**: **Critical - must be exact**
+
   - Production: `https://gateway.yourcompany.com/auth/sso/callback/ibm_verify`
   - Development: `http://localhost:8000/auth/sso/callback/ibm_verify`
 
@@ -64,7 +68,7 @@ After saving the application:
 4. **Important**: Copy the client secret immediately - you won't see it again
 5. Note the **Discovery endpoint** URL (usually `https://[tenant].verify.ibm.com/oidc/endpoint/default/.well-known/openid_configuration`)
 
-## Step 2: Configure MCP Gateway Environment
+## Step 2: Configure ContextForge Environment
 
 ### 2.1 Find Your IBM Security Verify Endpoints
 
@@ -153,10 +157,11 @@ IBM_VERIFY_GROUP_MAPPING={"CN=Developers,OU=Groups": "dev-team-uuid", "CN=Admini
 ### 3.1 Assign Users to Application
 
 1. In IBM Security Verify admin console, go to **Applications**
-2. Find your MCP Gateway application
+2. Find your ContextForge application
 3. Go to **Access** tab
 4. Click **Assign access**
 5. Choose assignment method:
+
    - **Users**: Assign specific users
    - **Groups**: Assign entire groups (recommended)
    - **Everyone**: Allow all users (not recommended for production)
@@ -165,8 +170,10 @@ IBM_VERIFY_GROUP_MAPPING={"CN=Developers,OU=Groups": "dev-team-uuid", "CN=Admini
 
 1. Create or use existing groups in IBM Security Verify
 2. Assign the application to appropriate groups:
-   - `MCP_Gateway_Users` - Regular users
-   - `MCP_Gateway_Admins` - Administrative users
+
+   - `ContextForge_Users` - Regular users
+   - `ContextForge_Admins` - Administrative users
+
 3. Add users to these groups as needed
 
 ## Step 4: Restart and Verify Gateway
@@ -207,6 +214,7 @@ curl -X GET http://localhost:8000/auth/sso/providers
 ### 5.1 Access Login Page
 
 1. Navigate to your gateway's login page:
+
    - Development: `http://localhost:8000/admin/login`
    - Production: `https://gateway.yourcompany.com/admin/login`
 
@@ -242,7 +250,7 @@ IBM Security Verify MFA is handled automatically:
 
 1. Configure MFA policies in IBM Security Verify admin console
 2. Go to **Security** → **Multi-factor authentication**
-3. Set up policies for your MCP Gateway application
+3. Set up policies for your ContextForge application
 4. Users will be prompted for MFA during login
 
 ### 6.2 Conditional Access
@@ -250,8 +258,9 @@ IBM Security Verify MFA is handled automatically:
 Configure access policies based on conditions:
 
 1. In IBM Security Verify, go to **Security** → **Access policies**
-2. Create policies for your MCP Gateway application
+2. Create policies for your ContextForge application
 3. Configure conditions:
+
    - Device compliance
    - Location-based access
    - Risk-based authentication
@@ -271,6 +280,7 @@ Enable comprehensive audit logging:
 
 1. In IBM Security Verify, configure audit settings
 2. Enable logging for:
+
    - Authentication events
    - Authorization decisions
    - User provisioning actions
@@ -338,10 +348,10 @@ SSO_IBM_VERIFY_CLIENT_SECRET=your-actual-client-secret
 ### Error: "User not authorized"
 
 **Problem**: User not assigned access to the application
-**Solution**: Assign user or their group to the MCP Gateway application
+**Solution**: Assign user or their group to ContextForge application
 
 1. In IBM Security Verify admin console, go to Applications
-2. Find MCP Gateway application → Access tab
+2. Find ContextForge application → Access tab
 3. Assign access to the user or their group
 
 ### Error: "Issuer mismatch"

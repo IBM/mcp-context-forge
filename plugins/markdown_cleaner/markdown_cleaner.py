@@ -28,6 +28,13 @@ from mcpgateway.plugins.framework import (
     ResourcePostFetchResult,
 )
 
+# Precompiled regex patterns for performance
+_CRLF_NORMALIZE_RE = re.compile(r"\r\n?|\u2028|\u2029")
+_HEADING_SPACE_RE = re.compile(r"^(#{1,6})(\S)", flags=re.MULTILINE)
+_LIST_MARKER_RE = re.compile(r"^(\s*)([*•+])\s+", flags=re.MULTILINE)
+_EMPTY_FENCES_RE = re.compile(r"```[ \t]*\n+```")
+_MULTI_NEWLINE_RE = re.compile(r"\n{3,}")
+
 
 def _clean_md(text: str) -> str:
     """Clean and normalize Markdown formatting.
@@ -39,15 +46,15 @@ def _clean_md(text: str) -> str:
         Cleaned Markdown text.
     """
     # Normalize CRLF
-    text = re.sub(r"\r\n?|\u2028|\u2029", "\n", text)
+    text = _CRLF_NORMALIZE_RE.sub("\n", text)
     # Ensure space after heading hashes
-    text = re.sub(r"^(#{1,6})(\S)", r"\1 \2", text, flags=re.MULTILINE)
+    text = _HEADING_SPACE_RE.sub(r"\1 \2", text)
     # Normalize list markers to '-'
-    text = re.sub(r"^(\s*)([*•+])\s+", r"\1- ", text, flags=re.MULTILINE)
+    text = _LIST_MARKER_RE.sub(r"\1- ", text)
     # Ensure fenced code blocks have fences
-    text = re.sub(r"```[ \t]*\n+```", "", text)  # remove empty fences
+    text = _EMPTY_FENCES_RE.sub("", text)  # remove empty fences
     # Collapse 3+ blank lines to 2
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = _MULTI_NEWLINE_RE.sub("\n\n", text)
     return text.strip()
 
 

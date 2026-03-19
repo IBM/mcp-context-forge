@@ -72,6 +72,18 @@ class MCPStackPython(CICDModule):
         True
     """
 
+    @staticmethod
+    def _escape_make_value(value: str) -> str:
+        """Escape Make variable values to prevent function-style expansion.
+
+        Args:
+            value: Raw variable value.
+
+        Returns:
+            Escaped value safe for ``NAME=value`` Make arguments.
+        """
+        return value.replace("$", "$$")
+
     async def build(self, config_file: str, plugins_only: bool = False, specific_plugins: Optional[List[str]] = None, no_cache: bool = False, copy_env_templates: bool = False) -> None:
         """Build gateway and plugin containers using docker/podman.
 
@@ -184,16 +196,17 @@ class MCPStackPython(CICDModule):
             raise RuntimeError("'make' command not found. Cannot generate certificates.")
 
         # Generate CA
-        await asyncio.to_thread(self._run_command, ["make", "certs-mcp-ca", f"MCP_CERT_DAYS={validity_days}"])
+        cert_days = self._escape_make_value(str(validity_days))
+        await asyncio.to_thread(self._run_command, ["make", "certs-mcp-ca", f"MCP_CERT_DAYS={cert_days}"])
 
         # Generate gateway cert
-        await asyncio.to_thread(self._run_command, ["make", "certs-mcp-gateway", f"MCP_CERT_DAYS={validity_days}"])
+        await asyncio.to_thread(self._run_command, ["make", "certs-mcp-gateway", f"MCP_CERT_DAYS={cert_days}"])
 
         # Generate plugin certificates
         plugins = config.plugins
         for plugin in plugins:
-            plugin_name = plugin.name
-            await asyncio.to_thread(self._run_command, ["make", "certs-mcp-plugin", f"PLUGIN_NAME={plugin_name}", f"MCP_CERT_DAYS={validity_days}"])
+            plugin_name = self._escape_make_value(plugin.name)
+            await asyncio.to_thread(self._run_command, ["make", "certs-mcp-plugin", f"PLUGIN_NAME={plugin_name}", f"MCP_CERT_DAYS={cert_days}"])
 
         if self.verbose:
             self.console.print("[green]✓ Certificates generated locally[/green]")
@@ -460,13 +473,13 @@ class MCPStackPython(CICDModule):
         if (clone_dir / ".git").exists():
             if self.verbose:
                 self.console.print(f"[dim]Updating {component_name} repository...[/dim]")
-            self._run_command(["git", "fetch", "origin", git_ref], cwd=clone_dir)
+            self._run_command(["git", "fetch", "origin", "--", git_ref], cwd=clone_dir)
             # Checkout what we just fetched (FETCH_HEAD)
             self._run_command(["git", "checkout", "FETCH_HEAD"], cwd=clone_dir)
         else:
             if self.verbose:
                 self.console.print(f"[dim]Cloning {component_name} repository...[/dim]")
-            self._run_command(["git", "clone", "--branch", git_ref, "--depth", "1", repo, str(clone_dir)])
+            self._run_command(["git", "clone", "--branch", git_ref, "--depth", "1", "--", repo, str(clone_dir)])
 
         # Determine build context (subdirectory within repo)
         build_context = component.context or "."

@@ -41,7 +41,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
      Helper: mcp-stack.postgresSecretName
      Returns the Secret name that the Postgres deployment should mount.
      If users set `postgres.existingSecret`, that name is used.
-     Otherwise the chart-managed default "postgres-secret" is returned.
+     Otherwise a release-scoped name is returned.
      -------------------------------------------------------------------- */}}
 {{- define "mcp-stack.postgresSecretName" -}}
 {{- if .Values.postgres.external.enabled }}
@@ -49,7 +49,33 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- else if .Values.postgres.existingSecret }}
 {{- .Values.postgres.existingSecret }}
 {{- else }}
-postgres-secret
+{{- printf "%s-postgres-secret" (include "mcp-stack.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{- /* --------------------------------------------------------------------
+     Helper: mcp-stack.redisSecretName
+     Returns the Secret name for Redis authentication.
+     If users set `redis.auth.existingSecret`, that name is used.
+     Otherwise a release-scoped name is returned.
+     -------------------------------------------------------------------- */}}
+{{- define "mcp-stack.redisSecretName" -}}
+{{- if .Values.redis.auth.existingSecret }}
+{{- .Values.redis.auth.existingSecret }}
+{{- else }}
+{{- printf "%s-redis-secret" (include "mcp-stack.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{- /* --------------------------------------------------------------------
+     Helper: mcp-stack.pgadminSecretName
+     Returns the Secret name for PgAdmin credentials.
+     -------------------------------------------------------------------- */}}
+{{- define "mcp-stack.pgadminSecretName" -}}
+{{- if .Values.pgadmin.existingSecret }}
+{{- .Values.pgadmin.existingSecret }}
+{{- else }}
+{{- printf "%s-pgadmin" (include "mcp-stack.fullname" .) }}
 {{- end }}
 {{- end }}
 

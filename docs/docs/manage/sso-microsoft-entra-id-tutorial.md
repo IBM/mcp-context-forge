@@ -1,10 +1,10 @@
 # Microsoft Entra ID OIDC Setup Tutorial
 
-This tutorial walks you through setting up Microsoft Entra ID (formerly Azure AD) Single Sign-On (SSO) authentication for MCP Gateway, enabling enterprise identity management with Microsoft's cloud identity platform.
+This tutorial walks you through setting up Microsoft Entra ID (formerly Azure AD) Single Sign-On (SSO) authentication for ContextForge, enabling enterprise identity management with Microsoft's cloud identity platform.
 
 ## Prerequisites
 
-- Context Forge installed and running
+- ContextForge installed and running
 - Microsoft Entra ID tenant with admin access (see below for free options)
 - Azure portal access with appropriate permissions
 - Access to your gateway's environment configuration
@@ -24,9 +24,11 @@ This provides a full E5 sandbox with **Microsoft Entra ID P2** licenses (25 user
 5. Click **Set up E5 subscription** on your dashboard
 6. Choose **Instant sandbox** (recommended)
 7. Create your admin account:
+
    - Username: e.g., `admin`
    - Domain: e.g., `yourname.onmicrosoft.com`
    - Password: Create a strong password
+
 8. Complete phone verification
 9. Wait for provisioning (~1 minute)
 
@@ -61,7 +63,7 @@ Contact your IT administrator to request access to create App Registrations.
 2. Click **+ New registration**
 3. Fill in the application details:
 
-**Name**: `MCP Gateway`
+**Name**: `ContextForge`
 
 **Supported account types**: Choose the appropriate option:
 
@@ -74,7 +76,6 @@ Contact your IT administrator to request access to create App Registrations.
 - Platform: **Web**
 - URI: `https://gateway.yourcompany.com/auth/sso/callback/entra`
 - For development, you can add: `http://localhost:8000/auth/sso/callback/entra`
-
 4. Click **Register**
 
 ### 1.3 Note Application Credentials
@@ -92,10 +93,12 @@ After registration, you'll see the **Overview** page:
 1. In your app registration, go to **Certificates & secrets** in the left sidebar
 2. Click the **Client secrets** tab
 3. Click **+ New client secret**
-4. Add a description: `MCP Gateway Client Secret`
+4. Add a description: `ContextForge Client Secret`
 5. Choose an expiration period:
+
    - **Recommended for production**: 180 days (6 months) or 365 days (1 year)
    - **Important**: Set a reminder to rotate secrets before expiration
+
 6. Click **Add**
 
 ### 2.2 Copy Secret Value
@@ -116,10 +119,12 @@ After registration, you'll see the **Overview** page:
 3. Select **Microsoft Graph**
 4. Choose **Delegated permissions**
 5. Add these permissions:
+
    - ✅ **OpenId permissions** → `openid`
    - ✅ **OpenId permissions** → `profile`
    - ✅ **OpenId permissions** → `email`
    - ✅ **User** → `User.Read` (basic profile information)
+
 6. Click **Add permissions**
 
 ### 3.2 Grant Admin Consent (if required)
@@ -138,22 +143,30 @@ If your organization requires admin consent for permissions:
 2. Click **+ Add optional claim**
 3. Select **ID** token type
 4. Add these optional claims:
+
    - ✅ `email` - Email address
    - ✅ `family_name` - Last name
    - ✅ `given_name` - First name
    - ✅ `preferred_username` - Username
+
 5. Click **Add**
 
 ### 4.2 Configure Authentication Settings
 
 1. Go to **Authentication** in the left sidebar
 2. Under **Platform configurations** → **Web**, verify:
+
    - ✅ Redirect URIs are correct
+
 3. Under **Implicit grant and hybrid flows**:
-   - Leave checkboxes **unchecked** (Context Forge uses authorization code flow, not implicit)
+
+   - Leave checkboxes **unchecked** (ContextForge uses authorization code flow, not implicit)
+
 4. Under **Advanced settings**:
+
    - **Allow public client flows**: No (keep default)
    - **Live SDK support**: No (keep default)
+
 5. Click **Save** if you made changes
 
 ### 4.3 Configure Front-channel Logout (Optional)
@@ -161,12 +174,18 @@ If your organization requires admin consent for permissions:
 Front-channel logout enables automatic session clearing when users log out from Microsoft Entra ID.
 
 1. Under **Authentication** → **Front-channel logout URL**:
+
    - Production: `https://gateway.yourcompany.com/admin/logout`
    - Development: `http://localhost:8000/admin/logout`
-2. When users log out from Microsoft, Entra ID sends a GET request to this URL
-3. Context Forge clears the session cookie and returns HTTP 200
 
-## Step 5: Configure MCP Gateway Environment
+2. **How it works**: The `/admin/logout` endpoint supports three scenarios:
+   - **OIDC front-channel logout**: When users log out from Microsoft Entra ID, it sends a GET request without browser headers. ContextForge clears the session and returns HTTP 200 (per OpenID Connect Front-Channel Logout 1.0 spec).
+   - **Browser navigation**: If a user navigates directly to `/admin/logout` in their browser (GET with `Accept: text/html` header), they are redirected to the login page.
+   - **User-initiated logout**: POST requests from the Admin UI logout button redirect to the login page after clearing the session.
+
+3. All three scenarios properly clear authentication cookies and SSO session state.
+
+## Step 5: Configure ContextForge Environment
 
 ### 5.1 Update Environment Variables
 
@@ -192,11 +211,14 @@ SSO_TRUSTED_DOMAINS=["yourcompany.com"]
 SSO_PRESERVE_ADMIN_AUTH=true
 
 # Role Mapping Configuration (New Feature)
-# Map EntraID groups to Context Forge roles
+# Map EntraID groups to ContextForge roles
 SSO_ENTRA_GROUPS_CLAIM=groups
 # Optional: Default role for users without group mappings (default: None - no role)
 # SSO_ENTRA_DEFAULT_ROLE=viewer
 SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true
+SSO_ENTRA_GRAPH_API_ENABLED=true
+SSO_ENTRA_GRAPH_API_TIMEOUT=10
+SSO_ENTRA_GRAPH_API_MAX_GROUPS=0  # 0 = unlimited
 
 # Admin Groups (Object IDs or App Role names)
 SSO_ENTRA_ADMIN_GROUPS=["a1b2c3d4-1234-5678-90ab-cdef12345678"]
@@ -324,6 +346,7 @@ journalctl -u mcpgateway | grep -i "SSO provider"
 ### 7.1 Access Login Page
 
 1. Navigate to your gateway's login page:
+
    - Development: `http://localhost:8000/admin/login`
    - Production: `https://gateway.yourcompany.com/admin/login`
 
@@ -376,10 +399,12 @@ Configure Conditional Access in Azure:
 1. Go to **Microsoft Entra ID** → **Security** → **Conditional Access**
 2. Click **+ New policy**
 3. Configure conditions:
+
    - **Users**: Select specific users or groups
-   - **Cloud apps**: Select your MCP Gateway app
+   - **Cloud apps**: Select your ContextForge app
    - **Conditions**: Device platform, location, sign-in risk
    - **Grant**: Require MFA, require compliant device, etc.
+
 4. Enable policy and test
 
 ### 8.2 Multi-Factor Authentication (MFA)
@@ -388,16 +413,18 @@ Configure MFA enforcement:
 
 1. Go to **Microsoft Entra ID** → **Security** → **MFA**
 2. Configure MFA settings:
+
    - **Service settings**: Enable MFA methods (Authenticator app, SMS, etc.)
    - **Users**: Enable MFA per-user or via Conditional Access
-3. Test MFA during login to MCP Gateway
+
+3. Test MFA during login to ContextForge
 
 ### 8.3 User Assignment and Access Control
 
 Control who can access the application:
 
 1. Go to your app registration → **Enterprise applications**
-2. Find your MCP Gateway application
+2. Find your ContextForge application
 3. Go to **Users and groups**
 4. Click **+ Add user/group**
 5. Select users or security groups who should have access
@@ -408,23 +435,29 @@ Control who can access the application:
 **IMPORTANT**: This step is required to enable automatic role assignment based on group memberships.
 
 > **Critical**: You MUST select **ID** token type when adding group claims. Microsoft's OIDC userinfo endpoint
-> does not return group claims. Context Forge extracts groups from the ID token, not the userinfo response.
+> does not return group claims. ContextForge extracts groups from the ID token, not the userinfo response.
 
 To include group memberships in tokens:
 
 1. In your app registration, go to **Token configuration**
 2. Click **+ Add groups claim**
 3. Select group types to include:
+
    - **Security groups** (recommended)
    - Microsoft 365 groups (if needed)
    - Distribution groups (if needed)
+
 4. Choose **Group ID** format (recommended for stability)
+
    - **Group ID**: Returns Object IDs (stable, won't change)
    - **sAMAccountName**: Returns group names (readable but can change)
+
 5. **Select token types** (CRITICAL):
+
    - **ID** - **REQUIRED** for role mapping to work
    - Access (optional, for API authorization)
    - SAML (if using SAML federation)
+
 6. Click **Add**
 
 **Note**: Groups will appear in the `groups` claim in the ID token. You can configure role mappings in Step 8.5 below.
@@ -433,11 +466,11 @@ To include group memberships in tokens:
 
 ### Overview
 
-MCP Gateway now supports automatic role assignment based on EntraID group memberships. Users are automatically assigned Context Forge RBAC roles based on their groups, eliminating manual role management.
+ContextForge now supports automatic role assignment based on EntraID group memberships. Users are automatically assigned ContextForge RBAC roles based on their groups, eliminating manual role management.
 
 ### Available Roles
 
-Context Forge includes these default roles:
+ContextForge includes these default roles:
 
 1. **`platform_admin`** (global scope) - Full platform access with all permissions
 2. **`team_admin`** (team scope) - Team management, tools, resources, prompts
@@ -458,6 +491,7 @@ Find your security group Object IDs in Azure:
 4. Repeat for all groups you want to map
 
 Example groups:
+
 - Admins: `a1b2c3d4-1234-5678-90ab-cdef12345678`
 - Developers: `e5f6g7h8-1234-5678-90ab-cdef12345678`
 - Team Admins: `i9j0k1l2-1234-5678-90ab-cdef12345678`
@@ -472,6 +506,9 @@ Add these environment variables to your `.env` file:
 SSO_ENTRA_GROUPS_CLAIM=groups
 SSO_ENTRA_DEFAULT_ROLE=viewer
 SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true
+SSO_ENTRA_GRAPH_API_ENABLED=true
+SSO_ENTRA_GRAPH_API_TIMEOUT=10
+SSO_ENTRA_GRAPH_API_MAX_GROUPS=0
 
 # Admin Groups (grants platform_admin role)
 SSO_ENTRA_ADMIN_GROUPS=["a1b2c3d4-1234-5678-90ab-cdef12345678"]
@@ -487,6 +524,10 @@ SSO_ENTRA_ROLE_MAPPINGS={"e5f6g7h8-1234-5678-90ab-cdef12345678":"developer","i9j
 - `SSO_ENTRA_ROLE_MAPPINGS`: Map group IDs to role names
 - `SSO_ENTRA_DEFAULT_ROLE`: Role assigned if no groups match (default: None - no automatic role assignment)
 - `SSO_ENTRA_SYNC_ROLES_ON_LOGIN`: Sync roles on each login (default: true)
+- `SSO_ENTRA_GRAPH_API_ENABLED`: Use Graph fallback when token has groups overage (default: true)
+- `SSO_ENTRA_GRAPH_API_TIMEOUT`: Timeout in seconds for Graph fallback call (default: 10)
+- `SSO_ENTRA_GRAPH_API_MAX_GROUPS`: Maximum Graph-fetched groups retained (default: 0 = unlimited)
+- Graph fallback endpoint `/me/getMemberObjects` requires delegated `User.Read` permission in Entra app registration
 
 **Security Note:** `SSO_ENTRA_DEFAULT_ROLE` defaults to `None` (not "viewer") to prevent automatic access grants. Set this explicitly only if you want all EntraID users to receive a default role when they don't match any group mappings.
 
@@ -535,12 +576,13 @@ Allowed member types: Users/Groups
 # Use 'roles' claim instead of 'groups'
 SSO_ENTRA_GROUPS_CLAIM=roles
 
-# Map App Role values to Context Forge roles
+# Map App Role values to ContextForge roles
 SSO_ENTRA_ADMIN_GROUPS=["Admin"]
 SSO_ENTRA_ROLE_MAPPINGS={"Developer":"developer","TeamAdmin":"team_admin","Viewer":"viewer"}
 ```
 
 **Benefits of App Roles:**
+
 - ✅ Semantic names (readable)
 - ✅ Stable (won't change)
 - ✅ No Object ID lookups needed
@@ -553,7 +595,7 @@ After configuration, test role assignment:
 **Step 1: Login with Test User**
 
 1. Assign a test user to a group/role in Azure
-2. Login to MCP Gateway via EntraID SSO
+2. Login to ContextForge via EntraID SSO
 3. Check assigned roles
 
 **Step 2: Verify via API**
@@ -563,12 +605,20 @@ After configuration, test role assignment:
 curl -H "Authorization: Bearer YOUR_TOKEN" \
   http://localhost:8000/rbac/my/roles
 
-# Should return assigned roles:
+# Should return assigned roles (abbreviated):
 [
   {
+    "id": "...",
+    "user_email": "user@example.com",
+    "role_id": "...",
     "role_name": "developer",
     "scope": "team",
-    "granted_by": "sso_system"
+    "scope_id": null,
+    "granted_by": "user@example.com",
+    "granted_at": "2026-02-20T21:20:20Z",
+    "expires_at": null,
+    "is_active": true,
+    "grant_source": "sso"
   }
 ]
 ```
@@ -589,30 +639,34 @@ tail -f logs/gateway.log | grep "Assigned SSO role"
 Roles are automatically synchronized:
 
 **On User Creation:**
+
 - Groups extracted from token
 - Roles mapped and assigned
 - User created with appropriate permissions
 
 **On User Login (if `SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true`):**
+
 - Current groups extracted
 - Old SSO-granted roles revoked if no longer in groups
 - New roles assigned based on current groups
 - Manually assigned roles preserved
 
 **Manual Role Management:**
+
 - Admins can manually assign additional roles via Admin UI
 - Manually assigned roles are preserved during sync
-- Only SSO-granted roles (granted_by='sso_system') are synchronized
+- Only SSO-granted roles (`grant_source='sso'`) are synchronized
 
 ### 8.5.7 Troubleshooting Role Mapping
 
 **Issue: Users not getting roles**
 
 Check:
+
 1. Groups claim is included in token (Step 8.4)
 2. `SSO_ENTRA_GROUPS_CLAIM` matches claim name in token
 3. Group IDs in `SSO_ENTRA_ROLE_MAPPINGS` match exactly
-4. Roles exist in Context Forge (check Admin UI → RBAC)
+4. Roles exist in ContextForge (check Admin UI → RBAC)
 
 Debug:
 ```bash
@@ -627,6 +681,7 @@ tail -f logs/gateway.log | grep "groups"
 **Issue: Admin users not getting admin access**
 
 Check:
+
 1. User's group is in `SSO_ENTRA_ADMIN_GROUPS`
 2. Group ID/name matches exactly (case-insensitive)
 3. User's `is_admin` flag is set
@@ -643,6 +698,7 @@ curl -H "Authorization: Bearer ADMIN_TOKEN" \
 **Issue: Roles not syncing on login**
 
 Check:
+
 1. `SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true`
 2. User has groups in token
 3. No errors in logs
@@ -703,6 +759,7 @@ curl -X PUT "http://localhost:8000/auth/sso/admin/providers/entra" \
 ```
 
 This is useful when:
+
 - Provider doesn't emit group claims
 - You want to manage roles manually for specific providers
 - Migrating from manual to automatic role management
@@ -710,6 +767,7 @@ This is useful when:
 ### 8.5.10 Best Practices
 
 **Security:**
+
 - ✅ Leave `SSO_ENTRA_DEFAULT_ROLE` unset unless you want automatic access for all users
 - ✅ Use App Roles for stable, semantic mappings
 - ✅ Limit admin groups to minimum necessary users
@@ -717,12 +775,14 @@ This is useful when:
 - ✅ Audit role assignments regularly
 
 **Management:**
+
 - ✅ Document group-to-role mappings
 - ✅ Use descriptive App Role names
 - ✅ Test with non-admin users first
 - ✅ Monitor logs for role assignment issues
 
 **Scalability:**
+
 - ✅ Use groups instead of individual user assignments
 - ✅ Leverage Azure group nesting if needed
 - ✅ Consider token size limits (~200 groups)
@@ -747,15 +807,17 @@ Define custom application roles:
 1. In your app registration, go to **App roles**
 2. Click **+ Create app role**
 3. Define roles:
-   - **Display name**: `MCP Gateway Admin`
+
+   - **Display name**: `ContextForge Admin`
    - **Allowed member types**: Users/Groups
    - **Value**: `gateway.admin`
-   - **Description**: Administrator role for MCP Gateway
+   - **Description**: Administrator role for ContextForge
+
 4. Assign roles to users in **Enterprise applications** → **Users and groups**
 
 ### 9.3 Certificate-Based Authentication (Future)
 
-> **Note**: Certificate-based authentication is not currently supported by Context Forge. Use client secrets for now. This section documents the Azure configuration for future reference.
+> **Note**: Certificate-based authentication is not currently supported by ContextForge. Use client secrets for now. This section documents the Azure configuration for future reference.
 
 For enhanced security, certificates can be used instead of client secrets:
 
@@ -764,7 +826,7 @@ For enhanced security, certificates can be used instead of client secrets:
 3. Upload .cer, .pem, or .crt file
 4. Benefits: No expiration concerns, more secure than secrets
 
-**Current limitation**: Context Forge uses client secrets (`SSO_ENTRA_CLIENT_SECRET`). Certificate authentication support is planned for a future release.
+**Current limitation**: ContextForge uses client secrets (`SSO_ENTRA_CLIENT_SECRET`). Certificate authentication support is planned for a future release.
 
 ### 9.4 Admin Consent Workflow
 
@@ -866,7 +928,7 @@ To fix:
 **Solution**: Assign user to the application
 
 1. Go to **Microsoft Entra ID** → **Enterprise applications**
-2. Find your MCP Gateway app
+2. Find your ContextForge app
 3. Go to **Users and groups**
 4. Click **+ Add user/group**
 5. Select the user and click **Assign**
@@ -998,7 +1060,7 @@ After Microsoft Entra ID SSO is working:
 
 ## Support and Resources
 
-### Context Forge Documentation
+### ContextForge Documentation
 
 - [EntraID Role Mapping Feature Guide](sso-entra-role-mapping.md) - Detailed role mapping configuration
 - [ADR-034: SSO Admin Sync & Config Precedence](../architecture/adr/034-sso-admin-sync-config-precedence.md) - Design decisions
@@ -1028,4 +1090,4 @@ If you encounter issues:
 3. Review gateway logs for Entra ID-specific errors
 4. Verify all Azure settings match tutorial exactly
 5. Consult Microsoft documentation and support forums
-6. Check [MCP Gateway issue tracker](https://github.com/IBM/mcp-context-forge/issues)
+6. Check [ContextForge issue tracker](https://github.com/IBM/mcp-context-forge/issues)

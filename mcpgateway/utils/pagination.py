@@ -4,10 +4,10 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Pagination Utilities for MCP Gateway.
+Pagination Utilities for ContextForge.
 
 This module provides utilities for implementing efficient pagination
-across all MCP Gateway endpoints, supporting both offset-based and
+across all ContextForge endpoints, supporting both offset-based and
 cursor-based pagination strategies.
 
 Features:
@@ -340,6 +340,8 @@ async def offset_paginate(
 
     # Calculate pagination metadata
     total_pages = math.ceil(total_items / per_page) if total_items > 0 else 0
+    if total_pages > 0:
+        page = min(page, total_pages)
     offset = (page - 1) * per_page
 
     # Validate offset

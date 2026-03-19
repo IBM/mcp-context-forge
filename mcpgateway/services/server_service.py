@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-MCP Gateway Server Service
+ContextForge Server Service
 
 This module implements server management for the MCP Servers Catalog.
 It handles server registration, listing, retrieval, updates, activation toggling, and deletion.
@@ -21,7 +21,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import httpx
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
@@ -37,6 +37,8 @@ from mcpgateway.db import ServerMetric, ServerMetricsHourly
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.performance_tracker import get_performance_tracker
@@ -65,6 +67,40 @@ def _get_registry_cache():
     return _REGISTRY_CACHE
 
 
+def _validate_server_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:
+    """Validate team assignment and ownership requirements for server updates.
+
+    Args:
+        db: Database session used for membership checks.
+        user_email: Requesting user email. When omitted, ownership checks are skipped
+            for system/internal update paths.
+        target_team_id: Team identifier to validate.
+
+    Raises:
+        ValueError: If team ID is missing, team does not exist, or caller is not
+            an active team owner.
+    """
+    if not target_team_id:
+        raise ValueError("Cannot set visibility to 'team' without a team_id")
+
+    team = db.query(DbEmailTeam).filter(DbEmailTeam.id == target_team_id).first()
+    if not team:
+        raise ValueError(f"Team {target_team_id} not found")
+
+    # Preserve existing behavior for system/internal updates where
+    # user context may be intentionally omitted.
+    if not user_email:
+        return
+
+    membership = (
+        db.query(DbEmailTeamMember)
+        .filter(DbEmailTeamMember.team_id == target_team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
+        .first()
+    )
+    if not membership:
+        raise ValueError("User membership in team not sufficient for this update.")
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -76,6 +112,10 @@ class ServerError(Exception):
 
 class ServerNotFoundError(ServerError):
     """Raised when a requested server is not found."""
+
+
+class ServerLockConflictError(ServerError):
+    """Raised when a server row is locked by another transaction."""
 
 
 class ServerNameConflictError(ServerError):
@@ -127,12 +167,14 @@ class ServerNameConflictError(ServerError):
         super().__init__(message)
 
 
-class ServerService:
+class ServerService(BaseService):
     """Service for managing MCP Servers in the catalog.
 
     Provides methods to create, list, retrieve, update, set state, and delete server records.
     Also supports event notifications for changes in server data.
     """
+
+    _visibility_model_cls = DbServer
 
     def __init__(self) -> None:
         """Initialize a new ServerService instance.
@@ -344,6 +386,7 @@ class ServerService:
             server_dict["metrics"] = None
         # Add associated IDs from relationships
         server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
+        server_dict["associated_tool_ids"] = [str(tool.id) for tool in server.tools] if server.tools else []
         server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
         server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents] if server.a2a_agents else []
@@ -351,7 +394,7 @@ class ServerService:
         # Team name is loaded via server.team property from email_team relationship
         server_dict["team"] = getattr(server, "team", None)
 
-        return ServerRead.model_validate(server_dict)
+        return ServerRead.model_validate(server_dict).masked()
 
     def _assemble_associated_items(
         self,
@@ -472,6 +515,7 @@ class ServerService:
         """
         try:
             logger.info(f"Registering server: {server_in.name}")
+            oauth_config = await protect_oauth_config_for_storage(getattr(server_in, "oauth_config", None))
             # # Create the new server record.
             db_server = DbServer(
                 name=server_in.name,
@@ -482,10 +526,12 @@ class ServerService:
                 # Team scoping fields - use schema values if provided, otherwise fallback to parameters
                 team_id=getattr(server_in, "team_id", None) or team_id,
                 owner_email=getattr(server_in, "owner_email", None) or owner_email or created_by,
-                visibility=getattr(server_in, "visibility", None) or visibility,
+                # IMPORTANT: Prefer function parameter over schema default
+                # The API has visibility as a separate Body param that should override schema default
+                visibility=visibility or getattr(server_in, "visibility", None) or "public",
                 # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
                 oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
-                oauth_config=getattr(server_in, "oauth_config", None),
+                oauth_config=oauth_config,
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -716,6 +762,7 @@ class ServerService:
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> Union[tuple[List[ServerRead], Optional[str]], Dict[str, Any]]:
         """List all registered servers with cursor or page-based pagination and optional team filtering.
 
@@ -730,6 +777,7 @@ class ServerService:
             user_email: Email of user for team-based access control. None for no access control.
             team_id: Optional team ID to filter by specific team (requires user_email).
             visibility: Optional visibility filter (private, team, public) (requires user_email).
+            token_teams: Optional list of team IDs from the token (None=unrestricted, []=public-only).
 
         Returns:
             If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
@@ -748,14 +796,21 @@ class ServerService:
             >>> isinstance(servers, list) and cursor is None
             True
         """
-        # Check cache for first page only - skip when user_email provided or page-based pagination
+        # Check cache for first page only
+        # SECURITY: Only cache public-only results (token_teams=[])
+        # - token_teams=None (admin bypass): Don't cache - admin sees all, should be fresh
+        # - token_teams=[] (public-only): Cache - same result for all public-only users
+        # - token_teams=[...] (team-scoped): Don't cache - results vary by team
+        # - user_email set: Don't cache - results vary by user ownership
         cache = _get_registry_cache()
-        if cursor is None and user_email is None and page is None:
+        is_public_only = token_teams is not None and len(token_teams) == 0
+        use_cache = cursor is None and user_email is None and page is None and is_public_only
+        if use_cache:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
             cached = await cache.get("servers", filters_hash)
             if cached is not None:
                 # Reconstruct ServerRead objects from cached dicts
-                cached_servers = [ServerRead.model_validate(s) for s in cached["servers"]]
+                cached_servers = [ServerRead.model_validate(s).masked() for s in cached["servers"]]
                 return (cached_servers, cached.get("next_cursor"))
 
         # Build base query with ordering and eager load relationships to avoid N+1
@@ -775,33 +830,10 @@ class ServerService:
         if not include_inactive:
             query = query.where(DbServer.enabled)
 
-        # Apply team-based access control if user_email is provided
-        if user_email:
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)
-                access_conditions = [
-                    and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])),
-                    and_(DbServer.team_id == team_id, DbServer.owner_email == user_email),
-                ]
-                query = query.where(or_(*access_conditions))
-            else:
-                # General access: user's servers + public servers + team servers
-                access_conditions = [
-                    DbServer.owner_email == user_email,
-                    DbServer.visibility == "public",
-                ]
-                if team_ids:
-                    access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
-                query = query.where(or_(*access_conditions))
-
-            if visibility:
-                query = query.where(DbServer.visibility == visibility)
+        if visibility:
+            query = query.where(DbServer.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
@@ -851,8 +883,9 @@ class ServerService:
 
         # Cursor-based format
 
-        # Cache first page results - only for non-user-specific queries
-        if cursor is None and user_email is None:
+        # Cache first page results - only for public-only queries (no user/team filtering)
+        # SECURITY: Only cache public-only results (token_teams=[]), never admin bypass or team-scoped
+        if cursor is None and user_email is None and is_public_only:
             try:
                 cache_data = {"servers": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("servers", cache_data, filters_hash)
@@ -1022,7 +1055,6 @@ class ServerService:
                 "resource_count": len(getattr(server, "resources", []) or []),
                 "prompt_count": len(getattr(server, "prompts", []) or []),
             },
-            db=db,
         )
 
         self._audit_trail.log_action(
@@ -1165,27 +1197,8 @@ class ServerService:
 
                 # Validate visibility transitions
                 if new_visibility == "team":
-                    if not server.team_id and not server_update.team_id:
-                        raise ValueError("Cannot set visibility to 'team' without a team_id")
-
-                    # Verify team exists and user is a member
-                    if server.team_id:
-                        team_id = server.team_id
-                    else:
-                        team_id = server_update.team_id
-
-                    team = db.query(DbEmailTeam).filter(DbEmailTeam.id == team_id).first()
-                    if not team:
-                        raise ValueError(f"Team {team_id} not found")
-
-                    # Verify user is a member of the team
-                    membership = (
-                        db.query(DbEmailTeamMember)
-                        .filter(DbEmailTeamMember.team_id == team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
-                        .first()
-                    )
-                    if not membership:
-                        raise ValueError("User membership in team not sufficient for this update.")
+                    target_team_id = server_update.team_id if server_update.team_id is not None else server.team_id
+                    _validate_server_team_assignment(db, user_email, target_team_id)
 
                 elif new_visibility == "public":
                     # Optional: Check if user has permission to make resources public
@@ -1195,10 +1208,9 @@ class ServerService:
                 server.visibility = new_visibility
 
             if server_update.team_id is not None:
+                if server_update.team_id != server.team_id:
+                    _validate_server_team_assignment(db, user_email, server_update.team_id)
                 server.team_id = server_update.team_id
-
-            if server_update.owner_email is not None:
-                server.owner_email = server_update.owner_email
 
             # Update associated tools if provided using bulk query
             if server_update.associated_tools is not None:
@@ -1245,9 +1257,9 @@ class ServerService:
             # This prevents the case where oauth_enabled=False and oauth_config are both provided
             if not oauth_being_disabled:
                 if hasattr(server_update, "model_fields_set") and "oauth_config" in server_update.model_fields_set:
-                    server.oauth_config = server_update.oauth_config
+                    server.oauth_config = await protect_oauth_config_for_storage(server_update.oauth_config, existing_oauth_config=server.oauth_config)
                 elif server_update.oauth_config is not None:
-                    server.oauth_config = server_update.oauth_config
+                    server.oauth_config = await protect_oauth_config_for_storage(server_update.oauth_config, existing_oauth_config=server.oauth_config)
 
             # Update metadata fields
             server.updated_at = datetime.now(timezone.utc)
@@ -1399,6 +1411,7 @@ class ServerService:
 
         Raises:
             ServerNotFoundError: If the server is not found.
+            ServerLockConflictError: If the server row is locked by another transaction.
             ServerError: For other errors.
             PermissionError: If user doesn't own the agent.
 
@@ -1423,18 +1436,25 @@ class ServerService:
             'server_read'
         """
         try:
-            server = get_for_update(
-                db,
-                DbServer,
-                server_id,
-                options=[
-                    selectinload(DbServer.tools),
-                    selectinload(DbServer.resources),
-                    selectinload(DbServer.prompts),
-                    selectinload(DbServer.a2a_agents),
-                    selectinload(DbServer.email_team),
-                ],
-            )
+            # Use nowait=True to fail fast if row is locked, preventing lock contention under high load
+            try:
+                server = get_for_update(
+                    db,
+                    DbServer,
+                    server_id,
+                    nowait=True,
+                    options=[
+                        selectinload(DbServer.tools),
+                        selectinload(DbServer.resources),
+                        selectinload(DbServer.prompts),
+                        selectinload(DbServer.a2a_agents),
+                        selectinload(DbServer.email_team),
+                    ],
+                )
+            except OperationalError as lock_err:
+                # Row is locked by another transaction - fail fast with 409
+                db.rollback()
+                raise ServerLockConflictError(f"Server {server_id} is currently being modified by another request") from lock_err
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
@@ -1514,6 +1534,12 @@ class ServerService:
                 user_email=user_email,
             )
             raise e
+        except ServerLockConflictError:
+            # Re-raise lock conflicts without wrapping - allows 409 response
+            raise
+        except ServerNotFoundError:
+            # Re-raise not found without wrapping - allows 404 response
+            raise
         except Exception as e:
             db.rollback()
 
@@ -1870,13 +1896,13 @@ class ServerService:
         Args:
             db: Database session.
             server_id: The ID of the server.
-            resource_base_url: The base URL for the resource (e.g., "https://gateway.example.com/servers/abc123").
+            resource_base_url: The base URL for the resource (e.g., "https://gateway.example.com/servers/abc123/mcp").
 
         Returns:
             Dict containing RFC 9728 Protected Resource Metadata:
-            - resource: The protected resource identifier (URL)
-            - authorization_servers: List of authorization server issuer URIs
-            - bearer_methods_supported: Supported bearer token methods
+            - resource: The protected resource identifier (URL with /mcp suffix)
+            - authorization_servers: JSON array of authorization server issuer URIs (RFC 9728 Section 2)
+            - bearer_methods_supported: Supported bearer token methods (always ["header"])
             - scopes_supported: Optional list of supported scopes
 
         Raises:
@@ -1911,12 +1937,12 @@ class ServerService:
         if not oauth_config:
             raise ServerError(f"OAuth not configured for server: {server_id}")
 
-        # Extract authorization server(s) - support both list and single value
+        # Extract authorization server(s) - support both list and single value in config
         authorization_servers = oauth_config.get("authorization_servers", [])
         if not authorization_servers:
             auth_server = oauth_config.get("authorization_server")
             if auth_server:
-                authorization_servers = [auth_server]
+                authorization_servers = [auth_server] if isinstance(auth_server, str) else auth_server
 
         if not authorization_servers:
             raise ServerError(f"OAuth authorization_server not configured for server: {server_id}")
@@ -1935,3 +1961,28 @@ class ServerService:
 
         logger.debug(f"Returning OAuth protected resource metadata for server {server_id}")
         return response_data
+
+
+# Lazy singleton - created on first access, not at module import time.
+# This avoids instantiation when only exception classes are imported.
+_server_service_instance = None  # pylint: disable=invalid-name
+
+
+def __getattr__(name: str):
+    """Module-level __getattr__ for lazy singleton creation.
+
+    Args:
+        name: The attribute name being accessed.
+
+    Returns:
+        The server_service singleton instance if name is "server_service".
+
+    Raises:
+        AttributeError: If the attribute name is not "server_service".
+    """
+    global _server_service_instance  # pylint: disable=global-statement
+    if name == "server_service":
+        if _server_service_instance is None:
+            _server_service_instance = ServerService()
+        return _server_service_instance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

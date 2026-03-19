@@ -128,9 +128,11 @@ Your module documentation continues here...
 
 *   **`authors`**: Specify author name(s) for the header
 *   **`shebang`**: Control shebang requirement
+
     - `auto` (default): Only required for executable files
     - `always`: Always require shebang line
     - `never`: Never require shebang line
+
 *   **`encoding`**: Set to `no` to skip encoding line requirement
 *   **`year`**: Override copyright year (for `fix-all-headers-custom`)
 *   **`license`**: Override license identifier (for `fix-all-headers-custom`)

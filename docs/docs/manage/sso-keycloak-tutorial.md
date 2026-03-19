@@ -1,10 +1,39 @@
 # Keycloak OIDC Setup Tutorial
 
-This tutorial walks you through setting up Keycloak Single Sign-On (SSO) authentication for MCP Gateway, enabling enterprise identity management with the popular open-source identity and access management solution.
+This tutorial walks you through setting up Keycloak Single Sign-On (SSO) authentication for ContextForge, enabling enterprise identity management with the popular open-source identity and access management solution.
+
+## Quick Start (Docker Compose)
+
+Use the preconfigured local SSO stack to test Keycloak end-to-end without external IdP setup:
+
+```bash
+make compose-sso
+make sso-test-login
+```
+
+Or run directly with compose:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.sso.yml --profile sso up -d
+```
+
+Preconfigured local endpoints and credentials:
+
+- Gateway UI: `http://localhost:8080/admin/login`
+- Keycloak admin console: `http://localhost:8180` (`admin` / `changeme`)
+- Keycloak realm: `mcp-gateway`
+- Keycloak client: `mcp-gateway`
+- Callback URL: `http://localhost:8080/auth/sso/callback/keycloak`
+- Compose wiring: internal Keycloak URL `http://keycloak:8080`, browser URL `http://localhost:8180`
+- Test users (all password `changeme`):
+  - `admin@example.com`
+  - `developer@example.com`
+  - `viewer@example.com`
+  - `newuser@example.com`
 
 ## Prerequisites
 
-- MCP Gateway installed and running
+- ContextForge installed and running
 - Keycloak instance with admin access (self-hosted or cloud)
 - Keycloak admin console access with appropriate permissions
 - Access to your gateway's environment configuration
@@ -16,6 +45,7 @@ This tutorial walks you through setting up Keycloak Single Sign-On (SSO) authent
 1. Navigate to your Keycloak admin console (typically at `https://keycloak.yourcompany.com/admin`)
 2. Log in with your administrator credentials
 3. Select the realm you want to use (or create a new one)
+
    - Default realm: `master`
    - For production, consider creating a dedicated realm
 
@@ -26,8 +56,10 @@ This tutorial walks you through setting up Keycloak Single Sign-On (SSO) authent
 1. Hover over the realm dropdown in the top-left corner
 2. Click **Create Realm**
 3. Enter realm details:
+
    - **Realm name**: `mcp-gateway` (or your preferred name)
    - **Enabled**: Yes
+
 4. Click **Create**
 
 **Using Existing Realm**:
@@ -63,6 +95,7 @@ On the **Capability config** page:
 **Authorization**: `Off` (not needed for basic SSO)
 
 **Authentication flow**: Select the following:
+
 - ✅ **Standard flow** - Enables authorization code flow (required)
 - ✅ **Direct access grants** - Enables direct access (optional, for API access)
 - ❌ **Implicit flow** - Leave unchecked (deprecated)
@@ -109,6 +142,7 @@ Keycloak includes default scopes for OpenID Connect. Verify these are enabled:
 
 1. In your client's settings, go to **Client scopes** tab
 2. Verify these **Assigned default client scopes**:
+
    - ✅ `email` - Email address scope
    - ✅ `profile` - Basic profile information
    - ✅ `roles` - User roles
@@ -126,6 +160,7 @@ To include additional claims in tokens:
 4. Choose mapper type based on what you need:
 
 **Group Membership Mapper**:
+
 - **Name**: `groups`
 - **Mapper Type**: `Group Membership`
 - **Token Claim Name**: `groups`
@@ -135,6 +170,7 @@ To include additional claims in tokens:
 - **Add to userinfo**: On
 
 **User Attribute Mapper** (for custom attributes):
+
 - **Name**: `department`
 - **Mapper Type**: `User Attribute`
 - **User Attribute**: `department`
@@ -155,18 +191,20 @@ Realm roles apply across all clients in the realm:
 3. Create roles for your organization:
 
 **Example roles**:
+
 - **Role name**: `gateway-admin`
-- **Description**: Administrator role for MCP Gateway
+- **Description**: Administrator role for ContextForge
 - Click **Save**
 
 Repeat for additional roles:
+
 - `gateway-user` - Standard user
 - `gateway-developer` - Developer access
 - `gateway-viewer` - Read-only access
 
 ### 4.2 Create Client Roles (Optional)
 
-Client roles are specific to the MCP Gateway client:
+Client roles are specific to ContextForge client:
 
 1. Navigate to **Clients** → Select your `mcp-gateway` client
 2. Go to **Roles** tab
@@ -174,6 +212,7 @@ Client roles are specific to the MCP Gateway client:
 4. Create client-specific roles:
 
 **Example roles**:
+
 - `admin` - Client admin
 - `member` - Client member
 - `viewer` - Client viewer
@@ -185,6 +224,7 @@ Client roles are specific to the MCP Gateway client:
 3. Go to **Role mapping** tab
 4. Click **Assign role**
 5. Select roles to assign:
+
    - Filter by **Realm roles** or client name
    - Check desired roles
    - Click **Assign**
@@ -198,10 +238,12 @@ To include roles in JWT tokens:
 3. Verify these mappers exist:
 
 **realm roles**:
+
 - Maps realm roles to `realm_access.roles` claim
 - Should be enabled by default
 
 **client roles**:
+
 - Maps client roles to `resource_access.{client_id}.roles` claim
 - Should be enabled by default
 
@@ -216,10 +258,12 @@ Groups provide hierarchical organization:
 1. In the left sidebar, click **Groups**
 2. Click **Create group**
 3. Enter group details:
+
    - **Name**: `Developers`
    - Click **Create**
 
 Create additional groups as needed:
+
 - `Administrators`
 - `Operations`
 - `Support`
@@ -240,7 +284,7 @@ To include group membership in tokens:
 2. Go to **Mappers** tab
 3. Verify or create **Group Membership** mapper (see Step 3.2)
 
-## Step 6: Configure MCP Gateway Environment
+## Step 6: Configure ContextForge Environment
 
 ### 6.1 Keycloak Auto-Discovery Feature
 
@@ -359,6 +403,7 @@ SSO_KEYCLOAK_CLIENT_ID=mcp-gateway-prod
 |----------|----------|---------|-------------|
 | `SSO_KEYCLOAK_ENABLED` | Yes | `false` | Enable Keycloak SSO provider |
 | `SSO_KEYCLOAK_BASE_URL` | Yes | - | Base URL of Keycloak instance |
+| `SSO_KEYCLOAK_PUBLIC_BASE_URL` | No | _unset_ | Browser-facing Keycloak URL used for authorization redirects and issuer verification when gateway uses an internal URL |
 | `SSO_KEYCLOAK_REALM` | Yes | `master` | Keycloak realm name |
 | `SSO_KEYCLOAK_CLIENT_ID` | Yes | - | OAuth client ID from Keycloak |
 | `SSO_KEYCLOAK_CLIENT_SECRET` | Yes | - | OAuth client secret from Keycloak |
@@ -367,6 +412,9 @@ SSO_KEYCLOAK_CLIENT_ID=mcp-gateway-prod
 | `SSO_KEYCLOAK_USERNAME_CLAIM` | No | `preferred_username` | JWT claim for username |
 | `SSO_KEYCLOAK_EMAIL_CLAIM` | No | `email` | JWT claim for email |
 | `SSO_KEYCLOAK_GROUPS_CLAIM` | No | `groups` | JWT claim for group membership |
+| `SSO_KEYCLOAK_ROLE_MAPPINGS` | No | `{}` | JSON map of Keycloak roles/groups to Gateway RBAC roles |
+| `SSO_KEYCLOAK_DEFAULT_ROLE` | No | _unset_ | Fallback role when no mapping matches |
+| `SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM` | No | `false` | Resolve team-scoped mapped roles to the user's personal team |
 
 ## Step 7: Restart and Verify Gateway
 
@@ -437,6 +485,7 @@ curl https://keycloak.yourcompany.com/realms/master/.well-known/openid-configura
 ### 8.1 Access Login Page
 
 1. Navigate to your gateway's login page:
+
    - Development: `http://localhost:8000/admin/login`
    - Production: `https://gateway.yourcompany.com/admin/login`
 
@@ -513,8 +562,10 @@ Configure MFA in Keycloak for enhanced security:
 1. Go to **Authentication** in the left sidebar
 2. Select **Flows** tab
 3. Configure **Browser** flow:
+
    - Add **OTP Form** execution
    - Set to **Required**
+
 4. Go to **Required Actions** tab
 5. Enable **Configure OTP** for first-time setup
 
@@ -527,6 +578,7 @@ Create custom authentication flows:
 1. Go to **Authentication** → **Flows**
 2. Click **Create flow**
 3. Add conditional logic:
+
    - **Condition - User Role**: Check if user has specific role
    - **Condition - User Attribute**: Check custom attributes
    - **OTP Form**: Require MFA for admins only
@@ -538,6 +590,7 @@ Connect Keycloak to external identity providers:
 1. Go to **Identity Providers** in the left sidebar
 2. Click **Add provider**
 3. Select provider type:
+
    - **GitHub** - Social login
    - **Google** - Google Workspace
    - **Microsoft** - Azure AD/Entra ID
@@ -553,14 +606,18 @@ Sync users from LDAP/Active Directory:
 1. Go to **User federation** in the left sidebar
 2. Click **Add LDAP providers** (or Kerberos)
 3. Configure connection:
+
    - **Connection URL**: `ldap://ldap.company.com:389`
    - **Bind DN**: Service account DN
    - **Bind Credential**: Service account password
+
 4. Configure user mapping:
+
    - **User Object Classes**: `person, organizationalPerson, user`
    - **Username LDAP attribute**: `sAMAccountName`
    - **RDN LDAP attribute**: `cn`
    - **UUID LDAP attribute**: `objectGUID`
+
 5. Click **Test connection** and **Test authentication**
 6. Click **Save**
 7. Click **Synchronize all users** to import LDAP users
@@ -571,10 +628,13 @@ Customize Keycloak's login page appearance:
 
 1. Go to **Realm settings** → **Themes** tab
 2. Configure themes:
+
    - **Login theme**: Custom branded login page
    - **Account theme**: Custom account management UI
    - **Email theme**: Branded email templates
+
 3. Or create custom theme:
+
    - Place theme files in `themes/{theme-name}/` directory
    - Update realm theme settings
    - Restart Keycloak
@@ -585,14 +645,18 @@ Configure audit logging:
 
 1. Go to **Realm settings** → **Events** tab
 2. **Login events settings**:
+
    - Enable **Save Events**: Yes
    - Set **Expiration**: 7 days (or longer for compliance)
    - Select events to log (Login, Logout, Register, etc.)
+
 3. **Admin events settings**:
+
    - Enable **Save Events**: Yes
    - Enable **Include Representation**: Yes (for detailed audit)
 
 View events:
+
 - **Events** → **Login events**: User authentication events
 - **Events** → **Admin events**: Configuration changes
 
@@ -678,6 +742,7 @@ SSO_KEYCLOAK_REALM=master  # Realm name (case-sensitive)
 ```
 
 Verify in Keycloak:
+
 1. Go to **Clients** → Select your client
 2. **Settings** tab: Verify Client ID
 3. **Credentials** tab: Regenerate secret if needed
@@ -716,6 +781,7 @@ To fix:
 4. Click **Save**
 
 Or configure Keycloak to skip email verification:
+
 1. Go to **Realm settings** → **Login** tab
 2. Disable **Verify email**
 
@@ -757,12 +823,24 @@ SSO_KEYCLOAK_BASE_URL=https://keycloak.yourcompany.com/auth
 SSO_KEYCLOAK_BASE_URL=https://keycloak.yourcompany.com
 ```
 
+**Split-URL deployments** (e.g., Docker Compose with reverse proxy): When the gateway
+reaches Keycloak via an internal URL (`SSO_KEYCLOAK_BASE_URL=http://keycloak:8080`) but
+users authenticate via a different public URL, set `SSO_KEYCLOAK_PUBLIC_BASE_URL` to the
+browser-facing URL. The gateway rewrites both the authorization URL and the issuer to
+the public base so that `id_token` issuer verification succeeds:
+
+```bash
+SSO_KEYCLOAK_BASE_URL=http://keycloak:8080          # Internal (token, userinfo, JWKS)
+SSO_KEYCLOAK_PUBLIC_BASE_URL=http://localhost:8180   # Browser-facing (auth URL, issuer)
+```
+
 ### Roles Not Appearing in JWT
 
 **Problem**: User roles not included in JWT token
 **Solution**: Configure role mappers and enable role mapping
 
 1. Verify role mappers exist:
+
    - Go to **Client scopes** → **roles** → **Mappers**
    - Ensure **realm roles** and **client roles** mappers exist
 
@@ -773,6 +851,7 @@ SSO_KEYCLOAK_MAP_CLIENT_ROLES=true
 ```
 
 3. Assign roles to user:
+
    - Go to **Users** → Select user → **Role mapping**
    - Assign appropriate roles
 
@@ -785,11 +864,13 @@ SSO_KEYCLOAK_MAP_CLIENT_ROLES=true
 2. Go to **Mappers** tab
 3. Click **Add mapper** → **By configuration**
 4. Select **Group Membership**:
+
    - **Name**: `groups`
    - **Token Claim Name**: `groups`
    - **Full group path**: Off
    - **Add to ID token**: On
    - **Add to userinfo**: On
+
 5. Click **Save**
 
 Update gateway configuration:
@@ -893,6 +974,7 @@ cd /opt/keycloak/bin
 Keycloak's auto-discovery reduces configuration by **40%** compared to generic OIDC:
 
 **Generic OIDC requires**:
+
 - Authorization URL
 - Token URL
 - Userinfo URL
@@ -900,6 +982,7 @@ Keycloak's auto-discovery reduces configuration by **40%** compared to generic O
 - JWKS URI (sometimes)
 
 **Keycloak requires only**:
+
 - Base URL
 - Realm name
 - Client ID
@@ -935,7 +1018,7 @@ After Keycloak SSO is working:
 5. **Customize login themes** for brand consistency
 6. **Set up event logging** for audit compliance
 7. **Configure session management** and timeout policies
-8. **Implement group-based team mapping** in MCP Gateway
+8. **Implement group-based team mapping** in ContextForge
 9. **Document your configuration** for team reference
 
 ## Related Documentation
@@ -976,4 +1059,4 @@ If you encounter issues:
 4. Review gateway logs for Keycloak-specific errors
 5. Test JWT token claims at [jwt.io](https://jwt.io)
 6. Consult Keycloak documentation and community forums
-7. Check [MCP Gateway issue tracker](https://github.com/IBM/mcp-context-forge/issues)
+7. Check [ContextForge issue tracker](https://github.com/IBM/mcp-context-forge/issues)

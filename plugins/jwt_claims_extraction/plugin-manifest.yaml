@@ -1,0 +1,8 @@
+description: "Extracts JWT claims and metadata from access tokens and stores them in global context state for downstream authorization plugins (Cedar, OPA)."
+author: "Ioannis Ioannou"
+version: "1.0.0"
+tags: ["auth", "jwt", "claims", "rbac", "abac", "rfc9396"]
+available_hooks:
+  - "http_auth_resolve_user"
+default_config:
+  context_key: jwt_claims

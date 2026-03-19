@@ -2,7 +2,7 @@
 
 ## Overview
 
-The MCP Gateway provides comprehensive input validation and output sanitization to protect against common security vulnerabilities including:
+ContextForge provides comprehensive input validation and output sanitization to protect against common security vulnerabilities including:
 
 - **Path Traversal**: Prevents access to files outside allowed directories
 - **Command Injection**: Blocks shell metacharacters in parameters
@@ -86,6 +86,7 @@ uri = "/srv/data/../../secret.txt"
 ```
 
 **Implementation**:
+
 - Normalizes paths using `Path.resolve()`
 - Checks for `..` sequences
 - Validates against `ALLOWED_ROOTS`
@@ -104,6 +105,7 @@ filename = "bobbytables.jpg; cat /etc/passwd"
 ```
 
 **Protected Patterns**:
+
 - Shell metacharacters: `; & | \` $ ( ) { } [ ] < >`
 - Command chaining: `&&`, `||`, `;`
 - Pipe operators: `|`
@@ -122,6 +124,7 @@ param = "'; DROP TABLE users; --"
 ```
 
 **Protected Patterns**:
+
 - Quote characters: `'`, `"`
 - SQL comments: `--`, `/* */`
 - SQL keywords: `UNION`, `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `DROP`
@@ -141,11 +144,36 @@ clean = "Result: Error"
 ```
 
 **Sanitization Rules**:
+
 - Removes C0 control characters (0x00-0x1F) except newlines/tabs
 - Removes ANSI escape sequences
 - Removes C1 control characters (0x7F-0x9F)
 - Preserves `\n` (newline) and `\t` (tab)
 - Verifies Content-Type matches payload
+
+### JSON Schema Validation
+
+**Scenario**: Validate tool and prompt schemas during registration
+
+```python
+# Tool registration with invalid schema
+tool = {
+    "name": "invalid_tool",
+    "inputSchema": {
+        "type": "object",
+        "properties": {"arg": {"type": "unknown_type"}} # Invalid type
+    }
+}
+
+# Strict mode (Default): Rejects with 400 Bad Request
+# Non-strict mode: Logs warning but accepts registration
+```
+
+**Validation Rules**:
+- Enforces valid JSON Schema 2020-12 (default)
+- Validates structural integrity of `inputSchema` for tools
+- Validates `arguments` schema for tool prompts
+- prevents registration of broken tools that would fail at runtime
 
 ## API Usage
 

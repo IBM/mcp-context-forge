@@ -1,5 +1,11 @@
 # All files in the repo
 * @crivetimihai
 
+# Plugin framework
+/mcpgateway/plugins @araujof @terylt @jonpspri
+
 # Ownership for all tests
 /tests/ @crivetimihai @kevalmahajan @madhav165
+
+# Tests for plugin framework
+/tests/unit/mcpgateway/plugins @araujof @terylt @jonpspri

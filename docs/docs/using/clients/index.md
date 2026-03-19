@@ -1,6 +1,6 @@
 # MCP Clients
 
-MCP Gateway is compatible with any client that speaks the [Model Context Protocol (MCP)](https://github.com/modelcontext/protocol). This section documents tested clients, their configuration, and any integration tips.
+ContextForge is compatible with any client that speaks the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). This section documents tested clients, their configuration, and any integration tips.
 
 ---
 
@@ -24,13 +24,17 @@ There are two ways clients typically connect:
 
 Each of these tools can consume the MCP protocol and dynamically detect tools from the Gateway.
 
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
 ---
 
 ## 📁 What's in This Section
 
 | Page | Description |
 |------|-------------|
-| [Claude Desktop](claude-desktop.md) | How to connect Claude to MCP Gateway via wrapper |
+| [Claude Desktop](claude-desktop.md) | How to connect Claude to ContextForge via wrapper |
 | [Cline](cline.md) | Using the CLI tool for invoking tools or prompts |
 | [Continue](continue.md) | Integrating with the VSCode plugin |
 | [MCP Inspector](mcp-inspector.md) | Launch and test the Gateway or wrapper via a web debugger |

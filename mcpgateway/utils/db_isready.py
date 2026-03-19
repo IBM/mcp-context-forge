@@ -335,7 +335,7 @@ def wait_for_db_ready(
                     # Exponential backoff: interval * 2^(attempt-1), capped at max_backoff
                     backoff = min(interval * (2 ** (attempt - 1)), max_backoff)
                     # Add jitter (±25%) to prevent thundering herd
-                    jitter = backoff * random.uniform(-0.25, 0.25)  # noqa: DUO102  # nosec B311 - timing jitter, not security
+                    jitter = backoff * random.uniform(-0.25, 0.25)  # nosec B311  # noqa: DUO102 - timing jitter, not security
                     sleep_time = max(0.1, backoff + jitter)  # Ensure minimum 0.1s
                     log.debug(f"Attempt {attempt}/{max_tries} failed ({_sanitize(str(exc))}) - retrying in {sleep_time:.1f}s")
                     time.sleep(sleep_time)
@@ -344,11 +344,20 @@ def wait_for_db_ready(
         raise RuntimeError(f"Database not ready after {max_tries} attempts")
 
     if sync:
-        _probe()
+        try:
+            _probe()
+        finally:
+            # Readiness probe should not keep pooled connections open.
+            if hasattr(engine, "dispose"):
+                engine.dispose()
     else:
         loop = asyncio.get_event_loop()
-        # Off-load to default executor to avoid blocking the event-loop.
-        loop.run_until_complete(loop.run_in_executor(None, _probe))
+        try:
+            # Off-load to default executor to avoid blocking the event-loop.
+            loop.run_until_complete(loop.run_in_executor(None, _probe))
+        finally:
+            if hasattr(engine, "dispose"):
+                engine.dispose()
 
 
 # ---------------------------------------------------------------------------

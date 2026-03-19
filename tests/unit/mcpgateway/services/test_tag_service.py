@@ -8,14 +8,19 @@ Tests for Tag Service.
 """
 
 # Standard
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 # First-Party
+from mcpgateway.db import Base, Resource as DbResource
 from mcpgateway.services.tag_service import TagService
+import mcpgateway.services.tag_service as tag_service_module
 
 
 @pytest.fixture(autouse=True)
@@ -39,6 +44,82 @@ def tag_service():
 def mock_db():
     """Create a mock database session."""
     return MagicMock(spec=Session)
+
+
+@pytest.mark.asyncio
+async def test_resolve_team_ids_uses_team_management_service_when_token_teams_absent(tag_service, monkeypatch):
+    class MockTeamService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_teams(self, _user_email):
+            return [SimpleNamespace(id="team-a"), SimpleNamespace(id="team-b")]
+
+    monkeypatch.setattr("mcpgateway.services.team_management_service.TeamManagementService", MockTeamService)
+
+    team_ids = await tag_service._resolve_team_ids(db=object(), user_email="member@example.com", token_teams=None)
+    assert team_ids == ["team-a", "team-b"]
+
+
+@pytest.fixture
+def tag_visibility_db():
+    """Create an in-memory DB with visibility-scoped resource tags."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    from sqlalchemy.orm import sessionmaker
+
+    SessionLocal = sessionmaker(bind=engine)
+    db = SessionLocal()
+
+    db.add_all(
+        [
+            DbResource(
+                uri="file://public.txt",
+                name="Public Resource",
+                text_content="public",
+                visibility="public",
+                owner_email="owner@example.com",
+                tags=["public-tag", "shared-tag"],
+                enabled=True,
+            ),
+            DbResource(
+                uri="file://team-1.txt",
+                name="Team Resource",
+                text_content="team",
+                visibility="team",
+                team_id="team-1",
+                owner_email="teammate@example.com",
+                tags=["team-tag", "shared-tag"],
+                enabled=True,
+            ),
+            DbResource(
+                uri="file://team-2.txt",
+                name="Other Team Resource",
+                text_content="team2",
+                visibility="team",
+                team_id="team-2",
+                owner_email="other@example.com",
+                tags=["other-team-tag"],
+                enabled=True,
+            ),
+            DbResource(
+                uri="file://private.txt",
+                name="Private Resource",
+                text_content="private",
+                visibility="private",
+                owner_email="owner@example.com",
+                tags=["private-tag", "shared-tag"],
+                enabled=True,
+            ),
+        ]
+    )
+    db.commit()
+
+    try:
+        yield db
+    finally:
+        db.close()
+        engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -81,6 +162,52 @@ async def test_get_all_tags_with_tools(tag_service, mock_db):
     assert api_tag.stats.tools == 2
     assert api_tag.stats.resources == 0
     assert api_tag.stats.total == 2
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_public_only_token_filters_non_public(tag_service, tag_visibility_db):
+    """Public-only token should only see tags present on public entities."""
+    tags = await tag_service.get_all_tags(
+        tag_visibility_db,
+        entity_types=["resources"],
+        include_entities=False,
+        user_email="owner@example.com",
+        token_teams=[],
+    )
+    tag_names = {tag.name for tag in tags}
+    assert tag_names == {"public-tag", "shared-tag"}
+    assert "team-tag" not in tag_names
+    assert "private-tag" not in tag_names
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_team_scoped_token_filters_other_teams(tag_service, tag_visibility_db):
+    """Team-scoped token should see public + own-team tags, but not private/other-team."""
+    tags = await tag_service.get_all_tags(
+        tag_visibility_db,
+        entity_types=["resources"],
+        include_entities=False,
+        user_email="member@example.com",
+        token_teams=["team-1"],
+    )
+    tag_names = {tag.name for tag in tags}
+    assert {"public-tag", "team-tag", "shared-tag"} <= tag_names
+    assert "other-team-tag" not in tag_names
+    assert "private-tag" not in tag_names
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_admin_bypass_sees_all(tag_service, tag_visibility_db):
+    """Explicit admin bypass context should return all tags across visibility levels."""
+    tags = await tag_service.get_all_tags(
+        tag_visibility_db,
+        entity_types=["resources"],
+        include_entities=False,
+        user_email=None,
+        token_teams=None,
+    )
+    tag_names = {tag.name for tag in tags}
+    assert {"public-tag", "team-tag", "other-team-tag", "private-tag", "shared-tag"} <= tag_names
 
 
 @pytest.mark.asyncio
@@ -236,6 +363,9 @@ async def test_get_all_tags_sorted(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_get_entities_by_tag(tag_service, mock_db):
     """Test getting entities by a specific tag."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     # Create mock entities
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
@@ -292,8 +422,38 @@ async def test_get_entities_by_tag(tag_service, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_get_entities_by_tag_public_only_token_denies_team_entity(tag_service, tag_visibility_db):
+    """Public-only token must not receive team-tag entity listings."""
+    entities = await tag_service.get_entities_by_tag(
+        tag_visibility_db,
+        "team-tag",
+        entity_types=["resources"],
+        user_email="owner@example.com",
+        token_teams=[],
+    )
+    assert entities == []
+
+
+@pytest.mark.asyncio
+async def test_get_entities_by_tag_team_token_sees_team_entity(tag_service, tag_visibility_db):
+    """Team-scoped token should list entities tagged within its team scope."""
+    entities = await tag_service.get_entities_by_tag(
+        tag_visibility_db,
+        "team-tag",
+        entity_types=["resources"],
+        user_email="member@example.com",
+        token_teams=["team-1"],
+    )
+    assert len(entities) == 1
+    assert entities[0].name == "Team Resource"
+
+
+@pytest.mark.asyncio
 async def test_get_entities_by_tag_no_entity_types(tag_service, mock_db):
     """Test getting entities by tag with no entity type filter."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
     mock_tool.name = "Test Tool"
@@ -315,6 +475,9 @@ async def test_get_entities_by_tag_no_entity_types(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_get_entities_by_tag_invalid_entity_type(tag_service, mock_db):
     """Test getting entities by tag with invalid entity types."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     mock_db.execute.return_value.scalars.return_value = []
 
     entities = await tag_service.get_entities_by_tag(mock_db, "api", ["invalid_type"])
@@ -327,6 +490,9 @@ async def test_get_entities_by_tag_invalid_entity_type(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_get_entities_by_tag_empty_tags(tag_service, mock_db):
     """Test entity lookup when entity has empty tags."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
     mock_tool.name = "Test Tool"
@@ -346,6 +512,9 @@ async def test_get_entities_by_tag_empty_tags(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_get_entities_by_tag_null_tags(tag_service, mock_db):
     """Test entity lookup when entity has None tags."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
     mock_tool.name = "Test Tool"
@@ -365,6 +534,9 @@ async def test_get_entities_by_tag_null_tags(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_get_entities_by_tag_name_fallback_simplified(tag_service, mock_db):
     """Test entity name resolution fallback logic."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     # Test entity with original_name but no name
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
@@ -555,6 +727,9 @@ async def test_get_all_tags_default_entity_types(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_get_entities_by_tag_default_entity_types(tag_service, mock_db):
     """Test that get_entities_by_tag uses all entity types by default."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     mock_result = MagicMock()
     mock_result.scalars.return_value = []
     mock_db.execute.return_value = mock_result
@@ -564,3 +739,217 @@ async def test_get_entities_by_tag_default_entity_types(tag_service, mock_db):
 
     # Should have been called for all 5 entity types
     assert mock_db.execute.call_count == 5
+
+
+# --- Tests for dict-format tags ---
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_with_dict_format_tags(tag_service, mock_db):
+    """Test getting tags when tags are stored in dict format [{id, label}]."""
+    # Create mock entity with dict-format tags
+    mock_tool = MagicMock()
+    mock_tool.id = "tool1"
+    mock_tool.name = "Test Tool"
+    mock_tool.description = "A test tool"
+    mock_tool.tags = [{"id": "api", "label": "API"}, {"id": "data", "label": "Data Processing"}]
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value = [mock_tool]
+    mock_db.execute.return_value = mock_result
+
+    tags = await tag_service.get_all_tags(mock_db, entity_types=["tools"], include_entities=True)
+
+    assert len(tags) == 2
+    tag_names = [tag.name for tag in tags]
+    assert "api" in tag_names
+    assert "data" in tag_names
+
+    # Check the entity is associated with correct tags
+    api_tag = next(tag for tag in tags if tag.name == "api")
+    assert len(api_tag.entities) == 1
+    assert api_tag.entities[0].name == "Test Tool"
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_with_mixed_format_tags(tag_service, mock_db):
+    """Test getting tags when some entities have string tags and some have dict tags."""
+    # Create mock entities with mixed tag formats
+    mock_tool1 = MagicMock()
+    mock_tool1.id = "tool1"
+    mock_tool1.name = "Legacy Tool"
+    mock_tool1.description = "Uses string tags"
+    mock_tool1.tags = ["legacy", "api"]  # String format
+
+    mock_tool2 = MagicMock()
+    mock_tool2.id = "tool2"
+    mock_tool2.name = "New Tool"
+    mock_tool2.description = "Uses dict tags"
+    mock_tool2.tags = [{"id": "api", "label": "API"}, {"id": "modern", "label": "Modern"}]
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value = [mock_tool1, mock_tool2]
+    mock_db.execute.return_value = mock_result
+
+    tags = await tag_service.get_all_tags(mock_db, entity_types=["tools"], include_entities=True)
+
+    assert len(tags) == 3  # legacy, api, modern (api is deduplicated)
+    tag_names = [tag.name for tag in tags]
+    assert "legacy" in tag_names
+    assert "api" in tag_names
+    assert "modern" in tag_names
+
+    # API tag should have 2 entities (from both string and dict formats)
+    api_tag = next(tag for tag in tags if tag.name == "api")
+    assert len(api_tag.entities) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_entities_by_tag_with_dict_format(tag_service, mock_db):
+    """Test getting entities when tags are in dict format."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
+    mock_tool = MagicMock()
+    mock_tool.id = "tool1"
+    mock_tool.name = "Test Tool"
+    mock_tool.description = "A test tool"
+    mock_tool.tags = [{"id": "api", "label": "API"}, {"id": "testing", "label": "Testing"}]
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value = [mock_tool]
+    mock_db.execute.return_value = mock_result
+
+    entities = await tag_service.get_entities_by_tag(mock_db, "api", ["tools"])
+
+    assert len(entities) == 1
+    assert entities[0].name == "Test Tool"
+
+
+def test_get_tag_id_with_string():
+    """Test _get_tag_id with string tag."""
+    service = TagService()
+    assert service._get_tag_id("simple-tag") == "simple-tag"
+
+
+def test_get_tag_id_with_dict_id():
+    """Test _get_tag_id with dict tag containing id."""
+    service = TagService()
+    assert service._get_tag_id({"id": "api", "label": "API"}) == "api"
+
+
+def test_get_tag_id_with_dict_label_only():
+    """Test _get_tag_id with dict tag containing only label (edge case)."""
+    service = TagService()
+    # Falls back to label when id is missing
+    assert service._get_tag_id({"label": "API"}) == "API"
+
+
+def test_get_tag_id_with_empty_dict():
+    """Test _get_tag_id with empty dict."""
+    service = TagService()
+    # Returns string representation of dict when neither id nor label present
+    result = service._get_tag_id({})
+    assert result == "{}"
+
+
+def test_get_tag_id_with_non_string_non_dict():
+    """Test _get_tag_id fallback for unsupported types."""
+    service = TagService()
+    assert service._get_tag_id(123) == "123"
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_uses_cached_value(tag_service, mock_db, monkeypatch):
+    """Test cache hit path reconstructs TagInfo entries."""
+    cache = MagicMock()
+    cache.get_tags = AsyncMock(
+        return_value=[
+            {
+                "name": "api",
+                "stats": {"tools": 1, "resources": 0, "prompts": 0, "servers": 0, "gateways": 0, "total": 1},
+                "entities": [],
+            }
+        ]
+    )
+    monkeypatch.setattr(tag_service_module, "_get_admin_stats_cache", lambda: cache)
+
+    tags = await tag_service.get_all_tags(mock_db, entity_types=["tools"], include_entities=False)
+
+    assert len(tags) == 1
+    assert tags[0].name == "api"
+    assert not mock_db.execute.called
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_include_entities_name_fallbacks(tag_service, mock_db):
+    """Cover URI and entity_id fallback name branches in include_entities flow."""
+
+    class _ResourceNoName:
+        id = None
+        uri = "resource://name-fallback"
+        name = None
+        original_name = None
+        description = "resource"
+        tags = ["api"]
+
+    class _ToolUnknownName:
+        id = None
+        name = None
+        original_name = None
+        description = "tool"
+        tags = ["api"]
+
+    res_result = MagicMock()
+    res_result.scalars.return_value = [_ResourceNoName()]
+    tool_result = MagicMock()
+    tool_result.scalars.return_value = [_ToolUnknownName()]
+    mock_db.execute.side_effect = [res_result, tool_result]
+
+    tags = await tag_service.get_all_tags(mock_db, entity_types=["resources", "tools"], include_entities=True)
+    api_tag = next(t for t in tags if t.name == "api")
+    names = [e.name for e in api_tag.entities]
+    assert "resource://name-fallback" in names
+    assert "unknown" in names
+
+
+@pytest.mark.asyncio
+async def test_get_entities_by_tag_covers_id_and_name_fallback_branches(tag_service, mock_db):
+    """Cover get_entities_by_tag fallback branches for id/name resolution."""
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
+    class _ResourceEntity:
+        id = None
+        name = None
+        original_name = None
+        uri = "resource://tagged"
+        description = "resource"
+        tags = ["api"]
+
+    class _ServerNamedEntity:
+        id = None
+        name = "srv-1"
+        original_name = None
+        description = "server"
+        tags = ["api"]
+
+    class _ServerUnknownEntity:
+        id = None
+        name = None
+        original_name = None
+        description = "server"
+        tags = ["api"]
+
+    res_result = MagicMock()
+    res_result.scalars.return_value = [_ResourceEntity()]
+    srv_result = MagicMock()
+    srv_result.scalars.return_value = [_ServerNamedEntity(), _ServerUnknownEntity()]
+    mock_db.execute.side_effect = [res_result, srv_result]
+
+    entities = await tag_service.get_entities_by_tag(mock_db, "api", entity_types=["resources", "servers"])
+
+    names = [e.name for e in entities]
+    ids = [e.id for e in entities]
+    assert "resource://tagged" in names
+    assert "srv-1" in ids
+    assert "unknown" in names

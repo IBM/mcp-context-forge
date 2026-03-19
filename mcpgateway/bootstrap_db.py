@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Madhav Kandukuri
 
-Database bootstrap/upgrade entry-point for MCP Gateway.
+Database bootstrap/upgrade entry-point for ContextForge.
 The script:
 
 1. Creates a synchronous SQLAlchemy ``Engine`` from ``settings.database_url``.
@@ -33,7 +33,9 @@ Examples:
 import asyncio
 from contextlib import contextmanager
 from importlib.resources import files
+import json
 import os
+from pathlib import Path
 import tempfile
 from typing import cast
 
@@ -46,6 +48,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.services.logging_service import LoggingService
@@ -85,7 +88,12 @@ def _schema_looks_current(inspector) -> bool:
     Returns:
         True when expected columns exist for a recent schema version.
     """
-    return _column_exists(inspector, "tools", "display_name") and _column_exists(inspector, "gateways", "oauth_config") and _column_exists(inspector, "prompts", "custom_name")
+    return (
+        _column_exists(inspector, "tools", "display_name")
+        and _column_exists(inspector, "gateways", "oauth_config")
+        and _column_exists(inspector, "prompts", "custom_name")
+        and _column_exists(inspector, "sso_providers", "jwks_uri")
+    )
 
 
 @contextmanager
@@ -167,11 +175,11 @@ async def bootstrap_admin_user(conn: Connection) -> None:
             # Check if admin user already exists
             existing_user = await auth_service.get_user_by_email(settings.platform_admin_email)
             if existing_user:
-                logger.info(f"Admin user {settings.platform_admin_email} already exists - skipping creation")
+                logger.info(f"Admin user {SecurityValidator.sanitize_log_message(settings.platform_admin_email)} already exists - skipping creation")
                 return
 
             # Create admin user
-            logger.info(f"Creating platform admin user: {settings.platform_admin_email}")
+            logger.info(f"Creating platform admin user: {SecurityValidator.sanitize_log_message(settings.platform_admin_email)}")
             admin_user = await auth_service.create_platform_admin(
                 email=settings.platform_admin_email,
                 password=settings.platform_admin_password.get_secret_value(),
@@ -197,7 +205,7 @@ async def bootstrap_admin_user(conn: Connection) -> None:
                 logger.info("Personal team automatically created for admin user")
 
             db.commit()
-            logger.info(f"Platform admin user created successfully: {settings.platform_admin_email}")
+            logger.info(f"Platform admin user created successfully: {SecurityValidator.sanitize_log_message(settings.platform_admin_email)}")
 
     except Exception as e:
         logger.error(f"Failed to bootstrap admin user: {e}")
@@ -241,24 +249,188 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     "name": "team_admin",
                     "description": "Team administrator with team management permissions",
                     "scope": "team",
-                    "permissions": ["teams.read", "teams.update", "teams.join", "teams.manage_members", "tools.read", "tools.execute", "resources.read", "prompts.read"],
+                    "permissions": [
+                        "admin.dashboard",
+                        "admin.overview",
+                        "gateways.read",
+                        "servers.read",
+                        "servers.use",
+                        "teams.read",
+                        "teams.update",
+                        "teams.join",
+                        "teams.delete",
+                        "teams.manage_members",
+                        "tools.read",
+                        "tools.execute",
+                        "resources.read",
+                        "prompts.read",
+                        "llm.read",
+                        "llm.invoke",
+                        "a2a.read",
+                        "gateways.create",
+                        "servers.create",
+                        "tools.create",
+                        "resources.create",
+                        "prompts.create",
+                        "a2a.create",
+                        "gateways.update",
+                        "servers.update",
+                        "tools.update",
+                        "resources.update",
+                        "prompts.update",
+                        "a2a.update",
+                        "gateways.delete",
+                        "servers.delete",
+                        "tools.delete",
+                        "resources.delete",
+                        "prompts.delete",
+                        "a2a.delete",
+                        "a2a.invoke",
+                        "tokens.create",
+                        "tokens.read",
+                        "tokens.update",
+                        "tokens.revoke",
+                    ],
                     "is_system_role": True,
                 },
                 {
                     "name": "developer",
                     "description": "Developer with tool and resource access",
                     "scope": "team",
-                    "permissions": ["teams.join", "tools.read", "tools.execute", "resources.read", "prompts.read"],
+                    "permissions": [
+                        "admin.dashboard",
+                        "admin.overview",
+                        "gateways.read",
+                        "servers.read",
+                        "servers.use",
+                        "teams.read",
+                        "teams.join",
+                        "tools.read",
+                        "tools.execute",
+                        "resources.read",
+                        "prompts.read",
+                        "llm.read",
+                        "llm.invoke",
+                        "a2a.read",
+                        "gateways.create",
+                        "servers.create",
+                        "tools.create",
+                        "resources.create",
+                        "prompts.create",
+                        "a2a.create",
+                        "gateways.update",
+                        "servers.update",
+                        "tools.update",
+                        "resources.update",
+                        "prompts.update",
+                        "a2a.update",
+                        "gateways.delete",
+                        "servers.delete",
+                        "tools.delete",
+                        "resources.delete",
+                        "prompts.delete",
+                        "a2a.delete",
+                        "a2a.invoke",
+                        "tokens.create",
+                        "tokens.read",
+                        "tokens.update",
+                        "tokens.revoke",
+                    ],
                     "is_system_role": True,
                 },
                 {
                     "name": "viewer",
-                    "description": "Read-only access to resources",
+                    "description": "Read-only access to resources and admin UI",
                     "scope": "team",
-                    "permissions": ["teams.join", "tools.read", "resources.read", "prompts.read"],
+                    "permissions": [
+                        "admin.dashboard",
+                        "admin.overview",
+                        "gateways.read",
+                        "servers.read",
+                        "servers.use",
+                        "teams.read",
+                        "teams.join",
+                        "tools.read",
+                        "resources.read",
+                        "prompts.read",
+                        "llm.read",
+                        "a2a.read",
+                        "tokens.create",
+                        "tokens.read",
+                        "tokens.update",
+                        "tokens.revoke",
+                    ],
+                    "is_system_role": True,
+                },
+                {
+                    "name": "platform_viewer",
+                    "description": "Read-only access to resources and admin UI",
+                    "scope": "global",
+                    "permissions": [
+                        "admin.dashboard",
+                        "admin.overview",
+                        "gateways.read",
+                        "servers.read",
+                        "servers.use",
+                        "teams.read",
+                        "teams.join",
+                        "tools.read",
+                        "resources.read",
+                        "prompts.read",
+                        "llm.read",
+                        "a2a.read",
+                        "tokens.create",
+                        "tokens.read",
+                        "tokens.update",
+                        "tokens.revoke",
+                    ],
                     "is_system_role": True,
                 },
             ]
+
+            # Logic to add additional default roles from a json file
+            if settings.mcpgateway_bootstrap_roles_in_db_enabled:
+                try:
+                    additional_default_roles_path = Path(settings.mcpgateway_bootstrap_roles_in_db_file)
+                    # Try multiple locations for the mcpgateway_bootstrap_roles_in_db_file file
+                    if not additional_default_roles_path.is_absolute():
+                        # Try current directory first
+                        if not additional_default_roles_path.exists():
+                            # Try project root (mcpgateway/bootstrap_db.py -> parent.parent = repo root)
+                            additional_default_roles_path = Path(__file__).resolve().parent.parent / settings.mcpgateway_bootstrap_roles_in_db_file
+
+                    if not additional_default_roles_path.exists():
+                        logger.warning(
+                            f"Additional roles file not found. Searched: CWD/{SecurityValidator.sanitize_log_message(settings.mcpgateway_bootstrap_roles_in_db_file)}, {SecurityValidator.sanitize_log_message(str(additional_default_roles_path))}"
+                        )
+                    else:
+                        with open(additional_default_roles_path, "r", encoding="utf-8") as f:
+                            additional_default_roles_data = json.load(f)
+
+                        # Validate JSON structure: must be a list of dicts with required keys
+                        required_keys = {"name", "scope", "permissions"}
+                        if not isinstance(additional_default_roles_data, list):
+                            logger.error(f"Additional roles file must contain a JSON array, got {type(additional_default_roles_data).__name__}")
+                        else:
+                            valid_roles = []
+                            for idx, role in enumerate(additional_default_roles_data):
+                                if not isinstance(role, dict):
+                                    logger.warning(f"Skipping invalid role at index {idx}: expected dict, got {type(role).__name__}")
+                                    continue
+                                missing_keys = required_keys - set(role.keys())
+                                if missing_keys:
+                                    role_name = role.get("name", f"<index {idx}>")
+                                    logger.warning(f"Skipping role '{SecurityValidator.sanitize_log_message(str(role_name))}': missing required keys {missing_keys}")
+                                    continue
+                                valid_roles.append(role)
+
+                            if valid_roles:
+                                default_roles.extend(valid_roles)
+                                logger.info(f"Added {len(valid_roles)} additional roles to default roles in bootstrap db")
+                            elif additional_default_roles_data:
+                                logger.warning("No valid roles found in additional roles file")
+                except Exception as e:
+                    logger.error(f"Failed to load mcpgateway_bootstrap_roles_in_db_file: {e}")
 
             # Create default roles
             created_roles = []
@@ -267,28 +439,31 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     # Check if role already exists
                     existing_role = await role_service.get_role_by_name(str(role_def["name"]), str(role_def["scope"]))
                     if existing_role:
-                        logger.info(f"System role {role_def['name']} already exists - skipping")
+                        logger.info(f"System role {SecurityValidator.sanitize_log_message(str(role_def['name']))} already exists - skipping")
                         created_roles.append(existing_role)
                         continue
 
-                    # Create the role
+                    # Create the role (description and is_system_role are optional)
                     role = await role_service.create_role(
                         name=str(role_def["name"]),
-                        description=str(role_def["description"]),
+                        description=str(role_def.get("description", "")),
                         scope=str(role_def["scope"]),
                         permissions=cast(list[str], role_def["permissions"]),
                         created_by=settings.platform_admin_email,
-                        is_system_role=bool(role_def["is_system_role"]),
+                        is_system_role=bool(role_def.get("is_system_role", False)),
                     )
                     created_roles.append(role)
                     logger.info(f"Created system role: {role.name}")
 
                 except Exception as e:
-                    logger.error(f"Failed to create role {role_def['name']}: {e}")
+                    logger.error(f"Failed to create role {SecurityValidator.sanitize_log_message(str(role_def['name']))}: {SecurityValidator.sanitize_log_message(str(e))}")
                     continue
 
             # Assign platform_admin role to admin user
             platform_admin_role = next((r for r in created_roles if r.name == "platform_admin"), None)
+            if not platform_admin_role:
+                # Role not in created_roles (creation may have failed) — look up from DB as fallback
+                platform_admin_role = await role_service.get_role_by_name("platform_admin", "global")
             if platform_admin_role:
                 try:
                     # Check if assignment already exists
@@ -296,12 +471,25 @@ async def bootstrap_default_roles(conn: Connection) -> None:
 
                     if not existing_assignment or not existing_assignment.is_active:
                         await role_service.assign_role_to_user(user_email=admin_user.email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=admin_user.email)
-                        logger.info(f"Assigned platform_admin role to {admin_user.email}")
+                        logger.info(f"Assigned platform_admin role to {SecurityValidator.sanitize_log_message(admin_user.email)}")
                     else:
                         logger.info("Admin user already has platform_admin role")
 
+                    # Synchronize is_admin flag with platform_admin role assignment
+                    # This ensures consistency when admin is manually demoted in DB but role is re-assigned during bootstrap
+                    if not admin_user.is_admin:
+                        logger.info(f"Synchronizing is_admin flag for {SecurityValidator.sanitize_log_message(admin_user.email)} (was False, setting to True)")
+                        admin_user.is_admin = True
+                        db.commit()
+
                 except Exception as e:
-                    logger.error(f"Failed to assign platform_admin role: {e}")
+                    logger.error(
+                        f"Failed to assign platform_admin role to {SecurityValidator.sanitize_log_message(admin_user.email)}: {SecurityValidator.sanitize_log_message(str(e))}. Admin UI routes using allow_admin_bypass=False will return 403."
+                    )
+            else:
+                logger.error(
+                    f"platform_admin role not found — could not assign to {SecurityValidator.sanitize_log_message(admin_user.email)}. Admin UI routes using allow_admin_bypass=False will return 403."
+                )
 
             logger.info("Default RBAC roles bootstrap completed successfully")
 
@@ -370,7 +558,7 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                 logger.warning("Admin personal team not found - skipping resource assignment")
                 return
 
-            logger.info(f"Assigning orphaned resources to admin team: {personal_team.name}")
+            logger.info(f"Assigning orphaned resources to admin team: {SecurityValidator.sanitize_log_message(personal_team.name)}")
 
             # Resource types to process
             resource_types = [("servers", Server), ("tools", Tool), ("resources", Resource), ("prompts", Prompt), ("gateways", Gateway), ("a2a_agents", A2AAgent)]
@@ -396,7 +584,7 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                         total_assigned += len(unassigned)
 
                 except Exception as e:
-                    logger.error(f"Failed to assign {resource_name}: {e}")
+                    logger.error(f"Failed to assign {SecurityValidator.sanitize_log_message(resource_name)}: {SecurityValidator.sanitize_log_message(str(e))}")
                     continue
 
             if total_assigned > 0:

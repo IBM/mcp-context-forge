@@ -42,8 +42,11 @@ class TestCrossHookContextSharing:
         Base.metadata.create_all(engine)
         SessionLocal = sessionmaker(bind=engine)
         db = SessionLocal()
-        yield db
-        db.close()
+        try:
+            yield db
+        finally:
+            db.close()
+            engine.dispose()
 
     @pytest.fixture
     async def plugin_manager(self):
@@ -54,7 +57,7 @@ class TestCrossHookContextSharing:
         # Enable plugins for this test
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv("PLUGINS_ENABLED", "true")
-            mp.setenv("PLUGIN_CONFIG_FILE", str(config_file))
+            mp.setenv("PLUGINS_CONFIG_FILE", str(config_file))
 
             # Create plugin manager
             manager = PluginManager(str(config_file))

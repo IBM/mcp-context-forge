@@ -1,12 +1,11 @@
-# 🚢 Deploying the MCP Gateway Stack with **Argo CD**
+# 🚢 Deploying ContextForge Stack with **Argo CD**
 
-This guide shows how to operate the **MCP Gateway Stack** with a *Git-Ops* workflow powered by [Argo CD](https://argo-cd.readthedocs.io). Once wired up, every commit to the repository becomes an automatic deployment (or rollback) to your Kubernetes cluster.
+This guide shows how to operate the **ContextForge Stack** with a *Git-Ops* workflow powered by [Argo CD](https://argo-cd.readthedocs.io). Once wired up, every commit to the repository becomes an automatic deployment (or rollback) to your Kubernetes cluster.
 
 > 🌳 Git source of truth:
 > `https://github.com/IBM/mcp-context-forge`
 >
-> * **App manifests:** `deployment/k8s/` (Kustomize-ready)
-> * **Helm chart (optional):** `charts/mcp-stack`
+> * **Helm chart:** `charts/mcp-stack`
 
 ---
 
@@ -70,13 +69,13 @@ argocd login localhost:8083 \
   --username admin --password "$PASS" --insecure
 ```
 
-Open the web UI → [http://localhost:8083](http://localhost:8083) (credentials above).
+Open the web UI → [https://localhost:8083](https://localhost:8083) (credentials above).
 
 ---
 
 ## 🚀 Step 3 - Bootstrap the Application
 
-Create an Argo CD *Application* that tracks the **`deployment/k8s/`** folder from the main branch:
+Create an Argo CD *Application* that tracks the **`charts/mcp-stack`** Helm chart from the main branch:
 
 ```bash
 APP=mcp-gateway
@@ -84,7 +83,7 @@ REPO=https://github.com/IBM/mcp-context-forge.git
 
 argocd app create "$APP" \
   --repo "$REPO" \
-  --path k8s \
+  --path charts/mcp-stack \
   --dest-server https://kubernetes.default.svc \
   --dest-namespace default \
   --sync-policy automated \
@@ -149,7 +148,7 @@ argocd app rollback mcp-gateway <REVISION>
 
 ```bash
 # Pause auto-sync
-a rgocd app set mcp-gateway --sync-policy none
+argocd app set mcp-gateway --sync-policy none
 # Re-enable
 argocd app set mcp-gateway --sync-policy automated
 ```
@@ -162,7 +161,8 @@ argocd app set mcp-gateway --sync-policy automated
 # Delete the application (leaves cluster objects intact)
 argocd app delete mcp-gateway --yes
 
-# Remove Argo CD completely\ nkubectl delete ns argocd
+# Remove Argo CD completely
+kubectl delete ns argocd
 ```
 
 ---

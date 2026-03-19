@@ -56,7 +56,6 @@ import logging
 import time
 import traceback
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
 import uuid
 
 # Third-Party
@@ -297,9 +296,176 @@ class SessionRegistry(SessionBackend):
         """
         super().__init__(backend=backend, redis_url=redis_url, database_url=database_url, session_ttl=session_ttl, message_ttl=message_ttl)
         self._sessions: Dict[str, Any] = {}  # Local transport cache
+        self._session_owners: Dict[str, str] = {}  # Session owner email by session_id
         self._client_capabilities: Dict[str, Dict[str, Any]] = {}  # Client capabilities by session_id
+        self._respond_tasks: Dict[str, asyncio.Task] = {}  # Track respond tasks for cancellation
+        self._stuck_tasks: Dict[str, asyncio.Task] = {}  # Tasks that couldn't be cancelled (for monitoring)
+        self._closing_sessions: set[str] = set()  # Sessions being closed - respond loop should exit
         self._lock = asyncio.Lock()
         self._cleanup_task: Task | None = None
+        self._stuck_task_reaper: Task | None = None  # Reaper for stuck tasks
+
+    def register_respond_task(self, session_id: str, task: asyncio.Task) -> None:
+        """Register a respond task for later cancellation.
+
+        Associates an asyncio Task with a session_id so it can be cancelled
+        when the session is removed. This prevents orphaned tasks that cause
+        CPU spin loops.
+
+        Args:
+            session_id: Session identifier the task belongs to.
+            task: The asyncio Task to track.
+        """
+        self._respond_tasks[session_id] = task
+        logger.debug(f"Registered respond task for session {session_id}")
+
+    async def _cancel_respond_task(self, session_id: str, timeout: float = 5.0) -> None:
+        """Cancel and await a respond task with timeout.
+
+        Safely cancels the respond task associated with a session. Uses a timeout
+        to prevent hanging if the task doesn't respond to cancellation.
+
+        If initial cancellation times out, escalates by force-disconnecting the
+        transport to unblock the task, then retries cancellation (Finding 1 fix).
+
+        Args:
+            session_id: Session identifier whose task should be cancelled.
+            timeout: Maximum seconds to wait for task cancellation. Default 5.0.
+        """
+        task = self._respond_tasks.get(session_id)
+        if task is None:
+            return
+
+        if task.done():
+            # Task already finished - safe to remove from tracking
+            self._respond_tasks.pop(session_id, None)
+            try:
+                task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"Respond task for {session_id} failed with: {e}")
+            return
+
+        task.cancel()
+        logger.debug(f"Cancelling respond task for session {session_id}")
+
+        try:
+            await asyncio.wait_for(task, timeout=timeout)
+            # Cancellation successful - remove from tracking
+            self._respond_tasks.pop(session_id, None)
+            logger.debug(f"Respond task cancelled for session {session_id}")
+        except asyncio.TimeoutError:
+            # ESCALATION (Finding 1): Force-disconnect transport to unblock the task
+            logger.warning(f"Respond task cancellation timed out for {session_id}, " f"escalating with transport disconnect")
+
+            # Force-disconnect the transport to unblock any pending I/O
+            transport = self._sessions.get(session_id)
+            if transport and hasattr(transport, "disconnect"):
+                try:
+                    await transport.disconnect()
+                    logger.debug(f"Force-disconnected transport for {session_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to force-disconnect transport for {session_id}: {e}")
+
+            # Retry cancellation with shorter timeout
+            if not task.done():
+                try:
+                    await asyncio.wait_for(task, timeout=2.0)
+                    self._respond_tasks.pop(session_id, None)
+                    logger.info(f"Respond task cancelled after escalation for {session_id}")
+                except asyncio.TimeoutError:
+                    # Still stuck - move to stuck_tasks for monitoring (Finding 2 fix)
+                    self._respond_tasks.pop(session_id, None)
+                    self._stuck_tasks[session_id] = task
+                    logger.error(f"Respond task for {session_id} still stuck after escalation, " f"moved to stuck_tasks for monitoring (total stuck: {len(self._stuck_tasks)})")
+                except asyncio.CancelledError:
+                    self._respond_tasks.pop(session_id, None)
+                    logger.info(f"Respond task cancelled after escalation for {session_id}")
+                except Exception as e:
+                    self._respond_tasks.pop(session_id, None)
+                    logger.warning(f"Error during retry cancellation for {session_id}: {e}")
+            else:
+                self._respond_tasks.pop(session_id, None)
+                logger.debug(f"Respond task completed during escalation for {session_id}")
+
+        except asyncio.CancelledError:
+            # Cancellation successful - remove from tracking
+            self._respond_tasks.pop(session_id, None)
+            logger.debug(f"Respond task cancelled for session {session_id}")
+        except Exception as e:
+            # Remove from tracking on unexpected error - task state unknown
+            self._respond_tasks.pop(session_id, None)
+            logger.warning(f"Error during respond task cancellation for {session_id}: {e}")
+
+    async def _reap_stuck_tasks(self) -> None:
+        """Periodically clean up stuck tasks that have completed.
+
+        This reaper runs every 30 seconds and:
+        1. Removes completed tasks from _stuck_tasks
+        2. Retries cancellation for tasks that are still running
+        3. Logs warnings for tasks that remain stuck
+
+        This prevents memory leaks from tasks that eventually complete after
+        being moved to _stuck_tasks during escalation.
+
+        Raises:
+            asyncio.CancelledError: If the task is cancelled during shutdown.
+        """
+        reap_interval = 30.0  # seconds
+        retry_timeout = 2.0  # seconds for retry cancellation
+
+        while True:
+            try:
+                await asyncio.sleep(reap_interval)
+
+                if not self._stuck_tasks:
+                    continue
+
+                # Collect completed and still-stuck tasks
+                completed = []
+                still_stuck = []
+
+                for session_id, task in list(self._stuck_tasks.items()):
+                    if task.done():
+                        completed.append(session_id)
+                        try:
+                            task.result()  # Consume result to avoid warnings
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                    else:
+                        still_stuck.append((session_id, task))
+
+                # Remove completed tasks
+                for session_id in completed:
+                    self._stuck_tasks.pop(session_id, None)
+
+                if completed:
+                    logger.info(f"Reaped {len(completed)} completed stuck tasks")
+
+                # Retry cancellation for still-stuck tasks
+                for session_id, task in still_stuck:
+                    task.cancel()
+                    try:
+                        await asyncio.wait_for(task, timeout=retry_timeout)
+                        self._stuck_tasks.pop(session_id, None)
+                        logger.info(f"Stuck task {session_id} finally cancelled during reap")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Task {session_id} still stuck after reap retry")
+                    except asyncio.CancelledError:
+                        self._stuck_tasks.pop(session_id, None)
+                        logger.info(f"Stuck task {session_id} cancelled during reap")
+                    except Exception as e:
+                        logger.warning(f"Error during stuck task reap for {session_id}: {e}")
+
+                if self._stuck_tasks:
+                    logger.warning(f"Stuck tasks remaining: {len(self._stuck_tasks)}")
+
+            except asyncio.CancelledError:
+                logger.debug("Stuck task reaper cancelled")
+                raise
+            except Exception as e:
+                logger.error(f"Error in stuck task reaper: {e}")
 
     async def initialize(self) -> None:
         """Initialize the registry with async setup.
@@ -344,6 +510,10 @@ class SessionRegistry(SessionBackend):
             self._cleanup_task = asyncio.create_task(self._memory_cleanup_task())
             logger.info("Memory cleanup task started")
 
+        # Start stuck task reaper for all backends
+        self._stuck_task_reaper = asyncio.create_task(self._reap_stuck_tasks())
+        logger.info("Stuck task reaper started")
+
     async def shutdown(self) -> None:
         """Shutdown the registry and clean up resources.
 
@@ -370,10 +540,56 @@ class SessionRegistry(SessionBackend):
             except asyncio.CancelledError:
                 pass
 
+        # Cancel stuck task reaper
+        if self._stuck_task_reaper:
+            self._stuck_task_reaper.cancel()
+            try:
+                await self._stuck_task_reaper
+            except asyncio.CancelledError:
+                pass
+
+        # CRITICAL: Cancel ALL respond tasks to prevent CPU spin loops
+        if self._respond_tasks:
+            logger.info(f"Cancelling {len(self._respond_tasks)} respond tasks")
+            tasks_to_cancel = list(self._respond_tasks.values())
+            self._respond_tasks.clear()
+
+            for task in tasks_to_cancel:
+                if not task.done():
+                    task.cancel()
+
+            if tasks_to_cancel:
+                try:
+                    await asyncio.wait_for(asyncio.gather(*tasks_to_cancel, return_exceptions=True), timeout=10.0)
+                    logger.info("All respond tasks cancelled successfully")
+                except asyncio.TimeoutError:
+                    logger.warning("Timeout waiting for respond tasks to cancel")
+
+        # Also cancel any stuck tasks (tasks that previously couldn't be cancelled)
+        if self._stuck_tasks:
+            logger.warning(f"Attempting final cancellation of {len(self._stuck_tasks)} stuck tasks")
+            stuck_to_cancel = list(self._stuck_tasks.values())
+            self._stuck_tasks.clear()
+
+            for task in stuck_to_cancel:
+                if not task.done():
+                    task.cancel()
+
+            if stuck_to_cancel:
+                try:
+                    await asyncio.wait_for(asyncio.gather(*stuck_to_cancel, return_exceptions=True), timeout=5.0)
+                    logger.info("Stuck tasks cancelled during shutdown")
+                except asyncio.TimeoutError:
+                    logger.error("Some stuck tasks could not be cancelled during shutdown")
+
         # Close Redis pubsub (but not the shared client)
+        # Use timeout to prevent blocking if pubsub doesn't close cleanly
+        cleanup_timeout = settings.mcp_session_pool_cleanup_timeout
         if self._backend == "redis" and getattr(self, "_pubsub", None):
             try:
-                await self._pubsub.aclose()
+                await asyncio.wait_for(self._pubsub.aclose(), timeout=cleanup_timeout)
+            except asyncio.TimeoutError:
+                logger.warning("Redis pubsub close timed out - proceeding anyway")
             except Exception as e:
                 logger.error(f"Error closing Redis pubsub: {e}")
             # Don't close self._redis - it's the shared client managed by redis_client.py
@@ -475,6 +691,343 @@ class SessionRegistry(SessionBackend):
                 logger.error(f"Database error adding session {session_id}: {e}")
 
         logger.info(f"Added session: {session_id}")
+
+    def _session_owner_key(self, session_id: str) -> str:
+        """Return Redis key used to store session ownership.
+
+        Args:
+            session_id: Session identifier.
+
+        Returns:
+            Redis key for the session owner mapping.
+        """
+        return f"mcp:session_owner:{session_id}"
+
+    async def set_session_owner(self, session_id: str, owner_email: Optional[str]) -> None:
+        """Set or clear owner for a session.
+
+        Args:
+            session_id: Session identifier to update.
+            owner_email: Owner email to set. Passing ``None`` clears ownership.
+
+        Returns:
+            None.
+        """
+        # Skip for none backend
+        if self._backend == "none":
+            return
+
+        if owner_email:
+            self._session_owners[session_id] = owner_email
+        else:
+            self._session_owners.pop(session_id, None)
+
+        if self._backend == "redis":
+            if not self._redis:
+                logger.warning(f"Redis client not initialized, cannot set owner for session {session_id}")
+                return
+            try:
+                owner_key = self._session_owner_key(session_id)
+                if owner_email:
+                    await self._redis.setex(owner_key, self._session_ttl, owner_email)
+                else:
+                    await self._redis.delete(owner_key)
+            except Exception as e:
+                logger.error(f"Redis error setting owner for session {session_id}: {e}")
+
+        elif self._backend == "database":
+            try:
+
+                def _db_set_owner() -> None:
+                    """Persist owner metadata for a session in the database backend.
+
+                    Raises:
+                        Exception: Propagates database write failures to the caller.
+                    """
+                    db_session = next(get_db())
+                    try:
+                        record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
+                        if not record:
+                            record = SessionRecord(session_id=session_id, data=None)
+                            db_session.add(record)
+                            db_session.flush()
+
+                        record_data: Dict[str, Any] = {}
+                        if record.data:
+                            try:
+                                parsed = orjson.loads(record.data)
+                                if isinstance(parsed, dict):
+                                    record_data = parsed
+                            except Exception:
+                                record_data = {}
+
+                        if owner_email:
+                            record_data["owner_email"] = owner_email
+                        else:
+                            record_data.pop("owner_email", None)
+
+                        record.data = orjson.dumps(record_data).decode() if record_data else None
+                        db_session.commit()
+                    except Exception as ex:
+                        db_session.rollback()
+                        raise ex
+                    finally:
+                        db_session.close()
+
+                await asyncio.to_thread(_db_set_owner)
+            except Exception as e:
+                logger.error(f"Database error setting owner for session {session_id}: {e}")
+
+    async def claim_session_owner(self, session_id: str, owner_email: str) -> Optional[str]:
+        """Atomically claim ownership for a session and return the effective owner.
+
+        This method provides compare-and-set semantics:
+        - If a session owner already exists, return the existing owner.
+        - If no owner exists, claim ownership for ``owner_email``.
+
+        Args:
+            session_id: Session identifier to claim.
+            owner_email: Requesting owner email.
+
+        Returns:
+            Effective owner email after the claim operation, or ``None`` if owner
+            metadata could not be verified due to backend availability issues.
+        """
+        if self._backend == "none":
+            return owner_email
+
+        # Fast local cache path.
+        cached_owner = self._session_owners.get(session_id)
+        if cached_owner:
+            return cached_owner
+
+        if self._backend == "memory":
+            async with self._lock:
+                existing_owner = self._session_owners.get(session_id)
+                if existing_owner:
+                    return existing_owner
+                self._session_owners[session_id] = owner_email
+                return owner_email
+
+        if self._backend == "redis":
+            if not self._redis:
+                logger.warning("Redis client not initialized, session owner claim unavailable for %s", session_id)
+                return None
+
+            owner_key = self._session_owner_key(session_id)
+            try:
+                claimed = await self._redis.set(owner_key, owner_email, ex=self._session_ttl, nx=True)
+                if claimed:
+                    self._session_owners[session_id] = owner_email
+                    return owner_email
+
+                owner_raw = await self._redis.get(owner_key)
+                if owner_raw is not None:
+                    existing_owner = owner_raw.decode() if isinstance(owner_raw, bytes) else str(owner_raw)
+                    if existing_owner:
+                        self._session_owners[session_id] = existing_owner
+                        return existing_owner
+
+                # Handle key expiry/race window by retrying once.
+                claimed_retry = await self._redis.set(owner_key, owner_email, ex=self._session_ttl, nx=True)
+                if claimed_retry:
+                    self._session_owners[session_id] = owner_email
+                    return owner_email
+
+                owner_raw = await self._redis.get(owner_key)
+                if owner_raw is None:
+                    return None
+                existing_owner = owner_raw.decode() if isinstance(owner_raw, bytes) else str(owner_raw)
+                if existing_owner:
+                    self._session_owners[session_id] = existing_owner
+                    return existing_owner
+                return None
+            except Exception as e:
+                logger.error("Redis error claiming owner for session %s: %s", session_id, e)
+                return None
+
+        if self._backend == "database":
+            try:
+
+                def _db_claim_owner() -> Optional[str]:
+                    """Claim owner in DB with optimistic compare-and-set retries.
+
+                    Returns:
+                        Effective owner email or ``None`` when claim cannot be verified.
+                    """
+                    db_session = next(get_db())
+                    try:
+                        for _attempt in range(3):
+                            record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
+                            if not record:
+                                owner_payload = {"owner_email": owner_email}
+                                new_record = SessionRecord(session_id=session_id, data=orjson.dumps(owner_payload).decode())
+                                db_session.add(new_record)
+                                try:
+                                    db_session.commit()
+                                    return owner_email
+                                except Exception:
+                                    db_session.rollback()
+                                    # Another writer may have inserted concurrently. Retry.
+                                    continue
+
+                            record_data: Dict[str, Any] = {}
+                            if record.data:
+                                try:
+                                    parsed = orjson.loads(record.data)
+                                    if isinstance(parsed, dict):
+                                        record_data = parsed
+                                except Exception:
+                                    record_data = {}
+
+                            existing_owner = record_data.get("owner_email")
+                            if isinstance(existing_owner, str) and existing_owner:
+                                return existing_owner
+
+                            current_data = record.data
+                            updated_data = dict(record_data)
+                            updated_data["owner_email"] = owner_email
+                            serialized = orjson.dumps(updated_data).decode()
+
+                            update_query = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id)
+                            if current_data is None:
+                                update_query = update_query.filter(SessionRecord.data.is_(None))
+                            else:
+                                update_query = update_query.filter(SessionRecord.data == current_data)
+
+                            updated_rows = update_query.update({"data": serialized}, synchronize_session=False)
+                            if updated_rows == 1:
+                                db_session.commit()
+                                return owner_email
+
+                            db_session.rollback()
+
+                        return None
+                    finally:
+                        db_session.close()
+
+                claimed_owner = await asyncio.to_thread(_db_claim_owner)
+                if claimed_owner:
+                    self._session_owners[session_id] = claimed_owner
+                return claimed_owner
+            except Exception as e:
+                logger.error("Database error claiming owner for session %s: %s", session_id, e)
+                return None
+
+        return None
+
+    async def get_session_owner(self, session_id: str) -> Optional[str]:
+        """Get owner email for a session.
+
+        Args:
+            session_id: Session identifier to resolve.
+
+        Returns:
+            Owner email when present, otherwise ``None``.
+        """
+        owner = self._session_owners.get(session_id)
+        if owner:
+            return owner
+
+        if self._backend == "redis":
+            if not self._redis:
+                return None
+            try:
+                owner_raw = await self._redis.get(self._session_owner_key(session_id))
+                if owner_raw is None:
+                    return None
+                if isinstance(owner_raw, bytes):
+                    owner = owner_raw.decode()
+                else:
+                    owner = str(owner_raw)
+                if owner:
+                    self._session_owners[session_id] = owner
+                return owner or None
+            except Exception as e:
+                logger.error(f"Redis error getting owner for session {session_id}: {e}")
+                return None
+
+        if self._backend == "database":
+            try:
+
+                def _db_get_owner() -> Optional[str]:
+                    db_session = next(get_db())
+                    try:
+                        record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
+                        if not record or not record.data:
+                            return None
+                        try:
+                            data = orjson.loads(record.data)
+                        except Exception:
+                            return None
+                        if not isinstance(data, dict):
+                            return None
+                        owner_email = data.get("owner_email")
+                        return owner_email if isinstance(owner_email, str) and owner_email else None
+                    finally:
+                        db_session.close()
+
+                owner = await asyncio.to_thread(_db_get_owner)
+                if owner:
+                    self._session_owners[session_id] = owner
+                return owner
+            except Exception as e:
+                logger.error(f"Database error getting owner for session {session_id}: {e}")
+                return None
+
+        return None
+
+    async def session_exists(self, session_id: str) -> Optional[bool]:
+        """Return whether a session marker exists.
+
+        Args:
+            session_id: Session identifier to resolve.
+
+        Returns:
+            ``True`` when session exists, ``False`` when session does not exist,
+            and ``None`` when existence cannot be verified due to backend errors.
+        """
+        if self._backend == "none":
+            return False
+
+        async with self._lock:
+            if session_id in self._sessions:
+                return True
+
+        if self._backend == "memory":
+            return False
+
+        if self._backend == "redis":
+            if not self._redis:
+                return None
+            try:
+                return bool(await self._redis.exists(f"mcp:session:{session_id}"))
+            except Exception as e:
+                logger.error("Redis error checking existence for session %s: %s", session_id, e)
+                return None
+
+        if self._backend == "database":
+            try:
+
+                def _db_exists() -> bool:
+                    """Check whether a session record exists in the database backend.
+
+                    Returns:
+                        ``True`` when a matching session record exists.
+                    """
+                    db_session = next(get_db())
+                    try:
+                        record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
+                        return record is not None
+                    finally:
+                        db_session.close()
+
+                return await asyncio.to_thread(_db_exists)
+            except Exception as e:
+                logger.error("Database error checking existence for session %s: %s", session_id, e)
+                return None
+
+        return False
 
     async def get_session(self, session_id: str) -> Any:
         """Get session transport by ID.
@@ -607,15 +1160,28 @@ class SessionRegistry(SessionBackend):
         if self._backend == "none":
             return
 
-        # Clean up local transport
-        transport = None
-        async with self._lock:
-            if session_id in self._sessions:
-                transport = self._sessions.pop(session_id)
-            # Also clean up client capabilities
-            if session_id in self._client_capabilities:
-                self._client_capabilities.pop(session_id)
-                logger.debug(f"Removed capabilities for session {session_id}")
+        # Mark session as closing FIRST so respond loop can exit early
+        # This allows the loop to exit without waiting for cancellation to complete
+        self._closing_sessions.add(session_id)
+
+        try:
+            # CRITICAL: Cancel respond task before any cleanup
+            # This prevents orphaned tasks that cause CPU spin loops
+            await self._cancel_respond_task(session_id)
+
+            # Clean up local transport
+            transport = None
+            async with self._lock:
+                if session_id in self._sessions:
+                    transport = self._sessions.pop(session_id)
+                self._session_owners.pop(session_id, None)
+                # Also clean up client capabilities
+                if session_id in self._client_capabilities:
+                    self._client_capabilities.pop(session_id)
+                    logger.debug(f"Removed capabilities for session {session_id}")
+        finally:
+            # Always remove from closing set
+            self._closing_sessions.discard(session_id)
 
         # Disconnect transport if found
         if transport:
@@ -630,6 +1196,7 @@ class SessionRegistry(SessionBackend):
                 return
             try:
                 await self._redis.delete(f"mcp:session:{session_id}")
+                await self._redis.delete(self._session_owner_key(session_id))
                 # Notify other workers
                 await self._redis.publish("mcp_session_events", orjson.dumps({"type": "remove", "session_id": session_id, "timestamp": time.time()}))
             except Exception as e:
@@ -783,6 +1350,76 @@ class SessionRegistry(SessionBackend):
             except Exception as e:
                 logger.error(f"Database error during broadcast: {e}")
 
+    async def _register_session_mapping(self, session_id: str, message: Dict[str, Any], user_email: Optional[str] = None) -> None:
+        """Register session mapping for session affinity when tools are called.
+
+        This method is called on the worker that executes the request (the SSE session
+        owner) to pre-register the mapping between a downstream session ID and the
+        upstream MCP session pool key. This enables session affinity in multi-worker
+        deployments.
+
+        Only registers mappings for tools/call methods - list operations and other
+        methods don't need session affinity since they don't maintain state.
+
+        Args:
+            session_id: The downstream SSE session ID.
+            message: The MCP protocol message being broadcast.
+            user_email: Optional user email for session isolation.
+        """
+        # Skip if session affinity is disabled
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+
+        # Only register for tools/call - other methods don't need session affinity
+        method = message.get("method")
+        if method != "tools/call":
+            return
+
+        # Extract tool name from params
+        params = message.get("params", {})
+        tool_name = params.get("name")
+        if not tool_name:
+            return
+
+        try:
+            # Look up tool in cache to get gateway info
+            # First-Party
+            from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+            tool_info = await tool_lookup_cache.get(tool_name)
+            if not tool_info:
+                logger.debug(f"Tool {tool_name} not found in cache, skipping session mapping registration")
+                return
+
+            # Extract gateway information
+            gateway = tool_info.get("gateway", {})
+            gateway_url = gateway.get("url")
+            gateway_id = gateway.get("id")
+            transport = gateway.get("transport")
+
+            if not gateway_url or not gateway_id or not transport:
+                logger.debug(f"Incomplete gateway info for tool {tool_name}, skipping session mapping registration")
+                return
+
+            # Register the session mapping with the pool
+            # First-Party
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+            pool = get_mcp_session_pool()
+            await pool.register_session_mapping(
+                session_id,
+                gateway_url,
+                gateway_id,
+                transport,
+                user_email,
+            )
+
+            logger.debug(f"Registered session mapping for session {session_id[:8]}... -> {gateway_url} (tool: {tool_name})")
+
+        except Exception as e:
+            # Don't fail the broadcast if session mapping registration fails
+            logger.warning(f"Failed to register session mapping for {session_id[:8]}...: {e}")
+
     async def get_all_session_ids(self) -> list[str]:
         """Return a snapshot list of all known local session IDs.
 
@@ -836,7 +1473,6 @@ class SessionRegistry(SessionBackend):
         server_id: Optional[str],
         user: Dict[str, Any],
         session_id: str,
-        base_url: str,
     ) -> None:
         """Process and respond to broadcast messages for a session.
 
@@ -854,7 +1490,9 @@ class SessionRegistry(SessionBackend):
             server_id: Optional server identifier for scoped operations.
             user: User information including authentication token.
             session_id: Session identifier to respond for.
-            base_url: Base URL for API calls (used for RPC endpoints).
+
+        Raises:
+            asyncio.CancelledError: When the respond task is cancelled (e.g., on session removal).
 
         Examples:
             >>> import asyncio
@@ -863,7 +1501,7 @@ class SessionRegistry(SessionBackend):
             >>> # This method is typically called internally by the SSE handler
             >>> reg = SessionRegistry()
             >>> user = {'token': 'test-token'}
-            >>> # asyncio.run(reg.respond(None, user, 'session-id', 'http://localhost'))
+            >>> # asyncio.run(reg.respond(None, user, 'session-id'))
         """
 
         if self._backend == "none":
@@ -879,7 +1517,7 @@ class SessionRegistry(SessionBackend):
                         message = data["message"]
                     else:
                         message = data
-                    await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
+                    await self.generate_response(message=message, transport=transport, server_id=server_id, user=user)
                 else:
                     logger.warning(f"Session message stored but message content is None for session {session_id}")
 
@@ -890,24 +1528,67 @@ class SessionRegistry(SessionBackend):
             pubsub = self._redis.pubsub()
             await pubsub.subscribe(session_id)
 
+            # Use timeout-based polling instead of infinite listen() to allow exit checks
+            # This is critical for allowing cancellation to work (Finding 2)
+            poll_timeout = 1.0  # Check every second if session still exists
+
             try:
-                async for msg in pubsub.listen():
-                    if msg["type"] != "message":
+                while True:
+                    # Check if session still exists or is closing - exit early
+                    if session_id not in self._sessions or session_id in self._closing_sessions:
+                        logger.info(f"Session {session_id} removed or closing, exiting Redis respond loop")
+                        break
+
+                    # Use get_message with timeout instead of blocking listen()
+                    try:
+                        msg = await asyncio.wait_for(
+                            pubsub.get_message(ignore_subscribe_messages=True, timeout=poll_timeout), timeout=poll_timeout + 0.5  # Slightly longer to account for Redis timeout
+                        )
+                    except asyncio.TimeoutError:
+                        # No message, loop back to check session existence
                         continue
+
+                    if msg is None:
+                        # CRITICAL: Sleep to prevent tight loop when get_message returns immediately
+                        # This can happen in certain Redis states after disconnects
+                        await asyncio.sleep(0.1)
+                        continue
+                    if msg["type"] != "message":
+                        # Sleep on non-message types to prevent spin in edge cases
+                        await asyncio.sleep(0.1)
+                        continue
+
                     data = orjson.loads(msg["data"])
                     message = data.get("message", {})
                     transport = self.get_session_sync(session_id)
                     if transport:
-                        await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
+                        await self.generate_response(message=message, transport=transport, server_id=server_id, user=user)
             except asyncio.CancelledError:
                 logger.info(f"PubSub listener for session {session_id} cancelled")
+                raise  # Re-raise to properly complete cancellation
+            except Exception as e:
+                logger.error(f"PubSub listener error for session {session_id}: {e}")
             finally:
-                await pubsub.unsubscribe(session_id)
+                # Pubsub cleanup first - use timeouts to prevent blocking
+                cleanup_timeout = settings.mcp_session_pool_cleanup_timeout
                 try:
-                    await pubsub.aclose()
-                except AttributeError:
-                    await pubsub.close()
+                    await asyncio.wait_for(pubsub.unsubscribe(session_id), timeout=cleanup_timeout)
+                except asyncio.TimeoutError:
+                    logger.debug(f"Pubsub unsubscribe timed out for session {session_id}")
+                except Exception as e:
+                    logger.debug(f"Error unsubscribing pubsub for session {session_id}: {e}")
+                try:
+                    try:
+                        await asyncio.wait_for(pubsub.aclose(), timeout=cleanup_timeout)
+                    except AttributeError:
+                        await asyncio.wait_for(pubsub.close(), timeout=cleanup_timeout)
+                except asyncio.TimeoutError:
+                    logger.debug(f"Pubsub close timed out for session {session_id}")
+                except Exception as e:
+                    logger.debug(f"Error closing pubsub for session {session_id}: {e}")
                 logger.info(f"Cleaned up pubsub for session {session_id}")
+                # Clean up task reference LAST (idempotent - may already be removed by _cancel_respond_task)
+                self._respond_tasks.pop(session_id, None)
 
         elif self._backend == "database":
 
@@ -1039,6 +1720,9 @@ class SessionRegistry(SessionBackend):
                 Args:
                     session_id (str): Unique identifier of the session to monitor.
 
+                Raises:
+                    asyncio.CancelledError: When the polling loop is cancelled.
+
                 Examples
                 --------
                 Adaptive backoff when no messages are present:
@@ -1075,43 +1759,64 @@ class SessionRegistry(SessionBackend):
                 poll_interval = settings.poll_interval  # start fast
                 max_interval = settings.max_interval  # cap at configured maximum
                 backoff_factor = settings.backoff_factor
-                while True:
-                    session, record = await asyncio.to_thread(_db_read_session_and_message, session_id)
+                try:
+                    while True:
+                        # Check if session is closing before querying DB
+                        if session_id in self._closing_sessions:
+                            logger.debug("Session %s closing, stopping poll loop early", session_id)
+                            break
 
-                    # session gone → stop polling
-                    if not session:
-                        logger.debug("Session %s no longer exists, stopping poll loop", session_id)
-                        break
+                        session, record = await asyncio.to_thread(_db_read_session_and_message, session_id)
 
-                    if record:
-                        poll_interval = settings.poll_interval  # reset on activity
+                        # session gone → stop polling
+                        if not session:
+                            logger.debug("Session %s no longer exists, stopping poll loop", session_id)
+                            break
 
-                        data = orjson.loads(record.message)
-                        if isinstance(data, dict) and "message" in data:
-                            message = data["message"]
+                        if record:
+                            poll_interval = settings.poll_interval  # reset on activity
+
+                            data = orjson.loads(record.message)
+                            if isinstance(data, dict) and "message" in data:
+                                message = data["message"]
+                            else:
+                                message = data
+
+                            transport = self.get_session_sync(session_id)
+                            if transport:
+                                logger.info("Ready to respond")
+                                await self.generate_response(
+                                    message=message,
+                                    transport=transport,
+                                    server_id=server_id,
+                                    user=user,
+                                )
+
+                                await asyncio.to_thread(_db_remove, session_id, record.message)
                         else:
-                            message = data
+                            # no message → backoff
+                            # update polling interval with backoff factor
+                            poll_interval = min(poll_interval * backoff_factor, max_interval)
 
-                        transport = self.get_session_sync(session_id)
-                        if transport:
-                            logger.info("Ready to respond")
-                            await self.generate_response(
-                                message=message,
-                                transport=transport,
-                                server_id=server_id,
-                                user=user,
-                                base_url=base_url,
-                            )
+                        await asyncio.sleep(poll_interval)
+                except asyncio.CancelledError:
+                    logger.info(f"Message check loop cancelled for session {session_id}")
+                    raise  # Re-raise to properly complete cancellation
+                except Exception as e:
+                    logger.error(f"Message check loop error for session {session_id}: {e}")
 
-                            await asyncio.to_thread(_db_remove, session_id, record.message)
-                    else:
-                        # no message → backoff
-                        # update polling interval with backoff factor
-                        poll_interval = min(poll_interval * backoff_factor, max_interval)
-
-                    await asyncio.sleep(poll_interval)
-
-            asyncio.create_task(message_check_loop(session_id))
+            # CRITICAL: Await instead of fire-and-forget
+            # This ensures CancelledError propagates from outer respond() task to inner loop
+            # The outer task (registered from main.py) now runs until message_check_loop exits
+            try:
+                await message_check_loop(session_id)
+            except asyncio.CancelledError:
+                logger.info(f"Database respond cancelled for session {session_id}")
+                raise
+            finally:
+                # Clean up task reference on ANY exit (normal, cancelled, or error)
+                # Prevents stale done tasks from accumulating in _respond_tasks
+                self._respond_tasks.pop(session_id, None)
 
     async def _refresh_redis_sessions(self) -> None:
         """Refresh TTLs for Redis sessions and clean up disconnected sessions.
@@ -1151,6 +1856,9 @@ class SessionRegistry(SessionBackend):
 
         The task also verifies that local sessions still exist in the database
         and removes them locally if they've been deleted elsewhere.
+
+        Raises:
+            asyncio.CancelledError: If the task is cancelled during shutdown.
         """
         logger.info("Starting database cleanup task")
         while True:
@@ -1203,7 +1911,7 @@ class SessionRegistry(SessionBackend):
 
             except asyncio.CancelledError:
                 logger.info("Database cleanup task cancelled")
-                break
+                raise
             except Exception as e:
                 logger.error(f"Error in database cleanup task: {e}")
                 await asyncio.sleep(600)  # Sleep longer on error
@@ -1300,6 +2008,9 @@ class SessionRegistry(SessionBackend):
         Runs periodically (every minute) to check all local sessions and remove
         those that are no longer connected. This prevents memory leaks from
         accumulating disconnected transport objects.
+
+        Raises:
+            asyncio.CancelledError: If the task is cancelled during shutdown.
         """
         logger.info("Starting memory cleanup task")
         while True:
@@ -1321,7 +2032,7 @@ class SessionRegistry(SessionBackend):
 
             except asyncio.CancelledError:
                 logger.info("Memory cleanup task cancelled")
-                break
+                raise
             except Exception as e:
                 logger.error(f"Error in memory cleanup task: {e}")
                 await asyncio.sleep(300)  # Sleep longer on error
@@ -1400,7 +2111,7 @@ class SessionRegistry(SessionBackend):
             >>> result.protocol_version
             '2025-06-18'
             >>> result.server_info.name
-            'MCP_Gateway'
+            'ContextForge'
             >>>
             >>> # Missing protocol version
             >>> try:
@@ -1450,7 +2161,7 @@ class SessionRegistry(SessionBackend):
                 experimental=experimental,  # OAuth capability when configured
             ),
             serverInfo=Implementation(name=settings.app_name, version=__version__),
-            instructions=("MCP Gateway providing federated tools, resources and prompts. Use /admin interface for configuration."),
+            instructions=("ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration."),
         )
 
     async def store_client_capabilities(self, session_id: str, capabilities: Dict[str, Any]) -> None:
@@ -1506,19 +2217,22 @@ class SessionRegistry(SessionBackend):
                         capable_sessions.append(session_id)
             return capable_sessions
 
-    async def generate_response(self, message: Dict[str, Any], transport: SSETransport, server_id: Optional[str], user: Dict[str, Any], base_url: str) -> None:
+    async def generate_response(self, message: Dict[str, Any], transport: SSETransport, server_id: Optional[str], user: Dict[str, Any]) -> None:
         """Generate and send response for incoming MCP protocol message.
 
         Processes MCP protocol messages and generates appropriate responses based on
         the method. Supports various MCP methods including initialization, tool/resource/prompt
         listing, tool invocation, and ping.
 
+        Uses loopback (127.0.0.1) for the internal RPC call to avoid issues when
+        the gateway is behind a reverse proxy or service mesh where the client-facing
+        URL is not reachable from the server itself.
+
         Args:
             message: Incoming MCP message as JSON. Must contain 'method' and 'id' fields.
             transport: SSE transport to send responses through.
             server_id: Optional server ID for scoped operations.
             user: User information containing authentication token.
-            base_url: Base URL for constructing RPC endpoints.
 
         Examples:
             >>> import asyncio
@@ -1532,7 +2246,7 @@ class SessionRegistry(SessionBackend):
             >>> transport = MockTransport()
             >>> message = {"method": "ping", "id": 1}
             >>> user = {"token": "test-token"}
-            >>> # asyncio.run(reg.generate_response(message, transport, None, user, "http://localhost"))
+            >>> # asyncio.run(reg.generate_response(message, transport, None, user))
             >>> # Response: {}
         """
         result = {}
@@ -1552,15 +2266,14 @@ class SessionRegistry(SessionBackend):
             # Get the token from the current authentication context
             # The user object should contain auth_token, token_teams, and is_admin from the SSE endpoint
             token = None
-            token_teams = user.get("token_teams", [])  # Default to empty list, never None
             is_admin = user.get("is_admin", False)  # Preserve admin status from SSE endpoint
 
             try:
                 if hasattr(user, "get") and user.get("auth_token"):
                     token = user["auth_token"]
                 else:
-                    # Fallback: create token preserving the user's context (including admin status)
-                    logger.warning("No auth token available for SSE RPC call - creating fallback token")
+                    # Fallback: create lightweight session token (teams resolved server-side by downstream /rpc)
+                    logger.warning("No auth token available for SSE RPC call - creating fallback session token")
                     now = datetime.now(timezone.utc)
                     payload = {
                         "sub": user.get("email", "system"),
@@ -1568,7 +2281,7 @@ class SessionRegistry(SessionBackend):
                         "aud": settings.jwt_audience,
                         "iat": int(now.timestamp()),
                         "jti": str(uuid.uuid4()),
-                        "teams": token_teams,  # Always a list - preserves token scope
+                        "token_use": "session",  # nosec B105 - token type marker, not a password
                         "user": {
                             "email": user.get("email", "system"),
                             "full_name": user.get("full_name", "System"),
@@ -1579,25 +2292,19 @@ class SessionRegistry(SessionBackend):
                     # Generate token using centralized token creation
                     token = await create_jwt_token(payload)
 
-                headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-                # Extract root URL from base_url (remove /servers/{id} path)
-                parsed_url = urlparse(base_url)
-                # Preserve the path up to the root path (before /servers/{id})
-                path_parts = parsed_url.path.split("/")
-                if "/servers/" in parsed_url.path:
-                    # Find the index of 'servers' and take everything before it
-                    try:
-                        servers_index = path_parts.index("servers")
-                        root_path = "/" + "/".join(path_parts[1:servers_index]).strip("/")
-                        if root_path == "/":
-                            root_path = ""
-                    except ValueError:
-                        root_path = ""
-                else:
-                    root_path = parsed_url.path.rstrip("/")
+                # Pass downstream session id to /rpc for session affinity.
+                # This is gateway-internal only; the pool strips it before contacting upstream MCP servers.
+                if settings.mcpgateway_session_affinity_enabled:
+                    await self._register_session_mapping(transport.session_id, message, user.get("email") if hasattr(user, "get") else None)
 
-                root_url = f"{parsed_url.scheme}://{parsed_url.netloc}{root_path}"
-                rpc_url = root_url + "/rpc"
+                headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+                if settings.mcpgateway_session_affinity_enabled:
+                    headers["x-mcp-session-id"] = transport.session_id
+                # Use loopback for internal RPC call (consistent with other self-call sites
+                # in mcp_session_pool.py and streamablehttp_transport.py). This avoids
+                # failures when the client-facing URL is not reachable from the server
+                # (e.g., behind a reverse proxy or service mesh). See #3049.
+                rpc_url = f"http://127.0.0.1:{settings.port}/rpc"
 
                 logger.info(f"SSE RPC: Making call to {rpc_url} with method={method}, params={params}")
 

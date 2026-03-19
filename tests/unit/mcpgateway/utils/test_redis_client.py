@@ -7,6 +7,8 @@ Unit tests for the centralized Redis client factory.
 """
 
 # Standard
+import builtins
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -74,12 +76,19 @@ async def test_get_redis_client_returns_none_when_redis_not_installed():
         mock_settings.cache_type = "redis"
         mock_settings.redis_url = "redis://localhost:6379"
 
+        real_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "redis.asyncio":
+                raise ImportError("No module named 'redis.asyncio'")
+            return real_import(name, globals, locals, fromlist, level)
+
         # Simulate import error for redis.asyncio
         with patch.dict("sys.modules", {"redis.asyncio": None}):
-            with patch("builtins.__import__", side_effect=ImportError("No module named 'redis.asyncio'")):
+            with patch("builtins.__import__", side_effect=fake_import):
                 _reset_client()  # Force re-initialization
-                # The actual test should trigger the import error path
-                # For this test, we just verify the function handles it gracefully
+                client = await get_redis_client()
+                assert client is None
 
 
 @pytest.mark.asyncio
@@ -432,3 +441,72 @@ async def test_get_redis_client_with_parser_setting():
             parser_info = get_redis_parser_info()
             assert parser_info is not None
             assert "auto-detected" in parser_info
+
+
+def test_is_hiredis_available_true_when_module_present(monkeypatch):
+    monkeypatch.setitem(sys.modules, "hiredis", object())
+    assert _is_hiredis_available() is True
+
+
+def test_get_async_parser_class_auto_prefers_hiredis_when_available(monkeypatch):
+    monkeypatch.setattr("mcpgateway.utils.redis_client._is_hiredis_available", lambda: True)
+    parser_class, parser_info = _get_async_parser_class("auto")
+    assert parser_class is None
+    assert "auto-detected" in parser_info
+    assert "C extension" in parser_info
+
+
+def test_get_async_parser_class_hiredis_forced_when_available(monkeypatch):
+    monkeypatch.setattr("mcpgateway.utils.redis_client._is_hiredis_available", lambda: True)
+    parser_class, parser_info = _get_async_parser_class("hiredis")
+    assert parser_class is None
+    assert "AsyncHiredisParser" in parser_info
+
+
+@pytest.mark.asyncio
+async def test_get_redis_client_sets_parser_class_when_python_parser_selected():
+    mock_redis = AsyncMock()
+    mock_redis.ping = AsyncMock(return_value=True)
+
+    with patch("mcpgateway.config.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "redis://localhost:6379"
+        mock_settings.redis_decode_responses = True
+        mock_settings.redis_max_connections = 10
+        mock_settings.redis_socket_timeout = 5.0
+        mock_settings.redis_socket_connect_timeout = 5.0
+        mock_settings.redis_retry_on_timeout = True
+        mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "python"
+
+        with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
+            client = await get_redis_client()
+
+            assert client is mock_redis
+            mock_from_url.assert_called_once()
+            call_kwargs = mock_from_url.call_args[1]
+            assert call_kwargs["parser_class"] is not None
+
+
+@pytest.mark.asyncio
+async def test_get_redis_client_parser_configuration_error_returns_none():
+    mock_redis = AsyncMock()
+    mock_redis.ping = AsyncMock(return_value=True)
+
+    with patch("mcpgateway.config.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "redis://localhost:6379"
+        mock_settings.redis_decode_responses = True
+        mock_settings.redis_max_connections = 10
+        mock_settings.redis_socket_timeout = 5.0
+        mock_settings.redis_socket_connect_timeout = 5.0
+        mock_settings.redis_retry_on_timeout = True
+        mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "hiredis"
+
+        with patch("mcpgateway.utils.redis_client._get_async_parser_class", side_effect=ImportError("no hiredis")):
+            with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
+                client = await get_redis_client()
+
+                assert client is None
+                mock_from_url.assert_not_called()

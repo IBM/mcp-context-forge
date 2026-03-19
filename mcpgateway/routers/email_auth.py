@@ -28,17 +28,23 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal, utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
+    AdminCreateUserRequest,
+    AdminUserUpdateRequest,
     AuthenticationResponse,
     AuthEventResponse,
     ChangePasswordRequest,
     CursorPaginatedUsersResponse,
     EmailLoginRequest,
-    EmailRegistrationRequest,
     EmailUserResponse,
+    ForgotPasswordRequest,
+    PasswordResetTokenValidationResponse,
+    PublicRegistrationRequest,
+    ResetPasswordRequest,
     SuccessResponse,
 )
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
@@ -136,33 +142,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     expires_delta = timedelta(minutes=settings.token_expiry)
     expire = now + expires_delta
 
-    # Get user's teams for namespace information (ensure safe access)
-    try:
-        teams = user.get_teams() if callable(getattr(user, "get_teams", None)) else []
-    except Exception:
-        teams = []
-
-    # Normalize teams into JSON-serializable primitives
-    safe_teams = []
-    for team in teams or []:
-        try:
-            safe_teams.append(
-                {
-                    "id": str(getattr(team, "id", None)) if getattr(team, "id", None) is not None else None,
-                    "name": str(getattr(team, "name", "")),
-                    "slug": str(getattr(team, "slug", "")),
-                    "is_personal": bool(getattr(team, "is_personal", False)),
-                    "role": str(next((m.role for m in getattr(user, "team_memberships", []) if getattr(m, "team_id", None) == getattr(team, "id", None)), "member")),
-                }
-            )
-        except Exception:
-            # Fallback to a string representation if anything goes wrong
-            try:
-                safe_teams.append({"id": None, "name": str(team), "slug": str(team), "is_personal": False, "role": "member"})
-            except Exception:
-                safe_teams.append({"id": None, "name": "", "slug": "", "is_personal": False, "role": "member"})
-
-    # Create enhanced JWT payload with team and namespace information
+    # Create JWT payload — session token (teams resolved server-side at request time)
     payload = {
         # Standard JWT claims
         "sub": user.email,
@@ -178,17 +158,10 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
             "is_admin": bool(getattr(user, "is_admin", False)),
             "auth_provider": str(getattr(user, "auth_provider", "local")),
         },
-        # Namespace access (backwards compatible)
-        "namespaces": [f"user:{getattr(user, 'email', '')}", *[f"team:{t.get('slug', '')}" for t in safe_teams], "public"],
+        "token_use": "session",  # nosec B105 - token type marker, not a password
         # Token scoping (if provided)
         "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
     }
-
-    # For admin users: omit "teams" key entirely to enable unrestricted access bypass
-    # For regular users: include teams for proper team-based scoping
-    if not bool(getattr(user, "is_admin", False)):
-        # Use only team IDs for the "teams" claim to match /tokens behavior
-        payload["teams"] = [t["id"] for t in safe_teams if t.get("id")]
 
     # Generate token using centralized token creation
     token = await create_jwt_token(payload)
@@ -294,7 +267,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                 from mcpgateway.services.argon2_service import Argon2PasswordService
 
                 password_service = Argon2PasswordService()
-                is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+                is_using_default_password = await password_service.verify_password_async(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
                 if is_using_default_password:
                     # Mark user for password change depending on configuration
                     if getattr(settings, "require_password_change_for_default_password", True):
@@ -308,7 +281,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                         logger.info("User %s is using default password but enforcement is disabled", login_request.email)
 
         if needs_password_change:
-            logger.info(f"Login blocked for {login_request.email}: password change required")
+            logger.info(f"Login blocked for {SecurityValidator.sanitize_log_message(login_request.email)}: password change required")
             return ORJSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={"detail": "Password change required. Please change your password before continuing."},
@@ -326,16 +299,20 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, etc.)
     except Exception as e:
-        logger.error(f"Login error for {login_request.email}: {e}")
+        logger.error(f"Login error for {SecurityValidator.sanitize_log_message(login_request.email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
 
 
 @email_auth_router.post("/register", response_model=AuthenticationResponse)
-async def register(registration_request: EmailRegistrationRequest, request: Request, db: Session = Depends(get_db)):
+async def register(registration_request: PublicRegistrationRequest, request: Request, db: Session = Depends(get_db)):
     """Register a new user account.
 
+    This endpoint is controlled by the PUBLIC_REGISTRATION_ENABLED setting.
+    When disabled (default), returns 403 Forbidden and users can only be
+    created by administrators via the admin API.
+
     Args:
-        registration_request: Registration information
+        registration_request: Registration information (email, password, full_name only)
         request: FastAPI request object
         db: Database session
 
@@ -343,7 +320,7 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
         AuthenticationResponse: Access token and user info
 
     Raises:
-        HTTPException: If registration fails
+        HTTPException: If registration fails or is disabled
 
     Examples:
         Request JSON:
@@ -353,24 +330,35 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
               "full_name": "New User"
             }
     """
+    # Check if public registration is allowed
+    if not settings.public_registration_enabled:
+        logger.warning(f"Registration attempt rejected - public registration disabled: {SecurityValidator.sanitize_log_message(registration_request.email)}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Public registration is disabled. Please contact an administrator to create an account.",
+        )
+
     auth_service = EmailAuthService(db)
     get_client_ip(request)
     get_user_agent(request)
 
     try:
-        # Create new user
+        # Password is required by schema (str, not Optional) — Pydantic returns 422 if missing
+        # Security-sensitive fields are hardcoded (not exposed on public schema)
         user = await auth_service.create_user(
             email=registration_request.email,
             password=registration_request.password,
             full_name=registration_request.full_name,
             is_admin=False,  # Regular users cannot self-register as admin
+            is_active=True,  # Public registrations are always active
+            password_change_required=False,  # No forced password change for self-registration
             auth_provider="local",
         )
 
         # Create access token
         access_token, expires_in = await create_access_token(user)
 
-        logger.info(f"New user registered: {user.email}")
+        logger.info(f"New user registered: {SecurityValidator.sanitize_log_message(user.email)}")
 
         return AuthenticationResponse(
             access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
@@ -383,7 +371,7 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
     except UserExistsError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
-        logger.error(f"Registration error for {registration_request.email}: {e}")
+        logger.error(f"Registration error for {SecurityValidator.sanitize_log_message(registration_request.email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Registration service error")
 
 
@@ -430,8 +418,104 @@ async def change_password(password_request: ChangePasswordRequest, request: Requ
     except PasswordValidationError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Password change error for {current_user.email}: {e}")
+        logger.error(f"Password change error for {SecurityValidator.sanitize_log_message(current_user.email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Password change service error")
+
+
+@email_auth_router.post("/forgot-password", response_model=SuccessResponse)
+async def forgot_password(reset_request: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    """Request a one-time password reset token via email.
+
+    Args:
+        reset_request: Forgot-password request payload.
+        request: Incoming HTTP request.
+        db: Database session dependency.
+
+    Returns:
+        SuccessResponse: Generic success response to avoid account enumeration.
+
+    Raises:
+        HTTPException: If password reset is disabled or the request is rate limited.
+    """
+    if not getattr(settings, "password_reset_enabled", True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password reset is disabled")
+
+    auth_service = EmailAuthService(db)
+    ip_address = get_client_ip(request)
+    user_agent = get_user_agent(request)
+
+    result = await auth_service.request_password_reset(email=reset_request.email, ip_address=ip_address, user_agent=user_agent)
+    if result.rate_limited:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests. Please try again later.")
+
+    return SuccessResponse(success=True, message="If this email is registered, you will receive a reset link.")
+
+
+@email_auth_router.get("/reset-password/{token}", response_model=PasswordResetTokenValidationResponse)
+async def validate_password_reset_token(token: str, request: Request, db: Session = Depends(get_db)):
+    """Validate a password reset token before submitting a new password.
+
+    Args:
+        token: One-time reset token.
+        request: Incoming HTTP request.
+        db: Database session dependency.
+
+    Returns:
+        PasswordResetTokenValidationResponse: Token validity and expiration data.
+
+    Raises:
+        HTTPException: If password reset is disabled or token validation fails.
+    """
+    if not getattr(settings, "password_reset_enabled", True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password reset is disabled")
+
+    auth_service = EmailAuthService(db)
+    ip_address = get_client_ip(request)
+    user_agent = get_user_agent(request)
+
+    try:
+        reset_token = await auth_service.validate_password_reset_token(token=token, ip_address=ip_address, user_agent=user_agent)
+        return PasswordResetTokenValidationResponse(valid=True, message="Reset token is valid", expires_at=reset_token.expires_at)
+    except AuthenticationError as exc:
+        detail = str(exc)
+        if "expired" in detail.lower():
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail=detail)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+@email_auth_router.post("/reset-password/{token}", response_model=SuccessResponse)
+async def complete_password_reset(token: str, reset_request: ResetPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    """Complete password reset with a valid one-time token.
+
+    Args:
+        token: One-time reset token.
+        reset_request: Reset-password payload with new credentials.
+        request: Incoming HTTP request.
+        db: Database session dependency.
+
+    Returns:
+        SuccessResponse: Password reset completion status.
+
+    Raises:
+        HTTPException: If password reset is disabled or reset validation fails.
+    """
+    if not getattr(settings, "password_reset_enabled", True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password reset is disabled")
+
+    auth_service = EmailAuthService(db)
+    ip_address = get_client_ip(request)
+    user_agent = get_user_agent(request)
+
+    try:
+        await auth_service.reset_password_with_token(token=token, new_password=reset_request.new_password, ip_address=ip_address, user_agent=user_agent)
+        return SuccessResponse(success=True, message="Password reset successful. Please sign in with your new password.")
+    except AuthenticationError as exc:
+        detail = str(exc)
+        if "expired" in detail.lower():
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail=detail)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+    except PasswordValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @email_auth_router.get("/me", response_model=EmailUserResponse)
@@ -482,7 +566,7 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
         return [AuthEventResponse.model_validate(event) for event in events]
 
     except Exception as e:
-        logger.error(f"Error getting auth events for {current_user.email}: {e}")
+        logger.error(f"Error getting auth events for {SecurityValidator.sanitize_log_message(current_user.email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve authentication events")
 
 
@@ -499,6 +583,7 @@ async def list_users(
     ),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ) -> Union[CursorPaginatedUsersResponse, List[EmailUserResponse]]:
     """List all users (admin only) with cursor-based pagination support.
 
@@ -508,6 +593,7 @@ async def list_users(
             If not specified, uses pagination_default_page_size (default: 50).
         include_pagination: Whether to include cursor pagination metadata in the response (default: false)
         current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
 
     Returns:
         CursorPaginatedUsersResponse with users and nextCursor if include_pagination=true, or
@@ -521,8 +607,6 @@ async def list_users(
         >>> # Simple list: GET /auth/email/admin/users
         >>> # Headers: Authorization: Bearer <admin_token>
     """
-
-    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -541,7 +625,7 @@ async def list_users(
 
 @email_auth_router.get("/admin/events", response_model=list[AuthEventResponse])
 @require_permission("admin.user_management")
-async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Optional[str] = None, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
+async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Optional[str] = None, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """List authentication events for all users (admin only).
 
     Args:
@@ -549,6 +633,7 @@ async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Op
         offset: Number of events to skip
         user_email: Filter events by specific user email
         current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
 
     Returns:
         List[AuthEventResponse]: Authentication events
@@ -560,8 +645,6 @@ async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Op
         >>> # GET /auth/email/admin/events?limit=50&user_email=user@example.com
         >>> # Headers: Authorization: Bearer <admin_token>
     """
-
-    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -576,12 +659,13 @@ async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Op
 
 @email_auth_router.post("/admin/users", response_model=EmailUserResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("admin.user_management")
-async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
+async def create_user(user_request: AdminCreateUserRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Create a new user account (admin only).
 
     Args:
         user_request: User creation information
         current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
 
     Returns:
         EmailUserResponse: Created user information
@@ -598,17 +682,20 @@ async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: 
               "is_admin": false
             }
     """
-    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
-        # Create new user with admin privileges
+        # Password is required by schema (str, not Optional) — Pydantic returns 422 if missing
+        # Create new user with all fields from request
         user = await auth_service.create_user(
             email=user_request.email,
             password=user_request.password,
             full_name=user_request.full_name,
             is_admin=user_request.is_admin,
+            is_active=user_request.is_active,
+            password_change_required=user_request.password_change_required,
             auth_provider="local",
+            granted_by=current_user_ctx.get("email"),
         )
 
         # If the user was created with the default password, optionally force password change
@@ -620,8 +707,10 @@ async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: 
             user.password_change_required = True
             db.commit()
 
-        logger.info(f"Admin {current_user_ctx['email']} created user: {user.email}")
+        logger.info(f"Admin {SecurityValidator.sanitize_log_message(current_user_ctx['email'])} created user: {SecurityValidator.sanitize_log_message(user.email)}")
 
+        db.commit()
+        db.close()
         return EmailUserResponse.from_email_user(user)
 
     except EmailValidationError as e:
@@ -637,12 +726,13 @@ async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: 
 
 @email_auth_router.get("/admin/users/{user_email}", response_model=EmailUserResponse)
 @require_permission("admin.user_management")
-async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
+async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Get user by email (admin only).
 
     Args:
         user_email: Email of user to retrieve
         current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
 
     Returns:
         EmailUserResponse: User information
@@ -650,7 +740,6 @@ async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current
     Raises:
         HTTPException: If user not found
     """
-    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -663,19 +752,20 @@ async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
     except Exception as e:
-        logger.error(f"Error retrieving user {user_email}: {e}")
+        logger.error(f"Error retrieving user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user")
 
 
 @email_auth_router.put("/admin/users/{user_email}", response_model=EmailUserResponse)
 @require_permission("admin.user_management")
-async def update_user(user_email: str, user_request: EmailRegistrationRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
+async def update_user(user_email: str, user_request: AdminUserUpdateRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Update user information (admin only).
 
     Args:
         user_email: Email of user to update
         user_request: Updated user information
         current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
 
     Returns:
         EmailUserResponse: Updated user information
@@ -683,58 +773,46 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
     Raises:
         HTTPException: If user not found or update fails
     """
-    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
-        # Get existing user
-        user = await auth_service.get_user_by_email(user_email)
-        if not user:
+        user = await auth_service.update_user(
+            email=user_email,
+            full_name=user_request.full_name,
+            is_admin=user_request.is_admin,
+            is_active=user_request.is_active,
+            email_verified=user_request.email_verified,
+            password_change_required=user_request.password_change_required,
+            password=user_request.password,
+            admin_origin_source="api",
+        )
+
+        logger.info(f"Admin {SecurityValidator.sanitize_log_message(current_user_ctx['email'])} updated user: {SecurityValidator.sanitize_log_message(user.email)}")
+
+        result = EmailUserResponse.from_email_user(user)
+        return result
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-        # Update user fields
-        user.full_name = user_request.full_name
-        user.is_admin = getattr(user_request, "is_admin", user.is_admin)
-
-        # Update password if provided
-        if user_request.password:
-            # For admin updates, we need to directly update the password hash
-            # since we don't have the old password to verify
-            # First-Party
-            from mcpgateway.services.argon2_service import Argon2PasswordService
-
-            password_service = Argon2PasswordService()
-
-            # Validate the new password meets requirements
-            auth_service.validate_password(user_request.password)
-
-            # Update password hash directly
-            user.password_hash = password_service.hash_password(user_request.password)
-            user.password_change_required = False  # Clear password change requirement
-            user.password_changed_at = utc_now()  # Update password change timestamp
-
-        db.commit()
-        db.refresh(user)
-
-        logger.info(f"Admin {current_user_ctx['email']} updated user: {user.email}")
-
-        return EmailUserResponse.from_email_user(user)
-
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+    except PasswordValidationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error updating user {user_email}: {e}")
+        logger.error(f"Error updating user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user")
 
 
 @email_auth_router.delete("/admin/users/{user_email}", response_model=SuccessResponse)
 @require_permission("admin.user_management")
-async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
+async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Delete/deactivate user (admin only).
 
     Args:
         user_email: Email of user to delete
         current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
 
     Returns:
         SuccessResponse: Success confirmation
@@ -742,7 +820,6 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
     Raises:
         HTTPException: If user not found or deletion fails
     """
-    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -757,12 +834,42 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
         # Hard delete using auth service
         await auth_service.delete_user(user_email)
 
-        logger.info(f"Admin {current_user_ctx['email']} deleted user: {user_email}")
+        logger.info(f"Admin {SecurityValidator.sanitize_log_message(current_user_ctx['email'])} deleted user: {SecurityValidator.sanitize_log_message(user_email)}")
 
+        db.commit()
+        db.close()
         return SuccessResponse(success=True, message=f"User {user_email} has been deleted")
 
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
     except Exception as e:
-        logger.error(f"Error deleting user {user_email}: {e}")
+        logger.error(f"Error deleting user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user")
+
+
+@email_auth_router.post("/admin/users/{user_email}/unlock", response_model=SuccessResponse)
+@require_permission("admin.user_management")
+async def unlock_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Unlock a user account by clearing lockout state and failed login counter.
+
+    Args:
+        user_email: Email address of the user to unlock.
+        current_user_ctx: Authenticated admin context.
+        db: Database session dependency.
+
+    Returns:
+        SuccessResponse: Unlock operation result.
+
+    Raises:
+        HTTPException: If user is missing or unlock operation fails.
+    """
+    auth_service = EmailAuthService(db)
+
+    try:
+        await auth_service.unlock_user_account(email=user_email, unlocked_by=current_user_ctx.get("email"))
+        return SuccessResponse(success=True, message=f"User {user_email} has been unlocked")
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except Exception as exc:
+        logger.error("Failed to unlock user %s: %s", user_email, exc)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to unlock user")

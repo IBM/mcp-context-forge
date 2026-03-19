@@ -6,9 +6,11 @@ Tests SQL-based and Python-based computation paths for query performance metrics
 
 # Standard
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 # Third-Party
+from fastapi import HTTPException
 import pytest
 
 # First-Party
@@ -16,6 +18,22 @@ from mcpgateway.routers.observability import (
     _get_query_performance_postgresql,
     _get_query_performance_python,
 )
+
+
+@pytest.fixture
+def allow_permission(monkeypatch):
+    """Allow permission checks in require_permission wrapper."""
+
+    class DummyPermissionService:
+        def __init__(self, _db):
+            pass
+
+        async def check_permission(self, **_kwargs):
+            return True
+
+    monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DummyPermissionService)
+    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
+
 
 
 class TestQueryPerformancePostgresql:
@@ -188,3 +206,270 @@ class TestQueryPerformanceRouting:
                 mock_py.assert_called_once()
                 mock_pg.assert_not_called()
                 assert result["total_traces"] == 50
+
+
+class TestObservabilityRouterEndpoints:
+    """Tests for observability router endpoints."""
+
+    def test_get_db_commit_and_close(self, monkeypatch):
+        """get_db commits and closes on success."""
+        from mcpgateway.routers.observability import get_db
+
+        mock_db = MagicMock()
+        monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", lambda: mock_db)
+
+        gen = get_db()
+        db = next(gen)
+        assert db is mock_db
+
+        with pytest.raises(StopIteration):
+            next(gen)
+
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    def test_get_db_rollback_invalidate(self, monkeypatch):
+        """get_db rolls back and invalidates on error."""
+        from mcpgateway.routers.observability import get_db
+
+        mock_db = MagicMock()
+        mock_db.rollback.side_effect = Exception("rollback error")
+        monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", lambda: mock_db)
+
+        gen = get_db()
+        next(gen)
+
+        with pytest.raises(RuntimeError):
+            gen.throw(RuntimeError("boom"))
+
+        mock_db.rollback.assert_called_once()
+        mock_db.invalidate.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    def test_get_db_rollback_and_invalidate_failure_ignored(self, monkeypatch):
+        """get_db suppresses invalidate failures during error cleanup."""
+        from mcpgateway.routers.observability import get_db
+
+        mock_db = MagicMock()
+        mock_db.rollback.side_effect = Exception("rollback error")
+        mock_db.invalidate.side_effect = Exception("invalidate error")
+        monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", lambda: mock_db)
+
+        gen = get_db()
+        next(gen)
+
+        with pytest.raises(RuntimeError):
+            gen.throw(RuntimeError("boom"))
+
+        mock_db.rollback.assert_called_once()
+        mock_db.invalidate.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_list_traces_returns_service_results(self, allow_permission):
+        """list_traces returns query results."""
+        from mcpgateway.routers.observability import list_traces
+
+        mock_db = MagicMock()
+        fake_trace = SimpleNamespace(trace_id="t1")
+
+        with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
+            mock_service.return_value.query_traces.return_value = [fake_trace]
+
+            result = await list_traces(db=mock_db, _user={"email": "admin", "db": mock_db})
+
+        assert result == [fake_trace]
+
+    @pytest.mark.asyncio
+    async def test_query_traces_advanced_parses_dates(self, allow_permission):
+        """query_traces_advanced parses ISO datetime strings."""
+        from mcpgateway.routers.observability import query_traces_advanced
+
+        mock_db = MagicMock()
+        fake_trace = SimpleNamespace(trace_id="t1", name="n")
+
+        with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
+            mock_service.return_value.query_traces.return_value = [fake_trace]
+
+            result = await query_traces_advanced(
+                {"start_time": "2025-01-01T00:00:00Z", "end_time": "2025-01-02T00:00:00Z"},
+                db=mock_db,
+                _user={"email": "admin", "db": mock_db},
+            )
+
+        assert result == [fake_trace]
+        call_kwargs = mock_service.return_value.query_traces.call_args.kwargs
+        assert isinstance(call_kwargs["start_time"], datetime)
+        assert isinstance(call_kwargs["end_time"], datetime)
+
+    @pytest.mark.asyncio
+    async def test_query_traces_advanced_invalid_date(self, allow_permission):
+        """query_traces_advanced returns 400 on invalid date."""
+        from mcpgateway.routers.observability import query_traces_advanced
+
+        with pytest.raises(HTTPException) as exc_info:
+            await query_traces_advanced({"start_time": "not-a-date"}, db=MagicMock(), _user={"email": "admin", "db": MagicMock()})
+
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_get_trace_missing(self, allow_permission):
+        """get_trace returns 404 when missing."""
+        from mcpgateway.routers.observability import get_trace
+
+        mock_db = MagicMock()
+        with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
+            mock_service.return_value.get_trace_with_spans.return_value = None
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_trace("missing", db=mock_db, _user={"email": "admin", "db": mock_db})
+
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_trace_found(self, allow_permission):
+        """get_trace returns trace when found."""
+        from mcpgateway.routers.observability import get_trace
+
+        mock_db = MagicMock()
+        trace = {"trace_id": "t1"}
+        with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
+            mock_service.return_value.get_trace_with_spans.return_value = trace
+
+            result = await get_trace("t1", db=mock_db, _user={"email": "admin", "db": mock_db})
+
+        assert result == trace
+
+    @pytest.mark.asyncio
+    async def test_list_spans_returns_service_results(self, allow_permission):
+        """list_spans returns query results."""
+        from mcpgateway.routers.observability import list_spans
+
+        mock_db = MagicMock()
+        fake_span = SimpleNamespace(span_id="s1")
+
+        with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
+            mock_service.return_value.query_spans.return_value = [fake_span]
+
+            result = await list_spans(db=mock_db, _user={"email": "admin", "db": mock_db})
+
+        assert result == [fake_span]
+
+    @pytest.mark.asyncio
+    async def test_cleanup_old_traces(self, allow_permission):
+        """cleanup_old_traces returns deleted count."""
+        from mcpgateway.routers.observability import cleanup_old_traces
+
+        mock_db = MagicMock()
+        with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
+            mock_service.return_value.delete_old_traces.return_value = 5
+
+            result = await cleanup_old_traces(days=3, db=mock_db, _user={"email": "admin", "db": mock_db})
+
+        assert result["deleted"] == 5
+
+    @pytest.mark.asyncio
+    async def test_get_stats(self, allow_permission):
+        """get_stats returns aggregated counts and slowest endpoints."""
+        from mcpgateway.routers.observability import get_stats
+
+        mock_db = MagicMock()
+
+        query_total = MagicMock()
+        query_total.filter.return_value.scalar.return_value = 10
+        query_success = MagicMock()
+        query_success.filter.return_value.scalar.return_value = 7
+        query_error = MagicMock()
+        query_error.filter.return_value.scalar.return_value = 3
+        query_avg = MagicMock()
+        query_avg.filter.return_value.scalar.return_value = 12.345
+        query_slowest = MagicMock()
+        query_slowest.filter.return_value.group_by.return_value.order_by.return_value.limit.return_value.all.return_value = [("GET /", 50.5, 2)]
+
+        mock_db.query.side_effect = [query_total, query_success, query_error, query_avg, query_slowest]
+
+        result = await get_stats(hours=24, db=mock_db, _user={"email": "admin", "db": mock_db})
+
+        assert result["total_traces"] == 10
+        assert result["success_count"] == 7
+        assert result["error_count"] == 3
+        assert result["avg_duration_ms"] == 12.35
+        assert result["slowest_endpoints"][0]["name"] == "GET /"
+
+    @pytest.mark.asyncio
+    async def test_export_traces_invalid_format(self, allow_permission):
+        """export_traces raises on invalid format."""
+        from mcpgateway.routers.observability import export_traces
+
+        with pytest.raises(HTTPException) as exc_info:
+            await export_traces({}, format="xml", db=MagicMock(), _user={"email": "admin", "db": MagicMock()})
+
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_export_traces_json_csv_ndjson(self, allow_permission):
+        """export_traces supports json, csv, and ndjson formats."""
+        from mcpgateway.routers.observability import export_traces
+
+        mock_db = MagicMock()
+        fake_trace = SimpleNamespace(
+            trace_id="t1",
+            name="name",
+            start_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            end_time=None,
+            duration_ms=100,
+            status="ok",
+            http_method="GET",
+            http_url="/",
+            http_status_code=200,
+            user_email="user@example.com",
+        )
+
+        with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
+            mock_service.return_value.query_traces.return_value = [fake_trace]
+
+            json_resp = await export_traces({}, format="json", db=mock_db, _user={"email": "admin", "db": mock_db})
+            assert json_resp[0]["trace_id"] == "t1"
+
+            csv_resp = await export_traces({}, format="csv", db=mock_db, _user={"email": "admin", "db": mock_db})
+            assert csv_resp.media_type == "text/csv"
+            assert b"trace_id" in csv_resp.body
+
+            ndjson_resp = await export_traces({}, format="ndjson", db=mock_db, _user={"email": "admin", "db": mock_db})
+            chunks = [chunk async for chunk in ndjson_resp.body_iterator]
+            first_chunk = chunks[0]
+            assert "trace_id" in (first_chunk.decode() if isinstance(first_chunk, bytes) else first_chunk)
+
+    @pytest.mark.asyncio
+    async def test_export_traces_parses_iso_start_end(self, allow_permission):
+        """export_traces parses ISO datetime strings in request body."""
+        from mcpgateway.routers.observability import export_traces
+
+        mock_db = MagicMock()
+        with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
+            mock_service.return_value.query_traces.return_value = []
+
+            await export_traces(
+                {"start_time": "2025-01-01T00:00:00Z", "end_time": "2025-01-02T00:00:00Z"},
+                format="json",
+                db=mock_db,
+                _user={"email": "admin", "db": mock_db},
+            )
+
+        kwargs = mock_service.return_value.query_traces.call_args.kwargs
+        assert isinstance(kwargs["start_time"], datetime)
+        assert isinstance(kwargs["end_time"], datetime)
+
+    @pytest.mark.asyncio
+    async def test_export_traces_wraps_failures_in_http_400(self, allow_permission):
+        """export_traces returns HTTP 400 when service query fails."""
+        from mcpgateway.routers.observability import export_traces
+
+        with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
+            mock_service.return_value.query_traces.side_effect = RuntimeError("boom")
+
+            with pytest.raises(HTTPException) as exc_info:
+                await export_traces({}, format="json", db=MagicMock(), _user={"email": "admin", "db": MagicMock()})
+
+        assert exc_info.value.status_code == 400
+        assert "Export failed:" in exc_info.value.detail

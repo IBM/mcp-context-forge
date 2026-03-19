@@ -123,6 +123,11 @@ class TestPluginConfig:
         with pytest.raises(ValidationError, match="Plugin name cannot be empty"):
             PluginConfig(name="   ", image="test:latest")
 
+    def test_plugin_name_rejects_unsafe_characters(self):
+        """Test that plugin name rejects shell-like characters."""
+        with pytest.raises(ValidationError, match="must contain only letters, numbers, underscore, and hyphen"):
+            PluginConfig(name="bad$(name)", image="test:latest")
+
     def test_plugin_defaults(self):
         """Test plugin default values."""
         config = PluginConfig(name="TestPlugin", image="test:latest")
@@ -328,3 +333,35 @@ class TestBuildableConfig:
         )
         assert config.containerfile == "Dockerfile"
         assert config.target == "production"
+
+    def test_repo_rejects_unsafe_characters(self):
+        """Repository URL should reject command-like metacharacters."""
+        with pytest.raises(ValidationError, match="unsupported characters"):
+            GatewayConfig(repo="https://github.com/org/repo.git$(whoami)")
+
+    def test_repo_rejects_backslashes(self):
+        """Repository URL should reject backslashes in SCP-style values."""
+        with pytest.raises(ValidationError, match="cannot contain backslashes"):
+            GatewayConfig(repo=r"git@github.com:org/repo\\.git")
+
+        with pytest.raises(ValidationError, match="cannot contain backslashes"):
+            GatewayConfig(repo=r"git@github.com:org/repo\\xgit")
+
+    def test_repo_accepts_scp_style_git_url(self):
+        """Repository URL should support git@host:path syntax."""
+        config = GatewayConfig(repo="git@github.com:org/repo.git")
+        assert config.repo == "git@github.com:org/repo.git"
+
+    def test_ref_rejects_unsafe_sequences(self):
+        """Git ref should reject unsafe option-like or traversal patterns."""
+        with pytest.raises(ValidationError, match="cannot start with '-'"):
+            GatewayConfig(repo="https://github.com/org/repo.git", ref="-badref")
+
+        with pytest.raises(ValidationError, match="unsupported sequence"):
+            GatewayConfig(repo="https://github.com/org/repo.git", ref="main..evil")
+
+        with pytest.raises(ValidationError, match="unsupported sequence"):
+            GatewayConfig(repo="https://github.com/org/repo.git", ref="main@{1}")
+
+        with pytest.raises(ValidationError, match="unsupported sequence"):
+            GatewayConfig(repo="https://github.com/org/repo.git", ref="main//evil")

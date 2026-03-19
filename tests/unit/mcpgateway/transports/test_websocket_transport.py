@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Tests for the MCP Gateway WebSocket transport implementation.
+Tests for ContextForge WebSocket transport implementation.
 """
 
 # Standard
@@ -54,6 +54,14 @@ class TestWebSocketTransport:
         # Should have accepted the connection
         mock_websocket.accept.assert_called_once()
         assert await websocket_transport.is_connected() is True
+
+    @pytest.mark.asyncio
+    async def test_connect_without_ping_task_when_interval_disabled(self, monkeypatch, websocket_transport):
+        monkeypatch.setattr("mcpgateway.transports.websocket_transport.settings.websocket_ping_interval", 0)
+
+        await websocket_transport.connect()
+
+        assert websocket_transport._ping_task is None
 
     @pytest.mark.asyncio
     async def test_disconnect(self, websocket_transport, mock_websocket):
@@ -189,7 +197,7 @@ class TestWebSocketTransport:
 
         mock_ws.receive_bytes.side_effect = fake_receive_bytes
 
-        with caplog.at_level("WARNING"):
+        with caplog.at_level("WARNING", logger="mcpgateway.transports.websocket_transport"):
             await transport._ping_loop()
             assert "Invalid ping response" in caplog.text
 
@@ -213,7 +221,7 @@ class TestWebSocketTransport:
 
         monkeypatch.setattr("asyncio.wait_for", fake_wait_for)
 
-        with caplog.at_level("WARNING"), pytest.warns(RuntimeWarning):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.transports.websocket_transport"), pytest.warns(RuntimeWarning):
             await transport._ping_loop()
             assert "Ping timeout" in caplog.text
 
@@ -303,6 +311,33 @@ class TestWebSocketTransport:
         await websocket_transport.connect()
         await websocket_transport.send_ping()
         mock_websocket.send_bytes.assert_called_with(b"ping")
+
+    @pytest.mark.asyncio
+    async def test_disconnect_returns_when_loop_closed(self, websocket_transport, monkeypatch, mock_websocket):
+        class _ClosedLoop:
+            def is_closed(self) -> bool:
+                return True
+
+        monkeypatch.setattr("asyncio.get_running_loop", lambda: _ClosedLoop())
+        websocket_transport._connected = True
+
+        await websocket_transport.disconnect()
+
+        mock_websocket.close.assert_not_called()
+        assert await websocket_transport.is_connected() is True
+
+    @pytest.mark.asyncio
+    async def test_disconnect_returns_when_no_running_loop(self, websocket_transport, monkeypatch, mock_websocket):
+        def _raise_runtime_error():
+            raise RuntimeError("no running loop")
+
+        monkeypatch.setattr("asyncio.get_running_loop", _raise_runtime_error)
+        websocket_transport._connected = True
+
+        await websocket_transport.disconnect()
+
+        mock_websocket.close.assert_not_called()
+        assert await websocket_transport.is_connected() is True
 
     # @pytest.mark.asyncio
     # async def test_ping_loop(websocket_transport, mock_websocket):

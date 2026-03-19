@@ -29,7 +29,7 @@ class NameModel(BaseModel):
     @field_validator("name")
     def validate_name(cls, v):
         if not v.startswith("A"):
-            raise ValueError("Tool name must start with a letter")
+            raise ValueError("Tool name must start with a letter, number, or underscore")
         if len(v) > 255:
             raise ValueError("Tool name exceeds maximum length")
         return v
@@ -69,10 +69,10 @@ def test_format_validation_error_letter_requirement():
     with pytest.raises(ValidationError) as exc:
         NameModel(name="Bobby")
     result = ErrorFormatter.format_validation_error(exc.value)
-    assert result["message"] == "Validation failed: Name must start with a letter and contain only letters, numbers, and underscores"
+    assert result["message"] == "Validation failed: Name must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes"
     assert result["success"] is False
     assert result["details"][0]["field"] == "name"
-    assert "must start with a letter" in result["details"][0]["message"]
+    assert "must start with a letter, number, or underscore" in result["details"][0]["message"]
 
 
 def test_format_validation_error_length():
@@ -145,7 +145,7 @@ def test_format_validation_error_multiple_fields():
 
 def test_get_user_message_all_patterns():
     # Directly test _get_user_message for all mappings and fallback
-    assert "must start with a letter" in ErrorFormatter._get_user_message("name", "Tool name must start with a letter")
+    assert "must start with a letter, number, or underscore" in ErrorFormatter._get_user_message("name", "Tool name must start with a letter, number, or underscore")
     assert "too long" in ErrorFormatter._get_user_message("description", "Tool name exceeds maximum length")
     assert "valid HTTP" in ErrorFormatter._get_user_message("endpoint", "Tool URL must start with http")
     assert "invalid characters" in ErrorFormatter._get_user_message("path", "cannot contain directory traversal")
@@ -168,9 +168,22 @@ def make_mock_integrity_error(msg):
         ("UNIQUE constraint failed: tools.name", "A tool with this name already exists"),
         ("UNIQUE constraint failed: resources.uri", "A resource with this URI already exists"),
         ("UNIQUE constraint failed: servers.name", "A server with this name already exists"),
+        ("UNIQUE constraint failed: prompts.name", "A prompt with this name already exists"),
+        ("UNIQUE constraint failed: servers.id", "A server with this ID already exists"),
+        ("UNIQUE constraint failed: a2a_agents.slug", "An A2A agent with this name already exists"),
         ("FOREIGN KEY constraint failed", "Referenced item not found"),
         ("NOT NULL constraint failed", "Required field is missing"),
         ("CHECK constraint failed: invalid_data", "Validation failed. Please check the input data."),
+        # Token name uniqueness – new per-team constraint name
+        ("uq_email_api_tokens_user_name_team", "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."),
+        # Token name uniqueness – legacy ORM constraint name (kept for backwards compat)
+        ("uq_email_api_tokens_user_name", "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."),
+        # Token name uniqueness – Alembic migration constraint name
+        ("uq_email_api_tokens_user_email_name", "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."),
+        # Token name uniqueness – SQLite column-path variant
+        ("UNIQUE constraint failed: email_api_tokens.user_email, email_api_tokens.name", "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."),
+        # Token name uniqueness – partial unique index for global-scope tokens (team_id IS NULL)
+        ("uq_email_api_tokens_user_name_global", "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."),
     ],
 )
 def test_format_database_error_integrity_patterns(msg, expected):
@@ -182,6 +195,14 @@ def test_format_database_error_integrity_patterns(msg, expected):
 
 def test_format_database_error_generic_integrity():
     err = make_mock_integrity_error("SOME OTHER ERROR")
+    result = ErrorFormatter.format_database_error(err)
+    assert result["message"].startswith("Unable to complete")
+    assert result["success"] is False
+
+
+def test_format_database_error_unique_constraint_unknown_table_falls_back():
+    """Unique constraint errors without a known mapping should use the generic message."""
+    err = make_mock_integrity_error("UNIQUE constraint failed: unknown.table")
     result = ErrorFormatter.format_database_error(err)
     assert result["message"].startswith("Unable to complete")
     assert result["success"] is False

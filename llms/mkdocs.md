@@ -45,7 +45,8 @@ Notes
 **Root-Level Helpers (Optional)**
 - Some repository-wide targets enrich docs content:
   - `make htmlcov` (root) writes coverage HTML to `docs/docs/coverage/`.
-  - `make coverage` (root) generates `docs/docs/test/unittest.md` and badges.
+  - `make coverage` (root) generates coverage HTML/XML/badge (does not update `unittest.md`).
+  - `make test-docs` (root) generates `docs/docs/test/unittest.md` with test results and coverage.
   - `make docs` (root) builds images/SBOM and copies `README.md` to `docs/docs/index.md`.
 
 **Quality & Linting**

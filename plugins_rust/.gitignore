@@ -1,6 +1,5 @@
 # Rust build artifacts
 target/
-Cargo.lock
 
 # Python build artifacts
 *.pyc
@@ -21,6 +20,12 @@ benchmarks/results/*.csv
 *.profraw
 coverage/
 htmlcov/
+
+# Flamegraph profiling
+flamegraph.svg
+cargo-flamegraph.trace
+perf.data
+perf.data.old
 
 # IDE
 .vscode/

@@ -12,7 +12,11 @@ This suite drives every code path in :pyfile:`mcpgateway/version.py`.
 from __future__ import annotations
 
 # Standard
+import builtins
+from importlib import util as importlib_util
 import re
+import runpy
+import sys
 import types
 from typing import Any, Dict
 
@@ -93,7 +97,7 @@ def _build_app(monkeypatch: pytest.MonkeyPatch, auth_ok: bool = True) -> FastAPI
 
     app = FastAPI()
     app.include_router(ver_mod.router)
-    app.dependency_overrides[ver_mod.require_auth] = _allow if auth_ok else _deny
+    app.dependency_overrides[ver_mod.require_admin_auth] = _allow if auth_ok else _deny
     return app
 
 
@@ -113,6 +117,9 @@ def test_version_json_ok(client: TestClient) -> None:
     payload: Dict[str, Any] = rsp.json()
     assert payload["database"]["server_version"] == "db-vX"
     assert payload["system"] == {"stub": True}
+    assert "mcp_runtime" in payload
+    assert "mode" in payload["mcp_runtime"]
+    assert "mounted" in payload["mcp_runtime"]
 
 
 def test_version_html_query_param(client: TestClient) -> None:
@@ -131,14 +138,15 @@ def test_version_html_accept_header(client: TestClient) -> None:
 
 def test_version_html_all_sections(client: TestClient) -> None:
     html = client.get("/version?fmt=html").text
-    for sec in ["App", "Platform", "Database", "Redis", "Settings", "System", "Environment"]:
+    for sec in ["App", "Platform", "Database", "Redis", "Settings", "MCP Runtime", "System", "Environment"]:
         assert re.search(rf"<h2[^>]*>{sec}</h2>", html)
 
 
 # --------------------------------------------------------------------------- #
 # Authentication                                                              #
 # --------------------------------------------------------------------------- #
-def test_version_requires_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_version_requires_admin_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Non-admin users must be denied access to /version diagnostics."""
     unauth_client = TestClient(_build_app(monkeypatch, auth_ok=False))
     rsp = unauth_client.get("/version")
     assert rsp.status_code == 401
@@ -151,10 +159,21 @@ def test_is_secret_and_public_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # First-Party
     from mcpgateway import version as ver_mod
 
-    monkeypatch.setenv("PLAIN", "1")
+    monkeypatch.setenv("MCPGATEWAY_TEST_VAR", "visible")
+    monkeypatch.setenv("MCP_ANOTHER_VAR", "also_visible")
+    monkeypatch.setenv("PORT", "8080")
+    monkeypatch.setenv("HOME", "/home/user")
     monkeypatch.setenv("X_SECRET", "bad")
-    assert "PLAIN" in ver_mod._public_env()
-    assert "X_SECRET" not in ver_mod._public_env()
+    env = ver_mod._public_env()
+    # App-prefixed vars included
+    assert "MCPGATEWAY_TEST_VAR" in env
+    assert "MCP_ANOTHER_VAR" in env
+    # Allowlisted vars included
+    assert "PORT" in env
+    # System vars excluded (not in prefix or allowlist)
+    assert "HOME" not in env
+    # Secrets still excluded
+    assert "X_SECRET" not in env
 
 
 def test_sanitize_url() -> None:
@@ -459,6 +478,172 @@ def test_import_error_branches() -> None:
 
     # At least one should be available in our test environment
     assert psutil_available or redis_available or True  # Always passes but exercises the check
+
+
+def test_version_partial_html_fragment(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First-Party
+    from mcpgateway import version as ver_mod
+
+    app = _build_app(monkeypatch, auth_ok=True)
+    # The partial template expects a few system metric keys for formatting.
+    monkeypatch.setattr(
+        ver_mod,
+        "_system_metrics",
+        lambda: {
+            "cpu_count": 4,
+            "cpu_freq_mhz": 2400,
+            "mem_used_mb": 128.0,
+            "mem_total_mb": 256.0,
+            "disk_used_gb": 1.0,
+            "disk_total_gb": 2.0,
+            "boot_time": "2026-01-01T00:00:00Z",
+        },
+    )
+
+    client = TestClient(app)
+    rsp = client.get("/version?partial=true")
+    assert rsp.status_code == 200
+    assert rsp.headers["content-type"].startswith("text/html")
+    assert "Application Information" in rsp.text
+    assert "MCP Runtime" in rsp.text
+
+
+def test_version_partial_html_uses_existing_app_templates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cover the branch where app.state.templates is already configured (version.py:846->853)."""
+    from fastapi.responses import HTMLResponse
+
+    # First-Party
+    from mcpgateway import version as ver_mod
+
+    app = _build_app(monkeypatch, auth_ok=True)
+
+    # Ensure payload build doesn't fail due to missing system keys in the template context.
+    monkeypatch.setattr(
+        ver_mod,
+        "_system_metrics",
+        lambda: {
+            "cpu_count": 4,
+            "cpu_freq_mhz": 2400,
+            "mem_used_mb": 128.0,
+            "mem_total_mb": 256.0,
+            "disk_used_gb": 1.0,
+            "disk_total_gb": 2.0,
+            "boot_time": "2026-01-01T00:00:00Z",
+        },
+    )
+
+    class _DummyTemplates:
+        def TemplateResponse(self, request, name, context):  # noqa: N802 - Jinja2Templates uses TemplateResponse
+            return HTMLResponse("dummy")
+
+    app.state.templates = _DummyTemplates()
+
+    client = TestClient(app)
+    rsp = client.get("/version?partial=true")
+    assert rsp.status_code == 200
+    assert rsp.headers["content-type"].startswith("text/html")
+    assert "dummy" in rsp.text
+
+
+def test_version_redis_client_not_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cover the redis health-check branch where redis is reachable but client factory returns None."""
+    from mcpgateway import version as ver_mod
+
+    app = _build_app(monkeypatch, auth_ok=True)
+    client = TestClient(app)
+
+    monkeypatch.setattr(ver_mod, "REDIS_AVAILABLE", True, raising=False)
+    monkeypatch.setattr(ver_mod.settings, "cache_type", "redis", raising=False)
+    monkeypatch.setattr(ver_mod.settings, "redis_url", "redis://localhost:6379", raising=False)
+
+    async def _redis_ok() -> bool:
+        return True
+
+    async def _no_client():
+        return None
+
+    monkeypatch.setattr(ver_mod, "is_redis_available", _redis_ok)
+    monkeypatch.setattr(ver_mod, "get_redis_client", _no_client)
+
+    rsp = client.get("/version")
+    assert rsp.status_code == 200
+    payload = rsp.json()
+    assert payload["redis"]["reachable"] is True
+    assert payload["redis"]["server_version"] == "Client not available"
+
+
+def test_version_redis_not_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cover the redis health-check branch where the availability check returns False."""
+    from mcpgateway import version as ver_mod
+
+    app = _build_app(monkeypatch, auth_ok=True)
+    client = TestClient(app)
+
+    monkeypatch.setattr(ver_mod, "REDIS_AVAILABLE", True, raising=False)
+    monkeypatch.setattr(ver_mod.settings, "cache_type", "redis", raising=False)
+    monkeypatch.setattr(ver_mod.settings, "redis_url", "redis://localhost:6379", raising=False)
+
+    async def _redis_not_ok() -> bool:
+        return False
+
+    monkeypatch.setattr(ver_mod, "is_redis_available", _redis_not_ok)
+
+    rsp = client.get("/version")
+    assert rsp.status_code == 200
+    payload = rsp.json()
+    assert payload["redis"]["reachable"] is False
+    assert payload["redis"]["server_version"] == "Not reachable"
+
+
+def test_version_redis_availability_check_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cover the redis health-check exception handler."""
+    from mcpgateway import version as ver_mod
+
+    app = _build_app(monkeypatch, auth_ok=True)
+    client = TestClient(app)
+
+    monkeypatch.setattr(ver_mod, "REDIS_AVAILABLE", True, raising=False)
+    monkeypatch.setattr(ver_mod.settings, "cache_type", "redis", raising=False)
+    monkeypatch.setattr(ver_mod.settings, "redis_url", "redis://localhost:6379", raising=False)
+
+    async def _boom() -> bool:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ver_mod, "is_redis_available", _boom)
+
+    rsp = client.get("/version")
+    assert rsp.status_code == 200
+    payload = rsp.json()
+    assert payload["redis"]["reachable"] is False
+    assert "boom" in payload["redis"]["server_version"]
+
+
+def test_version_module_import_error_branches_runpy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Execute the top-level ImportError branches (psutil + redis check) for coverage."""
+    real_import = builtins.__import__
+    real_find_spec = importlib_util.find_spec
+
+    def _fake_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002 - match __import__ signature
+        if name == "psutil":
+            raise ImportError("no psutil")
+        return real_import(name, globals, locals, fromlist, level)
+
+    def _fake_find_spec(name, *args, **kwargs):
+        if name == "redis.asyncio":
+            raise ModuleNotFoundError("no redis")
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+    monkeypatch.setattr(importlib_util, "find_spec", _fake_find_spec)
+
+    original_module = sys.modules.pop("mcpgateway.version", None)
+    try:
+        ns = runpy.run_module("mcpgateway.version", run_name="mcpgateway._version_import_error_test")
+    finally:
+        if original_module is not None:
+            sys.modules["mcpgateway.version"] = original_module
+    assert ns["psutil"] is None
+    assert ns["REDIS_AVAILABLE"] is False
 
 
 # These lines cover the import error branches and specific edge cases

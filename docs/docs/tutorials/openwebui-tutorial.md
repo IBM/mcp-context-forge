@@ -1,6 +1,6 @@
-# OpenWebUI with Ollama, LiteLLM, MCPO, and MCP Gateway Deployment Guide
+# OpenWebUI with Ollama, LiteLLM, MCPO, and ContextForge Deployment Guide
 
-This guide provides a comprehensive walkthrough for deploying OpenWebUI with local LLM models via Ollama, integrated with MCP (Model Context Protocol) tools through MCPO and MCP Gateway.
+This guide provides a comprehensive walkthrough for deploying OpenWebUI with local LLM models via Ollama, integrated with MCP (Model Context Protocol) tools through MCPO and ContextForge.
 
 ## 🏗 Architecture Overview
 
@@ -26,7 +26,7 @@ flowchart TD
   %% MCP Integration Layer
   subgraph "MCP Integration"
     MCPO[MCPO Server 🔌<br/>Port 8000<br/>MCP → OpenAPI Bridge]
-    MCG[MCP Gateway 🚪<br/>Port 4444<br/>MCP Registry & Federation]
+    MCG[ContextForge 🚪<br/>Port 4444<br/>MCP Registry & Federation]
     MCP1[MCP Server 1 📦]
     MCP2[MCP Server 2 📦]
     MCPN[MCP Server N 📦]
@@ -50,16 +50,6 @@ flowchart TD
   MCG -->|"MCP Protocol"| MCP2
   MCG -->|"MCP Protocol"| MCPN
 
-  %% Styling
-  classDef deployment fill:#1F618D,stroke:#85C1E9,stroke-width:2px,color:#FFF;
-  classDef ai fill:#27AE60,stroke:#58D68D,stroke-width:2px,color:#FFF;
-  classDef mcp fill:#8E44AD,stroke:#BB8FCE,stroke-width:2px,color:#FFF;
-  classDef external fill:#E74C3C,stroke:#F5B7B1,stroke-width:2px,color:#FFF;
-
-  class OW,LL,DB deployment;
-  class OL ai;
-  class MCPO,MCG,MCP1,MCP2,MCPN mcp;
-  class OP external;
 ```
 
 ### Components Overview
@@ -68,7 +58,7 @@ flowchart TD
 2. **Ollama**: Local LLM runtime supporting various models (Llama, Mistral, Granite, etc.)
 3. **LiteLLM**: Unified proxy providing OpenAI-compatible API for multiple model backends
 4. **MCPO**: Bridges MCP servers to OpenAPI, making tools accessible to OpenWebUI
-5. **MCP Gateway**: Central registry and federation point for MCP servers
+5. **ContextForge**: Central registry and federation point for MCP servers
 6. **PostgreSQL**: Persistent storage for OpenWebUI data
 
 ---
@@ -204,15 +194,15 @@ curl http://localhost:4000/v1/models \
   -H "Authorization: Bearer sk-1234567890"
 ```
 
-### Step 4: Set Up MCP Gateway
+### Step 4: Set Up ContextForge
 
-Deploy the MCP Gateway (ContextForge) for managing MCP servers:
+Deploy ContextForge for managing MCP servers:
 
 ```bash
 # Create data directory
 mkdir -p $(pwd)/mcpgateway_data
 
-# Run MCP Gateway
+# Run ContextForge
 docker run -d \
   --name mcpgateway \
   --network openwebui-net \
@@ -223,18 +213,18 @@ docker run -d \
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=your-secret-key \
-  -e BASIC_AUTH_USER=admin \
-  -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 
-# Generate an API token for later use
+# Generate an API token for later use (expires in 1 week)
 docker exec mcpgateway \
   python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin --exp 0 --secret your-secret-key
+  --username admin@example.com --exp 10080 --secret your-secret-key
 ```
 
-Access the MCP Gateway UI at http://localhost:4444/admin (admin/changeme).
+Access ContextForge UI at http://localhost:4444/admin using email/password (admin@example.com / changeme).
 
 ### Step 5: Deploy MCPO
 
@@ -332,6 +322,7 @@ docker logs -f openwebui
 2. Create an admin account on first login
 3. Navigate to **Settings** → **Connections**
 4. Verify the OpenAI connection is configured:
+
    - **API Base URL**: `http://litellm:4000/v1`
    - **API Key**: `sk-1234567890`
 
@@ -357,7 +348,7 @@ docker logs -f openwebui
 
 ### 6.4 Add MCP Servers to Gateway
 
-1. Access MCP Gateway at http://localhost:4444/admin
+1. Access ContextForge at http://localhost:4444/admin
 2. Navigate to **Gateways** tab
 3. Click **Add Gateway** to register external MCP servers
 4. Example configuration:
@@ -432,6 +423,7 @@ OpenWebUI supports custom functions for extending capabilities:
 1. Go to **Settings** → **Functions**
 2. Enable built-in functions or import custom ones
 3. Functions can:
+
    - Act as custom models (Pipe Functions)
    - Modify inputs/outputs (Filter Functions)
    - Add action buttons (Action Functions)
@@ -521,7 +513,7 @@ docker exec openwebui curl http://litellm:4000/health
 curl -H "Authorization: Bearer mcpo-secret-key" \
   http://localhost:8000/{tool-name}/list-tools
 
-# Verify MCP Gateway
+# Verify ContextForge
 curl -H "Authorization: Bearer $(cat mcpgateway_token.txt)" \
   http://localhost:4444/tools
 ```
@@ -545,7 +537,7 @@ curl -H "Authorization: Bearer $(cat mcpgateway_token.txt)" \
 - [Ollama Documentation](https://github.com/ollama/ollama)
 - [LiteLLM Documentation](https://docs.litellm.ai/)
 - [MCPO Documentation](https://github.com/open-webui/mcpo)
-- [MCP Gateway Documentation](https://github.com/ibm/mcp-context-forge)
+- [ContextForge Documentation](https://github.com/ibm/mcp-context-forge)
 - [Model Context Protocol Spec](https://modelcontextprotocol.io/)
 
 ---
@@ -597,16 +589,16 @@ services:
       - "host.docker.internal:host-gateway"
 
   mcpgateway:
-    image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+    image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
     environment:
       MCPGATEWAY_UI_ENABLED: "true"
       MCPGATEWAY_ADMIN_API_ENABLED: "true"
       DATABASE_URL: "sqlite:////data/mcp.db"
       HOST: "0.0.0.0"
       JWT_SECRET_KEY: "your-secret-key"
-      BASIC_AUTH_USER: "admin"
-      BASIC_AUTH_PASSWORD: "changeme"
       AUTH_REQUIRED: "true"
+      PLATFORM_ADMIN_EMAIL: "admin@example.com"
+      PLATFORM_ADMIN_PASSWORD: "changeme"
     volumes:
 
       - mcpgateway_data:/data

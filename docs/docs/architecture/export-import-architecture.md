@@ -1,6 +1,6 @@
 # Export/Import System Architecture
 
-Technical architecture documentation for MCP Gateway's configuration export and import system.
+Technical architecture documentation for ContextForge's configuration export and import system.
 
 ---
 
@@ -195,8 +195,8 @@ graph LR
 
     subgraph "Processing"
         Filter --> Transform[Data Transformation]
-        Transform --> Encrypt[Auth Encryption]
-        Encrypt --> Deps[Dependency Resolution]
+        Transform --> Preserve[Auth Preservation - encrypted at rest]
+        Preserve --> Deps[Dependency Resolution]
         Deps --> Validate[Validation]
     end
 
@@ -226,7 +226,7 @@ graph LR
 
     subgraph "Processing"
         Security --> Decrypt[Auth Decryption]
-        Decrypt --> Rekey[Key Rotation]
+        Decrypt --> Rekey[Key Rotation - optional]
         Rekey --> Order[Dependency Ordering]
         Order --> Process[Entity Processing]
     end
@@ -522,4 +522,4 @@ tests/
 
 ---
 
-This architecture provides a solid foundation for configuration management while maintaining compatibility with existing MCP Gateway systems and allowing for future enhancements.
+This architecture provides a solid foundation for configuration management while maintaining compatibility with existing ContextForge systems and allowing for future enhancements.

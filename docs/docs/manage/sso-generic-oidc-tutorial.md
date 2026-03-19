@@ -1,10 +1,10 @@
 # Generic OIDC Provider Setup Tutorial
 
-This tutorial walks you through setting up generic OpenID Connect (OIDC) Single Sign-On (SSO) authentication for MCP Gateway, enabling integration with any OIDC-compliant identity provider including Keycloak, Auth0, Authentik, and others.
+This tutorial walks you through setting up generic OpenID Connect (OIDC) Single Sign-On (SSO) authentication for ContextForge, enabling integration with any OIDC-compliant identity provider including Keycloak, Auth0, Authentik, and others.
 
 ## Overview
 
-The Generic OIDC provider support allows you to integrate MCP Gateway with any standards-compliant OpenID Connect provider. This flexibility enables you to use your existing identity infrastructure regardless of the vendor.
+The Generic OIDC provider support allows you to integrate ContextForge with any standards-compliant OpenID Connect provider. This flexibility enables you to use your existing identity infrastructure regardless of the vendor.
 
 **Supported Providers** (non-exhaustive):
 
@@ -20,7 +20,7 @@ The Generic OIDC provider support allows you to integrate MCP Gateway with any s
 
 ## Prerequisites
 
-- MCP Gateway installed and running
+- ContextForge installed and running
 - Access to your OIDC provider's admin console
 - Ability to create OAuth/OIDC applications in your provider
 - Access to your gateway's environment configuration
@@ -122,6 +122,7 @@ Issuer:        https://keycloak.company.com/auth/realms/master
 
 1. Go to **Client scopes** tab
 2. Ensure these scopes are in **Assigned default client scopes**:
+
    - `openid` (required)
    - `profile` (recommended)
    - `email` (recommended)
@@ -133,6 +134,7 @@ To ensure proper user info:
 1. Go to **Clients** → Your client → **Client scopes**
 2. Click on **profile** scope
 3. Verify these mappers exist:
+
    - `email` → User attribute `email`
    - `given_name` → User attribute `firstName`
    - `family_name` → User attribute `lastName`
@@ -148,7 +150,7 @@ To ensure proper user info:
 
 **Settings**:
 
-- **Name**: `MCP Gateway`
+- **Name**: `ContextForge`
 - **Application type**: `Regular Web Applications`
 - Click **Create**
 
@@ -202,7 +204,7 @@ Issuer:        https://your-tenant.auth0.com/
 
 **Provider Settings**:
 
-- **Name**: `MCP Gateway Provider`
+- **Name**: `ContextForge Provider`
 - **Type**: `OAuth2/OpenID Provider`
 - **Client type**: `Confidential`
 - **Client ID**: Auto-generated or custom
@@ -224,7 +226,7 @@ Click **Create**
 
 **Application Settings**:
 
-- **Name**: `MCP Gateway`
+- **Name**: `ContextForge`
 - **Slug**: `mcp-gateway`
 - **Provider**: Select the provider you just created
 - **Launch URL**: `https://gateway.yourcompany.com/admin`
@@ -242,7 +244,7 @@ Issuer:        https://authentik.company.com/application/o/mcp-gateway/
 
 **Note**: Authentik URLs typically include the application slug in the issuer URL.
 
-## Step 3: Configure MCP Gateway
+## Step 3: Configure ContextForge
 
 ### 3.1 Basic Configuration
 
@@ -417,6 +419,7 @@ tail -f logs/gateway.log | grep -i sso
 ### 6.1 Access Login Page
 
 1. Navigate to your gateway's login page:
+
    - Development: `http://localhost:8000/admin/login`
    - Production: `https://gateway.yourcompany.com/admin/login`
 
@@ -739,7 +742,7 @@ If you encounter issues:
 4. Test provider endpoints directly with curl
 5. Verify all URLs match provider documentation exactly
 6. Consult provider-specific documentation
-7. Check [MCP Gateway issue tracker](https://github.com/IBM/mcp-context-forge/issues)
+7. Check [ContextForge issue tracker](https://github.com/IBM/mcp-context-forge/issues)
 
 ### Common OIDC Standards
 

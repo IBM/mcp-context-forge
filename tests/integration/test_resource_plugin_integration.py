@@ -33,13 +33,16 @@ class TestResourcePluginIntegration:
         Base.metadata.create_all(engine)
         SessionLocal = sessionmaker(bind=engine)
         db = SessionLocal()
-        yield db
-        db.close()
+        try:
+            yield db
+        finally:
+            db.close()
+            engine.dispose()
 
     @pytest.fixture
     def resource_service_with_mock_plugins(self):
         """Create ResourceService with mocked plugin manager."""
-        with patch.dict(os.environ, {"PLUGINS_ENABLED": "true", "PLUGIN_CONFIG_FILE": "test.yaml"}):
+        with patch.dict(os.environ, {"PLUGINS_ENABLED": "true", "PLUGINS_CONFIG_FILE": "test.yaml"}):
             with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
                 # Standard
                 from unittest.mock import AsyncMock
@@ -126,7 +129,7 @@ class TestResourcePluginIntegration:
             os.environ,
             {
                 "PLUGINS_ENABLED": "true",
-                "PLUGIN_CONFIG_FILE": "plugins/config.yaml",
+                "PLUGINS_CONFIG_FILE": "plugins/config.yaml",
             },
         ):
             # Use real plugin manager but mock its initialization

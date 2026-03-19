@@ -1,12 +1,12 @@
 # Doctest Coverage
 
-This page documents the comprehensive doctest coverage implementation in MCP Context Forge, which ensures that all code examples in documentation are tested and verified automatically.
+This page documents the comprehensive doctest coverage implementation in ContextForge, which ensures that all code examples in documentation are tested and verified automatically.
 
 ---
 
 ## Overview
 
-MCP Context Forge implements comprehensive doctest coverage across all modules to ensure:
+ContextForge implements comprehensive doctest coverage across all modules to ensure:
 
 - **Code Quality**: All documented examples are tested and verified
 - **Documentation Accuracy**: Examples in docstrings are always up-to-date with actual code behavior
@@ -325,4 +325,4 @@ python -m py_compile module.py
 - [Development Guide](index.md) - General development information
 - [Testing Guide](../testing/index.md) - Testing strategies and tools
 - [Contributing Guidelines](https://github.com/IBM/mcp-context-forge/blob/main/CONTRIBUTING.md) - How to contribute to the project
-- [Makefile Targets](../index.md#makefile-targets) - Available make targets including doctest commands
+- [Make Targets](../index.md#development) - Available make targets including doctest commands

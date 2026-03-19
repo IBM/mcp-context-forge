@@ -1,6 +1,6 @@
 # Phoenix Integration Guide
 
-[Arize Phoenix](https://github.com/Arize-ai/phoenix) provides AI/LLM-focused observability for MCP Gateway, offering specialized features for monitoring AI-powered applications.
+[Arize Phoenix](https://github.com/Arize-ai/phoenix) provides AI/LLM-focused observability for ContextForge, offering specialized features for monitoring AI-powered applications.
 
 ## Why Phoenix?
 
@@ -21,7 +21,7 @@ Phoenix is optimized for AI/LLM workloads with features like:
 git clone https://github.com/IBM/mcp-context-forge
 cd mcp-context-forge
 
-# Start Phoenix with MCP Gateway
+# Start Phoenix with ContextForge
 docker-compose -f docker-compose.yml \
                -f docker-compose.with-phoenix.yml up -d
 
@@ -43,13 +43,13 @@ docker run -d \
   -v phoenix-data:/phoenix/data \
   arizephoenix/phoenix:latest
 
-# Configure MCP Gateway
+# Configure ContextForge
 export OTEL_ENABLE_OBSERVABILITY=true
 export OTEL_TRACES_EXPORTER=otlp
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 export OTEL_SERVICE_NAME=mcp-gateway
 
-# Start MCP Gateway
+# Start ContextForge
 mcpgateway
 ```
 
@@ -61,7 +61,7 @@ For production deployments, use [Phoenix Cloud](https://app.phoenix.arize.com):
 # Get your API key from Phoenix Cloud
 export PHOENIX_API_KEY=your-api-key
 
-# Configure MCP Gateway for Phoenix Cloud
+# Configure ContextForge for Phoenix Cloud
 export OTEL_EXPORTER_OTLP_ENDPOINT=https://app.phoenix.arize.com
 export OTEL_EXPORTER_OTLP_HEADERS="api-key=$PHOENIX_API_KEY"
 export OTEL_EXPORTER_OTLP_INSECURE=false
@@ -112,6 +112,7 @@ services:
 1. Navigate to http://localhost:6006
 2. Click on "Traces" in the left sidebar
 3. You'll see:
+
    - Timeline view of all operations
    - Span details with attributes
    - Error rates and latencies
@@ -122,11 +123,13 @@ services:
 Phoenix provides specialized views for tool calls:
 
 1. **Tool Performance**
+
    - Average latency per tool
    - Success/failure rates
    - Usage frequency
 
 2. **Cost Analysis** (when token tracking is implemented)
+
    - Token usage per tool
    - Estimated costs by model
    - Cost trends over time
@@ -146,7 +149,7 @@ evaluator = llm_eval.LLMEvaluator(
     eval_type="relevance"
 )
 
-# Traces from MCP Gateway will be evaluated
+# Traces from ContextForge will be evaluated
 evaluator.evaluate(
     trace_dataset=phoenix.get_traces(),
     eval_name="response_quality"
@@ -290,16 +293,19 @@ traces_df.to_csv("mcp_gateway_traces.csv")
 ### Key Metrics to Track
 
 1. **Response Times**
+
    - P50, P95, P99 latencies
    - Slowest operations
    - Timeout rates
 
 2. **Error Rates**
+
    - Error percentage by tool
    - Error types distribution
    - Error trends
 
 3. **Usage Patterns**
+
    - Most used tools
    - Peak usage times
    - User distribution
@@ -310,6 +316,7 @@ Configure alerts in Phoenix Cloud:
 
 1. Go to Settings → Alerts
 2. Create rules for:
+
    - High error rates (> 5%)
    - Slow responses (P95 > 2s)
    - Unusual token usage
@@ -330,7 +337,7 @@ Configure alerts in Phoenix Cloud:
    telnet localhost 4317
    ```
 
-3. Check MCP Gateway logs:
+3. Check ContextForge logs:
    ```bash
    docker logs mcpgateway | grep -i phoenix
    ```

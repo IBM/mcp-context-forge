@@ -1,4 +1,4 @@
-# ALTKJsonProcessor for Context Forge MCP Gateway
+# ALTKJsonProcessor for ContextForge
 
 > Author: Jason Tsay
 > Version: 0.1.0

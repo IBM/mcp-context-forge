@@ -9,6 +9,7 @@ This module loads configurations for plugins.
 """
 
 # Standard
+import copy
 import re
 
 # Third-Party
@@ -63,9 +64,15 @@ class SearchReplacePlugin(Plugin):
         """
         super().__init__(config)
         self._srconfig = SearchReplaceConfig.model_validate(self._config.config)
+        # Precompile regex patterns at initialization
         self.__patterns = []
         for word in self._srconfig.words:
-            self.__patterns.append((r"{}".format(word.search), word.replace))
+            try:
+                compiled_pattern = re.compile(word.search)
+                self.__patterns.append((compiled_pattern, word.replace))
+            except re.error:
+                # Skip invalid regex patterns
+                pass
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """The plugin hook run before a prompt is retrieved and rendered.
@@ -78,10 +85,12 @@ class SearchReplacePlugin(Plugin):
             The result of the plugin's analysis, including whether the prompt can proceed.
         """
         if payload.args:
-            for pattern in self.__patterns:
-                for key in payload.args:
-                    value = re.sub(pattern[0], pattern[1], payload.args[key])
-                    payload.args[key] = value
+            modified_args = dict(payload.args)
+            for pattern, replacement in self.__patterns:
+                for key, value in modified_args.items():
+                    if isinstance(value, str):
+                        modified_args[key] = pattern.sub(replacement, value)
+            payload = payload.model_copy(update={"args": modified_args})
         return PromptPrehookResult(modified_payload=payload)
 
     async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
@@ -96,10 +105,11 @@ class SearchReplacePlugin(Plugin):
         """
 
         if payload.result.messages:
-            for index, message in enumerate(payload.result.messages):
-                for pattern in self.__patterns:
-                    value = re.sub(pattern[0], pattern[1], message.content.text)
-                    payload.result.messages[index].content.text = value
+            modified_result = copy.deepcopy(payload.result)
+            for index, message in enumerate(modified_result.messages):
+                for pattern, replacement in self.__patterns:
+                    modified_result.messages[index].content.text = pattern.sub(replacement, message.content.text)
+            payload = payload.model_copy(update={"result": modified_result})
         return PromptPosthookResult(modified_payload=payload)
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
@@ -113,11 +123,12 @@ class SearchReplacePlugin(Plugin):
             The result of the plugin's analysis, including whether the tool can proceed.
         """
         if payload.args:
-            for pattern in self.__patterns:
-                for key in payload.args:
-                    if isinstance(payload.args[key], str):
-                        value = re.sub(pattern[0], pattern[1], payload.args[key])
-                        payload.args[key] = value
+            modified_args = dict(payload.args)
+            for pattern, replacement in self.__patterns:
+                for key, value in modified_args.items():
+                    if isinstance(value, str):
+                        modified_args[key] = pattern.sub(replacement, value)
+            payload = payload.model_copy(update={"args": modified_args})
         return ToolPreInvokeResult(modified_payload=payload)
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
@@ -131,12 +142,15 @@ class SearchReplacePlugin(Plugin):
             The result of the plugin's analysis, including whether the tool result should proceed.
         """
         if payload.result and isinstance(payload.result, dict):
-            for pattern in self.__patterns:
-                for key in payload.result:
-                    if isinstance(payload.result[key], str):
-                        value = re.sub(pattern[0], pattern[1], payload.result[key])
-                        payload.result[key] = value
+            modified_result = dict(payload.result)
+            for pattern, replacement in self.__patterns:
+                for key, value in modified_result.items():
+                    if isinstance(value, str):
+                        modified_result[key] = pattern.sub(replacement, value)
+            payload = payload.model_copy(update={"result": modified_result})
         elif payload.result and isinstance(payload.result, str):
-            for pattern in self.__patterns:
-                payload.result = re.sub(pattern[0], pattern[1], payload.result)
+            result = payload.result
+            for pattern, replacement in self.__patterns:
+                result = pattern.sub(replacement, result)
+            payload = payload.model_copy(update={"result": result})
         return ToolPostInvokeResult(modified_payload=payload)

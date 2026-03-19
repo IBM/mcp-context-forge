@@ -7,6 +7,7 @@
 ## Context
 
 In multi-worker deployments with database-backed session registries, the session cleanup task runs every 5 minutes to:
+
 1. Remove disconnected sessions from local memory
 2. Refresh active session timestamps in the database
 
@@ -108,6 +109,7 @@ For 100 sessions with 50ms database latency and max_concurrent=20:
 ### Why Bound Concurrency?
 
 Without limits, parallel cleanup can:
+
 - Exhaust database connection pools under high session counts
 - Cause DB timeouts when many operations queue simultaneously
 - Create memory pressure from thousands of pending task objects

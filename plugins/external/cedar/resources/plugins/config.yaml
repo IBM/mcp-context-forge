@@ -1,3 +1,18 @@
+# Plugin directories to scan
+plugin_dirs:
+  - "plugins/native"      # Built-in plugins
+  - "plugins/custom"      # Custom organization plugins
+  - "/etc/mcpgateway/plugins"  # System-wide plugins
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 120
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 120
+  include_user_info: true
+
 plugins:
   - name: "CedarPolicyPlugin"
     kind: "cedarpolicyplugin.plugin.CedarPolicyPlugin"
@@ -17,63 +32,37 @@ plugins:
       policy_output_keywords:
         view_full: "view_full_output"
         view_redacted: "view_redacted_output"
-      policy_redaction_spec:
-        pattern: '"\$\d{1,}(,\d{1,})*"' # provide regex, if none, then replace all
       policy:
-        - id: allow-employee-basic-access
+        - id: allow-admin-basic-access
           effect: Permit
-          principal: Role::"employee"
+          principal: Role::"admin"
           action:
-            - Action::"get_leave_balance" #tool name
-            - Action::"request_certificate"
+            - Action::"fast-time-git-status" #tool name
           resource:
-            - Server::"askHR" # mcp-server name
-            - Agent::"employee_agent" # agent name
+            - Server::"fast-time" # mcp-server name
 
-        - id: allow-manager-full-access
+        - id: redact-non-admin-views
           effect: Permit
-          principal: Role::"manager"
+          principal: Role::"non-admin"
           action:
-            - Action::"get_leave_balance"
-            - Action::"approve_leave"
-            - Action::"promote_employee"
-            - Action::"view_performance"
-            - Action::"view_full_output"
+            - Action::"fast-time-git-status" #tool name
+            - Action::"view_redacted_output"
           resource:
-            - Agent::"manager_agent"
-            - Server::"payroll_tool"
-
-        - id: allow-hr-hr_tool
-          effect: Permit
-          principal: Role::"hr"
-          action:
-            - Action::"update_payroll"
-            - Action::"view_performance"
-            - Action::"view_full_output"
-          resource: Server::"hr_tool"
-
-        - id: redact-non-manager-views
-          effect: Permit
-          principal: Role::"employee"
-          action: Action::"view_redacted_output"
-          resource:
-            - Server::"payroll_tool"
-            - Agent::"manager_agent"
-            - Server::"askHR"
+            - Server::"fast-time"
 
         - id: allow-admin-resources # policy for resources
           effect: Permit
           principal: Role::"admin"
           action:
             - Action::"view_full_output"
-          resource: Resource::""https://example.com/data"" #Resource::<resource_uri>
+          resource: Resource::"https://example.com/data" #Resource::<resource_uri>
 
         - id: allow-employee-redacted-resources # policy for resources
           effect: Permit
-          principal: Role::"employee"
+          principal: Role::"non-admin"
           action:
             - Action::"view_redacted_output"
-          resource: Resource::""https://example.com/data"" #Resource::<resource_uri>
+          resource: Resource::"https://example.com/data" #Resource::<resource_uri>
 
         - id: allow-admin-prompts # policy for resources
           effect: Permit
@@ -84,19 +73,7 @@ plugins:
 
         - id: allow-employee-redacted-prompts # policy for resources
           effect: Permit
-          principal: Role::"employee"
+          principal: Role::"non-admin"
           action:
             - Action::"view_redacted_output"
           resource: Prompts::"judge_prompts" #Prompt::<prompt_name>
-
-# Plugin directories to scan
-plugin_dirs:
-  - "cedarpolicyplugin"
-
-# Global plugin settings
-plugin_settings:
-  parallel_execution_within_band: true
-  plugin_timeout: 30
-  fail_on_plugin_error: false
-  enable_plugin_api: true
-  plugin_health_check_interval: 60

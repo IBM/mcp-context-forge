@@ -30,9 +30,11 @@ volumes:                # Named volumes survive podman-compose down/up
   grafanadata:
   prometheusdata:
   lokidata:
+  tempodata:
+  prometheus_token:
 
 ###############################################################################
-#  CORE SERVICE - MCP Gateway
+#  CORE SERVICE - ContextForge
 ###############################################################################
 services:
 
@@ -80,11 +82,11 @@ services:
           memory: 1G
 
   # ──────────────────────────────────────────────────────────────────────
-  # MCP Gateway - the main API server for the MCP stack
+  # ContextForge - the main API server for the MCP stack
   # ──────────────────────────────────────────────────────────────────────
   gateway:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Use the local latest image. Run `make docker-prod` to build it.
-    #image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1 # Use the release MCP Context Forge image
+    #image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2 # Use the release ContextForge image
     #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
     build:
       context: .
@@ -116,6 +118,8 @@ services:
       - PORT=4444
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
+      # Prometheus metrics endpoint (disabled by default; requires JWT auth when enabled)
+      - ENABLE_METRICS=true
       # Database connection: Via PgBouncer (default) or direct PostgreSQL
       # PgBouncer provides connection pooling for better performance under high concurrency
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp
@@ -187,6 +191,7 @@ services:
       - JWT_AUDIENCE=mcpgateway-api
       - JWT_ISSUER=mcpgateway
       - EMAIL_AUTH_ENABLED=true
+      - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
       - REQUIRE_TOKEN_EXPIRATION=false
@@ -231,6 +236,7 @@ services:
       - COMPRESSION_ENABLED=false
       # Disable optional middlewares for maximum throughput
       - VALIDATION_MIDDLEWARE_ENABLED=true
+      - JSON_SCHEMA_VALIDATION_STRICT=true
       - CORRELATION_ID_ENABLED=false
       - OBSERVABILITY_ENABLED=false
       # ═══════════════════════════════════════════════════════════════════════════
@@ -250,7 +256,7 @@ services:
       - DB_POOL_SIZE=20                # Pool size per worker
       - DB_MAX_OVERFLOW=10             # Extra connections under load
       - DB_POOL_TIMEOUT=30             # Time to wait for connection before failing
-      - DB_POOL_RECYCLE=60             # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT (half of 120s)
+      - DB_POOL_RECYCLE=60             # Recycle well before PgBouncer CLIENT_IDLE_TIMEOUT=300s (1/5 of idle timeout, safe proactive buffer)
       # Tool configuration for high-concurrency load testing
       - TOOL_TIMEOUT=60               # Seconds before tool invocation times out
       - MAX_TOOL_RETRIES=3            # Retry attempts for failed tool invocations
@@ -344,6 +350,15 @@ services:
       # - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-otlp}
       # - OTEL_METRICS_EXPORTER=${OTEL_METRICS_EXPORTER:-otlp}
       # - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
+
+      # OpenTelemetry (Tempo / OTLP) - enabled automatically by `make monitoring-up` / `make performance-up`
+      - LOG_FORMAT=${LOG_FORMAT:-text}  # text (human) or json (Loki-friendly)
+      - OTEL_ENABLE_OBSERVABILITY=${OTEL_ENABLE_OBSERVABILITY:-false}
+      - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-otlp}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-mcp-gateway}
+      - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
 
     # TCP kernel tuning for 10,000 concurrent users
     # Each tool call creates a new connection → many TIME_WAIT sockets
@@ -705,14 +720,14 @@ services:
       - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
       - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with pool_recycle)
+      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (5x DB_POOL_RECYCLE=60, large buffer for performance workloads)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
       # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=60   # Kill transactions idle > 300s (allows slow admin page rendering)
+      - IDLE_TRANSACTION_TIMEOUT=60   # Kill transactions idle > 60s (allows slow admin page rendering)
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
@@ -954,6 +969,30 @@ services:
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
+  # Prometheus scrape token - generates a JWT for Prometheus to
+  # authenticate against the gateway's /metrics/prometheus endpoint
+  # ──────────────────────────────────────────────────────────────────────
+  prometheus_token:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    restart: "no"
+    # Gateway image runs as non-root (uid 1001); named volumes are root-owned
+    # by default, so writing /tokens/gateway.jwt requires root.
+    user: "0"
+    volumes:
+      - prometheus_token:/tokens
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token \
+          --username prometheus@monitoring --exp 0 \
+          --secret my-test-key --algo HS256 2>/dev/null)
+        printf "%s" "$$TOKEN" > /tokens/gateway.jwt
+        echo "✅ Prometheus scrape token written to /tokens/gateway.jwt"
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
   # Prometheus - Metrics collection and storage
   # Scrapes: gateway, postgres, redis, nginx, cadvisor
   # Retention: 7 days (configurable via --storage.tsdb.retention.time)
@@ -967,15 +1006,22 @@ services:
     volumes:
       - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheusdata:/prometheus
+      - prometheus_token:/tokens:ro
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.retention.time=7d'
       - '--web.enable-lifecycle'
     depends_on:
-      - postgres_exporter
-      - redis_exporter
-      - nginx_exporter
-      - cadvisor
+      postgres_exporter:
+        condition: service_started
+      redis_exporter:
+        condition: service_started
+      nginx_exporter:
+        condition: service_started
+      cadvisor:
+        condition: service_started
+      prometheus_token:
+        condition: service_completed_successfully
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
@@ -993,6 +1039,24 @@ services:
       - ./infra/monitoring/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
       - lokidata:/loki
     command: -config.file=/etc/loki/local-config.yaml
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Tempo - Distributed tracing backend (OTLP receiver + TraceQL query API)
+  # Completes the Grafana observability stack: Prometheus (metrics) + Loki (logs) + Tempo (traces)
+  # ──────────────────────────────────────────────────────────────────────
+  tempo:
+    image: grafana/tempo:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "3200:3200"      # Tempo HTTP API / query frontend
+      - "4317:4317"      # OTLP gRPC receiver
+      - "4318:4318"      # OTLP HTTP receiver
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./infra/monitoring/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempodata:/var/tempo
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
@@ -1037,6 +1101,8 @@ services:
       - ./infra/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
     depends_on:
       - prometheus
+      - loki
+      - tempo
     profiles: ["monitoring"]
 
 ###############################################################################
@@ -1404,6 +1470,123 @@ services:
         echo "Token written to /tmp/gateway-token.txt"
 
         echo "✅ Setup complete!"
+
+  ###############################################################################
+  # Slow Time Server - Configurable-latency MCP server for timeout/resilience testing
+  # Port 8081 (avoids conflict with fast-time-server on 8080)
+  # Usage: docker compose up slow_time_server
+  ###############################################################################
+  slow_time_server:
+    build:
+      context: ./mcp-servers/go/slow-time-server
+      dockerfile: Dockerfile
+    image: mcpgateway/slow-time-server:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "8889:8081"    # Map host port 8889 to container port 8081
+    environment:
+      DEFAULT_LATENCY: "${SLOW_TIME_LATENCY:-5s}"
+      FAILURE_RATE: "${SLOW_TIME_FAILURE_RATE:-0.1}"
+    command: ["-transport=dual", "-port=8081", "-listen=0.0.0.0", "-log-level=info"]
+    healthcheck:
+      test: ["CMD", "/slow-time-server", "-health", "-port=8081"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+
+  ###############################################################################
+  # Auto-registration service - registers slow_time_server with gateway
+  ###############################################################################
+  register_slow_time:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      slow_time_server:
+        condition: service_started
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Registering slow_time_server with gateway..."
+
+        # Wait for slow_time_server to be ready
+        python3 -c "
+        import time
+        import urllib.request
+
+        for i in range(1, 31):
+            try:
+                with urllib.request.urlopen('http://slow_time_server:8081/health', timeout=2) as response:
+                    if response.status == 200:
+                        print('slow_time_server is healthy')
+                        break
+            except:
+                pass
+            print(f'Waiting for slow_time_server... ({i}/30)')
+            time.sleep(2)
+        else:
+            print('slow_time_server failed to become healthy')
+            exit(1)
+        "
+
+        # Generate JWT token
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+
+        # Register using Python
+        python3 -c "
+        import urllib.request
+        import json
+        import os
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+
+        def api_request(method, path, data=None):
+            url = f'http://gateway:4444{path}'
+            req = urllib.request.Request(url, method=method)
+            req.add_header('Authorization', f'Bearer {token}')
+            req.add_header('Content-Type', 'application/json')
+            if data:
+                req.data = json.dumps(data).encode('utf-8')
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read().decode('utf-8'))
+
+        # Delete existing gateway if present
+        try:
+            gateways = api_request('GET', '/gateways')
+            for gw in gateways:
+                if gw.get('name') == 'slow_time':
+                    print(f'Deleting existing gateway {gw[\"id\"]}...')
+                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
+        except Exception as e:
+            print(f'Note: {e}')
+
+        # Register the gateway (Streamable HTTP)
+        try:
+            result = api_request('POST', '/gateways', {
+                'name': 'slow_time',
+                'url': 'http://slow_time_server:8081/http',
+                'transport': 'STREAMABLEHTTP'
+            })
+            print(f'Registered slow_time_server: {result.get(\"id\", \"unknown\")}')
+        except Exception as e:
+            print(f'Registration failed: {e}')
+            exit(1)
+        "
+        echo "Registration complete!"
 
   ###############################################################################
   # Fast Test Server - Ultra-fast Rust MCP server for performance testing

@@ -1,0 +1,2 @@
+too-many-lines-threshold = 1000
+max-struct-bools = 10

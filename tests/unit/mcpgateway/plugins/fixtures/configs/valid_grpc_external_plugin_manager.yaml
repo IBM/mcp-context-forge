@@ -1,0 +1,21 @@
+# gRPC external plugin configuration for PluginManager tests
+# Note: The port will be dynamically updated by the test fixture
+plugins:
+  - name: "ReplaceBadWordsPlugin"
+    kind: "external"
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
+    mode: "enforce"
+    priority: 100
+    grpc:
+      target: "127.0.0.1:50151"
+
+# Plugin directories to scan
+plugin_dirs: []
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: false
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

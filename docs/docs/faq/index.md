@@ -1,8 +1,8 @@
-# ContextForge MCP Gateway - Frequently Asked Questions
+# ContextForge - Frequently Asked Questions
 
 ## ⚡ Quickstart
 
-???+ example "🚀 How can I install and run MCP Gateway in one command?"
+???+ example "🚀 How can I install and run ContextForge in one command?"
     PyPI (pipx / uvx makes an isolated venv):
 
     ```bash
@@ -16,14 +16,17 @@
     OCI image (Docker/Podman) - shares host network so localhost works:
 
     ```bash
-    podman run --network=host -p 4444:4444 ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+    podman run --network=host -p 4444:4444 ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
     ```
 
 ???+ example "🗂️ What URLs are available for the admin interface and API docs?"
 
-    - Admin UI → <http://localhost:4444/admin>
-    - Swagger → <http://localhost:4444/docs>
-    - ReDoc → <http://localhost:4444/redoc>
+    - Admin UI → `http://localhost:4444/admin` (or `http://localhost:8080/admin` with Compose)
+    - Swagger → `http://localhost:4444/docs` (JWT-protected by default)
+    - ReDoc → `http://localhost:4444/redoc` (JWT-protected by default)
+
+    !!! tip
+        Log in to the Admin UI to get a session cookie, or enable `DOCS_ALLOW_BASIC_AUTH=true` for Basic auth access to `/docs` and `/redoc`.
 
 ---
 
@@ -46,7 +49,7 @@
     See the provided [media kit](../media/index.md)
 
 ???+ tip "📄 How do I describe the gateway in boilerplate copy?"
-    > "ContextForge MCP Gateway is an open-source reverse-proxy that unifies MCP and REST tool servers under a single secure HTTPS endpoint with discovery, auth and observability baked in."
+    > "ContextForge is an open-source reverse-proxy that unifies MCP and REST tool servers under a single secure HTTPS endpoint with discovery, auth and observability baked in."
 
 ---
 
@@ -60,10 +63,16 @@
     Then edit:
 
     ```env
-    BASIC_AUTH_USER=admin
-    BASIC_AUTH_PASSWORD=changeme
+    # JWT authentication (required)
     JWT_SECRET_KEY=my-test-key
+
+    # Admin UI login credentials
+    PLATFORM_ADMIN_EMAIL=admin@example.com
+    PLATFORM_ADMIN_PASSWORD=changeme
     ```
+
+    !!! info "Authentication"
+        The Admin UI uses email/password authentication. Basic auth for API endpoints is disabled by default for security. Use JWT tokens for API access.
 
 ???+ example "🪛 What are some advanced environment variables I can configure?"
 
@@ -77,7 +86,7 @@
 
 ## 🚀 Running & Deployment
 
-???+ example "🏠 How do I run MCP Gateway locally using PyPI?"
+???+ example "🏠 How do I run ContextForge locally using PyPI?"
     ```bash
     python3 -m venv .venv && source .venv/bin/activate
     pip install mcp-contextforge-gateway
@@ -93,7 +102,7 @@
 
     Docker Compose is also available, ex: `make compose-up`.
 
-???+ example "☁️ How can I deploy MCP Gateway on Google Cloud Run, Code Engine, Kubernetes, AWS, etc?"
+???+ example "☁️ How can I deploy ContextForge on Google Cloud Run, Code Engine, Kubernetes, AWS, etc?"
     See the [Deployment Documentation](../deployment/index.md) for detailed deployment instructions across local, docker, podman, compose, AWS, Azure, GCP, IBM Cloud, Helm, Minikube, Kubernetes, OpenShift and more.
 
 ---
@@ -111,7 +120,7 @@
     Include a persistent volume with your container or Kubernetes deployment. Ex:
 
     ```bash
-    docker run -v $(pwd)/data:/app ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+    docker run -v $(pwd)/data:/app ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
     ```
 
     For production use, we recommend PostgreSQL. A Docker Compose target with PostgreSQL and Redis is provided.
@@ -150,7 +159,7 @@
     - Set `ALLOWED_ORIGINS` or `CORS_ENABLED` for CORS headers.
 
 ???+ example "🔐 How do I pass Authorization headers to upstream MCP servers when the gateway uses authentication?"
-    When MCP Gateway uses authentication (JWT/Bearer/Basic/OAuth), there's a conflict if you need to pass different Authorization headers to upstream MCP servers.
+    When ContextForge uses authentication (JWT/Bearer/Basic/OAuth), there's a conflict if you need to pass different Authorization headers to upstream MCP servers.
 
     **Solution: Use X-Upstream-Authorization header**
 
@@ -181,7 +190,7 @@
     ```
 
 ???+ example "🌉 How do I add a peer MCP gateway?"
-    A "Gateway" is another MCP Server. The MCP Gateway itself is an MCP Server. This means you can add any MCP Server under "Gateways" and it will retrieve Tools/Resources/Prompts.
+    A "Gateway" is another MCP Server. ContextForge itself is an MCP Server. This means you can add any MCP Server under "Gateways" and it will retrieve Tools/Resources/Prompts.
 
     ```bash
     curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \\
@@ -268,7 +277,7 @@
 
 ## 💻 Integration Recipes
 
-???+ example "🦜 How do I use MCP Gateway with LangChain?"
+???+ example "🦜 How do I use ContextForge with LangChain?"
     ```python
     import os
     from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -308,7 +317,7 @@
     Upgrading from earlier releases? Follow [MIGRATION-0.7.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md).
 
 ???+ info "🔁 Does basic auth still work?"
-    Yes. Email auth is recommended for multi‑tenancy; basic auth remains available. Use `AUTH_REQUIRED` to enforce authentication.
+    Basic auth for API endpoints is **disabled by default** for security. To enable it, set `API_ALLOW_BASIC_AUTH=true`. Email/password authentication is recommended for the Admin UI. For programmatic API access, use JWT tokens.
 
 ???+ info "🧩 How do teams and visibility work?"
     Users belong to teams. Resources (servers, tools, prompts, resources) can be `private`, `team`, or `public`. Assign via API or Admin UI. Use SSO mappings to auto‑assign teams.
@@ -390,7 +399,7 @@
 
 ## ❓ Rarely Asked Questions (RAQ)
 
-???+ example "🐙 Does MCP Gateway work on a Raspberry Pi?"
+???+ example "🐙 Does ContextForge work on a Raspberry Pi?"
     Yes - build as `arm64` and reduce RAM/workers.
 
 ---

@@ -3,70 +3,78 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sign In - MCP Gateway</title>
+    <title>Sign In - ContextForge</title>
     <!-- Tailwind CSS -->
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/tailwindcss/tailwind.min.js"></script>
     {% else %}
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SRI intentionally omitted: Tailwind Play CDN is JIT and does not provide stable CORS/SRI semantics -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     {% endif %}
     <script>
-      tailwind.config = {
-        darkMode: "class",
-        theme: {
-          extend: {
-            animation: {
-              "gradient-x": "gradient-x 15s ease infinite",
-              float: "float 6s ease-in-out infinite",
-              "pulse-soft": "pulse-soft 2s ease-in-out infinite",
-              "slide-up": "slide-up 0.8s ease-out",
-              "fade-in": "fade-in 1s ease-out",
-              "scale-pulse": "scale-pulse 4s ease-in-out infinite",
-            },
-            keyframes: {
-              "gradient-x": {
-                "0%, 100%": {
-                  "background-size": "200% 200%",
-                  "background-position": "left center",
+      if (window.tailwind && typeof window.tailwind === "object") {
+        window.tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              animation: {
+                "gradient-x": "gradient-x 15s ease infinite",
+                float: "float 6s ease-in-out infinite",
+                "pulse-soft": "pulse-soft 2s ease-in-out infinite",
+                "slide-up": "slide-up 0.8s ease-out",
+                "fade-in": "fade-in 1s ease-out",
+                "scale-pulse": "scale-pulse 4s ease-in-out infinite",
+              },
+              keyframes: {
+                "gradient-x": {
+                  "0%, 100%": {
+                    "background-size": "200% 200%",
+                    "background-position": "left center",
+                  },
+                  "50%": {
+                    "background-size": "200% 200%",
+                    "background-position": "right center",
+                  },
                 },
-                "50%": {
-                  "background-size": "200% 200%",
-                  "background-position": "right center",
+                float: {
+                  "0%, 100%": { transform: "translateY(0px)" },
+                  "50%": { transform: "translateY(-20px)" },
                 },
-              },
-              float: {
-                "0%, 100%": { transform: "translateY(0px)" },
-                "50%": { transform: "translateY(-20px)" },
-              },
-              "pulse-soft": {
-                "0%, 100%": { opacity: 1 },
-                "50%": { opacity: 0.8 },
-              },
-              "slide-up": {
-                "0%": { transform: "translateY(30px)", opacity: 0 },
-                "100%": { transform: "translateY(0)", opacity: 1 },
-              },
-              "fade-in": {
-                "0%": { opacity: 0 },
-                "100%": { opacity: 1 },
-              },
-              "scale-pulse": {
-                "0%, 100%": { transform: "scale(1)" },
-                "50%": { transform: "scale(1.05)" },
+                "pulse-soft": {
+                  "0%, 100%": { opacity: 1 },
+                  "50%": { opacity: 0.8 },
+                },
+                "slide-up": {
+                  "0%": { transform: "translateY(30px)", opacity: 0 },
+                  "100%": { transform: "translateY(0)", opacity: 1 },
+                },
+                "fade-in": {
+                  "0%": { opacity: 0 },
+                  "100%": { opacity: 1 },
+                },
+                "scale-pulse": {
+                  "0%, 100%": { transform: "scale(1)" },
+                  "50%": { transform: "scale(1.05)" },
+                },
               },
             },
           },
-        },
-      };
+        };
+      }
     </script>
     <!-- Font Awesome -->
     {% if ui_airgapped %}
     <link rel="stylesheet" href="{{ root_path }}/static/vendor/fontawesome/css/all.min.css" />
     {% else %}
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
+      integrity="{{ sri_hashes.fontawesome }}"
+      crossorigin="anonymous"
+    />
     {% endif %}
   </head>
-  <body class="h-full bg-gray-50 dark:bg-gray-900 overflow-hidden">
+  <body class="h-full bg-gray-50 dark:bg-gray-900 overflow-auto">
     <!-- Main Split Layout -->
     <div class="min-h-screen flex">
       <!-- Left Side - Login Form -->
@@ -99,6 +107,16 @@
               <div class="flex items-center">
                 <i class="fas fa-exclamation-circle mr-2"></i>
                 <span id="error-text"></span>
+              </div>
+            </div>
+
+            <div
+              id="success-message"
+              class="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-300 rounded-xl text-sm hidden"
+            >
+              <div class="flex items-center">
+                <i class="fas fa-check-circle mr-2"></i>
+                <span id="success-text"></span>
               </div>
             </div>
 
@@ -146,6 +164,7 @@
               action="{{ root_path }}/admin/login"
               method="post"
             >
+              <input type="hidden" name="csrf_token" value="" />
               <div>
                 <label
                   for="email"
@@ -158,8 +177,9 @@
                   id="email"
                   name="email"
                   type="email"
-                  autocomplete="email"
+                  autocomplete="{{ 'off' if prefill_email else 'email' }}"
                   required
+                  value="{{ prefill_email }}"
                   placeholder="Enter your email"
                   class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-gray-700/50 dark:text-white transition-all duration-200 backdrop-blur-sm"
                 />
@@ -192,6 +212,17 @@
                 </div>
               </div>
 
+              {% if password_reset_enabled %}
+              <div class="text-right">
+                <a
+                  href="{{ root_path }}/admin/forgot-password"
+                  class="text-sm text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300"
+                >
+                  Forgot password?
+                </a>
+              </div>
+              {% endif %}
+
               <button
                 type="submit"
                 class="w-full flex justify-center items-center py-2 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold rounded-lg shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all duration-200"
@@ -205,7 +236,7 @@
             <div class="mt-4 text-center">
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 <i class="fas fa-shield-alt mr-1"></i>
-                Secured by MCP Gateway Authentication
+                Secured by ContextForge Authentication
               </p>
             </div>
           </div>
@@ -251,7 +282,7 @@
               >
                 <img
                   src="{{ root_path }}/static/contextforge-logo-white.png"
-                  alt="ContextForge"
+                  alt="ContextForge logo"
                   class="h-12"
                 />
               </a>
@@ -408,6 +439,35 @@
       // Initialize ROOT_PATH for JavaScript URL composition
       window.ROOT_PATH = {{ root_path | tojson }};
 
+      function getCookie(name) {
+        const parts = document.cookie.split(";");
+        for (const part of parts) {
+          const trimmed = part.trim();
+          if (trimmed.startsWith(name + "=")) {
+            return decodeURIComponent(trimmed.slice(name.length + 1));
+          }
+        }
+        return "";
+      }
+
+      function attachCsrfToPostForms() {
+        const csrfToken = getCookie("mcpgateway_csrf_token");
+        if (!csrfToken) return;
+        const forms = document.querySelectorAll("form");
+        forms.forEach((form) => {
+          const method = (form.getAttribute("method") || "get").toLowerCase();
+          if (method === "get") return;
+          let tokenInput = form.querySelector('input[name="csrf_token"]');
+          if (!tokenInput) {
+            tokenInput = document.createElement("input");
+            tokenInput.type = "hidden";
+            tokenInput.name = "csrf_token";
+            form.appendChild(tokenInput);
+          }
+          tokenInput.value = csrfToken;
+        });
+      }
+
       // SSO Provider configurations with branding
       const ssoProviders = {
         github: {
@@ -457,9 +517,20 @@
 
       // Initialize page
       document.addEventListener("DOMContentLoaded", async function () {
+        attachCsrfToPostForms();
         await loadSSOProviders();
         handleErrorMessages();
         setupAnimations();
+
+        // Focus password field if email is prefilled (failed login retry)
+        const emailField = document.getElementById("email");
+        if (emailField && emailField.value) {
+          document.getElementById("password").focus();
+        }
+
+        document.querySelectorAll("form").forEach((form) => {
+          form.addEventListener("submit", attachCsrfToPostForms);
+        });
       });
 
       // Load available SSO providers
@@ -542,6 +613,26 @@
       function handleErrorMessages() {
         const urlParams = new URLSearchParams(window.location.search);
         const error = urlParams.get("error");
+        const notice = urlParams.get("notice");
+
+        if (notice) {
+          let noticeMessage = "Success";
+          switch (notice) {
+            case "reset_email_sent":
+              noticeMessage =
+                "If the account exists, a password reset link has been sent.";
+              break;
+            case "password_reset_success":
+              noticeMessage =
+                "Password reset successful. Sign in with your new password.";
+              break;
+            default:
+              noticeMessage = notice
+                .replace(/_/g, " ")
+                .replace(/\b\w/g, (l) => l.toUpperCase());
+          }
+          showSuccess(noticeMessage);
+        }
 
         if (error) {
           let errorMessage = "Login failed";
@@ -564,6 +655,13 @@
             case "sso_cancelled":
               errorMessage = "SSO authentication was cancelled";
               break;
+            case "token_too_large":
+              errorMessage =
+                "Your account has too many team memberships for cookie-based authentication. Please contact your administrator.";
+              break;
+            case "password_reset_disabled":
+              errorMessage = "Password reset is disabled by the administrator.";
+              break;
             default:
               errorMessage = error
                 .replace(/_/g, " ")
@@ -571,6 +669,17 @@
           }
           showError(errorMessage);
         }
+      }
+
+      function showSuccess(message) {
+        const successDiv = document.getElementById("success-message");
+        const successText = document.getElementById("success-text");
+        successText.textContent = message;
+        successDiv.classList.remove("hidden");
+
+        setTimeout(() => {
+          successDiv.classList.add("hidden");
+        }, 10000);
       }
 
       // Show error message

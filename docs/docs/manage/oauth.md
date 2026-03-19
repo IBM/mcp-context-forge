@@ -1,6 +1,6 @@
 # OAuth 2.0 Integration
 
-This guide explains how to configure and operate OAuth 2.0 authentication for MCP Gateway when connecting to MCP servers or downstream APIs on behalf of users or services.
+This guide explains how to configure and operate OAuth 2.0 authentication for ContextForge when connecting to MCP servers or downstream APIs on behalf of users or services.
 
 Related design docs:
 
@@ -25,9 +25,12 @@ Related design docs:
 ## Supported Flows
 
 - Client Credentials (machine-to-machine)
+
   - Uses client ID/secret to fetch access tokens
   - Best for service integrations without user consent
+
 - Authorization Code (user delegation)
+
   - Redirects the user to the provider for consent
   - Exchanges code for access token, with optional refresh tokens
 
@@ -39,6 +42,7 @@ See the flow details and security model in the architecture docs.
 
 - An OAuth 2.0 provider (e.g., GitHub, Google, custom OIDC)
 - A registered application with:
+
   - Client ID and Client Secret
   - Authorization URL and Token URL
   - Redirect URI pointing to the gateway callback (for Authorization Code)
@@ -58,7 +62,7 @@ AUTH_ENCRYPTION_SECRET=<strong-random-key>
 ```
 
 !!! important
-    Always run MCP Gateway over HTTPS when using OAuth. Never transmit client secrets or authorization codes over insecure channels.
+    Always run ContextForge over HTTPS when using OAuth. Never transmit client secrets or authorization codes over insecure channels.
 
 ---
 
@@ -67,14 +71,18 @@ AUTH_ENCRYPTION_SECRET=<strong-random-key>
 1. Open Admin UI → Gateways → New Gateway (or Edit).
 2. Set Authentication type = OAuth.
 3. Choose Grant Type:
+
    - client_credentials
    - authorization_code
+
 4. Fill fields:
+
    - Client ID
    - Client Secret (stored encrypted at rest)
    - Token URL
    - Scopes (space-separated)
    - Authorization URL and Redirect URI (required for Authorization Code)
+
 5. Save.
 
 Field mapping follows the architecture proposal and is used by the OAuth Manager service to request tokens.
@@ -117,7 +125,7 @@ Sequence (Authorization Code):
 ```mermaid
 sequenceDiagram
     participant User
-    participant Gateway as MCP Gateway
+    participant Gateway as ContextForge
     participant OAuth as OAuth Provider
     participant MCP as MCP Server
 
@@ -139,14 +147,14 @@ sequenceDiagram
 
 OAuth tokens are stored per gateway and user for the Authorization Code flow to ensure proper security isolation:
 
-- **User-Scoped Tokens**: OAuth tokens are scoped per MCP Gateway user (using app_user_email field) to prevent token sharing between users
+- **User-Scoped Tokens**: OAuth tokens are scoped per ContextForge user (using app_user_email field) to prevent token sharing between users
 - Store tokens per gateway + user combination with unique constraints
 - Auto-refresh using refresh tokens when near expiry
 - Encrypt tokens at rest using `AUTH_ENCRYPTION_SECRET`
 - Foreign key relationships ensure token cleanup when users are deleted
 
 !!! important "Security Enhancement"
-    OAuth tokens are now user-scoped to prevent token sharing between users. Each Authorization Code flow token is tied to the specific MCP Gateway user who authorized it, providing better security isolation.
+    OAuth tokens are now user-scoped to prevent token sharing between users. Each Authorization Code flow token is tied to the specific ContextForge user who authorized it, providing better security isolation.
 
 ---
 
@@ -196,7 +204,7 @@ Common issues and quick fixes:
 
 ## PKCE Support
 
-MCP Gateway implements **PKCE (Proof Key for Code Exchange)** as defined in [RFC 7636](https://tools.ietf.org/html/rfc7636) for all Authorization Code flows. This provides enhanced security, especially for:
+ContextForge implements **PKCE (Proof Key for Code Exchange)** as defined in [RFC 7636](https://tools.ietf.org/html/rfc7636) for all Authorization Code flows. This provides enhanced security, especially for:
 
 - Public clients (mobile apps, SPAs, desktop apps)
 - Environments where client secrets cannot be securely stored

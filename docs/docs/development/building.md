@@ -117,7 +117,7 @@ playwright install              # one-time browser setup
 pytest tests/playwright/        # run UI tests
 
 # Locust (load testing)
-locust -f tests/locust/locustfile.py --host=http://localhost:4444
+locust -f tests/loadtest/locustfile.py --host=http://localhost:4444
 ```
 
 Note: JavaScript unit tests are not yet implemented. Testing efforts focus on the Python backend (pytest) and UI automation (Playwright).
@@ -134,4 +134,4 @@ To test the Admin UI without CDN dependencies:
 MCPGATEWAY_UI_AIRGAPPED=true make dev
 ```
 
-This downloads HTMX, Alpine.js, Tailwind, CodeMirror, Chart.js, and Font Awesome for fully offline UI operation. See [Admin UI - Air-Gapped Mode](../overview/ui.md#-air-gapped-mode) for details.
+This downloads HTMX, Alpine.js, Tailwind, CodeMirror, Chart.js, and Font Awesome for fully offline UI operation. See [Admin UI - Air-Gapped Mode](../overview/ui.md#air-gapped-mode) for details.

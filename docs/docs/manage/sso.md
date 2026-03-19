@@ -1,12 +1,12 @@
 # Single Sign-On (SSO) Authentication
 
-!!! note "Multi‑Tenancy in v0.7.0"
-    v0.7.0 brings multi‑tenancy with email authentication, teams, RBAC, and resource visibility. If you're upgrading from 0.6.0, review the
+!!! note "Multi‑Tenancy (introduced in v0.7.0)"
+    Multi‑tenancy (email authentication, teams, RBAC, resource visibility) was introduced in v0.7.0. If you're upgrading from 0.6.0, review the
     [Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md) and [Changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md).
 
     For SSO deployments, configure group‑to‑team mappings to auto‑assign users on first login. See [Team Management](teams.md) and the provider tutorials for examples.
 
-MCP Gateway supports enterprise Single Sign-On authentication through OAuth2 and OpenID Connect (OIDC) providers. This enables seamless integration with existing identity providers while maintaining backward compatibility with local authentication.
+ContextForge supports enterprise Single Sign-On authentication through OAuth2 and OpenID Connect (OIDC) providers. This enables seamless integration with existing identity providers while maintaining backward compatibility with local authentication.
 
 ## Overview
 
@@ -30,16 +30,31 @@ sequenceDiagram
     participant P as SSO Provider
     participant D as Database
 
-    U->>G: GET /auth/sso/login/github
+    U->>G: GET /auth/sso/login/{provider}
     G->>D: Create auth session
     G->>U: Redirect to provider with PKCE
     U->>P: Authenticate with provider
     P->>G: Callback with auth code
     G->>P: Exchange code for tokens (PKCE)
     P->>G: Access token + user info
-    G->>D: Create/update user
+    opt OIDC providers
+        P->>G: id_token (signed)
+        G->>G: Verify id_token signature (JWKS)
+    end
+    G->>D: Create/update user from verified claims
     G->>U: Set JWT cookie + redirect
 ```
+
+!!! info "ID Token Verification"
+    For OIDC providers (Keycloak, Entra ID, Okta, generic OIDC), ContextForge cryptographically verifies the `id_token` signature using the provider's JWKS (JSON Web Key Set) endpoint. OAuth-only providers (GitHub, Google) use the access token to fetch user info from the provider's userinfo endpoint instead. This prevents token tampering attacks by validating:
+
+    - **Signature** - verified against the provider's public keys (RS256, ES256, EdDSA, etc.)
+    - **Expiration** - expired tokens are rejected
+    - **Audience** - must match the configured `client_id`
+    - **Issuer** - must match the provider's issuer URL
+    - **Nonce** - must match the value stored in the auth session (replay protection)
+
+    The JWKS URI is automatically discovered from the provider's `.well-known/openid-configuration` endpoint and cached for 5 minutes. Use `SSO_GENERIC_JWKS_URI` to override automatic discovery if needed.
 
 ### Database Schema
 
@@ -147,6 +162,17 @@ Support for any OpenID Connect compatible identity provider including Auth0, Aut
 
 **Note**: For Keycloak, use the dedicated [Keycloak SSO Setup Guide](sso-keycloak-tutorial.md) which leverages auto-discovery for simpler configuration.
 
+## Local Compose SSO (Keycloak)
+
+For local end-to-end SSO testing, use the preconfigured compose profile:
+
+```bash
+make compose-sso
+make sso-test-login
+```
+
+This starts Keycloak on `http://localhost:8180` and enables SSO bootstrap in the gateway automatically.
+
 ## Quick Start
 
 ### 1. Enable SSO
@@ -225,6 +251,10 @@ Response:
 }
 ```
 
+!!! important "Login State and Scope Enforcement"
+    - The SSO login endpoint sets an HTTP-only `sso_session_id` cookie and binds OAuth `state` to that browser session. The callback must present the same cookie or authentication is rejected.
+    - Optional `scopes` supplied to `/auth/sso/login/{provider}` must be a subset of the provider's configured scope policy. Out-of-policy scopes are rejected with HTTP `400`.
+
 ## Provider Configuration
 
 ### GitHub OAuth Setup
@@ -233,7 +263,8 @@ Response:
 
 1. **GitHub Settings** → **Developer settings** → **OAuth Apps**
 2. **New OAuth App**:
-   - **Application name**: `MCP Gateway - YourOrg`
+
+   - **Application name**: `ContextForge - YourOrg`
    - **Homepage URL**: `https://your-gateway.com`
    - **Authorization callback URL**: `https://your-gateway.com/auth/sso/callback/github`
 
@@ -332,9 +363,11 @@ SSO_OKTA_ISSUER=https://your-company.okta.com
 
 1. **Azure Portal** → **Microsoft Entra ID** → **App registrations**
 2. **New registration**:
-   - **Name**: `MCP Gateway - YourOrg`
+
+   - **Name**: `ContextForge - YourOrg`
    - **Supported account types**: Accounts in this organizational directory only
    - **Redirect URI**: `https://your-gateway.com/auth/sso/callback/entra`
+
 3. After creation, note the **Application (client) ID** and **Directory (tenant) ID**
 4. **Certificates & secrets** → **New client secret** → Note the secret value
 
@@ -375,6 +408,8 @@ Add Microsoft Graph API permissions for enhanced user profile access:
 # Keycloak OIDC Configuration (with auto-discovery)
 SSO_KEYCLOAK_ENABLED=true
 SSO_KEYCLOAK_BASE_URL=https://keycloak.yourcompany.com
+# Optional when gateway reaches Keycloak internally (e.g. Docker DNS):
+# SSO_KEYCLOAK_PUBLIC_BASE_URL=https://login.yourcompany.com
 SSO_KEYCLOAK_REALM=master
 SSO_KEYCLOAK_CLIENT_ID=mcp-gateway
 SSO_KEYCLOAK_CLIENT_SECRET=your-client-secret-value
@@ -387,6 +422,7 @@ SSO_KEYCLOAK_MAP_CLIENT_ROLES=false
 #### 3. Auto-Discovery Benefits
 
 Keycloak's auto-discovery reduces configuration by 40%:
+
 - Automatically discovers authorization, token, and userinfo endpoints
 - Only requires base URL and realm name
 - No need to manually specify 5+ endpoint URLs
@@ -743,21 +779,15 @@ curl -I https://api.github.com/user
    ```
 
 2. **Configure first provider** (e.g., GitHub)
-
 3. **Test SSO flow** with test users
-
 4. **Gradually migrate** production users
-
 5. **Optional**: Disable local auth after full migration
 
 ### Adding New Providers
 
 1. **Implement provider-specific** user info normalization in `SSOService._normalize_user_info`
-
 2. **Add environment variables** in `config.py`
-
 3. **Update bootstrap utilities** in `sso_bootstrap.py`
-
 4. **Test integration** thoroughly
 
 ## Best Practices

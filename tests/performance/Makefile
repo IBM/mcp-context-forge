@@ -1,11 +1,11 @@
-# MCP Gateway Performance Testing Makefile
+# ContextForge Performance Testing Makefile
 # Simple entrypoint for all performance testing operations
 
 .PHONY: help install check test quick heavy baseline compare clean list
 
 # Default target
 help:
-	@echo "MCP Gateway Performance Testing"
+	@echo "ContextForge Performance Testing"
 	@echo "================================"
 	@echo ""
 	@echo "Quick Start:"

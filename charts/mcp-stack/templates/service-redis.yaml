@@ -5,7 +5,7 @@
      - Selector now matches the app label from the Deployment above.
      ------------------------------------------------------------------- */}}
 
-{{- if .Values.redis.enabled }}
+{{- if and .Values.redis.enabled (not .Values.redis.external.enabled) }}
 apiVersion: v1
 kind: Service
 metadata:

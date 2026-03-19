@@ -4,10 +4,12 @@ nav:
   - "🧰 Use": using
   - "🚀 Deploy": deployment
   - "🛡️ Manage": manage
+  - "🔧 Operations": operations
   - "💻 Develop": development
   - "🧪 Test": testing
   - "📐 Design & Roadmap": architecture
   - "📰 Media": media
   - "📖 Tutorials": tutorials
+  - "📝 How-To Guides": howto
   - "⭐ Best Practices": best-practices
   - "❓ FAQ": faq

@@ -1,6 +1,6 @@
 # Model Configuration for MCP Eval Server
 # Configure available judge models for evaluation
-# Updated to align with agent_runtimes/langchain_agent environment variable patterns
+# Configure available judge models for evaluation
 
 models:
   openai:
@@ -8,7 +8,7 @@ models:
       provider: "openai"
       model_name: "gpt-4"
       api_key_env: "OPENAI_API_KEY"
-      organization_env: "OPENAI_ORGANIZATION"  # Changed from OPENAI_ORG_ID to match agent_runtimes
+      organization_env: "OPENAI_ORGANIZATION"
       base_url_env: "OPENAI_BASE_URL"  # Added for custom OpenAI endpoints
       default_temperature: 0.3
       max_tokens: 2000
@@ -97,8 +97,8 @@ models:
       deployment_name: "gpt-4"
       model_name: "gpt-4"
       api_base_env: "AZURE_OPENAI_ENDPOINT"
-      api_key_env: "AZURE_OPENAI_API_KEY"  # Changed to match agent_runtimes
-      api_version: "2024-02-15-preview"  # Updated to match agent_runtimes
+      api_key_env: "AZURE_OPENAI_API_KEY"
+      api_version: "2024-02-15-preview"
       deployment_name_env: "AZURE_DEPLOYMENT_NAME"  # Added for consistency
       default_temperature: 0.3
       max_tokens: 2000
@@ -283,7 +283,7 @@ models:
 
 # Default model selection preferences
 defaults:
-  primary_judge: "gpt-4o-mini"  # Updated to match agent_runtimes default
+  primary_judge: "gpt-4o-mini"
   fallback_judge: "gpt-3.5-turbo"
   fast_judge: "gpt-4o-mini"  # Fast and efficient
   consensus_judges: ["gpt-4", "claude-3-sonnet", "gpt-4-turbo"]  # Multi-provider consensus

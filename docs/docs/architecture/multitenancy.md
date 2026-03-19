@@ -1,6 +1,6 @@
 # Multi-Tenancy Architecture
 
-The MCP Gateway implements a comprehensive multi-tenant architecture that provides secure isolation, flexible resource sharing, and granular access control. This document describes the complete multi-tenancy design, user lifecycle, team management, and resource scoping mechanisms.
+ContextForge implements a comprehensive multi-tenant architecture that provides secure isolation, flexible resource sharing, and granular access control. This document describes the complete multi-tenancy design, user lifecycle, team management, and resource scoping mechanisms.
 
 ## Overview
 
@@ -51,7 +51,7 @@ sequenceDiagram
 
 ### User Creation & Personal Teams
 
-Every user gets an automatically created **Personal Team** upon registration:
+When personal teams are enabled (default), each user gets an automatically created **Personal Team** upon registration:
 
 ```mermaid
 flowchart TD
@@ -63,15 +63,15 @@ flowchart TD
     C --> E[Create EmailUser Record]
     D --> F[Create SSO User Record]
 
-    E --> G[Create Personal Team]
+    E --> G[Create Personal Team<br/>if enabled]
     F --> G
 
     G --> H[Set User as Team Owner]
     H --> I[User Can Access System]
 
     subgraph "Personal Team Properties"
-        J[Name: user@email.com or Full Name]
-        K[Type: personal]
+        J[Name: Display Name's Team<br/>full name or email prefix]
+        K[is_personal: true]
         L[Owner: User]
         M[Members: User only]
         N[Visibility: private]
@@ -103,43 +103,64 @@ erDiagram
     EmailUser ||--o{ EmailTeamMember : belongs_to
     EmailTeam ||--o{ EmailTeamInvitation : has_pending
     EmailUser ||--o{ EmailTeamInvitation : invited_by
+    EmailTeam ||--o{ EmailTeamJoinRequest : join_requests
+    EmailUser ||--o{ EmailTeamJoinRequest : requested_by
 
     EmailTeam {
-        uuid id PK
+        string id PK
         string name
+        string slug
         string description
-        enum type "personal|organizational"
-        enum visibility "private|public"
-        string owner_email FK
+        string created_by FK
+        boolean is_personal
+        string visibility
+        int max_members
+        boolean is_active
         timestamp created_at
         timestamp updated_at
     }
 
     EmailUser {
         string email PK
-        string password_hash
         string full_name
         boolean is_admin
+        boolean is_active
+        string auth_provider
         timestamp created_at
+        timestamp updated_at
     }
 
     EmailTeamMember {
-        uuid id PK
-        uuid team_id FK
+        string id PK
+        string team_id FK
         string user_email FK
-        enum role "owner|member"
+        string role
+        string invited_by FK
         timestamp joined_at
+        boolean is_active
     }
 
     EmailTeamInvitation {
-        uuid id PK
-        uuid team_id FK
-        string invited_email
-        string invited_by_email FK
-        enum role "owner|member"
-        string token
+        string id PK
+        string team_id FK
+        string email
+        string role
+        string invited_by FK
+        timestamp invited_at
         timestamp expires_at
-        enum status "pending|accepted|declined|expired"
+        string token
+        boolean is_active
+    }
+
+    EmailTeamJoinRequest {
+        string id PK
+        string team_id FK
+        string user_email FK
+        string status
+        timestamp requested_at
+        timestamp expires_at
+        timestamp reviewed_at
+        string reviewed_by FK
     }
 ```
 
@@ -177,7 +198,9 @@ Discoverable; membership by invite/request"]
         E --> F[Pending Invitation]
         F --> G[User Accepts/Declines]
 
-        D --> H[User Joins Team]
+        D --> J[Join Request Pending]
+        J --> K[Owner Approves]
+        K --> H[User Joins Team]
         G -->|Accept| H
         H --> I[Team Member]
     end
@@ -193,11 +216,13 @@ Discoverable; membership by invite/request"]
 **Note**: These are team membership levels, separate from RBAC roles. A user can have both a membership level and RBAC role assignments within the same team.
 
 - **Owner** (Team Membership Level):
+
   - Manage team settings (name, description, visibility) and lifecycle (cannot delete personal teams).
   - Manage membership (invite, accept, change roles, remove members).
   - Full control over team resources (create/update/delete), subject to platform policies.
 
 - **Member** (Team Membership Level):
+
   - Access and use team resources; can create resources by default unless policies restrict it.
   - Cannot manage team membership or team‑level settings.
 
@@ -210,7 +235,6 @@ sequenceDiagram
     participant O as Team Owner
     participant G as Gateway
     participant DB as Database
-    participant E as Email Service
     participant I as Invited User
 
     Note over O,I: Invitation Process
@@ -223,29 +247,15 @@ sequenceDiagram
     G->>DB: Create invitation record
     DB-->>G: Invitation token generated
 
-    alt User exists on platform
-        G->>DB: User found
-        Note right of G: Internal notification
-    else User not on platform
-        G->>E: Send invitation email
-        E-->>I: Email with invitation link
-    end
-
-    G-->>O: Invitation created
+    G-->>O: Invitation created (token)
+    O-->>I: Share invite link (out of band)
 
     Note over I,G: Acceptance Process
-    I->>G: GET /teams/invitations/{token}
-    G->>DB: Validate token
-    DB-->>G: Invitation details
-    G-->>I: Invitation info page
-
     I->>G: POST /teams/invitations/{token}/accept
+    G->>DB: Validate token + user
     G->>DB: Create team membership
-    G->>DB: Update invitation status
+    G->>DB: Deactivate invitation (is_active=false)
     G-->>I: Welcome to team
-
-    Note over O,G: Owner notification
-    G->>O: Member joined notification
 ```
 
 ---
@@ -257,11 +267,13 @@ This section clarifies what Private and Public mean for teams, and what Private/
 ### Team Visibility (Design)
 
 - Private:
+
   - Discoverability: Not listed to non‑members; only visible to members/owner.
   - Membership: By invitation from a team owner (request‑to‑join is not exposed to non‑members).
   - API/UI: Team shows up only in the current user's teams list; direct deep links require membership.
 
 - Public:
+
   - Discoverability: Listed in public team discovery views for all authenticated users.
   - Membership: Still requires an invitation or explicit approval of a join request.
   - API/UI: Limited metadata may be visible without membership; all management and resource operations still require membership.
@@ -273,22 +285,132 @@ Note: Platform Admin is a global role and is not a team role. Admins can view/ma
 Applies to Tools, Servers, Resources, Prompts, and A2A Agents. All resources are owned by a team (team_id) and created by a user (owner_email).
 
 - Private:
-  - Who sees it: Only the resource owner (owner_email).
+
+  - Who sees it: Only the resource owner (owner_email), and only when their token is not a public-only token (token_teams must be non-empty).
   - Team members cannot see or use it unless they are the owner.
+  - Public-only tokens (token_teams=[]) cannot access private resources even as the owner.
   - Mutations: Owner and Platform Admin can update/delete; team owners may be allowed by policy (see Enhancements).
 
 - Team:
+
   - Who sees it: All members of the owning team (owners and members).
   - Mutations: Owner can update/delete; team owners can administratively manage; Platform Admin can override.
 
 - Public:
+
   - Who sees it: All authenticated users across the platform (cross‑team visibility).
   - Mutations: Only the resource owner, team owners, or Platform Admins can modify/delete.
 
 Enforcement summary:
 
-- Listing queries include resources where (a) owner_email == user.email, (b) team_id ∈ user_teams with visibility ∈ {team, public}, and (c) visibility == public.
+- Listing queries include resources where (a) visibility == public, (b) team_id ∈ token_teams with visibility ∈ {team, public}, or (c) owner_email == user.email with visibility == private.
+- Owner-based access applies only to private resources. Owners cannot use ownership to bypass team scoping for team-visibility resources outside their token scope.
+- Public-only tokens (token_teams=[]) see only public resources — owner and team access are both suppressed.
 - Read follows the same rules as list; write operations require ownership or delegated/team administrative rights.
+
+---
+
+## Token Scoping Model
+
+### How Token Scoping Works
+
+Token scoping is the mechanism that determines which resources a user can **see** based on the `teams` claim in their JWT token. The `normalize_token_teams()` function in `mcpgateway/auth.py` is the **single source of truth** for interpreting JWT team claims.
+
+### Secure-First Defaults
+
+The token scoping system follows a **secure-first design principle**: when in doubt, access is restricted.
+
+| JWT `teams` State | `is_admin` | Result | Access Level |
+|-------------------|------------|--------|--------------|
+| Key MISSING | any | `[]` | PUBLIC-ONLY (secure default) |
+| Key `null` | `true` | `None` | ADMIN BYPASS (unrestricted) |
+| Key `null` | `false` | `[]` | PUBLIC-ONLY (no bypass) |
+| Key `[]` (empty) | any | `[]` | PUBLIC-ONLY |
+| Key `["t1", "t2"]` | any | `["t1", "t2"]` | TEAM-SCOPED |
+
+!!! warning "Critical Security Behavior"
+    A **missing** `teams` key always results in public-only access, even for admin users. Admin bypass requires **explicit** `teams: null` combined with `is_admin: true`.
+
+### Multi-Team Token Behavior
+
+When a token contains multiple teams (`teams: ["team-1", "team-2"]`):
+
+- **Listing queries**: Return resources visible to ANY of the user's teams
+- **`request.state.team_id`**: Set to the **first** team in the list
+- **Resource creation**: Uses `request.state.team_id` as default if not explicitly specified
+
+This means the first team in the token's teams array has special significance for default resource ownership.
+
+### Return Value Semantics
+
+The `normalize_token_teams()` function returns:
+
+| Return Value | Meaning | Query Behavior |
+|--------------|---------|----------------|
+| `None` | Admin bypass | Skip ALL team filtering |
+| `[]` (empty list) | Public-only | Filter to `visibility='public'` ONLY |
+| `["t1", "t2"]` | Team-scoped | Filter to team resources + public |
+
+---
+
+## Two-Layer Security Model
+
+ContextForge implements two distinct security layers that work together:
+
+### Layer 1: Token Scoping (Data Filtering)
+
+**Purpose**: Controls what resources a user CAN SEE
+
+- Enforced by `TokenScopingMiddleware` and service layer queries
+- Based on the `teams` claim in the JWT token
+- Filters database queries based on visibility rules
+- Applied **before** RBAC checks
+
+### Layer 2: RBAC (Action Authorization)
+
+**Purpose**: Controls what actions a user CAN DO
+
+- Enforced by `@require_permission` decorators
+- Based on role assignments and permission sets
+- Checks if user has permission for the requested action
+- Applied **after** token scoping passes
+
+### Request Flow
+
+```
+Request: POST /tools/{id}/execute
+    │
+    ▼
+┌─────────────────────────────┐
+│ Token Scoping (Layer 1)     │ ← Can user ACCESS this tool?
+│ - Check visibility          │   (public/team/private)
+│ - Check team membership     │
+└─────────────────────────────┘
+    │ (allowed)
+    ▼
+┌─────────────────────────────┐
+│ RBAC Permission (Layer 2)   │ ← Can user EXECUTE tools?
+│ @require_permission(        │   (tools.execute permission)
+│   "tools.execute")          │
+└─────────────────────────────┘
+    │ (allowed)
+    ▼
+┌─────────────────────────────┐
+│ Execute Operation           │
+└─────────────────────────────┘
+```
+
+### Enforcement Points Matrix
+
+| Location | Token Scoping | RBAC | Notes |
+|----------|--------------|------|-------|
+| Token Scoping Middleware | ✅ | N/A | Request-level data filtering |
+| REST API Endpoints | ✅ | ✅ | `@require_permission` decorators |
+| RPC Handler (`/rpc`) | ✅ | Varies | Method-specific checks |
+| Admin UI | ✅ | ✅ | Permission-based rendering |
+| Service Layer | ✅ | N/A | Database query filtering |
+| WebSocket | ✅ | ✅ | Forwards auth to /rpc |
+| MCP Transport | ✅ | N/A | Streamable HTTP filtering + per-server OAuth enforcement |
 
 ---
 
@@ -296,7 +418,7 @@ Enforcement summary:
 
 ### Resource Architecture
 
-All resources in the MCP Gateway are scoped to teams with three visibility levels:
+All resources in ContextForge are scoped to teams with three visibility levels:
 
 ```mermaid
 flowchart TD
@@ -422,7 +544,7 @@ flowchart TD
 
 ## Role-Based Access Control (RBAC)
 
-The MCP Gateway implements a comprehensive RBAC system with four built-in roles that are automatically created during system bootstrap. These roles provide granular permission management across different scopes.
+ContextForge implements a comprehensive RBAC system with four built-in roles that are automatically created during system bootstrap. These roles provide granular permission management across different scopes.
 
 ### System Roles
 
@@ -436,32 +558,41 @@ The following roles are created automatically when the system starts:
 
 #### 2. Team Admin (Team Scope)
 - **Permissions**:
+
   - `teams.read` - View team information
   - `teams.update` - Modify team settings
+  - `teams.join` - Join public teams
   - `teams.manage_members` - Add/remove team members
   - `tools.read` - View tools
   - `tools.execute` - Execute tools
   - `resources.read` - View resources
   - `prompts.read` - View prompts
+
 - **Scope**: Team
 - **Description**: Team administrator with team management permissions
 - **Use Case**: Team leaders who manage team membership and resources
 
 #### 3. Developer (Team Scope)
 - **Permissions**:
+
+  - `teams.join` - Join public teams
   - `tools.read` - View tools
   - `tools.execute` - Execute tools
   - `resources.read` - View resources
   - `prompts.read` - View prompts
+
 - **Scope**: Team
 - **Description**: Developer with tool and resource access
 - **Use Case**: Team members who need to use tools and access resources
 
 #### 4. Viewer (Team Scope)
 - **Permissions**:
+
+  - `teams.join` - Join public teams
   - `tools.read` - View tools
   - `resources.read` - View resources
   - `prompts.read` - View prompts
+
 - **Scope**: Team
 - **Description**: Read-only access to resources
 - **Use Case**: Team members who only need to view resources without executing them
@@ -534,8 +665,8 @@ flowchart TD
 SSO_AUTO_ADMIN_DOMAINS"]
         F["Trusted Domains
 SSO_TRUSTED_DOMAINS"]
-        G["Manual Assignment
-Platform admin approval"]
+        G["Admin Approval Gate
+SSO_REQUIRE_ADMIN_APPROVAL"]
     end
 
     A --> E
@@ -565,114 +696,57 @@ sequenceDiagram
     participant DB as Database
     participant A as Platform Admin
 
-    Note over U,A: SSO Registration with Domain Check
+    Note over U,A: SSO Registration with Domain + Approval Checks
     U->>G: SSO Login (user@company.com)
     G->>SSO: OAuth flow
     SSO-->>G: User profile
 
-    G->>G: Check SSO_AUTO_ADMIN_DOMAINS
-    Note right of G: company.com in whitelist?
-
-    alt Auto-Admin Domain
-        G->>DB: Create user with is_admin=true
-        G-->>U: Admin access granted
-    else Trusted Domain
-        G->>DB: Create user with is_admin=false
-        G->>DB: Auto-approve user
-        G-->>U: Regular user access
-    else Unknown Domain
-        G->>DB: Create pending user
-        G->>A: Admin approval required
-        A->>G: Approve/deny + admin assignment
-        alt Approved as Admin
-            G->>DB: Set is_admin=true
-            G-->>U: Admin access granted
-        else Approved as User
-            G->>DB: Set is_admin=false
-            G-->>U: Regular user access
-        else Denied
-            G-->>U: Access denied
+    G->>G: Check trusted domains (if configured)
+    alt Domain not trusted
+        G-->>U: Access denied
+    else Domain trusted
+        G->>G: Require admin approval?
+        alt Approval required (SSO_REQUIRE_ADMIN_APPROVAL=true)
+            G->>DB: Create PendingUserApproval
+            G-->>A: Approval required
+            A->>G: Approve user (admin UI)
+            Note over U,G: User logs in again after approval
+            U->>G: SSO Login (retry)
+        else Approval not required
+            Note right of G: Continue auto-create flow
         end
+
+        G->>G: Evaluate admin criteria
+        Note right of G: Auto-admin domains / provider admin groups
+        G->>DB: Create user (is_admin true/false)
+        G-->>U: JWT token issued
     end
 ```
 
 ## Password Management
 
-### Changing Platform Admin Password
+ContextForge now supports:
 
-The platform admin password can be changed using several methods:
+- Self-service forgot-password/reset flow:
+  - `POST /auth/email/forgot-password`
+  - `GET /auth/email/reset-password/{token}`
+  - `POST /auth/email/reset-password/{token}`
+- Admin unlock flow:
+  - `POST /auth/email/admin/users/{email}/unlock`
+- Admin password reset via UI and API (`PUT /auth/email/admin/users/{email}`)
 
-#### Method 1: Admin UI (Easiest)
-Use the web interface to change passwords:
+Operational guidance, Kubernetes recovery commands, emergency SQL procedures, and
+SMTP/reset configuration are documented in:
 
-1. Navigate to [http://localhost:4444/admin/#users](http://localhost:4444/admin/#users)
-2. Click "Edit" on the user account
-3. Enter a new password in the "New Password" field (leave empty to keep current password)
-4. Confirm the password in the "Confirm New Password" field
-5. Click "Update User"
-
-**Note**: Both password fields must match for the update to succeed. The form will prevent submission if passwords don't match.
-
-#### Method 2: API Endpoint
-Use the `/auth/email/change-password` endpoint after authentication:
-
-```bash
-# First, get a JWT token by logging in
-curl -X POST "http://localhost:4444/auth/email/login" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "admin@example.com",
-    "password": "current_password"
-  }'
-
-# Use the returned JWT token to change password
-curl -X POST "http://localhost:4444/auth/email/change-password" \
-  -H "Authorization: Bearer " \
-  -H "Content-Type: application/json" \
-  -d '{
-    "old_password": "current_password",
-    "new_password": "new_secure_password"
-  }'
-```
-
-#### Method 3: Environment Variable + Migration
-1. Update `PLATFORM_ADMIN_PASSWORD` in your `.env` file
-2. Run database migration to apply the change:
-   ```bash
-   alembic upgrade head
-   ```
-
-**Note**: This method only works during initial setup. After the admin user exists, the environment variable is ignored.
-
-#### Method 4: Direct Database Update
-For emergency password resets, you can update the database directly:
-
-```bash
-# Using the application's password service
-python3 -c "
-from mcpgateway.services.argon2_service import Argon2PasswordService
-from mcpgateway.db import SessionLocal
-from mcpgateway.common.models import EmailUser
-
-service = Argon2PasswordService()
-hashed = service.hash_password('new_password')
-
-with SessionLocal() as db:
-    user = db.query(EmailUser).filter(EmailUser.email == 'admin@example.com').first()
-    if user:
-        user.password_hash = hashed
-        db.commit()
-        print('Password updated successfully')
-    else:
-        print('Admin user not found')
-"
-```
+- [Management: Password Management & Recovery](../manage/password-management.md)
 
 ### Password Security Requirements
-- Minimum 8 characters (enforced by application)
-- Uses Argon2id hashing algorithm for secure storage
-- Password change events are logged in the audit trail
-- Failed login attempts are tracked and can trigger account lockout
+
+- Argon2id hashing for stored credentials
+- One-time reset tokens (hashed in DB, configurable expiry)
+- Password reset request rate limiting
+- Failed login tracking and account lockout controls
+- Audit events for login/reset/lockout/unlock actions
 
 ### Role-Based UI Experience
 
@@ -707,6 +781,7 @@ The user interface adapts based on the user's assigned roles:
 - Default on create: New resources (including MCP Servers, Tools, Resources, Prompts, and A2A Agents) default to `visibility="private"` unless a different value is explicitly provided by an allowed actor. For servers created via the UI, the visibility is enforced to `private` by default.
 - Team assignment: When a user creates a server and does not specify `team_id`, the server is automatically assigned to the user's personal team.
 - Sharing workflow:
+
   - Private → Team: Make the resource visible to the owning team by setting `visibility="team"`.
   - Private/Team → Public: Make the resource visible to all authenticated users by setting `visibility="public"`.
   - Cross-team: To have a resource under a different team, create it in that team or move/clone it per policy; cross-team "share" is by visibility, not multi-team ownership.
@@ -797,137 +872,134 @@ visibility = public"]
 
 ## Database Schema Design
 
-### Complete Multi-Tenant Schema
+### Core Multi-Tenant Schema (Key Fields)
 
 ```mermaid
 erDiagram
     %% User Management
     EmailUser ||--o{ EmailTeamMember : belongs_to
     EmailUser ||--o{ EmailTeamInvitation : invites
-    EmailUser ||--o{ EmailTeam : owns
+    EmailUser ||--o{ EmailTeamJoinRequest : requests
+    EmailUser ||--o{ EmailTeam : creates
 
     %% Team Management
     EmailTeam ||--o{ EmailTeamMember : has
     EmailTeam ||--o{ EmailTeamInvitation : has_pending
+    EmailTeam ||--o{ EmailTeamJoinRequest : has_requests
     EmailTeam ||--o{ Tool : owns
     EmailTeam ||--o{ Server : owns
     EmailTeam ||--o{ Resource : owns
     EmailTeam ||--o{ Prompt : owns
     EmailTeam ||--o{ A2AAgent : owns
 
-    %% Resources
-    Tool ||--o{ ToolExecution : executions
-    Server ||--o{ ServerConnection : connections
-    A2AAgent ||--o{ A2AInteraction : interactions
-
     EmailUser {
         string email PK
-        string password_hash
         string full_name
         boolean is_admin
+        boolean is_active
+        string auth_provider
         timestamp created_at
         timestamp updated_at
     }
 
     EmailTeam {
-        uuid id PK
+        string id PK
         string name
+        string slug
         text description
-        enum type "personal|organizational"
-        enum visibility "private|public"
-        string owner_email FK
-        jsonb settings
+        string created_by FK
+        boolean is_personal
+        string visibility
+        int max_members
+        boolean is_active
         timestamp created_at
         timestamp updated_at
     }
 
     EmailTeamMember {
-        uuid id PK
-        uuid team_id FK
+        string id PK
+        string team_id FK
         string user_email FK
-        enum role "owner|member"
-        jsonb permissions
+        string role
+        string invited_by FK
         timestamp joined_at
-        timestamp updated_at
+        boolean is_active
     }
 
     EmailTeamInvitation {
-        uuid id PK
-        uuid team_id FK
-        string invited_email
-        string invited_by_email FK
-        enum role "owner|member"
+        string id PK
+        string team_id FK
+        string email
+        string role
+        string invited_by FK
+        timestamp invited_at
         string token
-        text message
         timestamp expires_at
-        enum status "pending|accepted|declined|expired"
-        timestamp created_at
+        boolean is_active
+    }
+
+    EmailTeamJoinRequest {
+        string id PK
+        string team_id FK
+        string user_email FK
+        string status
+        timestamp requested_at
+        timestamp expires_at
+        timestamp reviewed_at
+        string reviewed_by FK
+        string notes
     }
 
     Tool {
-        uuid id PK
-        string name
-        text description
-        uuid team_id FK
-        string owner_email FK
-        enum visibility "private|team|public"
-        jsonb schema
-        jsonb tags
-        timestamp created_at
-        timestamp updated_at
-    }
-
-    Server {
-        uuid id PK
-        string name
-        text description
-        uuid team_id FK
-        string owner_email FK
-        enum visibility "private|team|public"
-        jsonb config
-        jsonb tags
+        string id PK
+        string original_name
+        string display_name
+        string team_id FK
+        string owner_email
+        string visibility
         timestamp created_at
         timestamp updated_at
     }
 
     Resource {
-        uuid id PK
-        string name
-        text description
-        uuid team_id FK
-        string owner_email FK
-        enum visibility "private|team|public"
+        string id PK
         string uri
-        string mime_type
-        jsonb tags
+        string name
+        string team_id FK
+        string owner_email
+        string visibility
         timestamp created_at
         timestamp updated_at
     }
 
     Prompt {
-        uuid id PK
+        string id PK
         string name
-        text description
-        uuid team_id FK
-        string owner_email FK
-        enum visibility "private|team|public"
-        text content
-        jsonb arguments
-        jsonb tags
+        string original_name
+        string team_id FK
+        string owner_email
+        string visibility
         timestamp created_at
         timestamp updated_at
     }
 
     A2AAgent {
-        uuid id PK
+        string id PK
         string name
-        text description
-        uuid team_id FK
-        string owner_email FK
-        enum visibility "private|team|public"
-        string endpoint_url
-        jsonb config
-        jsonb tags
+        string slug
+        string team_id FK
+        string owner_email
+        string visibility
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    Server {
+        string id PK
+        string name
+        string team_id FK
+        string owner_email
+        string visibility
         timestamp created_at
         timestamp updated_at
     }
@@ -946,11 +1018,11 @@ flowchart TD
     subgraph "API Endpoint Patterns"
         A["GET /tools?team_id=uuid&visibility=team"]
         B["POST /tools
-name, team_id, visibility"]
-        C["GET /tools/id"]
-        D["PUT /tools/id
-team_id, visibility"]
-        E["DELETE /tools/id"]
+name, team_id (optional), visibility"]
+        C["GET /tools/{tool_id}"]
+        D["PUT /tools/{tool_id}
+visibility, name, etc."]
+        E["DELETE /tools/{tool_id}"]
     end
 
     subgraph "Request Processing"
@@ -992,7 +1064,6 @@ sequenceDiagram
     participant C as Client
     participant G as Gateway
     participant A as Auth Middleware
-    participant T as Team Service
     participant R as Resource Service
     participant DB as Database
 
@@ -1001,14 +1072,11 @@ sequenceDiagram
 
     G->>A: Validate request
     A->>A: Extract user from JWT
-    A->>T: Check team membership
-    T->>DB: Query team_members
-    DB-->>T: Membership confirmed
-    T-->>A: Access granted
+    A->>A: Enforce permissions + token scope
     A-->>G: User authorized
 
     G->>R: Create resource
-    R->>R: Validate team_id ownership
+    R->>R: Validate payload + defaults
     R->>DB: INSERT resource
     Note right of R: team_id, owner_email, visibility
     DB-->>R: Resource created
@@ -1029,13 +1097,18 @@ sequenceDiagram
 
 # Team Settings
 AUTO_CREATE_PERSONAL_TEAMS=true
-PERSONAL_TEAM_PREFIX=personal
+# PERSONAL_TEAM_PREFIX=personal  # optional: set to get collision-safe email-based slugs
 MAX_TEAMS_PER_USER=50
 MAX_MEMBERS_PER_TEAM=100
 
 # Team Invitation Settings
 INVITATION_EXPIRY_DAYS=7
 REQUIRE_EMAIL_VERIFICATION_FOR_INVITES=true
+
+# Team Governance
+ALLOW_TEAM_CREATION=true
+ALLOW_TEAM_JOIN_REQUESTS=true
+ALLOW_TEAM_INVITATIONS=true
 
 # Visibility
 # NOTE: Resources default to 'private' (not configurable via env today)
@@ -1138,6 +1211,23 @@ flowchart TD
 
 **Note**: Team Owner/Member roles from the team management system work alongside RBAC roles. A user can have both team membership status (Owner/Member) and RBAC role assignments (Team Admin/Developer/Viewer) within the same team.
 
+### Token Scoping Invariants
+
+These behaviors are enforced consistently across all access paths:
+
+1. `normalize_token_teams()` is the ONLY function that interprets JWT team claims
+2. Missing `teams` key always returns `[]` (public-only, secure default)
+3. Admin bypass requires BOTH `teams: null` AND `is_admin: true`, and both `token_teams=None` AND `user_email=None` in the service layer
+4. Empty teams list (`[]`) results in public-only access, even for admins
+5. All list endpoints pass `token_teams` to the service layer
+6. Service layer applies visibility filtering based on `token_teams` via `BaseService._apply_access_control()`
+7. Public-only tokens can ONLY access `visibility='public'` resources — owner and team access are both suppressed
+8. Owner-based access (`owner_email`) grants visibility only for `visibility='private'` resources — it does not bypass team scoping for team-visibility resources
+
+### Related Documentation
+
+For detailed information on RBAC configuration, token scoping, and permission management, see [RBAC Configuration](../manage/rbac.md).
+
 ---
 
 ## Implementation Verification
@@ -1182,23 +1272,29 @@ flowchart TD
 ## Enhancements & Roadmap (Part of the Design)
 
 - Public Team Discovery & Join Requests:
+
   - Add endpoints and UI to request membership on public teams; owner approval workflow; optional auto‑approve policy.
   - Admin toggles/policies to restrict who can create public teams and who can approve joins.
 
 - Unified Operation Audit:
+
   - System‑wide audit log for create/update/delete across teams, tools, servers, resources, prompts, agents with export/reporting.
 
 - Role Automation:
+
   - Auto‑assign default RBAC roles on resource creation (e.g., owner gets manager role in team scope; members get viewer).
   - Optional per‑team policies defining who may create public resources.
 
 - ABAC for Virtual Servers:
+
   - Attribute‑based conditions layered on top of RBAC (tenant tags, data classifications, environment, time windows, client IP).
 
 - Team/Resource Quotas and Policies:
+
   - Per‑team limits (tools/servers/resources/agents); per‑team defaults for resource visibility and creation rights.
 
 - Public Resource Access Controls:
+
   - Fine‑grained cross‑tenant rate limits and opt‑in masking for metadata shown to non‑members.
 
 This architecture provides a robust, secure, and scalable multi-tenant system that supports complex organizational structures while maintaining strict data isolation and flexible resource sharing capabilities.

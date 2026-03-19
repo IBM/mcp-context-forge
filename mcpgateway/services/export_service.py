@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=import-outside-toplevel,no-name-in-module
 """Location: ./mcpgateway/services/export_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -31,12 +32,9 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.services.gateway_service import GatewayService
-from mcpgateway.services.prompt_service import PromptService
-from mcpgateway.services.resource_service import ResourceService
-from mcpgateway.services.root_service import RootService
-from mcpgateway.services.server_service import ServerService
-from mcpgateway.services.tool_service import ToolService
+from mcpgateway.utils.services_auth import encode_auth
+
+# Service singletons are imported lazily in __init__ to avoid circular imports
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +79,7 @@ class ExportValidationError(ExportError):
 
 
 class ExportService:
-    """Service for exporting MCP Gateway configuration and data.
+    """Service for exporting ContextForge configuration and data.
 
     This service provides comprehensive export functionality including:
     - Collection of all entity types (tools, gateways, servers, prompts, resources, roots)
@@ -126,12 +124,23 @@ class ExportService:
 
     def __init__(self):
         """Initialize the export service with required dependencies."""
-        self.gateway_service = GatewayService()
-        self.tool_service = ToolService()
-        self.resource_service = ResourceService()
-        self.prompt_service = PromptService()
-        self.server_service = ServerService()
-        self.root_service = RootService()
+        # Use globally-exported singletons from service modules so they
+        # share initialized EventService/Redis clients created at app startup.
+        # Import lazily to avoid circular import at module load time.
+        # First-Party
+        from mcpgateway.services.gateway_service import gateway_service
+        from mcpgateway.services.prompt_service import prompt_service
+        from mcpgateway.services.resource_service import resource_service
+        from mcpgateway.services.root_service import root_service
+        from mcpgateway.services.server_service import server_service
+        from mcpgateway.services.tool_service import tool_service
+
+        self.gateway_service = gateway_service
+        self.tool_service = tool_service
+        self.resource_service = resource_service
+        self.prompt_service = prompt_service
+        self.server_service = server_service
+        self.root_service = root_service
 
     async def initialize(self) -> None:
         """Initialize the export service."""
@@ -141,13 +150,15 @@ class ExportService:
         """Shutdown the export service."""
         logger.info("Export service shutdown")
 
-    async def _fetch_all_tools(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
-        """Fetch all tools by following pagination cursors.
+    async def _fetch_all_tools(self, db: Session, tags: Optional[List[str]], include_inactive: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Any]:
+        """Fetch all tools by following pagination cursors with team scoping.
 
         Args:
             db: Database session
             tags: Filter by tags
             include_inactive: Include inactive tools
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of all tools across all pages
@@ -155,20 +166,22 @@ class ExportService:
         all_tools = []
         cursor = None
         while True:
-            tools, next_cursor = await self.tool_service.list_tools(db, tags=tags, include_inactive=include_inactive, cursor=cursor)
+            tools, next_cursor = await self.tool_service.list_tools(db, tags=tags, include_inactive=include_inactive, cursor=cursor, user_email=user_email, token_teams=token_teams)
             all_tools.extend(tools)
             if not next_cursor:
                 break
             cursor = next_cursor
         return all_tools
 
-    async def _fetch_all_prompts(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
-        """Fetch all prompts by following pagination cursors.
+    async def _fetch_all_prompts(self, db: Session, tags: Optional[List[str]], include_inactive: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Any]:
+        """Fetch all prompts by following pagination cursors with team scoping.
 
         Args:
             db: Database session
             tags: Filter by tags
             include_inactive: Include inactive prompts
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of all prompts across all pages
@@ -176,20 +189,22 @@ class ExportService:
         all_prompts = []
         cursor = None
         while True:
-            prompts, next_cursor = await self.prompt_service.list_prompts(db, tags=tags, include_inactive=include_inactive, cursor=cursor)
+            prompts, next_cursor = await self.prompt_service.list_prompts(db, tags=tags, include_inactive=include_inactive, cursor=cursor, user_email=user_email, token_teams=token_teams)
             all_prompts.extend(prompts)
             if not next_cursor:
                 break
             cursor = next_cursor
         return all_prompts
 
-    async def _fetch_all_resources(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
-        """Fetch all resources by following pagination cursors.
+    async def _fetch_all_resources(self, db: Session, tags: Optional[List[str]], include_inactive: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Any]:
+        """Fetch all resources by following pagination cursors with team scoping.
 
         Args:
             db: Database session
             tags: Filter by tags
             include_inactive: Include inactive resources
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of all resources across all pages
@@ -197,20 +212,22 @@ class ExportService:
         all_resources = []
         cursor = None
         while True:
-            resources, next_cursor = await self.resource_service.list_resources(db, tags=tags, include_inactive=include_inactive, cursor=cursor)
+            resources, next_cursor = await self.resource_service.list_resources(db, tags=tags, include_inactive=include_inactive, cursor=cursor, user_email=user_email, token_teams=token_teams)
             all_resources.extend(resources)
             if not next_cursor:
                 break
             cursor = next_cursor
         return all_resources
 
-    async def _fetch_all_gateways(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
-        """Fetch all gateways by following pagination cursors.
+    async def _fetch_all_gateways(self, db: Session, tags: Optional[List[str]], include_inactive: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Any]:
+        """Fetch all gateways by following pagination cursors with team scoping.
 
         Args:
             db: Database session
             tags: Filter by tags
             include_inactive: Include inactive gateways
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of all gateways across all pages
@@ -218,20 +235,22 @@ class ExportService:
         all_gateways = []
         cursor = None
         while True:
-            gateways, next_cursor = await self.gateway_service.list_gateways(db, tags=tags, include_inactive=include_inactive, cursor=cursor)
+            gateways, next_cursor = await self.gateway_service.list_gateways(db, tags=tags, include_inactive=include_inactive, cursor=cursor, user_email=user_email, token_teams=token_teams)
             all_gateways.extend(gateways)
             if not next_cursor:
                 break
             cursor = next_cursor
         return all_gateways
 
-    async def _fetch_all_servers(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Any]:
-        """Fetch all servers by following pagination cursors.
+    async def _fetch_all_servers(self, db: Session, tags: Optional[List[str]], include_inactive: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Any]:
+        """Fetch all servers by following pagination cursors with team scoping.
 
         Args:
             db: Database session
             tags: Filter by tags
             include_inactive: Include inactive servers
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of all servers across all pages
@@ -239,7 +258,7 @@ class ExportService:
         all_servers = []
         cursor = None
         while True:
-            servers, next_cursor = await self.server_service.list_servers(db, tags=tags, include_inactive=include_inactive, cursor=cursor)
+            servers, next_cursor = await self.server_service.list_servers(db, tags=tags, include_inactive=include_inactive, cursor=cursor, user_email=user_email, token_teams=token_teams)
             all_servers.extend(servers)
             if not next_cursor:
                 break
@@ -256,6 +275,8 @@ class ExportService:
         include_dependencies: bool = True,
         exported_by: str = "system",
         root_path: str = "",
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Export complete gateway configuration to a standardized format.
 
@@ -268,6 +289,8 @@ class ExportService:
             include_dependencies: Whether to include dependent entities automatically
             exported_by: Username of the person performing the export
             root_path: Root path for constructing API endpoints
+            user_email: Requesting user's email for team-scoped visibility filtering
+            token_teams: Token team scope for visibility filtering (None=admin bypass, []=public-only)
 
         Returns:
             Dict containing the complete export data in the specified schema format
@@ -337,21 +360,21 @@ class ExportService:
                 "metadata": metadata,
             }
 
-            # Export each entity type
+            # Export each entity type (with team-scoped visibility filtering)
             if "tools" in entity_types:
-                export_data["entities"]["tools"] = await self._export_tools(db, tags, include_inactive)
+                export_data["entities"]["tools"] = await self._export_tools(db, tags, include_inactive, user_email=user_email, token_teams=token_teams)
 
             if "gateways" in entity_types:
-                export_data["entities"]["gateways"] = await self._export_gateways(db, tags, include_inactive)
+                export_data["entities"]["gateways"] = await self._export_gateways(db, tags, include_inactive, user_email=user_email, token_teams=token_teams)
 
             if "servers" in entity_types:
-                export_data["entities"]["servers"] = await self._export_servers(db, tags, include_inactive, root_path)
+                export_data["entities"]["servers"] = await self._export_servers(db, tags, include_inactive, root_path, user_email=user_email, token_teams=token_teams)
 
             if "prompts" in entity_types:
-                export_data["entities"]["prompts"] = await self._export_prompts(db, tags, include_inactive)
+                export_data["entities"]["prompts"] = await self._export_prompts(db, tags, include_inactive, user_email=user_email, token_teams=token_teams)
 
             if "resources" in entity_types:
-                export_data["entities"]["resources"] = await self._export_resources(db, tags, include_inactive)
+                export_data["entities"]["resources"] = await self._export_resources(db, tags, include_inactive, user_email=user_email, token_teams=token_teams)
 
             if "roots" in entity_types:
                 export_data["entities"]["roots"] = await self._export_roots()
@@ -374,7 +397,7 @@ class ExportService:
             logger.error(f"Export failed: {str(e)}")
             raise ExportError(f"Failed to export configuration: {str(e)}")
 
-    async def _export_tools(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
+    async def _export_tools(self, db: Session, tags: Optional[List[str]], include_inactive: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Export tools with encrypted authentication data.
 
         Uses batch queries to fetch auth data efficiently, avoiding N+1 query patterns.
@@ -383,12 +406,14 @@ class ExportService:
             db: Database session
             tags: Filter by tags
             include_inactive: Include inactive tools
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of exported tool dictionaries
         """
-        # Fetch all tools across all pages (bypasses pagination limit)
-        tools = await self._fetch_all_tools(db, tags, include_inactive)
+        # Fetch all tools across all pages (with team-scoped visibility)
+        tools = await self._fetch_all_tools(db, tags, include_inactive, user_email=user_email, token_teams=token_teams)
 
         # Filter to only exportable tools (local REST tools, not MCP tools from gateways)
         exportable_tools = [t for t in tools if not (t.integration_type == "MCP" and t.gateway_id)]
@@ -412,6 +437,7 @@ class ExportService:
                 "integration_type": tool.integration_type,
                 "request_type": tool.request_type,
                 "description": tool.description,
+                "original_description": tool.original_description,
                 "headers": tool.headers or {},
                 "input_schema": tool.input_schema or {"type": "object", "properties": {}},
                 "output_schema": tool.output_schema,
@@ -445,7 +471,7 @@ class ExportService:
 
         return exported_tools
 
-    async def _export_gateways(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
+    async def _export_gateways(self, db: Session, tags: Optional[List[str]], include_inactive: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Export gateways with encrypted authentication data.
 
         Uses batch queries to fetch auth data efficiently, avoiding N+1 query patterns.
@@ -454,12 +480,14 @@ class ExportService:
             db: Database session
             tags: Filter by tags
             include_inactive: Include inactive gateways
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of exported gateway dictionaries
         """
-        # Fetch all gateways across all pages (bypasses pagination limit)
-        gateways = await self._fetch_all_gateways(db, tags, include_inactive)
+        # Fetch all gateways across all pages (with team-scoped visibility)
+        gateways = await self._fetch_all_gateways(db, tags, include_inactive, user_email=user_email, token_teams=token_teams)
 
         # Batch fetch auth data for gateways with masked values (single query instead of N queries)
         gateway_ids_needing_auth = [g.id for g in gateways if g.auth_type and g.auth_value == settings.masked_auth_value]
@@ -491,7 +519,8 @@ class ExportService:
                         auth_type, auth_value = auth_data_map[gateway.id]
                         if auth_value:
                             gateway_data["auth_type"] = auth_type
-                            gateway_data["auth_value"] = auth_value
+                            # DbGateway.auth_value is JSON (dict); export format expects encoded string.
+                            gateway_data["auth_value"] = encode_auth(auth_value) if isinstance(auth_value, dict) else auth_value
                 else:
                     # Auth value is not masked, use as-is
                     gateway_data["auth_type"] = gateway.auth_type
@@ -501,7 +530,9 @@ class ExportService:
 
         return exported_gateways
 
-    async def _export_servers(self, db: Session, tags: Optional[List[str]], include_inactive: bool, root_path: str = "") -> List[Dict[str, Any]]:
+    async def _export_servers(
+        self, db: Session, tags: Optional[List[str]], include_inactive: bool, root_path: str = "", user_email: Optional[str] = None, token_teams: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         """Export virtual servers with their tool associations.
 
         Args:
@@ -509,12 +540,14 @@ class ExportService:
             tags: Filter by tags
             include_inactive: Include inactive servers
             root_path: Root path for constructing API endpoints
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of exported server dictionaries
         """
-        # Fetch all servers across all pages (bypasses pagination limit)
-        servers = await self._fetch_all_servers(db, tags, include_inactive)
+        # Fetch all servers across all pages (with team-scoped visibility)
+        servers = await self._fetch_all_servers(db, tags, include_inactive, user_email=user_email, token_teams=token_teams)
         exported_servers = []
 
         for server in servers:
@@ -534,19 +567,21 @@ class ExportService:
 
         return exported_servers
 
-    async def _export_prompts(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
+    async def _export_prompts(self, db: Session, tags: Optional[List[str]], include_inactive: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Export prompts with their templates and schemas.
 
         Args:
             db: Database session
             tags: Filter by tags
             include_inactive: Include inactive prompts
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of exported prompt dictionaries
         """
-        # Fetch all prompts across all pages (bypasses pagination limit)
-        prompts = await self._fetch_all_prompts(db, tags, include_inactive)
+        # Fetch all prompts across all pages (with team-scoped visibility)
+        prompts = await self._fetch_all_prompts(db, tags, include_inactive, user_email=user_email, token_teams=token_teams)
         exported_prompts = []
 
         for prompt in prompts:
@@ -579,19 +614,23 @@ class ExportService:
 
         return exported_prompts
 
-    async def _export_resources(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
+    async def _export_resources(
+        self, db: Session, tags: Optional[List[str]], include_inactive: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         """Export resources with their content metadata.
 
         Args:
             db: Database session
             tags: Filter by tags
             include_inactive: Include inactive resources
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of exported resource dictionaries
         """
-        # Fetch all resources across all pages (bypasses pagination limit)
-        resources = await self._fetch_all_resources(db, tags, include_inactive)
+        # Fetch all resources across all pages (with team-scoped visibility)
+        resources = await self._fetch_all_resources(db, tags, include_inactive, user_email=user_email, token_teams=token_teams)
         exported_resources = []
 
         for resource in resources:
@@ -674,7 +713,16 @@ class ExportService:
 
         logger.debug("Export data validation passed")
 
-    async def export_selective(self, db: Session, entity_selections: Dict[str, List[str]], include_dependencies: bool = True, exported_by: str = "system", root_path: str = "") -> Dict[str, Any]:
+    async def export_selective(
+        self,
+        db: Session,
+        entity_selections: Dict[str, List[str]],
+        include_dependencies: bool = True,
+        exported_by: str = "system",
+        root_path: str = "",
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """Export specific entities by their IDs/names.
 
         Args:
@@ -683,6 +731,8 @@ class ExportService:
             include_dependencies: Whether to include dependent entities
             exported_by: Username of the person performing the export
             root_path: Root path for constructing API endpoints
+            user_email: Requesting user's email for team-scoped visibility filtering
+            token_teams: Token team scope for visibility filtering (None=admin bypass, []=public-only)
 
         Returns:
             Dict containing the selective export data
@@ -740,15 +790,15 @@ class ExportService:
         # Export selected entities for each type
         for entity_type, selected_ids in entity_selections.items():
             if entity_type == "tools":
-                export_data["entities"]["tools"] = await self._export_selected_tools(db, selected_ids)
+                export_data["entities"]["tools"] = await self._export_selected_tools(db, selected_ids, user_email=user_email, token_teams=token_teams)
             elif entity_type == "gateways":
-                export_data["entities"]["gateways"] = await self._export_selected_gateways(db, selected_ids)
+                export_data["entities"]["gateways"] = await self._export_selected_gateways(db, selected_ids, user_email=user_email, token_teams=token_teams)
             elif entity_type == "servers":
-                export_data["entities"]["servers"] = await self._export_selected_servers(db, selected_ids, root_path)
+                export_data["entities"]["servers"] = await self._export_selected_servers(db, selected_ids, root_path, user_email=user_email, token_teams=token_teams)
             elif entity_type == "prompts":
-                export_data["entities"]["prompts"] = await self._export_selected_prompts(db, selected_ids)
+                export_data["entities"]["prompts"] = await self._export_selected_prompts(db, selected_ids, user_email=user_email, token_teams=token_teams)
             elif entity_type == "resources":
-                export_data["entities"]["resources"] = await self._export_selected_resources(db, selected_ids)
+                export_data["entities"]["resources"] = await self._export_selected_resources(db, selected_ids, user_email=user_email, token_teams=token_teams)
             elif entity_type == "roots":
                 export_data["entities"]["roots"] = await self._export_selected_roots(selected_ids)
 
@@ -765,7 +815,20 @@ class ExportService:
         logger.info(f"Selective export completed with {sum(export_data['metadata']['entity_counts'].values())} entities")
         return cast(Dict[str, Any], export_data)
 
-    async def _export_selected_tools(self, db: Session, tool_ids: List[str]) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _is_scoped_selective_export(user_email: Optional[str], token_teams: Optional[List[str]]) -> bool:
+        """Return whether selective export should apply visibility filtering.
+
+        Args:
+            user_email: Requesting user's email.
+            token_teams: Token team scope for visibility filtering.
+
+        Returns:
+            ``True`` when selective export should apply team/public filtering.
+        """
+        return user_email is not None or token_teams is not None
+
+    async def _export_selected_tools(self, db: Session, tool_ids: List[str], user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Export specific tools by their IDs using batch queries.
 
         Uses a single batch query instead of fetching all tools N times.
@@ -773,6 +836,8 @@ class ExportService:
         Args:
             db: Database session
             tool_ids: List of tool IDs to export
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of exported tool dictionaries
@@ -780,8 +845,18 @@ class ExportService:
         if not tool_ids:
             return []
 
+        visible_tool_ids: Optional[set[str]] = None
+        if self._is_scoped_selective_export(user_email, token_teams):
+            visible_tools = await self._fetch_all_tools(db, tags=None, include_inactive=True, user_email=user_email, token_teams=token_teams)
+            visible_tool_ids = {str(tool.id) for tool in visible_tools}
+            tool_ids = [tool_id for tool_id in tool_ids if tool_id in visible_tool_ids]
+            if not tool_ids:
+                return []
+
         # Batch query for selected tools only
         db_tools = db.execute(select(DbTool).where(DbTool.id.in_(tool_ids))).scalars().all()
+        if visible_tool_ids is not None:
+            db_tools = [db_tool for db_tool in db_tools if str(db_tool.id) in visible_tool_ids]
 
         exported_tools = []
         for db_tool in db_tools:
@@ -802,9 +877,9 @@ class ExportService:
                 "annotations": db_tool.annotations or {},
                 "jsonpath_filter": db_tool.jsonpath_filter,
                 "tags": db_tool.tags or [],
-                "rate_limit": db_tool.rate_limit,
-                "timeout": db_tool.timeout,
-                "is_active": db_tool.is_active,
+                "rate_limit": getattr(db_tool, "rate_limit", None),
+                "timeout": getattr(db_tool, "timeout", None),
+                "is_active": db_tool.enabled,
                 "created_at": db_tool.created_at.isoformat() if db_tool.created_at else None,
                 "updated_at": db_tool.updated_at.isoformat() if db_tool.updated_at else None,
             }
@@ -818,7 +893,7 @@ class ExportService:
 
         return exported_tools
 
-    async def _export_selected_gateways(self, db: Session, gateway_ids: List[str]) -> List[Dict[str, Any]]:
+    async def _export_selected_gateways(self, db: Session, gateway_ids: List[str], user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Export specific gateways by their IDs using batch queries.
 
         Uses a single batch query instead of fetching all gateways N times.
@@ -826,6 +901,8 @@ class ExportService:
         Args:
             db: Database session
             gateway_ids: List of gateway IDs to export
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of exported gateway dictionaries
@@ -833,8 +910,18 @@ class ExportService:
         if not gateway_ids:
             return []
 
+        visible_gateway_ids: Optional[set[str]] = None
+        if self._is_scoped_selective_export(user_email, token_teams):
+            visible_gateways = await self._fetch_all_gateways(db, tags=None, include_inactive=True, user_email=user_email, token_teams=token_teams)
+            visible_gateway_ids = {str(gateway.id) for gateway in visible_gateways}
+            gateway_ids = [gateway_id for gateway_id in gateway_ids if gateway_id in visible_gateway_ids]
+            if not gateway_ids:
+                return []
+
         # Batch query for selected gateways only
         db_gateways = db.execute(select(DbGateway).where(DbGateway.id.in_(gateway_ids))).scalars().all()
+        if visible_gateway_ids is not None:
+            db_gateways = [db_gateway for db_gateway in db_gateways if str(db_gateway.id) in visible_gateway_ids]
 
         exported_gateways = []
         for db_gateway in db_gateways:
@@ -845,7 +932,7 @@ class ExportService:
                 "transport": db_gateway.transport,
                 "capabilities": db_gateway.capabilities or {},
                 "health_check": {"url": f"{db_gateway.url}/health", "interval": 30, "timeout": 10, "retries": 3},
-                "is_active": db_gateway.is_active,
+                "is_active": db_gateway.enabled,
                 "tags": db_gateway.tags or [],
                 "passthrough_headers": db_gateway.passthrough_headers or [],
             }
@@ -854,7 +941,9 @@ class ExportService:
             if db_gateway.auth_type:
                 gateway_data["auth_type"] = db_gateway.auth_type
                 if db_gateway.auth_value:
-                    gateway_data["auth_value"] = db_gateway.auth_value
+                    # DbGateway.auth_value is JSON (dict); export format expects an encoded string.
+                    raw = db_gateway.auth_value
+                    gateway_data["auth_value"] = encode_auth(raw) if isinstance(raw, dict) else raw
                 # Include query param auth if present
                 if db_gateway.auth_type == "query_param" and getattr(db_gateway, "auth_query_params", None):
                     gateway_data["auth_query_params"] = db_gateway.auth_query_params
@@ -863,7 +952,9 @@ class ExportService:
 
         return exported_gateways
 
-    async def _export_selected_servers(self, db: Session, server_ids: List[str], root_path: str = "") -> List[Dict[str, Any]]:
+    async def _export_selected_servers(
+        self, db: Session, server_ids: List[str], root_path: str = "", user_email: Optional[str] = None, token_teams: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         """Export specific servers by their IDs using batch queries.
 
         Uses a single batch query instead of fetching all servers N times.
@@ -872,6 +963,8 @@ class ExportService:
             db: Database session
             server_ids: List of server IDs to export
             root_path: Root path for constructing API endpoints
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of exported server dictionaries
@@ -879,8 +972,18 @@ class ExportService:
         if not server_ids:
             return []
 
+        visible_server_ids: Optional[set[str]] = None
+        if self._is_scoped_selective_export(user_email, token_teams):
+            visible_servers = await self._fetch_all_servers(db, tags=None, include_inactive=True, user_email=user_email, token_teams=token_teams)
+            visible_server_ids = {str(server.id) for server in visible_servers}
+            server_ids = [server_id for server_id in server_ids if server_id in visible_server_ids]
+            if not server_ids:
+                return []
+
         # Batch query for selected servers with eager loading to avoid N+1 queries
         db_servers = db.execute(select(DbServer).options(selectinload(DbServer.tools)).where(DbServer.id.in_(server_ids))).scalars().all()
+        if visible_server_ids is not None:
+            db_servers = [db_server for db_server in db_servers if str(db_server.id) in visible_server_ids]
 
         exported_servers = []
         for db_server in db_servers:
@@ -895,7 +998,7 @@ class ExportService:
                 "websocket_endpoint": f"{root_path}/servers/{db_server.id}/ws",
                 "jsonrpc_endpoint": f"{root_path}/servers/{db_server.id}/jsonrpc",
                 "capabilities": {"tools": {"list_changed": True}, "prompts": {"list_changed": True}},
-                "is_active": db_server.is_active,
+                "is_active": db_server.enabled,
                 "tags": db_server.tags or [],
             }
 
@@ -903,7 +1006,7 @@ class ExportService:
 
         return exported_servers
 
-    async def _export_selected_prompts(self, db: Session, prompt_names: List[str]) -> List[Dict[str, Any]]:
+    async def _export_selected_prompts(self, db: Session, prompt_names: List[str], user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Export specific prompts by their identifiers using batch queries.
 
         Uses a single batch query instead of fetching all prompts N times.
@@ -911,6 +1014,8 @@ class ExportService:
         Args:
             db: Database session
             prompt_names: List of prompt IDs or names to export
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of exported prompt dictionaries
@@ -918,8 +1023,33 @@ class ExportService:
         if not prompt_names:
             return []
 
+        visible_prompt_identifiers: Optional[set[str]] = None
+        if self._is_scoped_selective_export(user_email, token_teams):
+            visible_prompts = await self._fetch_all_prompts(db, tags=None, include_inactive=True, user_email=user_email, token_teams=token_teams)
+            visible_prompt_identifiers = set()
+            for prompt in visible_prompts:
+                visible_prompt_identifiers.add(str(prompt.id))
+                if getattr(prompt, "name", None):
+                    visible_prompt_identifiers.add(prompt.name)
+                if getattr(prompt, "original_name", None):
+                    visible_prompt_identifiers.add(prompt.original_name)
+                if getattr(prompt, "custom_name", None):
+                    visible_prompt_identifiers.add(prompt.custom_name)
+            prompt_names = [prompt_name for prompt_name in prompt_names if prompt_name in visible_prompt_identifiers]
+            if not prompt_names:
+                return []
+
         # Batch query for selected prompts only
         db_prompts = db.execute(select(DbPrompt).where(or_(DbPrompt.id.in_(prompt_names), DbPrompt.name.in_(prompt_names)))).scalars().all()
+        if visible_prompt_identifiers is not None:
+            db_prompts = [
+                db_prompt
+                for db_prompt in db_prompts
+                if str(db_prompt.id) in visible_prompt_identifiers
+                or (getattr(db_prompt, "name", None) in visible_prompt_identifiers)
+                or (getattr(db_prompt, "original_name", None) in visible_prompt_identifiers)
+                or (getattr(db_prompt, "custom_name", None) in visible_prompt_identifiers)
+            ]
 
         exported_prompts = []
         for db_prompt in db_prompts:
@@ -944,7 +1074,7 @@ class ExportService:
 
         return exported_prompts
 
-    async def _export_selected_resources(self, db: Session, resource_uris: List[str]) -> List[Dict[str, Any]]:
+    async def _export_selected_resources(self, db: Session, resource_uris: List[str], user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Export specific resources by their URIs using batch queries.
 
         Uses a single batch query instead of fetching all resources N times.
@@ -952,6 +1082,8 @@ class ExportService:
         Args:
             db: Database session
             resource_uris: List of resource URIs to export
+            user_email: Requesting user's email for visibility filtering
+            token_teams: Token team scope for visibility filtering
 
         Returns:
             List of exported resource dictionaries
@@ -959,8 +1091,18 @@ class ExportService:
         if not resource_uris:
             return []
 
+        visible_resource_uris: Optional[set[str]] = None
+        if self._is_scoped_selective_export(user_email, token_teams):
+            visible_resources = await self._fetch_all_resources(db, tags=None, include_inactive=True, user_email=user_email, token_teams=token_teams)
+            visible_resource_uris = {resource.uri for resource in visible_resources}
+            resource_uris = [resource_uri for resource_uri in resource_uris if resource_uri in visible_resource_uris]
+            if not resource_uris:
+                return []
+
         # Batch query for selected resources only
         db_resources = db.execute(select(DbResource).where(DbResource.uri.in_(resource_uris))).scalars().all()
+        if visible_resource_uris is not None:
+            db_resources = [db_resource for db_resource in db_resources if db_resource.uri in visible_resource_uris]
 
         exported_resources = []
         for db_resource in db_resources:
@@ -970,7 +1112,7 @@ class ExportService:
                 "description": db_resource.description,
                 "mime_type": db_resource.mime_type,
                 "tags": db_resource.tags or [],
-                "is_active": db_resource.is_active,
+                "is_active": db_resource.enabled,
                 "last_modified": db_resource.updated_at.isoformat() if db_resource.updated_at else None,
             }
 

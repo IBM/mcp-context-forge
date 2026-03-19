@@ -1,24 +1,33 @@
 ---
 classification:
-status: draft
+status: published
 owner: Mihai Criveti
 ---
 
 # 🚀 Quick Start
 
-MCP Gateway can be running on your laptop or server in **< 5 minutes**.
+ContextForge can be running on your laptop or server in **< 5 minutes**.
 Pick an install method below, generate an auth token, then walk through a real tool + server demo.
 
-## Installing and starting MCP Gateway
+## Installing and starting ContextForge
+
+!!! tip "Choose a base URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+    - Dev server (`make dev`): `http://localhost:8000`
 
 === "PyPI / uv"
 
     !!! note
         **Prereqs**: Install uv (https://docs.astral.sh/uv/getting-started/installation/)
 
+    !!! info "Authentication"
+        Basic auth is **disabled by default** for security. Use JWT tokens for API access.
+        The Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`).
+
     ```bash
     # Quick start with environment variables
-    BASIC_AUTH_PASSWORD=pass \
+    JWT_SECRET_KEY=my-test-key \
     MCPGATEWAY_UI_ENABLED=true \
     MCPGATEWAY_ADMIN_API_ENABLED=true \
     PLATFORM_ADMIN_EMAIL=admin@example.com \
@@ -65,7 +74,6 @@ Pick an install method below, generate an auth token, then walk through a real t
         mcpgateway --host 0.0.0.0 --port 4444
 
         # Option 2: Set environment variables directly
-        export BASIC_AUTH_PASSWORD=changeme
         export JWT_SECRET_KEY=my-test-key
         export MCPGATEWAY_UI_ENABLED=true
         export MCPGATEWAY_ADMIN_API_ENABLED=true
@@ -77,14 +85,18 @@ Pick an install method below, generate an auth token, then walk through a real t
 
         The terminal shows startup logs; keep it running.
 
-    4. **Generate a bearer token with an expiration time of 10080 seconds (1 week)**
+    4. **Generate a bearer token with an expiration time of 10080 minutes (1 week)**
+
+        !!! warning "Development Only"
+            CLI token generation is for development/testing. For production, use the `/tokens` API endpoint which enforces security controls.
 
         ```bash
         export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-            --username admin --exp 10080 --secret my-test-key)
+            --username admin@example.com --exp 10080 --secret my-test-key)
         ```
 
-        !!! tip "Use `--exp 0` for tokens that don't expire"
+        !!! tip "Non-expiring tokens require `REQUIRE_TOKEN_EXPIRATION=false`"
+            By default, tokens must have an expiration. To use `--exp 0` for non-expiring tokens (development only), set `REQUIRE_TOKEN_EXPIRATION=false`.
 
     5. **Smoke-test health + version**
 
@@ -107,12 +119,10 @@ Pick an install method below, generate an auth token, then walk through a real t
           -p 4444:4444 \
           -e HOST=0.0.0.0 \
           -e JWT_SECRET_KEY=my-test-key \
-          -e BASIC_AUTH_USER=admin \
-          -e BASIC_AUTH_PASSWORD=changeme \
           -e PLATFORM_ADMIN_EMAIL=admin@example.com \
           -e PLATFORM_ADMIN_PASSWORD=changeme \
           -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-          ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+          ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
         ```
 
     2. **(Optional) persist the DB**
@@ -125,12 +135,10 @@ Pick an install method below, generate an auth token, then walk through a real t
               -v $(pwd)/data:/data \
               -e DATABASE_URL=sqlite:////data/mcp.db \
               -e JWT_SECRET_KEY=my-test-key \
-              -e BASIC_AUTH_USER=admin \
-              -e BASIC_AUTH_PASSWORD=changeme \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
               -e PLATFORM_ADMIN_PASSWORD=changeme \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-              ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+              ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
             ```
 
         === "MySQL"
@@ -144,18 +152,16 @@ Pick an install method below, generate an auth token, then walk through a real t
               -p 3306:3306 \
               mysql:8
 
-            # Start MCP Gateway with MySQL connection
+            # Start ContextForge with MySQL connection
             docker run -d --name mcpgateway \
               -p 4444:4444 \
               --link mysql-db:mysql \
               -e DATABASE_URL=mysql+pymysql://mysql:changeme@mysql:3306/mcp \
               -e JWT_SECRET_KEY=my-test-key \
-              -e BASIC_AUTH_USER=admin \
-              -e BASIC_AUTH_PASSWORD=changeme \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
               -e PLATFORM_ADMIN_PASSWORD=changeme \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-              ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+              ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
             ```
 
         === "PostgreSQL"
@@ -168,25 +174,23 @@ Pick an install method below, generate an auth token, then walk through a real t
               -p 5432:5432 \
               postgres:17
 
-            # Start MCP Gateway with PostgreSQL connection
+            # Start ContextForge with PostgreSQL connection
             docker run -d --name mcpgateway \
               -p 4444:4444 \
               --link postgres-db:postgres \
               -e DATABASE_URL=postgresql+psycopg://postgres:mysecretpassword@postgres:5432/mcp \
               -e JWT_SECRET_KEY=my-test-key \
-              -e BASIC_AUTH_USER=admin \
-              -e BASIC_AUTH_PASSWORD=changeme \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
               -e PLATFORM_ADMIN_PASSWORD=changeme \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-              ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+              ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
             ```
 
     3. **Generate a token inside the container**
 
         ```bash
         docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token \
-          --username admin --exp 10080 --secret my-test-key
+          --username admin@example.com --exp 10080 --secret my-test-key
         ```
 
     4. **Smoke-test**
@@ -216,7 +220,7 @@ Pick an install method below, generate an auth token, then walk through a real t
     2. **Pull the published image**
 
         ```bash
-        docker pull ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+        docker pull ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
         ```
 
     3. **Start the stack**
@@ -231,7 +235,8 @@ Pick an install method below, generate an auth token, then walk through a real t
     4. **Verify**
 
         ```bash
-        curl -s http://localhost:4444/health | jq
+        # Nginx proxy listens on 8080 in docker-compose.yml
+        curl -s http://localhost:8080/health | jq
         ```
 
     !!! tip "Database Support"
@@ -248,6 +253,11 @@ Pick an install method below, generate an auth token, then walk through a real t
 ## Registering MCP tools & creating a virtual server
 
 ```bash
+# Set the gateway base URL
+export BASE_URL="http://localhost:4444"
+# If you're running docker-compose with nginx:
+# export BASE_URL="http://localhost:8080"
+
 # Spin up a sample MCP time server (SSE, port 8002)
 pip install uv
 python3 -m mcpgateway.translate \
@@ -261,7 +271,7 @@ python3 -m mcpgateway.translate \
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"name":"local_time","url":"http://localhost:8002/sse"}' \
-     http://localhost:4444/gateways | jq
+     $BASE_URL/gateways | jq
 ```
 
 ```bash
@@ -269,19 +279,19 @@ curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"name":"demo_server","description":"Time tools","associatedTools":["1"]}' \
-     http://localhost:4444/servers | jq
+     $BASE_URL/servers | jq
 ```
 
 ```bash
 # Verify catalog entries
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools   | jq
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers | jq
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/tools   | jq
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/servers | jq
 ```
 
 ```bash
 # Optional: Connect interactively via MCP Inspector
 npx -y @modelcontextprotocol/inspector
-# Transport SSE → URL http://localhost:4444/servers/UUID_OF_SERVER_1/sse
+# Transport SSE → URL $BASE_URL/servers/UUID_OF_SERVER_1/sse
 # Header Authorization → Bearer $MCPGATEWAY_BEARER_TOKEN
 ```
 
@@ -291,7 +301,7 @@ npx -y @modelcontextprotocol/inspector
 
 ```bash
 export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-export MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp
+export MCP_SERVER_URL=$BASE_URL/servers/UUID_OF_SERVER_1/mcp
 python3 -m mcpgateway.wrapper   # behaves as a local MCP stdio server - run from MCP client
 ```
 
@@ -304,6 +314,7 @@ Use this in GUI clients (Claude Desktop, Continue, etc.) that prefer stdio. Exam
       "command": "python3",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
+        // Use http://localhost:8080 if you're running docker-compose with nginx.
         "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
         "MCP_AUTH": "Bearer <YOUR_JWT_TOKEN>",
         "MCP_TOOL_CALL_TIMEOUT": "120"
@@ -319,13 +330,16 @@ For more information see [MCP Clients](../using/index.md)
 
 ## 4 - Useful URLs
 
-| URL                             | Description                                 |
-| ------------------------------- | ------------------------------------------- |
-| `http://localhost:4444/admin`   | Admin UI (Basic Auth: `admin` / `changeme`) |
-| `http://localhost:4444/tools`   | Tool registry (GET)                         |
-| `http://localhost:4444/servers` | Virtual servers (GET)                       |
-| `/servers/<id>/sse`             | SSE endpoint for that server                |
-| `/docs`, `/redoc`               | Swagger / ReDoc (JWT-protected)             |
+Use the `BASE_URL` you set above (for example `http://localhost:4444` or `http://localhost:8080`).
+
+| URL | Description |
+| --- | --- |
+| `${BASE_URL}/admin` | Admin UI (login: `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`) |
+| `${BASE_URL}/tools` | Tool registry (GET) |
+| `${BASE_URL}/servers` | Virtual servers (GET) |
+| `${BASE_URL}/servers/<id>/sse` | SSE endpoint for that server |
+| `${BASE_URL}/docs`, `${BASE_URL}/redoc` | Swagger / ReDoc (JWT-protected by default; set `DOCS_ALLOW_BASIC_AUTH=true` to allow Basic auth) |
+| `${BASE_URL}/openapi.json` | OpenAPI schema (JWT-protected by default) |
 
 ---
 
@@ -338,5 +352,5 @@ For more information see [MCP Clients](../using/index.md)
 * Tweak **`.env`** - see [example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example)
 
 !!! success "Gateway is ready!"
-You now have an authenticated MCP Gateway proxying a live tool, exposed via SSE **and** stdio.
+You now have an authenticated ContextForge proxying a live tool, exposed via SSE **and** stdio.
 Jump into the Admin UI or start wiring it into your agents and clients!

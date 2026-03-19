@@ -17,7 +17,7 @@ These tests specifically target uncovered areas in gateway_service.py including:
 from __future__ import annotations
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -285,3 +285,359 @@ class TestGatewayServiceHealthOAuth:
 
         with pytest.raises(GatewayConnectionError):
             await gateway_service.fetch_tools_after_oauth(test_db, "1")
+
+
+class TestCheckSingleGatewayHealthReal:
+    """Exercise _check_single_gateway_health without mocking the method itself."""
+
+    def _make_gateway(self, *, transport: str = "sse", auth_type=None, oauth_config=None, auth_value=None, auth_query_params=None, reachable: bool = True):
+        gw = MagicMock(spec=DbGateway)
+        gw.id = "gw-1"
+        gw.name = "gw"
+        gw.url = "http://gw.test"
+        gw.transport = transport
+        gw.enabled = True
+        gw.reachable = reachable
+        gw.ca_certificate = None
+        gw.ca_certificate_sig = None
+        gw.auth_type = auth_type
+        gw.oauth_config = oauth_config
+        gw.auth_value = auth_value if auth_value is not None else {}
+        gw.auth_query_params = auth_query_params
+        gw.last_refresh_at = None
+        gw.refresh_interval_seconds = None
+        return gw
+
+    @pytest.mark.asyncio
+    async def test_streamablehttp_pool_not_initialized_falls_back_to_per_call_session(self):
+        service = GatewayService()
+        service._handle_gateway_failure = AsyncMock()
+
+        gateway = self._make_gateway(transport="streamablehttp")
+
+        # Non-pooled StreamableHTTP call path.
+        session = AsyncMock()
+        session.initialize = AsyncMock(return_value=None)
+
+        # Update last_seen path.
+        update_db = MagicMock()
+        db_gateway = MagicMock()
+        update_db.execute.return_value.scalar_one_or_none.return_value = db_gateway
+        update_db.commit = MagicMock()
+
+        class _DBCM:
+            def __enter__(self):
+                return update_db
+
+            def __exit__(self, *exc):
+                return False
+
+        class _SpanCM:
+            def __enter__(self):
+                return MagicMock()
+
+            def __exit__(self, *exc):
+                return False
+
+        class _IsoClientCM:
+            async def __aenter__(self):
+                return MagicMock()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            patch(
+                "mcpgateway.services.gateway_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    ed25519_public_key="pk",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    httpx_admin_read_timeout=1,
+                    health_check_timeout=1,
+                    mcp_session_pool_enabled=True,
+                    mcp_session_pool_explicit_health_rpc=False,
+                    auto_refresh_servers=False,
+                ),
+            ),
+            patch("mcpgateway.services.gateway_service.create_span", return_value=_SpanCM()),
+            patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
+            patch("mcpgateway.services.gateway_service.get_mcp_session_pool", side_effect=RuntimeError("not initialized")),
+            patch("mcpgateway.services.gateway_service.streamablehttp_client") as mock_http,
+            patch("mcpgateway.services.gateway_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
+        ):
+            mock_http.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=session)
+            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            await service._check_single_gateway_health(gateway)
+
+        service._handle_gateway_failure.assert_not_called()
+        update_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_streamablehttp_pool_used_and_explicit_health_rpc_calls_list_tools(self):
+        service = GatewayService()
+        service._handle_gateway_failure = AsyncMock()
+
+        gateway = self._make_gateway(transport="streamablehttp")
+
+        pooled_session = MagicMock()
+        pooled_session.list_tools = AsyncMock(return_value=[])
+
+        class _PooledCM:
+            async def __aenter__(self):
+                return MagicMock(session=pooled_session)
+
+            async def __aexit__(self, *exc):
+                return False
+
+        pool = MagicMock()
+        pool.session = MagicMock(return_value=_PooledCM())
+
+        update_db = MagicMock()
+        update_db.execute.return_value.scalar_one_or_none.return_value = MagicMock()
+        update_db.commit = MagicMock()
+
+        class _DBCM:
+            def __enter__(self):
+                return update_db
+
+            def __exit__(self, *exc):
+                return False
+
+        class _SpanCM:
+            def __enter__(self):
+                return MagicMock()
+
+            def __exit__(self, *exc):
+                return False
+
+        class _IsoClientCM:
+            async def __aenter__(self):
+                return MagicMock()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            patch(
+                "mcpgateway.services.gateway_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    ed25519_public_key="pk",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    httpx_admin_read_timeout=1,
+                    health_check_timeout=1,
+                    mcp_session_pool_enabled=True,
+                    mcp_session_pool_explicit_health_rpc=True,
+                    auto_refresh_servers=False,
+                ),
+            ),
+            patch("mcpgateway.services.gateway_service.create_span", return_value=_SpanCM()),
+            patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
+            patch("mcpgateway.services.gateway_service.get_mcp_session_pool", return_value=pool),
+            patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
+        ):
+            await service._check_single_gateway_health(gateway)
+
+        pooled_session.list_tools.assert_awaited_once()
+        service._handle_gateway_failure.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_oauth_authorization_code_missing_user_email_marks_unhealthy_and_handles_failure(self):
+        service = GatewayService()
+        service._handle_gateway_failure = AsyncMock()
+
+        gateway = self._make_gateway(
+            transport="sse",
+            auth_type="oauth",
+            oauth_config={"grant_type": "authorization_code"},
+        )
+
+        update_db = MagicMock()
+
+        class _DBCM:
+            def __enter__(self):
+                return update_db
+
+            def __exit__(self, *exc):
+                return False
+
+        class _SpanCM:
+            def __enter__(self):
+                return MagicMock()
+
+            def __exit__(self, *exc):
+                return False
+
+        class _IsoClientCM:
+            async def __aenter__(self):
+                return MagicMock()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            patch(
+                "mcpgateway.services.gateway_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    ed25519_public_key="pk",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    httpx_admin_read_timeout=1,
+                    health_check_timeout=1,
+                    mcp_session_pool_enabled=False,
+                    mcp_session_pool_explicit_health_rpc=False,
+                    auto_refresh_servers=False,
+                ),
+            ),
+            patch("mcpgateway.services.gateway_service.create_span", return_value=_SpanCM()),
+            patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
+            patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+        ):
+            mock_tss.return_value.get_user_token = AsyncMock(return_value="token")
+            await service._check_single_gateway_health(gateway, user_email=None)
+
+        service._handle_gateway_failure.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_oauth_client_credentials_failure_marks_unhealthy_and_handles_failure(self):
+        service = GatewayService()
+        service._handle_gateway_failure = AsyncMock()
+        service.oauth_manager.get_access_token = AsyncMock(side_effect=RuntimeError("boom"))
+
+        gateway = self._make_gateway(
+            transport="sse",
+            auth_type="oauth",
+            oauth_config={"grant_type": "client_credentials"},
+        )
+
+        class _SpanCM:
+            def __enter__(self):
+                return MagicMock()
+
+            def __exit__(self, *exc):
+                return False
+
+        class _IsoClientCM:
+            async def __aenter__(self):
+                return MagicMock()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            patch(
+                "mcpgateway.services.gateway_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    ed25519_public_key="pk",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    httpx_admin_read_timeout=1,
+                    health_check_timeout=1,
+                    mcp_session_pool_enabled=False,
+                    mcp_session_pool_explicit_health_rpc=False,
+                    auto_refresh_servers=False,
+                ),
+            ),
+            patch("mcpgateway.services.gateway_service.create_span", return_value=_SpanCM()),
+            patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
+        ):
+            await service._check_single_gateway_health(gateway, user_email="user@test.com")
+
+        service._handle_gateway_failure.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_query_param_decryption_applied_and_sse_stream_health_check(self):
+        service = GatewayService()
+        service._handle_gateway_failure = AsyncMock()
+        service.create_ssl_context = MagicMock(return_value=MagicMock())
+
+        gateway = self._make_gateway(
+            transport="sse",
+            auth_type="query_param",
+            auth_query_params={"api_key": "enc"},
+        )
+        gateway.ca_certificate = "dummy-cert"
+        gateway.ca_certificate_sig = "dummy-sig"
+
+        response = MagicMock()
+        response.status_code = 200
+        response.raise_for_status = MagicMock()
+
+        class _RespCM:
+            async def __aenter__(self):
+                return response
+
+            async def __aexit__(self, *exc):
+                return False
+
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_RespCM())
+
+        class _IsoClientCM:
+            async def __aenter__(self):
+                return client
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _SpanCM:
+            def __enter__(self):
+                return MagicMock()
+
+            def __exit__(self, *exc):
+                return False
+
+        # Ensure last_seen update doesn't touch a real DB.
+        update_db = MagicMock()
+        update_db.execute.return_value.scalar_one_or_none.return_value = MagicMock()
+        update_db.commit = MagicMock()
+
+        class _DBCM:
+            def __enter__(self):
+                return update_db
+
+            def __exit__(self, *exc):
+                return False
+
+        with (
+            patch(
+                "mcpgateway.services.gateway_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=True,
+                    ed25519_public_key="pk",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    httpx_admin_read_timeout=1,
+                    health_check_timeout=1,
+                    mcp_session_pool_enabled=False,
+                    mcp_session_pool_explicit_health_rpc=False,
+                    auto_refresh_servers=False,
+                ),
+            ),
+            patch("mcpgateway.services.gateway_service.create_span", return_value=_SpanCM()),
+            patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
+            patch("mcpgateway.services.gateway_service.decode_auth", return_value={"api_key": "secret"}),
+            patch("mcpgateway.services.gateway_service.apply_query_param_auth", return_value="http://gw.test?api_key=secret"),
+            patch("mcpgateway.services.gateway_service.sanitize_url_for_logging", side_effect=lambda u, *_a, **_k: u),
+            patch("mcpgateway.services.gateway_service.validate_signature", return_value=True),
+            patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
+        ):
+            await service._check_single_gateway_health(gateway)
+
+        # url should have been rewritten by apply_query_param_auth and used in stream().
+        assert "api_key=secret" in client.stream.call_args.args[1]

@@ -6,7 +6,8 @@
 
 ## Context
 
-The ContextForge codebase has grown to support diverse use cases:
+ContextForge codebase has grown to support diverse use cases:
+
 - Standalone Python module for development
 - Serverless deployments (Lambda, Cloud Run, Code Engine)
 - Container orchestration (Kubernetes, OpenShift)
@@ -16,6 +17,7 @@ The ContextForge codebase has grown to support diverse use cases:
 - MCP servers in multiple languages (Python, Go, Rust)
 
 The monolithic architecture created challenges:
+
 - Large repository difficult to navigate
 - Plugins tied to core release cycle
 - Utilities that should be standalone had unnecessary dependencies
@@ -27,7 +29,7 @@ We needed maximum deployment flexibility while maintaining cohesive functionalit
 
 ## Decision
 
-We will split the ContextForge ecosystem into **14 independently deployable modules** that can run standalone or be composed together:
+We will split ContextForge ecosystem into **14 independently deployable modules** that can run standalone or be composed together:
 
 ### Core Gateway (2 modules)
 1. **mcp-contextforge-gateway-core** - FastAPI gateway with 33 services, 11 routers (~150K lines)
@@ -58,6 +60,7 @@ We will split the ContextForge ecosystem into **14 independently deployable modu
 14. **mcp-contextforge-docs** - MkDocs Material site
 
 **Key Design Principles:**
+
 - **Zero dependency utilities** - translate, wrapper, reverse-proxy can run without gateway
 - **Zero dependency servers** - MCP servers only require MCP SDK
 - **Independent versioning** - Each module has its own semver
@@ -155,7 +158,7 @@ CACHE_TYPE=redis|memory|database
 
 # Plugin system
 PLUGINS_ENABLED=true
-PLUGIN_CONFIG_FILE=plugins/config.yaml
+PLUGINS_CONFIG_FILE=plugins/config.yaml
 
 # Transport protocols
 MCPGATEWAY_SSE_ENABLED=true

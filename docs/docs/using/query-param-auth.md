@@ -5,7 +5,12 @@
 !!! warning "Security Warning"
     Query parameter authentication is **inherently insecure** (CWE-598). API keys in URLs may appear in proxy logs, browser history, and server access logs. Only use this authentication method when the upstream MCP server **requires** it (e.g., Tavily MCP).
 
-MCP Gateway supports API key authentication via URL query parameters for upstream MCP servers that mandate this authentication method. This feature is disabled by default and requires explicit opt-in.
+ContextForge supports API key authentication via URL query parameters for upstream MCP servers that mandate this authentication method. This feature is disabled by default and requires explicit opt-in.
+
+!!! tip "Admin UI URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444/admin/`
+    - Docker Compose (nginx proxy): `http://localhost:8080/admin/`
+    - Dev server (`make dev`): `http://localhost:8000/admin/`
 
 ## Use Cases
 
@@ -39,16 +44,17 @@ INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS=["mcp.tavily.com"]
 
 ### Via Admin UI
 
-1. Navigate to the Admin Panel at `http://localhost:8000/admin/`
+1. Navigate to the Admin Panel (see Admin UI URL above)
 2. Click on the "Gateways" tab
 3. When adding or editing a gateway:
+
    - Select **"Query Parameter (INSECURE)"** as the Authentication Type
    - Read the security warning displayed
    - Enter the **Query Parameter Name** (e.g., `tavilyApiKey`)
    - Enter the **API Key Value**
    - Submit the form to save your configuration
 
-![Query Parameter Auth UI](../assets/query-param-auth-ui.png)
+The Admin UI displays an inline warning when you select query-parameter authentication to highlight the security risks.
 
 ### Via API
 

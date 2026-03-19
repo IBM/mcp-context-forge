@@ -6,7 +6,7 @@
 
 ## Context
 
-MCP Gateways must participate in mesh/federated deployments. Faulty nodes must be detected and removed automatically.
+ContextForge instances must participate in mesh/federated deployments. Faulty nodes must be detected and removed automatically.
 Additionally, cloud-native infrastructure (like Kubernetes, Docker Swarm, or systemd watchdogs) needs a way to check local health.
 
 The gateway config supports health-related settings:
@@ -22,10 +22,12 @@ The README and architecture describe `/health` and `/metrics` endpoints as built
 Implement two health-check levels:
 
 1. **Local health endpoint** at `/health`:
+
    - Verifies database connectivity and response time
    - Optionally checks cache (e.g. Redis ping or in-memory status)
 
 2. **Federated peer liveness**:
+
    - Every `HEALTH_CHECK_INTERVAL`, we ping all registered peers via HTTP
    - If a peer fails `UNHEALTHY_THRESHOLD` times consecutively, it's tagged as 'Offline' i.e. The gateway is unreachable. Once its back online, it's automatically tagged as 'Active'
    - A separate background task handles this (see `GatewayService`)

@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Vendor-agnostic OpenTelemetry instrumentation for MCP Gateway.
+Vendor-agnostic OpenTelemetry instrumentation for ContextForge.
 Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).
 """
 
@@ -174,7 +174,7 @@ def init_telemetry() -> Optional[Any]:
         # Create resource attributes
         resource_attributes: Dict[str, Any] = {
             "service.name": os.getenv("OTEL_SERVICE_NAME", "mcp-gateway"),
-            "service.version": "1.0.0-BETA-2",
+            "service.version": "1.0.0-RC-2",
             "deployment.environment": os.getenv("DEPLOYMENT_ENV", "development"),
         }
 
@@ -321,7 +321,7 @@ def init_telemetry() -> Optional[Any]:
         # Get tracer
         # Obtain a tracer if trace API available; otherwise create a no-op tracer
         if trace is not None and hasattr(trace, "get_tracer"):
-            _TRACER = cast(Any, trace).get_tracer("mcp-gateway", "1.0.0-BETA-2", schema_url="https://opentelemetry.io/schemas/1.11.0")
+            _TRACER = cast(Any, trace).get_tracer("mcp-gateway", "1.0.0-RC-2", schema_url="https://opentelemetry.io/schemas/1.11.0")
         else:
 
             class _NoopTracer:

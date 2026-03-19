@@ -10,11 +10,21 @@ tests/
 │   └── mcpgateway/     # Mirrors source structure
 ├── integration/        # Cross-module and service integration tests
 ├── e2e/               # End-to-end flows (slower; may require services)
+├── e2e_rust/          # Rust-mode-specific end-to-end flows (requires Rust MCP path)
 ├── performance/        # Database performance & N+1 detection tests
 ├── playwright/        # UI automation (requires extra setup)
 ├── security/          # Security validation tests
 ├── fuzz/             # Fuzzing & property-based testing
+├── load/             # Load testing scenarios
+├── loadtest/         # Locust load test configurations
+├── jmeter/           # JMeter performance test plans
+├── client/           # MCP client testing
+├── async/            # Async operation tests
+├── migration/        # Database migration tests
+├── differential/     # Differential testing
+├── manual/           # Manual test scenarios
 ├── helpers/           # Test utilities (query_counter.py, conftest.py)
+├── utils/            # Additional test utilities
 └── conftest.py        # Shared pytest fixtures
 ```
 
@@ -28,6 +38,12 @@ make doctest test                 # Doctests then unit tests
 make htmlcov                      # Coverage HTML → docs/docs/coverage/index.html
 make coverage                     # Full coverage (md + HTML + XML + badge + annotated)
 make smoketest                    # Container build + simple E2E flow
+make test-mcp-cli                 # MCP protocol via mcp-cli (needs live gateway)
+make test-mcp-rbac                # MCP RBAC transport E2E (needs live gateway)
+make test-mcp-plugin-parity       # MCP plugin parity E2E for the current stack (requires test-specific plugin config)
+make test-mcp-access-matrix       # Rust-only MCP role/access matrix with strong sentinels
+make test-mcp-session-isolation   # Rust-only MCP session isolation E2E
+make test-mcp-session-isolation-load  # Rust-only Locust correctness load test
 
 # Selective runs
 pytest -k "fragment"              # By name substring
@@ -40,6 +56,13 @@ make dev-query-log                # Dev server with query logging
 make query-log-tail               # Tail query log in another terminal
 make query-log-analyze            # Analyze for N+1 patterns
 make test-db-perf                 # Run performance tests
+
+# JMeter load testing
+make jmeter-rest-baseline         # REST API baseline (1,000 RPS, 10min)
+make jmeter-mcp-baseline          # MCP JSON-RPC baseline (1,000 RPS, 15min)
+make jmeter-load                  # Production load test (4,000 RPS, 30min)
+make jmeter-stress                # Stress test (ramp to 10,000 RPS)
+make jmeter-report                # Generate HTML report from JTL file
 
 # PR readiness
 make doctest test htmlcov smoketest lint-web flake8 bandit interrogate pylint verify

@@ -1,268 +1,322 @@
-# Makefile for Rust plugins
-# Copyright 2025
-# SPDX-License-Identifier: Apache-2.0
+# Makefile for Rust Plugins
+# Automatically discovers and installs all plugins (subdirectories with Cargo.toml)
 
-.PHONY: help build dev test clean check lint fmt bench audit doc install
+.PHONY: install clean list help build test fmt clippy doc test-python test-verbose clean-all fmt-check doc-open bench bench-compare compare check verify verify-stubs clean-stubs test-integration test-all uninstall
 
-# Default target
-.DEFAULT_GOAL := help
+# Discover all plugin directories containing Cargo.toml
+PLUGIN_DIRS := $(shell find . -mindepth 1 -maxdepth 1 -type d -exec test -f {}/Cargo.toml \; -print | sed 's|^\./||' | sort)
 
-# Colors for output
-BLUE := \033[0;34m
-GREEN := \033[0;32m
-YELLOW := \033[0;33m
-RED := \033[0;31m
-NC := \033[0m # No Color
+# Pattern rule for calling plugin-specific targets (common to all plugins)
+# Usage: make <plugin>-<target>
+# Examples:
+#   make pii_filter-install
+#   make secrets_detection-test
+#   make encoded_exfil_detection-build
+%-build %-clean %-clean-all %-clippy %-doc %-doc-open %-fmt %-fmt-check %-help %-install %-uninstall %-test %-test-python %-test-verbose:
+	@plugin=$$(echo $@ | sed 's/-[^-]*$$//'); \
+	target=$$(echo $@ | sed 's/^[^-]*-//'); \
+	echo "Running 'make $$target' in $$plugin..."; \
+	cd $$plugin && $(MAKE) $$target
 
-help: ## Show this help message
-	@echo "$(BLUE)Rust Plugins Makefile$(NC)"
+install:
+	@echo "Installing all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo ""; \
+		echo "Installing plugin: $$plugin"; \
+		(cd $$plugin && $(MAKE) install) || exit 1; \
+	done
 	@echo ""
-	@echo "$(GREEN)Available targets:$(NC)"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-20s$(NC) %s\n", $$1, $$2}'
+	@echo "✓ All plugins installed successfully"
+
+uninstall:
+	@echo "Uninstalling all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Uninstalling: $$plugin"; \
+		(cd $$plugin && $(MAKE) uninstall) || exit 1; \
+	done
+	@echo "✓ All plugins uninstalled"
+
+clean:
+	@echo "Cleaning all plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Cleaning: $$plugin"; \
+		(cd $$plugin && $(MAKE) clean) || exit 1; \
+	done
+	@rm -rf target/
+
+build:
+	@echo "Building all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Building: $$plugin"; \
+		(cd $$plugin && $(MAKE) build) || exit 1; \
+	done
+
+build-target-%:
+	@echo "Building all Rust plugins for target: $*..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Building $$plugin for $*..."; \
+		(cd $$plugin && $(MAKE) build-target TARGET=$*) || exit 1; \
+	done
+
+test:
+	@echo "Testing all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Testing: $$plugin"; \
+		(cd $$plugin && $(MAKE) test) || exit 1; \
+	done
+
+test-verbose:
+	@echo "Testing all Rust plugins (verbose)..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Testing: $$plugin"; \
+		(cd $$plugin && $(MAKE) test-verbose) || exit 1; \
+	done
+
+test-python:
+	@echo "Running Python tests for all plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Testing Python: $$plugin"; \
+		(cd $$plugin && $(MAKE) test-python) || exit 1; \
+	done
+
+fmt:
+	@echo "Formatting all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Formatting: $$plugin"; \
+		(cd $$plugin && $(MAKE) fmt) || exit 1; \
+	done
+
+fmt-check:
+	@echo "Checking format for all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Checking format: $$plugin"; \
+		(cd $$plugin && $(MAKE) fmt-check) || exit 1; \
+	done
+
+clippy:
+	@echo "Running clippy on all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Clippy: $$plugin"; \
+		(cd $$plugin && $(MAKE) clippy) || exit 1; \
+	done
+
+doc:
+	@echo "Building documentation for all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Building docs: $$plugin"; \
+		(cd $$plugin && $(MAKE) doc) || exit 1; \
+	done
+
+doc-open:
+	@echo "Building and opening documentation for all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Building docs: $$plugin"; \
+		(cd $$plugin && $(MAKE) doc-open) || exit 1; \
+	done
+
+clean-all:
+	@echo "Deep cleaning all plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Deep cleaning: $$plugin"; \
+		(cd $$plugin && $(MAKE) clean-all); \
+	done
+	@rm -rf target/
+
+bench:
+	@echo "Running benchmarks for all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Benchmarking: $$plugin"; \
+		(cd $$plugin && $(MAKE) bench) || exit 1; \
+	done
+
+bench-compare:
+	@echo "Running performance comparisons for all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Comparing: $$plugin"; \
+		(cd $$plugin && $(MAKE) bench-compare) || exit 1; \
+	done
+
+compare:
+	@echo "Running compare_performance.py for all Rust plugins (skip benchmarks)..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Comparing: $$plugin"; \
+		(cd $$plugin && $(MAKE) compare) || exit 1; \
+	done
+
+build-wheels:
+	@echo "Building wheels for all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Building wheels for: $$plugin"; \
+		echo "Cleaning python directory..."; \
+		find $$plugin/python -name "*.so" -delete 2>/dev/null || true; \
+		find $$plugin/python -name "*.pyd" -delete 2>/dev/null || true; \
+		(cd $$plugin && uv run maturin build --release --out dist) || exit 1; \
+	done
+	@echo "✓ All wheels built successfully"
+
+audit:
+	@echo "Running security audit for all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Auditing: $$plugin"; \
+		(cd $$plugin && cargo audit) || exit 1; \
+	done
+	@echo "✓ All plugins audited successfully"
+
+coverage:
+	@echo "Running coverage for all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Running coverage for: $$plugin"; \
+		cd $$plugin; \
+		$(MAKE) install || exit 1; \
+		if [ -f Makefile ] && grep -q "coverage:" Makefile; then \
+			uv run make coverage || exit 1; \
+		else \
+			mkdir -p coverage; \
+			cargo llvm-cov --cobertura --output-path coverage/cobertura.xml || exit 1; \
+		fi; \
+		cd ..; \
+	done
+	@echo "✓ Coverage completed for all plugins"
+
+release:
+	@echo "Building and publishing release for all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Building release for: $$plugin"; \
+		cd $$plugin; \
+		uv run maturin build --release --out dist || exit 1; \
+		cd ..; \
+	done
+	@echo "✓ Release build completed"
+
+release-publish:
+	@echo "Publishing release wheels to PyPI..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Publishing: $$plugin"; \
+		cd $$plugin; \
+		if [ -n "$$MATURIN_PYPI_TOKEN" ]; then \
+			uv run maturin publish --username __token__ --password "$$MATURIN_PYPI_TOKEN" || exit 1; \
+		else \
+			echo "⚠️  MATURIN_PYPI_TOKEN not set, skipping publish"; \
+		fi; \
+		cd ..; \
+	done
+	@echo "✓ Release published"
+
+check:
+	@echo "Running all checks for all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Checking: $$plugin"; \
+		(cd $$plugin && $(MAKE) check-all) || exit 1; \
+	done
+
+verify:
+	@echo "Verifying Rust plugin installations..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Verifying: $$plugin"; \
+		(cd $$plugin && $(MAKE) verify) || exit 1; \
+	done
+
+clean-stubs:
+	@echo "Cleaning stub files for all plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Cleaning stubs: $$plugin"; \
+		find $$plugin/python -name "__init__.pyi" -type f -delete 2>/dev/null || true; \
+	done
+	@echo "✓ All stub files cleaned"
+
+verify-stubs:
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Running: make rust-verify-stubs"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Verifying stub files and pyproject.toml for all plugins..."
 	@echo ""
-	@echo "$(YELLOW)Examples:$(NC)"
-	@echo "  make dev          # Build and install in development mode"
-	@echo "  make test         # Run all tests"
-	@echo "  make bench        # Run benchmarks"
-	@echo "  make check        # Run all checks (fmt, clippy, test)"
-
-# Build targets
-build: ## Build release version
-	@echo "$(GREEN)Building release version...$(NC)"
-	maturin build --release
-
-build-debug: ## Build debug version
-	@echo "$(YELLOW)Building debug version...$(NC)"
-	maturin build
-
-dev: ## Build and install in development mode (editable)
-	@echo "$(GREEN)Building and installing in development mode...$(NC)"
-	maturin develop --release
-
-dev-debug: ## Build and install debug version in development mode
-	@echo "$(YELLOW)Building debug version in development mode...$(NC)"
-	maturin develop
-
-install: build ## Build and install (non-editable)
-	@echo "$(GREEN)Installing built package...$(NC)"
-	pip install --force-reinstall dist/*.whl
-
-# Testing targets
-test: ## Run all Rust tests (unit tests only, excludes integration tests requiring Python)
-	@echo "$(GREEN)Running Rust tests...$(NC)"
-	cargo test --lib --bins --verbose --no-default-features
-
-test-integration: dev ## Run integration tests (requires Python module built)
-	@echo "$(GREEN)Running integration tests (with Python module)...$(NC)"
-	cargo test --test integration --verbose
-
-test-python: ## Run Python tests (requires dev install)
-	@echo "$(GREEN)Running Python unit tests...$(NC)"
-	cd .. && pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py -v
-
-test-differential: ## Run differential tests (Rust vs Python)
-	@echo "$(GREEN)Running differential tests...$(NC)"
-	cd .. && pytest tests/differential/test_pii_filter_differential.py -v
-
-test-all: test test-integration test-python test-differential ## Run all tests (Rust + Python)
-	@echo "$(GREEN)All tests completed!$(NC)"
-
-# Code quality targets
-check: fmt clippy test ## Run all checks (format, lint, test)
-	@echo "$(GREEN)All checks passed!$(NC)"
-
-fmt: ## Format code with rustfmt
-	@echo "$(GREEN)Formatting code...$(NC)"
-	cargo fmt --all
-
-fmt-check: ## Check if code is formatted
-	@echo "$(GREEN)Checking code format...$(NC)"
-	cargo fmt --all -- --check
-
-clippy: ## Run clippy linter
-	@echo "$(GREEN)Running clippy...$(NC)"
-	cargo clippy --all-targets --all-features -- -D warnings
-
-lint: clippy ## Alias for clippy
-	@echo "$(GREEN)Linting completed!$(NC)"
-
-# Benchmarking targets
-bench: ## Run Rust benchmarks with Criterion
-	@echo "$(GREEN)Running Rust benchmarks...$(NC)"
-	cargo bench
-
-bench-compare: dev ## Run Python comparison benchmarks
-	@echo "$(GREEN)Running Python vs Rust comparison...$(NC)"
-	cd .. && python benchmarks/compare_pii_filter.py
-
-bench-save: dev ## Run benchmarks and save results
-	@echo "$(GREEN)Running benchmarks and saving results...$(NC)"
-	cd .. && python benchmarks/compare_pii_filter.py --output benchmark-results.json
-	@echo "$(GREEN)Results saved to ../benchmark-results.json$(NC)"
-
-bench-all: bench bench-compare ## Run all benchmarks (Rust + Python comparison)
-	@echo "$(GREEN)All benchmarks completed!$(NC)"
-
-# Security and audit targets
-audit: ## Run security audit with cargo-audit
-	@echo "$(GREEN)Running security audit...$(NC)"
-	@command -v cargo-audit >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-audit...$(NC)"; cargo install cargo-audit; }
-	cargo audit
-
-audit-fix: ## Run security audit and apply fixes
-	@echo "$(GREEN)Running security audit with fixes...$(NC)"
-	cargo audit fix
-
-# Documentation targets
-doc: ## Build Rust documentation
-	@echo "$(GREEN)Building documentation...$(NC)"
-	cargo doc --no-deps --document-private-items
-
-doc-open: doc ## Build and open documentation in browser
-	@echo "$(GREEN)Opening documentation...$(NC)"
-	cargo doc --no-deps --document-private-items --open
-
-# Coverage targets
-coverage: ## Generate code coverage report
-	@echo "$(GREEN)Generating code coverage...$(NC)"
-	@command -v cargo-tarpaulin >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-tarpaulin...$(NC)"; cargo install cargo-tarpaulin; }
-	cargo tarpaulin --out Html --out Xml --output-dir coverage
-
-coverage-open: coverage ## Generate and open coverage report
-	@echo "$(GREEN)Opening coverage report...$(NC)"
-	@command -v xdg-open >/dev/null 2>&1 && xdg-open coverage/index.html || open coverage/index.html
-
-# Cleaning targets
-clean: ## Remove build artifacts
-	@echo "$(YELLOW)Cleaning build artifacts...$(NC)"
-	cargo clean
-	rm -rf dist/
-	rm -rf target/
-	rm -rf coverage/
-	rm -f Cargo.lock
-	find . -type f -name "*.whl" -delete
-	find . -type f -name "*.pyc" -delete
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	@echo "$(YELLOW)Cleaning benchmark results...$(NC)"
-	rm -f benchmarks/results/*.json
-	rm -f benchmarks/results/*.csv
-
-clean-all: clean ## Remove all generated files including caches
-	@echo "$(RED)Cleaning all generated files...$(NC)"
-	rm -rf ~/.cargo/registry/cache/
-	rm -rf ~/.cargo/git/db/
-
-# Development workflow targets
-dev-cycle: fmt clippy test ## Quick development cycle (format, lint, test)
-	@echo "$(GREEN)Development cycle completed!$(NC)"
-
-ci: fmt-check clippy test ## Run CI checks (format check, lint, test)
-	@echo "$(GREEN)CI checks passed!$(NC)"
-
-pre-commit: fmt clippy test ## Run pre-commit checks
-	@echo "$(GREEN)Pre-commit checks passed!$(NC)"
-
-# Utility targets
-verify: ## Verify installation
-	@echo "$(GREEN)Verifying Rust installation...$(NC)"
-	@python -c "from plugins_rust import PIIDetectorRust; print('✓ Rust PII filter available')" && \
-		echo "$(GREEN)✓ Installation verified$(NC)" || \
-		echo "$(RED)✗ Installation failed - run 'make dev' first$(NC)"
-
-info: ## Show build information
-	@echo "$(BLUE)Build Information:$(NC)"
-	@echo "  Rust version:    $$(rustc --version)"
-	@echo "  Cargo version:   $$(cargo --version)"
-	@echo "  Maturin version: $$(maturin --version 2>/dev/null || echo 'not installed')"
-	@echo "  Python version:  $$(python --version)"
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo ""; \
+		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+		echo "Checking plugin: $$plugin"; \
+		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+		if [ ! -f "$$plugin/pyproject.toml" ]; then \
+			echo "❌ ERROR: pyproject.toml not found in $$plugin"; \
+			exit 1; \
+		fi; \
+		echo "✅ pyproject.toml exists"; \
+		pyi_file=$$(find $$plugin/python -name "__init__.pyi" 2>/dev/null | head -1); \
+		if [ -z "$$pyi_file" ]; then \
+			echo "❌ ERROR: No __init__.pyi file found in $$plugin/python"; \
+			echo "   Run 'make rust-install' to generate stub files"; \
+			exit 1; \
+		fi; \
+		if [ ! -s "$$pyi_file" ]; then \
+			echo "❌ ERROR: Stub file is empty: $$pyi_file"; \
+			exit 1; \
+		fi; \
+		echo "✅ Stub file exists: $$pyi_file"; \
+		if ! grep -q "def \|class " "$$pyi_file"; then \
+			echo "⚠️  WARNING: Stub file may be incomplete (no functions or classes found)"; \
+		fi; \
+		echo "✅ $$plugin verification complete"; \
+	done
 	@echo ""
-	@echo "$(BLUE)Project Information:$(NC)"
-	@echo "  Name:    plugins_rust"
-	@echo "  Version: $$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
-	@echo "  License: Apache-2.0"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "✅ All plugins verified successfully!"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-deps: ## Install/update dependencies
-	@echo "$(GREEN)Installing/updating dependencies...$(NC)"
-	@command -v maturin >/dev/null 2>&1 || { echo "$(YELLOW)Installing maturin...$(NC)"; pip install maturin; }
-	@command -v cargo-audit >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-audit...$(NC)"; cargo install cargo-audit; }
-	@command -v cargo-tarpaulin >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-tarpaulin...$(NC)"; cargo install cargo-tarpaulin; }
-	@command -v cargo-upgrade >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-edit (cargo-upgrade)...$(NC)"; cargo install cargo-edit; }
-	@command -v cargo-outdated >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-outdated...$(NC)"; cargo install cargo-outdated; }
-	@echo "$(GREEN)Dependencies installed!$(NC)"
+test-all: test test-python
+	@echo "✓ All tests completed successfully"
 
-upgrade-deps-check: ## Check for outdated dependencies (dry-run)
-	@echo "$(GREEN)Checking for outdated dependencies...$(NC)"
-	@command -v cargo-outdated >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-outdated...$(NC)"; cargo install cargo-outdated; }
-	cargo outdated
+list:
+	@echo "Discovered plugins:"
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "  - $$plugin"; \
+	done
 
-upgrade-deps: ## Update dependencies to latest versions
-	@echo "$(GREEN)Updating Rust dependencies to latest versions...$(NC)"
-	@command -v cargo-upgrade >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-edit (cargo-upgrade)...$(NC)"; cargo install cargo-edit; }
-	@echo "$(YELLOW)Running cargo upgrade --incompatible...$(NC)"
-	cargo upgrade --incompatible
-	@echo "$(YELLOW)Updating Cargo.lock...$(NC)"
-	cargo update
-	@echo "$(YELLOW)Building release to verify compatibility...$(NC)"
-	cargo build --release
-	@echo "$(YELLOW)Running tests to verify functionality...$(NC)"
-	cargo test --lib --bins --no-default-features
-	@echo "$(GREEN)Dependencies updated successfully!$(NC)"
-	@echo "$(YELLOW)Review changes with: git diff Cargo.toml Cargo.lock$(NC)"
-
-# Release targets
-release-build: clean ## Build release packages for all platforms
-	@echo "$(GREEN)Building release packages...$(NC)"
-	maturin build --release --out dist
-
-release-check: fmt-check clippy test audit ## Run all release checks
-	@echo "$(GREEN)Release checks passed!$(NC)"
-
-release: release-check release-build ## Full release workflow (checks + build)
-	@echo "$(GREEN)Release build completed!$(NC)"
-	@echo "$(YELLOW)Wheels created in dist/:$(NC)"
-	@ls -lh dist/
-
-# Watch targets (requires cargo-watch)
-watch: ## Watch for changes and run tests
-	@command -v cargo-watch >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-watch...$(NC)"; cargo install cargo-watch; }
-	cargo watch -x test
-
-watch-dev: ## Watch for changes and rebuild in dev mode
-	@command -v cargo-watch >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-watch...$(NC)"; cargo install cargo-watch; }
-	cargo watch -x 'maturin develop'
-
-# Performance profiling
-profile: ## Profile Rust code with flamegraph
-	@command -v cargo-flamegraph >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-flamegraph...$(NC)"; cargo install flamegraph; }
-	@echo "$(GREEN)Profiling with flamegraph...$(NC)"
-	cargo flamegraph --bench pii_filter
-
-# Statistics
-stats: ## Show code statistics
-	@echo "$(BLUE)Code Statistics:$(NC)"
-	@echo "  Rust files:  $$(find src -name '*.rs' | wc -l)"
-	@echo "  Rust lines:  $$(find src -name '*.rs' -exec cat {} \; | wc -l)"
-	@echo "  Test files:  $$(find tests -name '*.rs' | wc -l)"
-	@echo "  Test lines:  $$(find tests -name '*.rs' -exec cat {} \; | wc -l)"
-	@echo "  Bench files: $$(find benches -name '*.rs' 2>/dev/null | wc -l)"
+help:
+	@echo "Available targets (run on ALL plugins):"
+	@echo "  make install          - Install all Rust plugins"
+	@echo "  make uninstall        - Uninstall all Rust plugins"
+	@echo "  make build            - Build all Rust plugins"
+	@echo "  make test             - Test all Rust plugins"
+	@echo "  make test-verbose     - Test all plugins (verbose)"
+	@echo "  make test-python      - Run Python tests for all plugins"
+	@echo "  make test-integration - Run integration tests for all plugins"
+	@echo "  make test-all         - Run all tests (Rust + Python)"
+	@echo "  make clean            - Clean all build artifacts"
+	@echo "  make clean-all        - Deep clean all plugins"
+	@echo "  make fmt              - Format all plugin code"
+	@echo "  make fmt-check        - Check formatting for all plugins"
+	@echo "  make clippy           - Run clippy on all plugins"
+	@echo "  make check            - Run all checks (fmt, clippy, test)"
+	@echo "  make bench            - Run benchmarks for all plugins"
+	@echo "  make bench-compare    - Run performance comparisons (with benchmarks)"
+	@echo "  make compare          - Run compare_performance.py only (skip benchmarks)"
+	@echo "  make verify           - Verify all plugin installations"
+	@echo "  make verify-stubs     - Verify stub generation and pyproject.toml"
+	@echo "  make clean-stubs      - Remove all generated stub files"
+	@echo "  make doc              - Build documentation for all plugins"
+	@echo "  make doc-open         - Build and open docs for all plugins"
+	@echo "  make list             - List discovered plugins"
 	@echo ""
-	@echo "$(BLUE)Dependency Tree:$(NC)"
-	@cargo tree --depth 1
+	@echo "Plugin-specific targets (use <plugin>-<target>):"
+	@echo "  make <plugin>-build        - Build specific plugin"
+	@echo "  make <plugin>-clean        - Clean specific plugin"
+	@echo "  make <plugin>-clean-all    - Clean all plugin artifacts"
+	@echo "  make <plugin>-clippy       - Run clippy on plugin"
+	@echo "  make <plugin>-doc          - Build plugin documentation"
+	@echo "  make <plugin>-doc-open     - Build and open plugin docs"
+	@echo "  make <plugin>-fmt          - Format plugin code"
+	@echo "  make <plugin>-fmt-check    - Check plugin code formatting"
+	@echo "  make <plugin>-help         - Show plugin-specific help"
+	@echo "  make <plugin>-install      - Install specific plugin"
+	@echo "  make <plugin>-uninstall    - Uninstall specific plugin"
+	@echo "  make <plugin>-test         - Test specific plugin"
+	@echo "  make <plugin>-test-python  - Run Python tests for plugin"
+	@echo "  make <plugin>-test-verbose - Run verbose tests for plugin"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make install                        # Install all plugins"
+	@echo "  make test                           # Test all plugins"
+	@echo "  make pii_filter-install             # Install only pii_filter"
+	@echo "  make secrets_detection-test         # Test only secrets_detection"
+	@echo "  make encoded_exfil_detection-build  # Build only encoded_exfil_detection"
 
-# Quick commands
-q: dev-cycle ## Quick: format, lint, test (alias for dev-cycle)
-
-qq: fmt test ## Very quick: format and test only (no clippy)
-
-.PHONY: help build build-debug dev dev-debug install \
-        test test-integration test-python test-differential test-all \
-        check fmt fmt-check clippy lint \
-        bench bench-compare bench-save bench-all \
-        audit audit-fix \
-        doc doc-open \
-        coverage coverage-open \
-        clean clean-all \
-        dev-cycle ci pre-commit \
-        verify info deps upgrade-deps-check upgrade-deps \
-        release-build release-check release \
-        watch watch-dev profile stats q qq
+.DEFAULT_GOAL := install

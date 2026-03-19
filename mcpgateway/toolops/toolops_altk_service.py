@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Jay Bandlamudi
 
-MCP Gateway - Main module for toolops services.
+ContextForge - Main module for toolops services.
 
 This module defines the different toolops services
 
@@ -76,10 +76,10 @@ LLM_PLATFORM = "OpenAIProvider - " + provider
 # ---------------
 # IMPORTANT NOTE:
 # ---------------
-# ALTK (agent life cycle toolkit) does not support all LLM providers that are supported in MCP context forge.
-# To use all MCP CF supported LLM providers we need to override the ALTK modules related to LLM inferencing.
+# ALTK (agent life cycle toolkit) does not support all LLM providers that are supported in ContextForge.
+# To use all ContextForge supported LLM providers we need to override the ALTK modules related to LLM inferencing.
 # i.e; `execute_prompt` method used in different ALTK toolops modules is overrided with custom execute prompt
-# that uses MCP context forge LLM inferencing modules.
+# that uses ContextForge LLM inferencing modules.
 
 
 #  custom execute prompt to support MCP-CF LLM providers
@@ -242,12 +242,16 @@ async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session) -> t
     Returns:
         enriched_description: Enriched tool description
         tool_schema: Updated tool schema in MCP-CF ToolRead format
+
+    Raises:
+        Exception: If the tool cannot be retrieved or converted to schema.
     """
     try:
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
         mcp_cf_tool = tool_schema.to_dict(use_alias=True)
     except Exception as e:
         logger.error(f"Failed to convert tool {tool_id} to schema: {e}")
+        raise
 
     toolops_enrichment = ToolOpsMCPCFToolEnrichment(llm_client=None, gen_mode=None)
     enriched_description = await toolops_enrichment.enrich_mc_cf_tool(mcp_cf_toolspec=mcp_cf_tool)

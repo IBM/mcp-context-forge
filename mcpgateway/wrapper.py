@@ -4,8 +4,8 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan
 
-MCP Gateway Wrapper.
-MCP Client (stdio) <-> MCP Gateway Bridge
+ContextForge Wrapper.
+MCP Client (stdio) <-> ContextForge Bridge
 
 This module implements a wrapper stdio bridge that facilitates
 interaction between the MCP client and the MCP gateway.
@@ -46,7 +46,6 @@ import argparse
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
-import errno
 import logging
 import os
 import signal
@@ -212,10 +211,8 @@ def send_to_stdout(obj: Union[dict, str, bytes]) -> None:
             sys.stdout.write(line.decode("utf-8") + "\n")
             sys.stdout.flush()
     except OSError as e:
-        if e.errno in (errno.EPIPE, errno.EINVAL):
-            _mark_shutdown()
-        else:
-            _mark_shutdown()
+        logger.error("OS error: %s", e)
+        _mark_shutdown()
 
 
 def make_error(message: str, code: int = JSONRPC_INTERNAL_ERROR, data: Any = None) -> dict:

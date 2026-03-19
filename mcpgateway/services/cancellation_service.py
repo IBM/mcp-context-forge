@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -82,36 +82,74 @@ class CancellationService:
     async def _listen_for_cancellations(self) -> None:
         """Listen for cancellation events from other workers via Redis pubsub.
 
+        Uses timeout-based polling instead of blocking listen() to allow proper
+        cancellation handling. This prevents CPU spin loops when the task is cancelled
+        but stuck waiting on the blocking async iterator.
+
         Raises:
             asyncio.CancelledError: When the listener task is cancelled during shutdown.
         """
         if not self._redis:
             return
 
+        pubsub = None
         try:
             pubsub = self._redis.pubsub()
             await pubsub.subscribe("cancellation:cancel")
             logger.info("CancellationService: Subscribed to cancellation:cancel channel")
 
-            async for message in pubsub.listen():
-                if message["type"] == "message":
-                    try:
-                        data = json.loads(message["data"])
-                        # Normalize run_id to string (handle id=0 which is valid per JSON-RPC)
-                        raw_run_id = data.get("run_id")
-                        run_id = str(raw_run_id) if raw_run_id is not None else None
-                        reason = data.get("reason")
+            # Use timeout-based polling instead of blocking listen()
+            # This allows the task to respond to cancellation properly
+            poll_timeout = 1.0
 
-                        if run_id is not None:
-                            # Cancel locally if we have this run (don't re-publish)
-                            await self._cancel_run_local(run_id, reason=reason)
-                    except Exception as e:
-                        logger.warning(f"Error processing cancellation message: {e}")
+            while True:
+                try:
+                    message = await asyncio.wait_for(
+                        pubsub.get_message(ignore_subscribe_messages=True, timeout=poll_timeout),
+                        timeout=poll_timeout + 0.5,
+                    )
+                except asyncio.TimeoutError:
+                    # No message, continue loop to check for cancellation
+                    continue
+
+                if message is None:
+                    # Prevent spin if get_message returns None immediately
+                    await asyncio.sleep(0.1)
+                    continue
+
+                if message["type"] != "message":
+                    # Sleep on non-message types to prevent spin
+                    await asyncio.sleep(0.1)
+                    continue
+
+                try:
+                    data = json.loads(message["data"])
+                    # Normalize run_id to string (handle id=0 which is valid per JSON-RPC)
+                    raw_run_id = data.get("run_id")
+                    run_id = str(raw_run_id) if raw_run_id is not None else None
+                    reason = data.get("reason")
+
+                    if run_id is not None:
+                        # Cancel locally if we have this run (don't re-publish)
+                        await self._cancel_run_local(run_id, reason=reason)
+                except Exception as e:
+                    logger.warning(f"Error processing cancellation message: {e}")
         except asyncio.CancelledError:
             logger.info("CancellationService: Pubsub listener cancelled")
             raise
         except Exception as e:
             logger.error(f"CancellationService: Pubsub listener error: {e}")
+        finally:
+            # Clean up pubsub on any exit
+            if pubsub is not None:
+                try:
+                    await pubsub.unsubscribe("cancellation:cancel")
+                    try:
+                        await pubsub.aclose()
+                    except AttributeError:
+                        await pubsub.close()
+                except Exception as e:
+                    logger.debug(f"Error closing cancellation pubsub: {e}")
 
     async def _cancel_run_local(self, run_id: str, reason: Optional[str] = None) -> bool:
         """Cancel a run locally without publishing to Redis (internal use).
@@ -145,16 +183,32 @@ class CancellationService:
 
         return True
 
-    async def register_run(self, run_id: str, name: Optional[str] = None, cancel_callback: Optional[CancelCallback] = None) -> None:
+    async def register_run(
+        self,
+        run_id: str,
+        name: Optional[str] = None,
+        cancel_callback: Optional[CancelCallback] = None,
+        owner_email: Optional[str] = None,
+        owner_team_ids: Optional[List[str]] = None,
+    ) -> None:
         """Register a run for future cancellation.
 
         Args:
             run_id: Unique run identifier (string)
             name: Optional friendly name for debugging/observability
             cancel_callback: Optional async callback called when a cancel is requested
+            owner_email: Optional email of the user who started the run
+            owner_team_ids: Optional list of token team IDs associated with the run owner
         """
         async with self._lock:
-            self._runs[run_id] = {"name": name, "registered_at": time.time(), "cancel_callback": cancel_callback, "cancelled": False}
+            self._runs[run_id] = {
+                "name": name,
+                "registered_at": time.time(),
+                "cancel_callback": cancel_callback,
+                "cancelled": False,
+                "owner_email": owner_email,
+                "owner_team_ids": owner_team_ids or [],
+            }
             logger.info("Registered run %s (%s)", run_id, name)
 
     async def unregister_run(self, run_id: str) -> None:

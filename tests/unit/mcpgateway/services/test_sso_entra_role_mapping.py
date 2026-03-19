@@ -203,6 +203,7 @@ class TestEntraIDRoleMapping:
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_settings.sso_entra_admin_groups = ["Admin"]
             mock_settings.sso_entra_role_mappings = {}
+            mock_settings.default_admin_role = "platform_admin"
 
             user_groups = ["Admin", "Developer"]
             role_assignments = await sso_service._map_groups_to_roles("user@company.com", user_groups, entra_provider)
@@ -325,7 +326,7 @@ class TestEntraIDRoleSynchronization:
             await sso_service._sync_user_roles("user@company.com", role_assignments, entra_provider)
 
             # Verify role was assigned
-            mock_role_service.assign_role_to_user.assert_called_once_with(user_email="user@company.com", role_id="role-123", scope="team", scope_id=None, granted_by="sso_system")
+            mock_role_service.assign_role_to_user.assert_called_once_with(user_email="user@company.com", role_id="role-123", scope="team", scope_id=None, granted_by="user@company.com", grant_source="sso")
 
     @pytest.mark.asyncio
     async def test_sync_user_roles_revoke_old_roles(self, sso_service, entra_provider):
@@ -343,7 +344,7 @@ class TestEntraIDRoleSynchronization:
             old_user_role.role = old_role
             old_user_role.scope = "team"
             old_user_role.scope_id = None
-            old_user_role.granted_by = "sso_system"
+            old_user_role.grant_source = "sso"
 
             mock_role_service.list_user_roles = AsyncMock(return_value=[old_user_role])
             mock_role_service.revoke_role_from_user = AsyncMock()
@@ -362,7 +363,7 @@ class TestEntraIDRoleSynchronization:
         with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
             mock_role_service = MockRoleService.return_value
 
-            # Mock manually assigned role (not granted by sso_system)
+            # Mock manually assigned role (no SSO grant_source)
             manual_role = MagicMock(spec=Role)
             manual_role.id = "manual-role-123"
             manual_role.name = "manual_role"
@@ -372,7 +373,7 @@ class TestEntraIDRoleSynchronization:
             manual_user_role.role = manual_role
             manual_user_role.scope = "team"
             manual_user_role.scope_id = None
-            manual_user_role.granted_by = "admin@company.com"  # Not sso_system
+            manual_user_role.grant_source = None  # Not SSO-granted
 
             mock_role_service.list_user_roles = AsyncMock(return_value=[manual_user_role])
             mock_role_service.revoke_role_from_user = AsyncMock()
@@ -482,7 +483,7 @@ class TestEntraIDRoleRevocationOnLogin:
             old_user_role.role = old_role
             old_user_role.scope = "team"
             old_user_role.scope_id = None
-            old_user_role.granted_by = "sso_system"
+            old_user_role.grant_source = "sso"
 
             mock_role_service.list_user_roles = AsyncMock(return_value=[old_user_role])
             mock_role_service.revoke_role_from_user = AsyncMock()
@@ -515,14 +516,14 @@ class TestEntraIDRoleRevocationOnLogin:
             dev_user_role.role = developer_role
             dev_user_role.scope = "team"
             dev_user_role.scope_id = None
-            dev_user_role.granted_by = "sso_system"
+            dev_user_role.grant_source = "sso"
 
             admin_user_role = MagicMock(spec=UserRole)
             admin_user_role.role_id = "admin-role-456"
             admin_user_role.role = admin_role
             admin_user_role.scope = "team"
             admin_user_role.scope_id = None
-            admin_user_role.granted_by = "sso_system"
+            admin_user_role.grant_source = "sso"
 
             mock_role_service.list_user_roles = AsyncMock(return_value=[dev_user_role, admin_user_role])
             mock_role_service.revoke_role_from_user = AsyncMock()
@@ -536,6 +537,60 @@ class TestEntraIDRoleRevocationOnLogin:
 
             # Verify only team_admin was revoked
             mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="user@company.com", role_id="admin-role-456", scope="team", scope_id=None)
+
+
+    @pytest.mark.asyncio
+    async def test_sync_user_roles_uses_user_email_as_granted_by(self, sso_service, entra_provider):
+        """Regression: granted_by must be user_email, not 'sso_system' (FK constraint violation #3484)."""
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            mock_role_service = MockRoleService.return_value
+
+            mock_role_service.list_user_roles = AsyncMock(return_value=[])
+
+            role = MagicMock(spec=Role)
+            role.id = "role-abc"
+            role.name = "developer"
+            role.scope = "team"
+
+            mock_role_service.get_role_by_name = AsyncMock(return_value=role)
+            mock_role_service.get_user_role_assignment = AsyncMock(return_value=None)
+            mock_role_service.assign_role_to_user = AsyncMock()
+
+            await sso_service._sync_user_roles("alice@example.com", [{"role_name": "developer", "scope": "team", "scope_id": None}], entra_provider)
+
+            call_kwargs = mock_role_service.assign_role_to_user.call_args.kwargs
+            # granted_by must be the user's own email (satisfies FK to email_users)
+            assert call_kwargs["granted_by"] == "alice@example.com"
+            # grant_source tracks provenance without abusing the FK column
+            assert call_kwargs["grant_source"] == "sso"
+
+    @pytest.mark.asyncio
+    async def test_sync_user_roles_does_not_revoke_non_sso_self_granted_roles(self, sso_service, entra_provider):
+        """Regression: only roles with grant_source='sso' should be revoked, not all self-granted roles."""
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            mock_role_service = MockRoleService.return_value
+
+            # Auto-assigned role during user creation (self-granted, no grant_source)
+            auto_role = MagicMock(spec=Role)
+            auto_role.id = "auto-role-1"
+            auto_role.name = "viewer"
+
+            auto_user_role = MagicMock(spec=UserRole)
+            auto_user_role.role_id = "auto-role-1"
+            auto_user_role.role = auto_role
+            auto_user_role.scope = "global"
+            auto_user_role.scope_id = None
+            auto_user_role.granted_by = "user@company.com"
+            auto_user_role.grant_source = None  # Not SSO-granted
+
+            mock_role_service.list_user_roles = AsyncMock(return_value=[auto_user_role])
+            mock_role_service.revoke_role_from_user = AsyncMock()
+
+            # SSO login with no role mappings
+            await sso_service._sync_user_roles("user@company.com", [], entra_provider)
+
+            # Auto-assigned role must NOT be revoked (it's not SSO-granted)
+            mock_role_service.revoke_role_from_user.assert_not_called()
 
 
 class TestEntraIDDefaultRoleForNoGroups:
@@ -588,6 +643,7 @@ class TestEntraIDDefaultRoleForNoGroups:
             mock_settings.sso_entra_admin_groups = ["Admin"]
             mock_settings.sso_entra_role_mappings = {}
             mock_settings.sso_entra_default_role = "viewer"
+            mock_settings.default_admin_role = "platform_admin"
 
             # User is in Admin group
             role_assignments = await sso_service._map_groups_to_roles("user@company.com", ["Admin"], entra_provider)
@@ -669,6 +725,7 @@ class TestProviderLevelSyncOptOut:
             mock_settings.sso_entra_admin_groups = ["Admin"]
             mock_settings.sso_entra_role_mappings = {}
             mock_settings.sso_entra_default_role = None
+            mock_settings.default_admin_role = "platform_admin"
 
             role_assignments = await sso_service._map_groups_to_roles("user@company.com", ["Admin"], entra_provider)
 
@@ -751,6 +808,7 @@ class TestIsAdminSyncOnLogin:
         mock_user.email = "user@company.com"
         mock_user.full_name = "Test User"
         mock_user.is_admin = False  # Not admin initially
+        mock_user.admin_origin = None  # Not SSO granted
         mock_user.auth_provider = "entra"
         mock_user.email_verified = True
         mock_user.get_teams.return_value = []
@@ -765,6 +823,7 @@ class TestIsAdminSyncOnLogin:
             "full_name": "Test User",
             "provider": "entra",
             "groups": ["Admin"],  # User is now in admin group
+            "email_verified": True,
         }
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -797,6 +856,7 @@ class TestIsAdminSyncOnLogin:
         mock_user.email = "user@company.com"
         mock_user.full_name = "Test User"
         mock_user.is_admin = True  # Admin initially (manual grant)
+        mock_user.admin_origin = None  # Manual grant - not SSO synced
         mock_user.auth_provider = "entra"
         mock_user.email_verified = True
         mock_user.get_teams.return_value = []
@@ -811,6 +871,7 @@ class TestIsAdminSyncOnLogin:
             "full_name": "Test User",
             "provider": "entra",
             "groups": ["Developer"],  # User no longer in admin group
+            "email_verified": True,
         }
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -838,6 +899,7 @@ class TestIsAdminSyncOnLogin:
         mock_user.email = "user@company.com"
         mock_user.full_name = "Test User"
         mock_user.is_admin = True  # Already admin
+        mock_user.admin_origin = "sso"  # SSO granted
         mock_user.auth_provider = "entra"
         mock_user.email_verified = True
         mock_user.get_teams.return_value = []
@@ -862,6 +924,7 @@ class TestIsAdminSyncOnLogin:
             "full_name": "Test User",
             "provider": "entra",
             "groups": ["Admin"],  # Still in admin group
+            "email_verified": True,
         }
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -880,3 +943,52 @@ class TestIsAdminSyncOnLogin:
 
                 # is_admin should NOT have been set since it already matched
                 assert is_admin_set_count == 0
+
+    @pytest.mark.asyncio
+    async def test_is_admin_revoked_when_sso_admin_removed_from_group(self, sso_service, entra_provider):
+        """Test that SSO admin user gets is_admin=False when removed from admin group.
+
+        This tests the new bidirectional sync: SSO-granted admins can be demoted
+        when they no longer belong to the admin group in the IdP.
+        """
+        # Create mock existing SSO admin user
+        mock_user = MagicMock()
+        mock_user.email = "user@company.com"
+        mock_user.full_name = "Test User"
+        mock_user.is_admin = True  # Was SSO admin
+        mock_user.admin_origin = "sso"  # SSO granted - can be demoted
+        mock_user.auth_provider = "entra"
+        mock_user.email_verified = True
+        mock_user.get_teams.return_value = []
+
+        # Mock auth service to return existing user
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.get_provider = MagicMock(return_value=entra_provider)
+
+        # User info WITHOUT admin group (removed from admin)
+        user_info = {
+            "email": "user@company.com",
+            "full_name": "Test User",
+            "provider": "entra",
+            "groups": ["Developer"],  # No longer in admin group
+            "email_verified": True,
+        }
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_admin_groups = ["Admin"]
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_sync_roles_on_login = True
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.sso_entra_default_role = None
+
+            with patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+                mock_jwt.return_value = "mock_token"
+
+                await sso_service.authenticate_or_create_user(user_info)
+
+                # Verify is_admin was revoked since user was SSO admin and removed from group
+                assert mock_user.is_admin is False
+                # Verify admin_origin was cleared
+                assert mock_user.admin_origin is None

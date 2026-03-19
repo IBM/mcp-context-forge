@@ -1,7 +1,7 @@
-# 🧠 GitHub Copilot + MCP Gateway
+# 🧠 GitHub Copilot + ContextForge
 
 Super-charge Copilot (or any VS Code chat agent that speaks MCP) with tools, prompts and
-resources from **your own MCP Gateway**.
+resources from **your own ContextForge**.
 
 With Copilot → MCP you can:
 
@@ -12,13 +12,17 @@ With Copilot → MCP you can:
 Copilot supports **SSE** streams out-of-the-box; for environments that forbid long-lived
 HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`** bridge.
 
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
 ---
 
 ## 🛠 Prerequisites
 
 * **VS Code ≥ 1.99**
 * `"chat.mcp.enabled": true` in your *settings.json*
-* An MCP Gateway running (`make serve`, Docker, or container image)
+* ContextForge running (`make serve`, Docker, or container image)
 * A JWT or Basic credentials (`admin` / `changeme` in dev)
 
 ---
@@ -113,7 +117,7 @@ That's it - VS Code spawns the stdio process, pipes JSON-RPC, and you're ready t
     "run", "--rm", "--network=host", "-i",
     "-e", "MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1",
     "-e", "MCP_AUTH=<Bearer YOUR_JWT_TOKEN>",
-    "ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2",
+    "ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2",
     "python3", "-m", "mcpgateway.wrapper"
   ]
 }

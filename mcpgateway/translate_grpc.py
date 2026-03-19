@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/translate_grpc.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: MCP Gateway Contributors
+Authors: ContextForge Contributors
 
 gRPC to MCP Translation Module
 

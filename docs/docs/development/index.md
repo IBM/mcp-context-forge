@@ -1,6 +1,6 @@
 # Development
 
-Welcome! This guide is for developers contributing to MCP Gateway. Whether you're fixing bugs, adding features, or extending federation or protocol support, this doc will help you get up and running quickly and consistently.
+Welcome! This guide is for developers contributing to ContextForge. Whether you're fixing bugs, adding features, or extending federation or protocol support, this doc will help you get up and running quickly and consistently.
 
 ---
 
@@ -9,6 +9,7 @@ Welcome! This guide is for developers contributing to MCP Gateway. Whether you'r
 | Page                                                                              | Description                                                                    |
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | [Building Locally](building.md)                                                   | How to install dependencies, set up a virtual environment, and run the gateway |
+| [Developer Workstation](developer-workstation.md)                                 | Local workstation setup, troubleshooting, and Keycloak SSO development login   |
 | [Packaging](packaging.md)                                                         | How to build a release, container image, or prebuilt binary                    |
 | [Database Performance](db-performance.md)                                         | N+1 query detection, query logging, and database optimization                  |
 | [Doctest Coverage](doctest-coverage.md)                                           | Comprehensive doctest coverage implementation and guidelines                    |
@@ -18,7 +19,7 @@ Welcome! This guide is for developers contributing to MCP Gateway. Whether you'r
 
 ## 🛠 Developer Environment
 
-MCP Gateway is built with:
+ContextForge is built with:
 
 * **Python 3.11+**
 * **FastAPI** + **SQLAlchemy (async)** + **Pydantic Settings**
@@ -56,7 +57,7 @@ Test coverage includes:
 * Integration tests under `tests/integration/`
 * End-to-end tests under `tests/e2e/`
 * UI automation under `tests/playwright/` (Playwright)
-* Load testing under `tests/locust/` (Locust)
+* Load testing under `tests/loadtest/` (Locust)
 * Example payload performance testing under `tests/hey/`
 
 Use:
@@ -66,7 +67,7 @@ make test                        # run full suite
 pytest tests/unit/               # run only unit tests
 pytest tests/e2e/                # run end-to-end scenarios
 pytest tests/playwright/         # run UI automation tests
-locust -f tests/locust/locustfile.py --host=http://localhost:4444  # load testing
+locust -f tests/loadtest/locustfile.py --host=http://localhost:4444  # load testing
 ```
 
 Note: JavaScript unit tests are not yet implemented; frontend testing relies on Playwright for UI automation.
@@ -116,12 +117,12 @@ make podman-run-ssl    # run with self-signed TLS at https://localhost:4444
 
 ## 🔐 Authentication
 
-Admin UI and API are protected by Basic Auth or JWT.
+Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`). API endpoints require JWT tokens (Basic Auth is disabled by default).
 
 To generate a JWT token:
 
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)
 echo $MCPGATEWAY_BEARER_TOKEN
 ```
 
@@ -137,7 +138,7 @@ curl -sX GET \
 
 ## 📦 Configuration
 
-Edit `.env` or set environment variables. A complete list is documented in the [README](https://github.com/IBM/mcp-context-forge#configuration-env-or-env-vars).
+Edit `.env` or set environment variables. A complete list is documented in the [Configuration Reference](../manage/configuration.md).
 
 Use:
 

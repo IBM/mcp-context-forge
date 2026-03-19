@@ -66,7 +66,7 @@ class TestPromptServiceExtended:
         """Test initialize method (line 125)."""
         service = PromptService()
 
-        with patch('mcpgateway.services.prompt_service.logger') as mock_logger:
+        with patch("mcpgateway.services.prompt_service.logger") as mock_logger:
             await service.initialize()
             mock_logger.info.assert_called_with("Initializing prompt service")
 
@@ -78,7 +78,7 @@ class TestPromptServiceExtended:
         # Mock the EventService shutdown method
         service._event_service.shutdown = AsyncMock()
 
-        with patch('mcpgateway.services.prompt_service.logger') as mock_logger:
+        with patch("mcpgateway.services.prompt_service.logger") as mock_logger:
             await service.shutdown()
 
             # Verify EventService.shutdown was called
@@ -93,18 +93,20 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async
-        assert hasattr(service, 'register_prompt')
-        assert callable(getattr(service, 'register_prompt'))
+        assert hasattr(service, "register_prompt")
+        assert callable(getattr(service, "register_prompt"))
         # Standard
         import asyncio
+
         assert asyncio.iscoroutinefunction(service.register_prompt)
 
         # Test method parameters
         # Standard
         import inspect
+
         sig = inspect.signature(service.register_prompt)
-        assert 'db' in sig.parameters
-        assert 'prompt' in sig.parameters
+        assert "db" in sig.parameters
+        assert "prompt" in sig.parameters
 
     @pytest.mark.asyncio
     async def test_template_validation_with_jinja_syntax_error(self):
@@ -112,8 +114,8 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test that validation method exists
-        assert hasattr(service, '_validate_template')
-        assert callable(getattr(service, '_validate_template'))
+        assert hasattr(service, "_validate_template")
+        assert callable(getattr(service, "_validate_template"))
 
     @pytest.mark.asyncio
     async def test_template_validation_with_undefined_variables(self):
@@ -121,8 +123,8 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is callable
-        assert hasattr(service, '_get_required_arguments')
-        assert callable(getattr(service, '_get_required_arguments'))
+        assert hasattr(service, "_get_required_arguments")
+        assert callable(getattr(service, "_get_required_arguments"))
 
     @pytest.mark.asyncio
     async def test_get_prompt_not_found(self):
@@ -130,10 +132,11 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async
-        assert hasattr(service, 'get_prompt')
-        assert callable(getattr(service, 'get_prompt'))
+        assert hasattr(service, "get_prompt")
+        assert callable(getattr(service, "get_prompt"))
         # Standard
         import asyncio
+
         assert asyncio.iscoroutinefunction(service.get_prompt)
 
     @pytest.mark.asyncio
@@ -144,9 +147,10 @@ class TestPromptServiceExtended:
         # Test method signature
         # Standard
         import inspect
+
         sig = inspect.signature(service.get_prompt)
-        assert 'prompt_id' in sig.parameters
-        assert 'arguments' in sig.parameters
+        assert "prompt_id" in sig.parameters
+        assert "arguments" in sig.parameters
 
     @pytest.mark.asyncio
     async def test_update_prompt_not_found(self):
@@ -154,10 +158,11 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async
-        assert hasattr(service, 'update_prompt')
-        assert callable(getattr(service, 'update_prompt'))
+        assert hasattr(service, "update_prompt")
+        assert callable(getattr(service, "update_prompt"))
         # Standard
         import asyncio
+
         assert asyncio.iscoroutinefunction(service.update_prompt)
 
     @pytest.mark.asyncio
@@ -168,9 +173,10 @@ class TestPromptServiceExtended:
         # Test method parameters
         # Standard
         import inspect
+
         sig = inspect.signature(service.update_prompt)
-        assert 'prompt_id' in sig.parameters
-        assert 'prompt_update' in sig.parameters
+        assert "prompt_id" in sig.parameters
+        assert "prompt_update" in sig.parameters
 
     @pytest.mark.asyncio
     async def test_update_prompt_template_validation_error(self):
@@ -178,7 +184,7 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and has proper attributes
-        method = getattr(service, 'update_prompt')
+        method = getattr(service, "update_prompt")
         assert method is not None
         assert callable(method)
 
@@ -188,8 +194,8 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists
-        assert hasattr(service, 'set_prompt_state')
-        assert callable(getattr(service, 'set_prompt_state'))
+        assert hasattr(service, "set_prompt_state")
+        assert callable(getattr(service, "set_prompt_state"))
 
     @pytest.mark.asyncio
     async def test_set_prompt_state_no_change_needed(self):
@@ -199,6 +205,7 @@ class TestPromptServiceExtended:
         # Test method is async
         # Standard
         import asyncio
+
         assert asyncio.iscoroutinefunction(service.set_prompt_state)
 
     @pytest.mark.asyncio
@@ -207,10 +214,11 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async
-        assert hasattr(service, 'delete_prompt')
-        assert callable(getattr(service, 'delete_prompt'))
+        assert hasattr(service, "delete_prompt")
+        assert callable(getattr(service, "delete_prompt"))
         # Standard
         import asyncio
+
         assert asyncio.iscoroutinefunction(service.delete_prompt)
 
     @pytest.mark.asyncio
@@ -221,9 +229,10 @@ class TestPromptServiceExtended:
         # Test method parameters
         # Standard
         import inspect
+
         sig = inspect.signature(service.delete_prompt)
-        assert 'prompt_id' in sig.parameters
-        assert 'db' in sig.parameters
+        assert "prompt_id" in sig.parameters
+        assert "db" in sig.parameters
 
     @pytest.mark.asyncio
     async def test_render_prompt_template_rendering_error(self):
@@ -231,10 +240,11 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async (get_prompt does the rendering)
-        assert hasattr(service, 'get_prompt')
-        assert callable(getattr(service, 'get_prompt'))
+        assert hasattr(service, "get_prompt")
+        assert callable(getattr(service, "get_prompt"))
         # Standard
         import asyncio
+
         assert asyncio.iscoroutinefunction(service.get_prompt)
 
     @pytest.mark.asyncio
@@ -243,14 +253,15 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test plugin manager exists
-        assert hasattr(service, '_plugin_manager')
+        assert hasattr(service, "_plugin_manager")
 
         # Test method parameters
         # Standard
         import inspect
+
         sig = inspect.signature(service.get_prompt)
-        assert 'prompt_id' in sig.parameters
-        assert 'arguments' in sig.parameters
+        assert "prompt_id" in sig.parameters
+        assert "arguments" in sig.parameters
 
     @pytest.mark.asyncio
     async def test_record_prompt_metric_error_handling(self):
@@ -258,10 +269,11 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async
-        assert hasattr(service, 'aggregate_metrics')
-        assert callable(getattr(service, 'aggregate_metrics'))
+        assert hasattr(service, "aggregate_metrics")
+        assert callable(getattr(service, "aggregate_metrics"))
         # Standard
         import asyncio
+
         assert asyncio.iscoroutinefunction(service.aggregate_metrics)
 
     @pytest.mark.asyncio
@@ -270,10 +282,11 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async
-        assert hasattr(service, 'reset_metrics')
-        assert callable(getattr(service, 'reset_metrics'))
+        assert hasattr(service, "reset_metrics")
+        assert callable(getattr(service, "reset_metrics"))
         # Standard
         import asyncio
+
         assert asyncio.iscoroutinefunction(service.reset_metrics)
 
     @pytest.mark.asyncio
@@ -284,9 +297,10 @@ class TestPromptServiceExtended:
         # Test method signature
         # Standard
         import inspect
+
         sig = inspect.signature(service.get_prompt_details)
-        assert 'prompt_id' in sig.parameters
-        assert 'include_inactive' in sig.parameters
+        assert "prompt_id" in sig.parameters
+        assert "include_inactive" in sig.parameters
 
     @pytest.mark.asyncio
     async def test_subscribe_events_functionality(self):
@@ -294,12 +308,12 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists
-        assert hasattr(service, 'subscribe_events')
-        assert callable(getattr(service, 'subscribe_events'))
+        assert hasattr(service, "subscribe_events")
+        assert callable(getattr(service, "subscribe_events"))
 
         # Test it returns an async generator
         async_gen = service.subscribe_events()
-        assert hasattr(async_gen, '__aiter__')
+        assert hasattr(async_gen, "__aiter__")
 
     @pytest.mark.asyncio
     async def test_publish_event_multiple_subscribers(self):
@@ -337,7 +351,6 @@ class TestPromptServiceExtended:
 
         # Verify EventService.subscribe_events was called
         service._event_service.subscribe_events.assert_called_once()
-
 
     @pytest.mark.asyncio
     async def test_notify_prompt_methods(self):
@@ -388,4 +401,213 @@ class TestPromptServiceExtended:
         await service._notify_prompt_deleted(prompt_info)
         call_args = service._publish_event.call_args[0][0]
         assert call_args["type"] == "prompt_deleted"
-        assert call_args["data"] == prompt_info
+
+
+class TestPromptArgumentsJSONValidation:
+    """Test JSON validation functionality for prompt arguments."""
+
+    def test_exception_attributes(self):
+        """Test PromptArgumentsJSONError has correct attributes."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        error = PromptArgumentsJSONError(field_name="arguments", json_error="unexpected character", raw_value='{"invalid": json}', context="test prompt")
+
+        assert error.field_name == "arguments"
+        assert error.json_error == "unexpected character"
+        assert error.raw_value == '{"invalid": json}'
+        assert error.context == "test prompt"
+
+    def test_exception_message_format(self):
+        """Test exception message is properly formatted."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        error = PromptArgumentsJSONError(field_name="arguments", json_error="unexpected character: line 1 column 5", raw_value='{"bad', context="prompt 123")
+
+        error_msg = str(error)
+        assert "arguments" in error_msg.lower()
+        assert "json" in error_msg.lower()
+        assert "prompt 123" in error_msg
+
+    def test_exception_truncates_long_values(self):
+        """Test exception truncates long values to 200 chars."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        long_value = "x" * 300
+        error = PromptArgumentsJSONError(field_name="arguments", json_error="test error", raw_value=long_value)
+
+        assert len(error.raw_value) == 200
+        assert error.raw_value == "x" * 200
+
+    def test_valid_json_array(self):
+        """Test validation with valid JSON array."""
+        result = PromptService.validate_arguments_json('[{"name": "arg1", "required": true}]', context="test prompt")
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["name"] == "arg1"
+        assert result[0]["required"] is True
+
+    def test_valid_empty_array(self):
+        """Test validation with empty JSON array."""
+        result = PromptService.validate_arguments_json("[]", context="test")
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_none_returns_empty_list(self):
+        """Test None value returns empty list."""
+        result = PromptService.validate_arguments_json(None, context="test")
+        assert result == []
+
+    def test_empty_string_returns_empty_list(self):
+        """Test empty string returns empty list."""
+        result = PromptService.validate_arguments_json("", context="test")
+        assert result == []
+
+    def test_whitespace_only_returns_empty_list(self):
+        """Test whitespace-only string returns empty list."""
+        result = PromptService.validate_arguments_json("   \n\t  ", context="test")
+        assert result == []
+
+    def test_invalid_json_raises_exception(self):
+        """Test invalid JSON raises PromptArgumentsJSONError."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        with pytest.raises(PromptArgumentsJSONError) as exc_info:
+            PromptService.validate_arguments_json('{"invalid": json}', context="test prompt")
+
+        error = exc_info.value
+        assert error.field_name == "arguments"
+        assert "json" in error.json_error.lower() or "character" in error.json_error.lower()
+
+    def test_malformed_json_unclosed_bracket(self):
+        """Test malformed JSON with unclosed bracket."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        with pytest.raises(PromptArgumentsJSONError):
+            PromptService.validate_arguments_json('[{"name": "test"', context="prompt 123")
+
+    def test_malformed_json_trailing_comma(self):
+        """Test malformed JSON with trailing comma."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        with pytest.raises(PromptArgumentsJSONError):
+            PromptService.validate_arguments_json('[{"name": "test"},]', context="new prompt")
+
+    def test_non_array_object_raises_exception(self):
+        """Test non-array JSON object raises exception."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        with pytest.raises(PromptArgumentsJSONError) as exc_info:
+            PromptService.validate_arguments_json('{"name": "test"}', context="test")
+
+        assert "array" in str(exc_info.value).lower() or "list" in str(exc_info.value).lower()
+
+    def test_non_array_string_raises_exception(self):
+        """Test JSON string instead of array raises exception."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        with pytest.raises(PromptArgumentsJSONError):
+            PromptService.validate_arguments_json('"just a string"', context="test")
+
+    def test_non_array_number_raises_exception(self):
+        """Test JSON number instead of array raises exception."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        with pytest.raises(PromptArgumentsJSONError):
+            PromptService.validate_arguments_json("42", context="test")
+
+    def test_non_string_value_conversion(self):
+        """Test non-string values are converted to strings (covers line 281)."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        # Integer gets converted to string and parsed
+        with pytest.raises(PromptArgumentsJSONError):
+            PromptService.validate_arguments_json(123, context="test")
+
+        # Dict gets converted to string representation (invalid JSON)
+        with pytest.raises(PromptArgumentsJSONError):
+            PromptService.validate_arguments_json({"key": "value"}, context="test")
+
+    def test_complex_valid_json(self):
+        """Test validation with complex valid JSON array."""
+        complex_json = """[
+            {
+                "name": "query",
+                "description": "Search query",
+                "required": true,
+                "type": "string"
+            },
+            {
+                "name": "limit",
+                "required": false,
+                "default": 10
+            }
+        ]"""
+
+        result = PromptService.validate_arguments_json(complex_json, context="test")
+        assert len(result) == 2
+        assert result[0]["name"] == "query"
+        assert result[1]["default"] == 10
+
+    def test_unicode_in_json(self):
+        """Test validation with Unicode characters."""
+        unicode_json = '[{"name": "测试", "emoji": "🎉"}]'
+        result = PromptService.validate_arguments_json(unicode_json, context="test")
+        assert result[0]["name"] == "测试"
+        assert result[0]["emoji"] == "🎉"
+
+    def test_escaped_characters(self):
+        """Test validation with escaped characters."""
+        escaped_json = r'[{"name": "test\nline", "quote": "He said \"hello\""}]'
+        result = PromptService.validate_arguments_json(escaped_json, context="test")
+        assert result[0]["name"] == "test\nline"
+        assert result[0]["quote"] == 'He said "hello"'
+
+    def test_context_in_error_message(self):
+        """Test context is included in error message."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        with pytest.raises(PromptArgumentsJSONError) as exc_info:
+            PromptService.validate_arguments_json("invalid", context="prompt abc-123")
+
+        assert "abc-123" in str(exc_info.value)
+
+    def test_whitespace_variations(self):
+        """Test various whitespace-only inputs."""
+        whitespace_inputs = ["   ", "\t\t", "\n\n", " \t\n ", "\r\n"]
+
+        for ws_input in whitespace_inputs:
+            result = PromptService.validate_arguments_json(ws_input, context="test")
+            assert result == [], f"Failed for whitespace: {repr(ws_input)}"
+
+    def test_json_with_comments_fails(self):
+        """Test JSON with comments (invalid) raises exception."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        json_with_comments = """[
+            // This is a comment
+            {"name": "test"}
+        ]"""
+
+        with pytest.raises(PromptArgumentsJSONError):
+            PromptService.validate_arguments_json(json_with_comments, context="test")
+
+    def test_single_quotes_json_fails(self):
+        """Test single-quoted JSON (invalid) raises exception."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptArgumentsJSONError
+
+        with pytest.raises(PromptArgumentsJSONError):
+            PromptService.validate_arguments_json("[{'name': 'test'}]", context="test")

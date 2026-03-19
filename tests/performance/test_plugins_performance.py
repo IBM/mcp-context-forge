@@ -31,8 +31,8 @@ import io
 import logging
 import os
 import pstats
-import sys
 from pstats import SortKey
+import sys
 from typing import Any, Dict, Tuple
 
 # Disable security warnings
@@ -218,7 +218,7 @@ async def profile_all_plugins(manager: PluginManager, show_details: bool = False
     payloads = create_sample_payloads()
 
     # Create global context
-    global_context = GlobalContext(request_id="perf-test-request", server_id="perf-test-server")
+    global_context = GlobalContext(request_id="perf-test-request", server_id="perf-test-server", user={"email": "admin@example.com", "is_admin": True})
 
     # Results storage: plugin_name -> hook_type -> avg_time_ms
     results: Dict[str, Dict[str, float]] = defaultdict(dict)
@@ -227,7 +227,11 @@ async def profile_all_plugins(manager: PluginManager, show_details: bool = False
     plugins_info = []
     for plugin_config in manager.config.plugins:
         if plugin_config.mode != "disabled":
-            plugins_info.append((plugin_config.name, plugin_config.hooks))
+            plugin_ref = manager.get_plugin(plugin_config.name)
+            if plugin_ref is None:
+                print(f"  Warning: Enabled plugin '{plugin_config.name}' not found in registry, skipping")
+                continue
+            plugins_info.append((plugin_config.name, plugin_ref.hooks))
 
     print(f"\nProfiling {len(plugins_info)} enabled plugins...")
     print(f"Iterations per hook: {ITERATIONS}")

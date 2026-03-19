@@ -99,6 +99,7 @@ def get_predefined_sso_providers() -> List[Dict]:
         ...     sso_generic_token_url='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/token',
         ...     sso_generic_userinfo_url='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/userinfo',
         ...     sso_generic_issuer='https://keycloak.company.com/auth/realms/master',
+        ...     sso_generic_jwks_uri='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/certs',
         ...     sso_generic_scope='openid profile email'
         ... )
         >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
@@ -209,13 +210,16 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "token_url": f"{base_url}/oauth2/v2.0/token",
                 "userinfo_url": "https://graph.microsoft.com/oidc/userinfo",
                 "issuer": f"{base_url}/v2.0",
-                "scope": "openid profile email",
+                "scope": "openid profile email User.Read",
                 "trusted_domains": settings.sso_trusted_domains,
                 "auto_create_users": settings.sso_auto_create_users,
                 "team_mapping": {},
                 "provider_metadata": {
                     "groups_claim": settings.sso_entra_groups_claim,
                     "role_mappings": settings.sso_entra_role_mappings,
+                    "graph_api_enabled": settings.sso_entra_graph_api_enabled,
+                    "graph_api_timeout": settings.sso_entra_graph_api_timeout,
+                    "graph_api_max_groups": settings.sso_entra_graph_api_max_groups,
                 },
             }
         )
@@ -226,7 +230,11 @@ def get_predefined_sso_providers() -> List[Dict]:
             # First-Party
             from mcpgateway.utils.keycloak_discovery import discover_keycloak_endpoints_sync
 
-            endpoints = discover_keycloak_endpoints_sync(settings.sso_keycloak_base_url, settings.sso_keycloak_realm)
+            endpoints = discover_keycloak_endpoints_sync(
+                settings.sso_keycloak_base_url,
+                settings.sso_keycloak_realm,
+                public_base_url=getattr(settings, "sso_keycloak_public_base_url", None),
+            )
 
             if endpoints:
                 providers.append(
@@ -249,47 +257,53 @@ def get_predefined_sso_providers() -> List[Dict]:
                         "provider_metadata": {
                             "realm": settings.sso_keycloak_realm,
                             "base_url": settings.sso_keycloak_base_url,
+                            "public_base_url": getattr(settings, "sso_keycloak_public_base_url", None),
                             "map_realm_roles": settings.sso_keycloak_map_realm_roles,
                             "map_client_roles": settings.sso_keycloak_map_client_roles,
                             "username_claim": settings.sso_keycloak_username_claim,
                             "email_claim": settings.sso_keycloak_email_claim,
                             "groups_claim": settings.sso_keycloak_groups_claim,
+                            "jwks_uri": endpoints.get("jwks_uri"),
+                            "role_mappings": getattr(settings, "sso_keycloak_role_mappings", {}),
+                            "default_role": getattr(settings, "sso_keycloak_default_role", None),
+                            "resolve_team_scope_to_personal_team": getattr(settings, "sso_keycloak_resolve_team_scope_to_personal_team", False),
                         },
                     }
                 )
             else:
                 logger.error(f"Failed to discover Keycloak endpoints for realm '{settings.sso_keycloak_realm}' at {settings.sso_keycloak_base_url}")
         except Exception as e:
-            logger.error(f"Error bootstrapping Keycloak provider: {e}")
+            logger.error(f"Error bootstrapping Keycloak provider: {type(e).__name__}: {e}", exc_info=True)
 
     # Generic OIDC Provider (Keycloak, Auth0, Authentik, etc.)
     if settings.sso_generic_enabled and settings.sso_generic_client_id and settings.sso_generic_provider_id:
         provider_id = settings.sso_generic_provider_id
         display_name = settings.sso_generic_display_name or provider_id.title()
 
-        providers.append(
-            {
-                "id": provider_id,
-                "name": provider_id,
-                "display_name": display_name,
-                "provider_type": "oidc",
-                "client_id": settings.sso_generic_client_id,
-                "client_secret": settings.sso_generic_client_secret.get_secret_value() if settings.sso_generic_client_secret else "",
-                "authorization_url": settings.sso_generic_authorization_url,
-                "token_url": settings.sso_generic_token_url,
-                "userinfo_url": settings.sso_generic_userinfo_url,
-                "issuer": settings.sso_generic_issuer,
-                "scope": settings.sso_generic_scope,
-                "trusted_domains": settings.sso_trusted_domains,
-                "auto_create_users": settings.sso_auto_create_users,
-                "team_mapping": {},
-            }
-        )
+        provider_config = {
+            "id": provider_id,
+            "name": provider_id,
+            "display_name": display_name,
+            "provider_type": "oidc",
+            "client_id": settings.sso_generic_client_id,
+            "client_secret": settings.sso_generic_client_secret.get_secret_value() if settings.sso_generic_client_secret else "",
+            "authorization_url": settings.sso_generic_authorization_url,
+            "token_url": settings.sso_generic_token_url,
+            "userinfo_url": settings.sso_generic_userinfo_url,
+            "issuer": settings.sso_generic_issuer,
+            "scope": settings.sso_generic_scope,
+            "trusted_domains": settings.sso_trusted_domains,
+            "auto_create_users": settings.sso_auto_create_users,
+            "team_mapping": {},
+        }
+        if settings.sso_generic_jwks_uri:
+            provider_config["jwks_uri"] = settings.sso_generic_jwks_uri
+        providers.append(provider_config)
 
     return providers
 
 
-def bootstrap_sso_providers() -> None:
+async def bootstrap_sso_providers() -> None:
     """Bootstrap SSO providers from environment configuration.
 
     This function should be called during application startup to
@@ -297,7 +311,8 @@ def bootstrap_sso_providers() -> None:
 
     Examples:
         >>> # This would typically be called during app startup
-        >>> bootstrap_sso_providers()  # doctest: +SKIP
+        >>> import asyncio
+        >>> asyncio.run(bootstrap_sso_providers())  # doctest: +SKIP
     """
     if not settings.sso_enabled:
         return
@@ -320,7 +335,7 @@ def bootstrap_sso_providers() -> None:
             existing_by_name = sso_service.get_provider_by_name(provider_config["name"])
 
             if not existing_by_id and not existing_by_name:
-                sso_service.create_provider(provider_config)
+                await sso_service.create_provider(provider_config)
                 print(f"✅ Created SSO provider: {provider_config['display_name']}")
             else:
                 # Update existing provider with current configuration
@@ -345,7 +360,7 @@ def bootstrap_sso_providers() -> None:
                     merged_metadata = {**env_metadata, **db_metadata}
                     provider_config["provider_metadata"] = merged_metadata
 
-                updated = sso_service.update_provider(existing_provider.id, provider_config)
+                updated = await sso_service.update_provider(existing_provider.id, provider_config)
                 if updated:
                     print(f"🔄 Updated SSO provider: {provider_config['display_name']} (ID: {existing_provider.id})")
                 else:
@@ -365,4 +380,7 @@ def bootstrap_sso_providers() -> None:
 
 
 if __name__ == "__main__":
-    bootstrap_sso_providers()
+    # Standard
+    import asyncio
+
+    asyncio.run(bootstrap_sso_providers())

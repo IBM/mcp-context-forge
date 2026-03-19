@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Performance Monitoring Service.
 
 This module provides comprehensive system and application performance monitoring
-for the MCP Gateway. It collects metrics from:
+for ContextForge. It collects metrics from:
 - System resources (CPU, memory, disk, network) via psutil
 - Gunicorn workers and processes
 - Database connection pools
@@ -295,7 +295,8 @@ class PerformanceService:
 
                 # Get connections
                 try:
-                    connections = len(proc.connections(kind="inet"))
+                    connection_fetcher = getattr(proc, "net_connections", None) or proc.connections
+                    connections = len(connection_fetcher(kind="inet"))
                 except (psutil.AccessDenied, psutil.NoSuchProcess):
                     connections = 0
 

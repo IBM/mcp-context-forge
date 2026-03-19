@@ -511,24 +511,24 @@ class ReverseProxyClient:
             LOGGER.error(f"Error handling gateway message: {e}")
 
     async def _keepalive_loop(self) -> None:
-        """Send periodic keepalive messages."""
-        try:
-            while self.state == ConnectionState.CONNECTED:
-                await asyncio.sleep(self.keepalive_interval)
+        """Send periodic keepalive messages.
 
-                heartbeat = {
-                    "type": MessageType.HEARTBEAT.value,
-                    "sessionId": self.session_id,
-                }
+        Raises:
+            asyncio.CancelledError: If the task is cancelled during shutdown.
+        """
+        while self.state == ConnectionState.CONNECTED:
+            await asyncio.sleep(self.keepalive_interval)
 
-                try:
-                    await self._send_to_gateway(orjson.dumps(heartbeat).decode())
-                except Exception as e:
-                    LOGGER.warning(f"Keepalive failed: {e}")
-                    break
+            heartbeat = {
+                "type": MessageType.HEARTBEAT.value,
+                "sessionId": self.session_id,
+            }
 
-        except asyncio.CancelledError:
-            pass
+            try:
+                await self._send_to_gateway(orjson.dumps(heartbeat).decode())
+            except Exception as e:
+                LOGGER.warning(f"Keepalive failed: {e}")
+                break
 
     async def disconnect(self) -> None:
         """Disconnect from gateway and stop local server."""

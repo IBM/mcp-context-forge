@@ -74,7 +74,8 @@ from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, PLUGIN_NAME, 
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.models import MCPServerConfig, PluginContext
+from mcpgateway.plugins.framework.models import GRPCServerConfig, MCPServerConfig, PluginContext
+from mcpgateway.plugins.framework.settings import get_config_path_settings
 
 P = TypeVar("P", bound=BaseModel)
 
@@ -96,7 +97,7 @@ class ExternalPluginServer:
             >>> server is not None
             True
         """
-        self._config_path = config_path or os.environ.get("PLUGINS_CONFIG_PATH", os.path.join(".", "resources", "plugins", "config.yaml"))
+        self._config_path = config_path or get_config_path_settings().config_path or os.path.join(".", "resources", "plugins", "config.yaml")
         self._config = ConfigLoader.load_config(self._config_path, use_jinja=False)
         self._plugin_manager = PluginManager(self._config_path)
 
@@ -173,7 +174,7 @@ class ExternalPluginServer:
                     return plug.model_dump()
         return None
 
-    async def invoke_hook(self, hook_type: str, plugin_name: str, payload: Dict[str, Any], context: Dict[str, Any]) -> dict:
+    async def invoke_hook(self, hook_type: str, plugin_name: str, payload: Dict[str, Any], context: Dict[str, Any] | PluginContext) -> dict:
         """Invoke a plugin hook.
 
         Args:
@@ -181,6 +182,7 @@ class ExternalPluginServer:
             plugin_name: The name of the plugin to execute.
             payload: The prompt name and arguments to be analyzed.
             context: The contextual and state information required for the execution of the hook.
+                    Can be a dict (for MCP transport) or PluginContext (for gRPC/Unix socket).
 
         Raises:
             ValueError: If unable to retrieve a plugin.
@@ -193,6 +195,7 @@ class ExternalPluginServer:
             >>> import os
             >>> os.environ["PYTHONPATH"] = "."
             >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, PromptHookType, PromptPrehookPayload, PluginContext, PromptPrehookResult, PluginManager
+            >>> PluginManager.reset()
             >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
             >>> payload = PromptPrehookPayload(prompt_id="123", name="test_prompt", args={"user": "This is a crap app"})
             >>> context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
@@ -209,13 +212,16 @@ class ExternalPluginServer:
         """
         result_payload: dict[str, Any] = {PLUGIN_NAME: plugin_name}
         try:
-            _context = PluginContext.model_validate(context)
+            # Track if input was Pydantic (for optimized response path)
+            context_is_pydantic = isinstance(context, PluginContext)
+            _context = context if context_is_pydantic else PluginContext.model_validate(context)
 
             result = await self._plugin_manager.invoke_hook_for_plugin(plugin_name, hook_type, payload, _context, payload_as_json=True)
 
             result_payload[RESULT] = result.model_dump()
             if not _context.is_empty():
-                result_payload[CONTEXT] = _context.model_dump()
+                # Return Pydantic directly if input was Pydantic (avoids extra serialization)
+                result_payload[CONTEXT] = _context if context_is_pydantic else _context.model_dump()
             return result_payload
         except PluginError as pe:
             result_payload[ERROR] = pe.error
@@ -272,3 +278,17 @@ class ExternalPluginServer:
             8000
         """
         return self._config.server_settings or MCPServerConfig.from_env() or MCPServerConfig()
+
+    def get_grpc_server_config(self) -> GRPCServerConfig | None:
+        """Return the gRPC server configuration if defined.
+
+        Returns:
+            The gRPC server configuration from the config file, or None if not defined.
+
+        Examples:
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+            >>> config = server.get_grpc_server_config()
+            >>> config is None or isinstance(config, GRPCServerConfig)
+            True
+        """
+        return self._config.grpc_server_settings

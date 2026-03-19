@@ -128,13 +128,13 @@ from urllib.parse import urlencode
 import uuid
 
 # Third-Party
+import anyio
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from mcp.server import Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 import orjson
-from sse_starlette.sse import EventSourceResponse
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
@@ -149,6 +149,9 @@ except ImportError:
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.translate_header_utils import extract_env_vars_from_headers, NormalizedMappings, parse_header_mappings
+
+# Use patched EventSourceResponse with CPU spin protection (anyio#695 fix)
+from mcpgateway.transports.sse_transport import EventSourceResponse
 from mcpgateway.utils.orjson_response import ORJSONResponse
 
 # Initialize logging service first
@@ -171,6 +174,11 @@ except ImportError:
     DEFAULT_SSL_VERIFY = True  # Verify SSL by default when config unavailable
 
 KEEP_ALIVE_INTERVAL = DEFAULT_KEEP_ALIVE_INTERVAL  # seconds - from config or fallback to 30
+
+# Buffer limit for subprocess stdout (default 64KB is too small for large tool responses)
+# Set to 16MB to handle tools that return large amounts of data (e.g., search results)
+STDIO_BUFFER_LIMIT = 16 * 1024 * 1024  # 16MB
+
 __all__ = ["main"]  # for console-script entry-point
 
 
@@ -412,6 +420,7 @@ class StdIOEndpoint:
             stdout=asyncio.subprocess.PIPE,
             stderr=sys.stderr,  # passthrough for visibility
             env=env,  # 🔑 Add environment variable support
+            limit=STDIO_BUFFER_LIMIT,  # Increase buffer limit for large tool responses
         )
 
         # Explicit error checking
@@ -689,7 +698,26 @@ def _build_fastapi(
         >>> any("CORSMiddleware" in str(m) for m in app3.user_middleware)
         True
     """
+    # Standard
+    import time as _time  # pylint: disable=import-outside-toplevel
+
     app = FastAPI()
+
+    # Rate limiter: minimum interval between subprocess restarts (seconds)
+    restart_min_interval_secs = 30.0
+    last_restart_ts: dict[str, float] = {"t": 0.0}
+
+    def _restart_allowed() -> bool:
+        """Return whether enough time elapsed to allow a subprocess restart.
+
+        Returns:
+            bool: ``True`` when restart is allowed, otherwise ``False``.
+        """
+        now = _time.monotonic()
+        if now - last_restart_ts["t"] < restart_min_interval_secs:
+            return False
+        last_restart_ts["t"] = now
+        return True
 
     # Add CORS middleware if origins specified
     if cors_origins:
@@ -721,11 +749,11 @@ def _build_fastapi(
             request_headers = dict(request.headers)
             additional_env_vars = extract_env_vars_from_headers(request_headers, header_mappings)
 
-            # Restart stdio endpoint with new environment variables
-            if additional_env_vars:
+            # Restart stdio endpoint with new environment variables (rate-limited)
+            if additional_env_vars and _restart_allowed():
                 LOGGER.info(f"Restarting stdio endpoint with {len(additional_env_vars)} environment variables")
-                await stdio.stop()  # Stop existing process
-                await stdio.start(additional_env_vars)  # Start with new env vars
+                await stdio.stop()
+                await stdio.start(additional_env_vars)
 
         queue = pubsub.subscribe()
         session_id = uuid.uuid4().hex
@@ -821,11 +849,11 @@ def _build_fastapi(
             request_headers = dict(raw.headers)
             additional_env_vars = extract_env_vars_from_headers(request_headers, header_mappings)
 
-            # Restart stdio endpoint with new environment variables
-            if additional_env_vars:
+            # Restart stdio endpoint with new environment variables (rate-limited)
+            if additional_env_vars and _restart_allowed():
                 LOGGER.info(f"Restarting stdio endpoint with {len(additional_env_vars)} environment variables")
-                await stdio.stop()  # Stop existing process
-                await stdio.start(additional_env_vars)  # Start with new env vars
+                await stdio.stop()
+                await stdio.start(additional_env_vars)
                 await asyncio.sleep(0.5)  # Give process time to initialize
 
         # Ensure stdio endpoint is running
@@ -1687,8 +1715,10 @@ async def _run_streamable_http_to_stdio(
                     retry_delay = initial_retry_delay
 
                     async for line in response.aiter_lines():
-                        if line.startswith("data: "):
-                            data = line[6:]  # Remove "data: " prefix
+                        if line.startswith("data:"):
+                            data = line[5:]
+                            if data.startswith(" "):
+                                data = data[1:]
                             if data and process.stdin:
                                 process.stdin.write((data + "\n").encode())
                                 await process.stdin.drain()
@@ -1760,8 +1790,10 @@ async def _simple_streamable_http_pump(client: "Any", url: str, max_retries: int
                 retry_delay = initial_retry_delay
 
                 async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data = line[6:]  # Remove "data: " prefix
+                    if line.startswith("data:"):
+                        data = line[5:]
+                        if data.startswith(" "):
+                            data = data[1:]
                         if data:
                             print(data)
                             LOGGER.debug(f"Received: {data}")
@@ -2040,10 +2072,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                 try:
                     timeout = 10.0  # seconds; tuneable
                     deadline = asyncio.get_event_loop().time() + timeout
-                    while True:
-                        remaining = max(0.0, deadline - asyncio.get_event_loop().time())
-                        if remaining == 0:
-                            break
+                    remaining = max(0.0, deadline - asyncio.get_event_loop().time())
+                    while remaining > 0:
                         try:
                             msg = await asyncio.wait_for(queue.get(), timeout=remaining)
                         except asyncio.TimeoutError:
@@ -2054,6 +2084,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                             parsed = orjson.loads(msg)
                         except (orjson.JSONDecodeError, ValueError):
                             # not JSON -> skip
+                            remaining = max(0.0, deadline - asyncio.get_event_loop().time())
                             continue
 
                         candidates = parsed if isinstance(parsed, list) else [parsed]
@@ -2061,6 +2092,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                             if isinstance(candidate, dict) and candidate.get("id") == obj.get("id"):
                                 # return the matched response as JSON
                                 return ORJSONResponse(candidate)
+
+                        remaining = max(0.0, deadline - asyncio.get_event_loop().time())
 
                     # timeout -> accept and return 202
                     return PlainTextResponse("accepted (no response yet)", status_code=status.HTTP_202_ACCEPTED)
@@ -2085,13 +2118,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                 receive (Receive): An awaitable that yields incoming ASGI events.
                 send (Send): An awaitable used to send ASGI events.
             """
-            if scope.get("type") == "http" and scope.get("path") == "/mcp" and streamable_manager:
-                # Let StreamableHTTPSessionManager handle session-oriented streaming
-                # await streamable_manager.handle_request(scope, receive, send)
-                await original_app(scope, receive, send)
-            else:
-                # Delegate everything else to the original FastAPI app
-                await original_app(scope, receive, send)
+            await original_app(scope, receive, send)
 
         # Replace the app used by uvicorn with the ASGI wrapper
         app = mcp_asgi_wrapper  # type: ignore[assignment]
@@ -2129,7 +2156,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     # If we have a streamable manager, start its context so it can accept ASGI /mcp
     if streamable_manager:
         streamable_context = streamable_manager.run()
-        await streamable_context.__aenter__()  # pylint: disable=unnecessary-dunder-call,no-member
+        await streamable_context.__aenter__()  # noqa: PLC2801  # pylint: disable=unnecessary-dunder-call,no-member
 
     # Log available endpoints
     endpoints = []
@@ -2144,9 +2171,26 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         await server.serve()
     finally:
         await _shutdown()
-        # Clean up streamable HTTP context
+        # Clean up streamable HTTP context with timeout to prevent spin loop
+        # if tasks don't respond to cancellation (anyio _deliver_cancellation issue)
         if streamable_context:
-            await streamable_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call,no-member
+            # Get cleanup timeout from config (with fallback for standalone usage)
+            try:
+                # First-Party
+                from mcpgateway.config import settings as cfg  # pylint: disable=import-outside-toplevel
+
+                cleanup_timeout = cfg.mcp_session_pool_cleanup_timeout
+            except Exception:
+                cleanup_timeout = 5.0
+            # Use anyio.move_on_after instead of asyncio.wait_for to properly propagate
+            # cancellation through anyio's cancel scope system (prevents orphaned spinning tasks)
+            with anyio.move_on_after(cleanup_timeout) as cleanup_scope:
+                try:
+                    await streamable_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call,no-member
+                except Exception as e:
+                    LOGGER.debug(f"Error cleaning up streamable HTTP context: {e}")
+            if cleanup_scope.cancelled_caught:
+                LOGGER.warning("Streamable HTTP context cleanup timed out - proceeding anyway")
 
 
 async def _simple_sse_pump(client: "Any", url: str, max_retries: int, initial_retry_delay: float) -> None:

@@ -23,7 +23,7 @@ import pytest
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
+from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.tool_service import ToolNotFoundError, ToolService
 
@@ -85,6 +85,16 @@ def create_mock_tool(visibility="public", owner_email=None, team_id=None, enable
     tool.custom_name_slug = None
     tool.display_name = None
     tool.description = "A test tool"
+    tool.created_by = None
+    tool.created_from_ip = None
+    tool.created_via = None
+    tool.created_user_agent = None
+    tool.modified_by = None
+    tool.modified_from_ip = None
+    tool.modified_via = None
+    tool.modified_user_agent = None
+    tool.import_batch_id = None
+    tool.federation_source = None
     return tool
 
 
@@ -424,6 +434,8 @@ class TestInvokeToolAuthorization:
 
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = mock_tool
+        mock_scalar.scalars.return_value = mock_scalar
+        mock_scalar.all.return_value = [mock_tool]
         mock_db.execute = Mock(return_value=mock_scalar)
 
         with pytest.raises(ToolNotFoundError) as exc_info:
@@ -444,6 +456,8 @@ class TestInvokeToolAuthorization:
 
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = mock_tool
+        mock_scalar.scalars.return_value = mock_scalar
+        mock_scalar.all.return_value = [mock_tool]
         mock_db.execute = Mock(return_value=mock_scalar)
 
         # Mock successful REST call
@@ -472,6 +486,8 @@ class TestInvokeToolAuthorization:
 
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = mock_tool
+        mock_scalar.scalars.return_value = mock_scalar
+        mock_scalar.all.return_value = [mock_tool]
         mock_db.execute = Mock(return_value=mock_scalar)
 
         # Mock successful REST call
@@ -536,6 +552,8 @@ class TestServerScoping:
 
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = mock_tool
+        mock_scalar.scalars.return_value = mock_scalar
+        mock_scalar.all.return_value = [mock_tool]
         # First call returns tool, second call (server membership check) returns None
         mock_db.execute = Mock(side_effect=[mock_scalar, MagicMock(first=Mock(return_value=None))])
 
@@ -559,6 +577,8 @@ class TestServerScoping:
 
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = mock_tool
+        mock_scalar.scalars.return_value = mock_scalar
+        mock_scalar.all.return_value = [mock_tool]
         mock_db.execute = Mock(return_value=mock_scalar)
 
         # The _build_tool_cache_payload will set id to "None" (string), not None

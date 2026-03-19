@@ -54,6 +54,12 @@ class TestImportErrors:
 
             # Should set REDIS_AVAILABLE = False
             assert not mcpgateway.cache.session_registry.REDIS_AVAILABLE
+        # Reload again to avoid leaking import-error flags into other tests/workers.
+        import importlib
+
+        import mcpgateway.cache.session_registry
+
+        importlib.reload(mcpgateway.cache.session_registry)
 
     def test_sqlalchemy_import_error_flag(self):
         """Test SQLALCHEMY_AVAILABLE flag when sqlalchemy import fails."""
@@ -68,6 +74,12 @@ class TestImportErrors:
 
             # Should set SQLALCHEMY_AVAILABLE = False
             assert not mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE
+        # Reload again to avoid leaking import-error flags into other tests/workers.
+        import importlib
+
+        import mcpgateway.cache.session_registry
+
+        importlib.reload(mcpgateway.cache.session_registry)
 
 
 class TestNoneBackend:
@@ -249,7 +261,7 @@ class TestRedisBackendRespond:
                 # Mock generate_response to track calls
                 with patch.object(registry, "generate_response", new_callable=AsyncMock):
                     # Start respond task and let it process one message
-                    respond_task = asyncio.create_task(registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost"))
+                    respond_task = asyncio.create_task(registry.respond(server_id=None, user={"token": "test"}, session_id="test_session"))
 
                     # Give it time to process messages
                     await asyncio.sleep(0.01)
@@ -296,7 +308,7 @@ class TestRedisBackendRespond:
                 await registry.add_session("test_session", mock_sse_transport)
 
                 # Start respond task and cancel it
-                respond_task = asyncio.create_task(registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost"))
+                respond_task = asyncio.create_task(registry.respond(server_id=None, user={"token": "test"}, session_id="test_session"))
 
                 await asyncio.sleep(0.01)  # Let it start
                 respond_task.cancel()
@@ -349,39 +361,36 @@ class TestDatabaseBackendRespond:
         with patch("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True):
             with patch("mcpgateway.cache.session_registry.get_db", mock_get_db):
                 with patch("asyncio.to_thread") as mock_to_thread:
+                    with patch("asyncio.sleep", new_callable=AsyncMock):
 
-                    def side_effect(func, *args):
-                        if func.__name__ == "_db_read_session_and_message":
-                            return mock_db_read_session_and_message(*args)
-                        elif func.__name__ == "_db_remove":
-                            return mock_db_remove(*args)
-                        return func(*args)
+                        def side_effect(func, *args):
+                            if func.__name__ == "_db_read_session_and_message":
+                                return mock_db_read_session_and_message(*args)
+                            elif func.__name__ == "_db_remove":
+                                return mock_db_remove(*args)
+                            return func(*args)
 
-                    mock_to_thread.side_effect = side_effect
+                        mock_to_thread.side_effect = side_effect
 
-                    registry = SessionRegistry(
-                        backend="database",
-                        database_url="sqlite:///test.db",
-                    )
-
-                    await registry.add_session("test_session", mock_sse_transport)
-
-                    with patch.object(
-                        registry, "generate_response", new_callable=AsyncMock
-                    ) as mock_gen:
-
-                        await registry.respond(
-                            server_id=None,
-                            user={"token": "test"},
-                            session_id="test_session",
-                            base_url="http://localhost",
+                        registry = SessionRegistry(
+                            backend="database",
+                            database_url="sqlite:///test.db",
                         )
 
-                        # Allow background task to run
-                        await asyncio.sleep(0.3)
+                        await registry.add_session("test_session", mock_sse_transport)
 
-                        # Assert message was processed
-                        mock_gen.assert_called_once()
+                        with patch.object(
+                            registry, "generate_response", new_callable=AsyncMock
+                        ) as mock_gen:
+
+                            await registry.respond(
+                                server_id=None,
+                                user={"token": "test"},
+                                session_id="test_session",
+                            )
+
+                            # Assert message was processed
+                            mock_gen.assert_called_once()
 
 
     @pytest.mark.asyncio
@@ -412,39 +421,36 @@ class TestDatabaseBackendRespond:
         with patch("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True):
             with patch("mcpgateway.cache.session_registry.get_db", mock_get_db):
                 with patch("asyncio.to_thread") as mock_to_thread:
+                    with patch("asyncio.sleep", new_callable=AsyncMock):
 
-                    def side_effect(func, *args):
-                        if func.__name__ == "_db_read_session_and_message":
-                            return mock_db_read_session_and_message(*args)
-                        elif func.__name__ == "_db_remove":
-                            return mock_db_remove(*args)
-                        return func(*args)
+                        def side_effect(func, *args):
+                            if func.__name__ == "_db_read_session_and_message":
+                                return mock_db_read_session_and_message(*args)
+                            elif func.__name__ == "_db_remove":
+                                return mock_db_remove(*args)
+                            return func(*args)
 
-                    mock_to_thread.side_effect = side_effect
+                        mock_to_thread.side_effect = side_effect
 
-                    registry = SessionRegistry(
-                        backend="database",
-                        database_url="sqlite:///test.db",
-                    )
-
-                    await registry.add_session("test_session", mock_sse_transport)
-
-                    # Mock generate_response to avoid side effects
-                    with patch.object(
-                        registry, "generate_response", new_callable=AsyncMock
-                    ):
-                        await registry.respond(
-                            server_id=None,
-                            user={"token": "test"},
-                            session_id="test_session",
-                            base_url="http://localhost",
+                        registry = SessionRegistry(
+                            backend="database",
+                            database_url="sqlite:///test.db",
                         )
 
-                        # Allow background polling loop to run
-                        await asyncio.sleep(0.2)
+                        await registry.add_session("test_session", mock_sse_transport)
 
-                        # Assert log output
-                        assert "Ready to respond" in caplog.text
+                        # Mock generate_response to avoid side effects
+                        with patch.object(
+                            registry, "generate_response", new_callable=AsyncMock
+                        ):
+                            await registry.respond(
+                                server_id=None,
+                                user={"token": "test"},
+                                session_id="test_session",
+                            )
+
+                            # Assert log output
+                            assert "Ready to respond" in caplog.text
 
     @pytest.mark.asyncio
     async def test_database_respond_message_remove_logging(
@@ -479,38 +485,35 @@ class TestDatabaseBackendRespond:
         with patch("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True):
             with patch("mcpgateway.cache.session_registry.get_db", mock_get_db):
                 with patch("asyncio.to_thread") as mock_to_thread:
+                    with patch("asyncio.sleep", new_callable=AsyncMock):
 
-                    def side_effect(func, *args):
-                        if func.__name__ == "_db_read_session_and_message":
-                            return mock_db_read_session_and_message(*args)
-                        elif func.__name__ == "_db_remove":
-                            return mock_db_remove_with_logging(*args)
-                        return func(*args)
+                        def side_effect(func, *args):
+                            if func.__name__ == "_db_read_session_and_message":
+                                return mock_db_read_session_and_message(*args)
+                            elif func.__name__ == "_db_remove":
+                                return mock_db_remove_with_logging(*args)
+                            return func(*args)
 
-                    mock_to_thread.side_effect = side_effect
+                        mock_to_thread.side_effect = side_effect
 
-                    registry = SessionRegistry(
-                        backend="database",
-                        database_url="sqlite:///test.db",
-                    )
-
-                    await registry.add_session("test_session", mock_sse_transport)
-
-                    with patch.object(
-                        registry, "generate_response", new_callable=AsyncMock
-                    ):
-                        await registry.respond(
-                            server_id=None,
-                            user={"token": "test"},
-                            session_id="test_session",
-                            base_url="http://localhost",
+                        registry = SessionRegistry(
+                            backend="database",
+                            database_url="sqlite:///test.db",
                         )
 
-                        # Allow background task to process message
-                        await asyncio.sleep(0.2)
+                        await registry.add_session("test_session", mock_sse_transport)
 
-                        # Assert message removal log
-                        assert "Removed message from mcp_messages table" in caplog.text
+                        with patch.object(
+                            registry, "generate_response", new_callable=AsyncMock
+                        ):
+                            await registry.respond(
+                                server_id=None,
+                                user={"token": "test"},
+                                session_id="test_session",
+                            )
+
+                            # Assert message removal log
+                            assert "Removed message from mcp_messages table" in caplog.text
 
 class TestDatabaseCleanupTask:
     """Test database cleanup task functionality."""
@@ -949,3 +952,97 @@ class TestInitializationAndShutdown:
 
         # Shutdown should not raise error
         await registry.shutdown()
+
+
+class TestRespondTaskCancellation:
+    """Cover respond task cancellation and reaper behavior."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_respond_task_handles_done_exception(self):
+        registry = SessionRegistry(backend="memory")
+
+        async def fail_task():
+            raise RuntimeError("boom")
+
+        task = asyncio.create_task(fail_task())
+        await asyncio.sleep(0)
+
+        registry.register_respond_task("sid", task)
+        await registry._cancel_respond_task("sid")
+
+        assert "sid" not in registry._respond_tasks
+
+    @pytest.mark.asyncio
+    async def test_cancel_respond_task_escalation_moves_to_stuck(self, monkeypatch):
+        registry = SessionRegistry(backend="memory")
+        transport = MagicMock()
+        transport.disconnect = AsyncMock()
+        registry._sessions["sid"] = transport
+
+        event = asyncio.Event()
+
+        async def wait_task():
+            await event.wait()
+
+        task = asyncio.create_task(wait_task())
+        registry.register_respond_task("sid", task)
+
+        timeouts = [asyncio.TimeoutError(), asyncio.TimeoutError()]
+
+        async def fake_wait_for(*_args, **_kwargs):
+            raise timeouts.pop(0)
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.wait_for", fake_wait_for)
+
+        await registry._cancel_respond_task("sid", timeout=0.0)
+
+        assert "sid" in registry._stuck_tasks
+        transport.disconnect.assert_called_once()
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_reap_stuck_tasks_handles_completed_and_timeout(self, monkeypatch):
+        registry = SessionRegistry(backend="memory")
+
+        done_task = asyncio.create_task(asyncio.sleep(0))
+        await done_task
+
+        hang_event = asyncio.Event()
+
+        async def hang_task():
+            await hang_event.wait()
+
+        pending_task = asyncio.create_task(hang_task())
+
+        registry._stuck_tasks = {"done": done_task, "pending": pending_task}
+
+        sleep_calls = {"count": 0}
+
+        async def fake_sleep(_interval):
+            sleep_calls["count"] += 1
+            if sleep_calls["count"] > 1:
+                raise asyncio.CancelledError()
+            return None
+
+        async def fake_wait_for(*_args, **_kwargs):
+            raise asyncio.TimeoutError()
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.sleep", fake_sleep)
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.wait_for", fake_wait_for)
+
+        with pytest.raises(asyncio.CancelledError):
+            await registry._reap_stuck_tasks()
+
+        assert "done" not in registry._stuck_tasks
+        assert "pending" in registry._stuck_tasks
+
+        pending_task.cancel()
+        try:
+            await pending_task
+        except asyncio.CancelledError:
+            pass

@@ -1,0 +1,437 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/playwright/pages/admin_utils.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti, Marek Dano
+
+Shared utility functions for admin page interactions.
+"""
+
+# Standard
+import logging
+import os
+import urllib.parse
+
+# Third-Party
+from playwright.sync_api import Page
+
+# Local
+from mcpgateway.admin import ADMIN_CSRF_COOKIE_NAME, ADMIN_CSRF_HEADER_NAME
+
+logger = logging.getLogger(__name__)
+
+
+def _get_auth_headers(page: Page) -> dict:
+    """Extract JWT and CSRF tokens from browser cookies for API requests."""
+    headers: dict[str, str] = {}
+    jwt_cookie = None
+    csrf_cookie = None
+    for cookie in page.context.cookies():
+        if cookie.get("name") == "jwt_token":
+            jwt_cookie = cookie
+        elif cookie.get("name") == ADMIN_CSRF_COOKIE_NAME:
+            csrf_cookie = cookie
+    if jwt_cookie:
+        headers["Authorization"] = f"Bearer {jwt_cookie['value']}"
+    if csrf_cookie:
+        headers[ADMIN_CSRF_HEADER_NAME] = csrf_cookie["value"]
+    origin = None
+    parsed = urllib.parse.urlparse(page.url or "")
+    if parsed.scheme and parsed.netloc:
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+    elif os.getenv("TEST_BASE_URL"):
+        fallback = urllib.parse.urlparse(os.getenv("TEST_BASE_URL", ""))
+        if fallback.scheme and fallback.netloc:
+            origin = f"{fallback.scheme}://{fallback.netloc}"
+
+    if origin:
+        headers["Origin"] = origin
+        headers["Referer"] = f"{origin}/admin"
+    return headers
+
+
+def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
+    """Generic function to find any entity by name via admin API.
+
+    Args:
+        page: Playwright page object
+        endpoint: API endpoint (e.g., "servers", "tools", "resources")
+        name: Entity name to search for
+        retries: Number of retry attempts
+
+    Returns:
+        Entity dict if found, None otherwise
+    """
+    headers = _get_auth_headers(page)
+    for attempt in range(retries):
+        cache_bust = str(attempt)
+        url = f"/admin/{endpoint}?per_page=500&cache_bust={cache_bust}"
+        response = page.request.get(url, headers=headers)
+        if response.ok:
+            payload = response.json()
+            # Handle both list and dict responses
+            if isinstance(payload, list):
+                data = payload
+            else:
+                data = payload.get("data", [])
+            for item in data:
+                if item.get("name") == name:
+                    return item
+        else:
+            logger.warning("find_entity_by_name: %s returned status=%d: %s", endpoint, response.status, response.text()[:200])
+        # Exponential backoff with cap under DB contention in full-suite runs.
+        page.wait_for_timeout(min(100 * (2**attempt), 1000))
+    return None
+
+
+def find_server(page: Page, server_name: str, retries: int = 5):
+    """Find server by name.
+
+    Args:
+        page: Playwright page object
+        server_name: Server name to search for
+        retries: Number of retry attempts
+
+    Returns:
+        Server dict if found, None otherwise
+    """
+    return find_entity_by_name(page, "servers", server_name, retries)
+
+
+def wait_for_entity_deleted(page: Page, endpoint: str, name: str, retries: int = 10) -> bool:
+    """Wait until an entity is no longer found via admin API.
+
+    Retries with increasing delay to handle DB commit propagation lag.
+
+    Returns:
+        True if entity disappeared within retries, False otherwise.
+    """
+    headers = _get_auth_headers(page)
+    for attempt in range(retries):
+        url = f"/admin/{endpoint}?per_page=500&cache_bust=del{attempt}"
+        response = page.request.get(url, headers=headers)
+        if response.ok:
+            payload = response.json()
+            data = payload if isinstance(payload, list) else payload.get("data", [])
+            if not any(item.get("name") == name for item in data):
+                return True
+        page.wait_for_timeout(min(100 * (2**attempt), 800))
+    return False
+
+
+def find_tool(page: Page, tool_name: str, retries: int = 5):
+    """Find tool by name.
+
+    Args:
+        page: Playwright page object
+        tool_name: Tool name to search for
+        retries: Number of retry attempts
+
+    Returns:
+        Tool dict if found, None otherwise
+    """
+    return find_entity_by_name(page, "tools", tool_name, retries)
+
+
+def find_resource(page: Page, resource_name: str, retries: int = 5):
+    """Find resource by name.
+
+    Args:
+        page: Playwright page object
+        resource_name: Resource name to search for
+        retries: Number of retry attempts
+
+    Returns:
+        Resource dict if found, None otherwise
+    """
+    return find_entity_by_name(page, "resources", resource_name, retries)
+
+
+def find_prompt(page: Page, prompt_name: str, retries: int = 5):
+    """Find prompt by name.
+
+    Args:
+        page: Playwright page object
+        prompt_name: Prompt name to search for
+        retries: Number of retry attempts
+
+    Returns:
+        Prompt dict if found, None otherwise
+    """
+    return find_entity_by_name(page, "prompts", prompt_name, retries)
+
+
+def find_agent(page: Page, agent_name: str, retries: int = 5):
+    """Find A2A agent by name.
+
+    Args:
+        page: Playwright page object
+        agent_name: Agent name to search for
+        retries: Number of retry attempts
+
+    Returns:
+        Agent dict if found, None otherwise
+    """
+    return find_entity_by_name(page, "a2a", agent_name, retries)
+
+
+def find_gateway(page: Page, gateway_name: str, retries: int = 5):
+    """Find gateway by name.
+
+    Args:
+        page: Playwright page object
+        gateway_name: Gateway name to search for
+        retries: Number of retry attempts
+
+    Returns:
+        Gateway dict if found, None otherwise
+    """
+    return find_entity_by_name(page, "gateways", gateway_name, retries)
+
+
+# ==================== Delete Operations ====================
+
+
+def delete_entity_by_id(page: Page, endpoint: str, entity_id: str, mark_inactive: bool = False) -> bool:
+    """Generic function to delete any entity by ID via admin API.
+
+    Args:
+        page: Playwright page object
+        endpoint: API endpoint (e.g., "tools", "servers", "resources")
+        entity_id: Entity ID to delete
+        mark_inactive: If True, mark as inactive instead of hard delete
+
+    Returns:
+        True if deletion successful, False otherwise
+    """
+    data = f"is_inactive_checked={'true' if mark_inactive else 'false'}"
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    headers.update(_get_auth_headers(page))
+    response = page.request.post(
+        f"/admin/{endpoint}/{entity_id}/delete",
+        data=data,
+        headers=headers,
+    )
+    return response.status < 400
+
+
+def delete_tool(page: Page, tool_id: str, mark_inactive: bool = False) -> bool:
+    """Delete tool by ID.
+
+    Args:
+        page: Playwright page object
+        tool_id: Tool ID to delete
+        mark_inactive: If True, mark as inactive instead of hard delete
+
+    Returns:
+        True if deletion successful, False otherwise
+    """
+    return delete_entity_by_id(page, "tools", tool_id, mark_inactive)
+
+
+def delete_server(page: Page, server_id: str, mark_inactive: bool = False) -> bool:
+    """Delete server by ID.
+
+    Args:
+        page: Playwright page object
+        server_id: Server ID to delete
+        mark_inactive: If True, mark as inactive instead of hard delete
+
+    Returns:
+        True if deletion successful, False otherwise
+    """
+    return delete_entity_by_id(page, "servers", server_id, mark_inactive)
+
+
+def delete_resource(page: Page, resource_id: str, mark_inactive: bool = False) -> bool:
+    """Delete resource by ID.
+
+    Args:
+        page: Playwright page object
+        resource_id: Resource ID to delete
+        mark_inactive: If True, mark as inactive instead of hard delete
+
+    Returns:
+        True if deletion successful, False otherwise
+    """
+    return delete_entity_by_id(page, "resources", resource_id, mark_inactive)
+
+
+def delete_prompt(page: Page, prompt_id: str, mark_inactive: bool = False) -> bool:
+    """Delete prompt by ID.
+
+    Args:
+        page: Playwright page object
+        prompt_id: Prompt ID to delete
+        mark_inactive: If True, mark as inactive instead of hard delete
+
+    Returns:
+        True if deletion successful, False otherwise
+    """
+    return delete_entity_by_id(page, "prompts", prompt_id, mark_inactive)
+
+
+def delete_agent(page: Page, agent_id: str, mark_inactive: bool = False) -> bool:
+    """Delete A2A agent by ID.
+
+    Args:
+        page: Playwright page object
+        agent_id: Agent ID to delete
+        mark_inactive: If True, mark as inactive instead of hard delete
+
+    Returns:
+        True if deletion successful, False otherwise
+    """
+    return delete_entity_by_id(page, "a2a", agent_id, mark_inactive)
+
+
+# ==================== Cleanup Helpers ====================
+
+
+def cleanup_entity(page: Page, endpoint: str, entity_name: str) -> bool:
+    """Find and delete an entity by name (convenience method for test cleanup).
+
+    Args:
+        page: Playwright page object
+        endpoint: API endpoint (e.g., "tools", "servers")
+        entity_name: Entity name to find and delete
+
+    Returns:
+        True if entity was found and deleted, False otherwise
+    """
+    entity = find_entity_by_name(page, endpoint, entity_name)
+    if entity:
+        return delete_entity_by_id(page, endpoint, entity["id"])
+    return False
+
+
+def cleanup_tool(page: Page, tool_name: str) -> bool:
+    """Find and delete a tool by name.
+
+    Args:
+        page: Playwright page object
+        tool_name: Tool name to find and delete
+
+    Returns:
+        True if tool was found and deleted, False otherwise
+    """
+    return cleanup_entity(page, "tools", tool_name)
+
+
+def cleanup_server(page: Page, server_name: str) -> bool:
+    """Find and delete a server by name.
+
+    Args:
+        page: Playwright page object
+        server_name: Server name to find and delete
+
+    Returns:
+        True if server was found and deleted, False otherwise
+    """
+    return cleanup_entity(page, "servers", server_name)
+
+
+def cleanup_resource(page: Page, resource_name: str) -> bool:
+    """Find and delete a resource by name.
+
+    Args:
+        page: Playwright page object
+        resource_name: Resource name to find and delete
+
+    Returns:
+        True if resource was found and deleted, False otherwise
+    """
+    return cleanup_entity(page, "resources", resource_name)
+
+
+def cleanup_prompt(page: Page, prompt_name: str) -> bool:
+    """Find and delete a prompt by name.
+
+    Args:
+        page: Playwright page object
+        prompt_name: Prompt name to find and delete
+
+    Returns:
+        True if prompt was found and deleted, False otherwise
+    """
+    return cleanup_entity(page, "prompts", prompt_name)
+
+
+def cleanup_agent(page: Page, agent_name: str) -> bool:
+    """Find and delete an A2A agent by name.
+
+    Args:
+        page: Playwright page object
+        agent_name: Agent name to find and delete
+
+    Returns:
+        True if agent was found and deleted, False otherwise
+    """
+    return cleanup_entity(page, "a2a", agent_name)
+
+
+# ==================== User Operations ====================
+
+
+def find_user(page: Page, user_email: str, retries: int = 5):
+    """Find user by email via admin API.
+
+    Args:
+        page: Playwright page object
+        user_email: User email to search for
+        retries: Number of retry attempts
+
+    Returns:
+        User dict if found, None otherwise
+    """
+    headers = _get_auth_headers(page)
+    for attempt in range(retries):
+        cache_bust = str(attempt)
+        url = f"/admin/users?per_page=500&cache_bust={cache_bust}"
+        response = page.request.get(url, headers=headers)
+        if response.ok:
+            payload = response.json()
+            data = payload if isinstance(payload, list) else payload.get("data", [])
+            for item in data:
+                if item.get("email") == user_email:
+                    return item
+        else:
+            logger.warning("find_user: returned status=%d: %s", response.status, response.text()[:200])
+        page.wait_for_timeout(min(100 * (2**attempt), 1000))
+    return None
+
+
+def delete_user(page: Page, user_email: str) -> bool:
+    """Delete user by email via admin API.
+
+    Args:
+        page: Playwright page object
+        user_email: User email to delete
+
+    Returns:
+        True if deletion successful, False otherwise
+    """
+    headers = _get_auth_headers(page)
+    # URL-encode the email for the path
+    encoded_email = urllib.parse.quote(user_email, safe="")
+    response = page.request.delete(
+        f"/admin/users/{encoded_email}",
+        headers=headers,
+    )
+    return response.status < 400
+
+
+def cleanup_user(page: Page, user_email: str) -> bool:
+    """Find and delete a user by email (convenience method for test cleanup).
+
+    Args:
+        page: Playwright page object
+        user_email: User email to find and delete
+
+    Returns:
+        True if user was found and deleted, False otherwise
+    """
+    user = find_user(page, user_email)
+    if user:
+        return delete_user(page, user_email)
+    return False

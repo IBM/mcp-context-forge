@@ -18,7 +18,7 @@ from typing import Sequence, Union
 
 # Third-Party
 from alembic import op
-from sqlalchemy.engine import Inspector
+import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "f3a3a3d901b8"
@@ -58,7 +58,12 @@ def upgrade():
     """Remove the unique constraint on (team_id, owner_email, url) from gateway table."""
 
     conn = op.get_bind()
-    inspector = Inspector.from_engine(conn)
+    inspector = sa.inspect(conn)
+
+    # Fresh DBs may not have legacy gateways table at this revision point.
+    if "gateways" not in inspector.get_table_names():
+        print("Table 'gateways' does not exist, skipping constraint drop.")
+        return
 
     # Check if constraint exists before attempting to drop
     if not constraint_exists(inspector, "gateways", "uq_team_owner_url_gateway"):
@@ -80,7 +85,11 @@ def downgrade():
     """Re-add the unique constraint on (team_id, owner_email, url) to gateway table."""
 
     conn = op.get_bind()
-    inspector = Inspector.from_engine(conn)
+    inspector = sa.inspect(conn)
+
+    if "gateways" not in inspector.get_table_names():
+        print("Table 'gateways' does not exist, skipping constraint creation.")
+        return
 
     # Check if constraint already exists before attempting to create
     if constraint_exists(inspector, "gateways", "uq_team_owner_url_gateway"):
@@ -93,6 +102,6 @@ def downgrade():
             batch_op.create_unique_constraint("uq_team_owner_url_gateway", ["team_id", "owner_email", "url"])
     else:
         # PostgreSQL, MySQL, etc.: Direct constraint creation
-        op.create_unique_constraint("uq_team_owner_url_constraint", "gateways", ["team_id", "owner_email", "url"])
+        op.create_unique_constraint("uq_team_owner_url_gateway", "gateways", ["team_id", "owner_email", "url"])
 
     print("Successfully re-added constraint 'uq_team_owner_url_gateway' to gateways table.")

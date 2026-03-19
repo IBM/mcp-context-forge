@@ -122,7 +122,6 @@ async def test_client_load_stdio_post_prompt():
     del os.environ["PLUGINS_CONFIG_PATH"]
     del os.environ["PYTHONPATH"]
 
-@pytest.mark.skip(reason="Plugin config structure needs investigation")
 @pytest.mark.asyncio
 async def test_client_get_plugin_configs():
     session: Optional[ClientSession] = None
@@ -141,22 +140,21 @@ async def test_client_get_plugin_configs():
     configs = await session.call_tool("get_plugin_configs", {})
     for content in configs.content:
         confs = json.loads(content.text)
-        # confs is expected to be a dict with plugin names as keys
         if isinstance(confs, dict):
-            for plugin_name, config_data in confs.items():
-                plugconfig = PluginConfig.model_validate(config_data)
-                all_configs.append(plugconfig)
+            if "name" in confs:
+                all_configs.append(PluginConfig.model_validate(confs))
+            else:
+                for config_data in confs.values():
+                    all_configs.append(PluginConfig.model_validate(config_data))
         else:
-            # fallback if it's a list
             for c in confs:
-                plugconfig = PluginConfig.model_validate(c)
-                all_configs.append(plugconfig)
+                all_configs.append(PluginConfig.model_validate(c))
     await exit_stack.aclose()
     assert all_configs[0].name == "SynonymsPlugin"
     assert all_configs[0].kind == "plugins.regex_filter.search_replace.SearchReplacePlugin"
     assert all_configs[0].description == "A plugin for finding and replacing synonyms."
     assert all_configs[0].version == "0.1"
-    assert all_configs[0].author == "MCP Context Forge Team"
+    assert all_configs[0].author == "ContextForge Team"
     assert all_configs[0].hooks[0] == "prompt_pre_fetch"
     assert all_configs[0].hooks[1] == "prompt_post_fetch"
     assert all_configs[0].config
@@ -168,7 +166,7 @@ async def test_client_get_plugin_configs():
     assert all_configs[1].kind == "plugins.regex_filter.search_replace.SearchReplacePlugin"
     assert all_configs[1].description == "A plugin for finding and replacing words."
     assert all_configs[1].version == "0.1"
-    assert all_configs[1].author == "MCP Context Forge Team"
+    assert all_configs[1].author == "ContextForge Team"
     assert all_configs[1].hooks[0] == "prompt_pre_fetch"
     assert all_configs[1].hooks[1] == "prompt_post_fetch"
     assert all_configs[1].config

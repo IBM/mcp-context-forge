@@ -8,6 +8,13 @@ datasources:
     url: http://prometheus:9090
     isDefault: true
     editable: true
+    jsonData:
+      # Enables metric exemplar -> trace pivot when exemplars include a trace ID label.
+      exemplarTraceIdDestinations:
+        - datasourceUid: tempo
+          name: traceID
+        - datasourceUid: tempo
+          name: trace_id
 
   - name: Loki
     uid: loki
@@ -17,3 +24,28 @@ datasources:
     editable: true
     jsonData:
       maxLines: 1000
+      derivedFields:
+        # Enables "Logs -> Trace" pivot in Grafana Explore when trace_id is present.
+        - name: trace_id
+          matcherRegex: '(?:"trace_id"\s*:\s*"|trace_id=)([a-f0-9]{32})'
+          datasourceUid: tempo
+          url: '${__value.raw}'
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: true
+    jsonData:
+      httpMethod: GET
+      tracesToLogsV2:
+        # Enables "Traces -> Logs" pivot in Grafana Explore.
+        # Query Loki for JSON logs containing the current trace ID (gateway logs only).
+        datasourceUid: loki
+        spanStartTimeShift: '-15m'
+        spanEndTimeShift: '15m'
+        filterByTraceID: false
+        filterBySpanID: false
+        customQuery: true
+        query: '{service="gateway"} | json | trace_id="${__trace.traceId}"'

@@ -233,3 +233,150 @@ class TestGatewayResourcesPrompts:
 
         assert prompts_to_add == []
         assert existing_prompt.description == "New description"
+
+
+class TestOrphanedResourceUpsert:
+    """Tests for orphaned resource/prompt upsert logic during gateway registration (issue #2352).
+
+    These tests verify that:
+    1. Orphaned resources (gateway_id is NULL or invalid) are updated, not duplicated
+    2. Resources belonging to active gateways are NOT touched
+    """
+
+    def test_orphaned_resource_is_updated_not_duplicated(self):
+        """Test that an orphaned resource is updated when a new gateway registers the same URI.
+
+        This directly tests the orphan detection and update logic without running
+        the full register_gateway flow.
+        """
+        from mcpgateway.db import Gateway as DbGateway, Resource as DbResource
+
+        # Simulate orphaned resource detection logic
+        valid_gateway_ids = set()  # No valid gateways - simulates all gateways deleted
+
+        # Create an orphaned resource (gateway_id is None)
+        orphaned_resource = MagicMock(spec=DbResource)
+        orphaned_resource.id = "orphaned-resource-id"
+        orphaned_resource.uri = "file://test-resource/"
+        orphaned_resource.name = "old_name"
+        orphaned_resource.description = "old description"
+        orphaned_resource.team_id = "team-123"
+        orphaned_resource.owner_email = "user@example.com"
+        orphaned_resource.gateway_id = None  # Orphaned - no gateway
+
+        # Simulate the orphan detection logic from gateway_service.py
+        candidate_resources = [orphaned_resource]
+        orphaned_resources_map = {}
+
+        for res in candidate_resources:
+            is_orphaned = res.gateway_id is None or res.gateway_id not in valid_gateway_ids
+            if is_orphaned:
+                key = (res.team_id, res.owner_email, res.uri)
+                orphaned_resources_map[key] = res
+
+        # Verify orphaned resource was detected
+        assert len(orphaned_resources_map) == 1
+        lookup_key = ("team-123", "user@example.com", "file://test-resource/")
+        assert lookup_key in orphaned_resources_map
+
+        # Simulate the update logic
+        existing = orphaned_resources_map[lookup_key]
+        existing.name = "new_name"
+        existing.description = "new description"
+
+        # Verify the orphaned resource was updated
+        assert orphaned_resource.name == "new_name"
+        assert orphaned_resource.description == "new description"
+
+    def test_resource_with_deleted_gateway_is_orphaned(self):
+        """Test that a resource pointing to a non-existent gateway is considered orphaned."""
+        from mcpgateway.db import Resource as DbResource
+
+        # Valid gateways in the system
+        valid_gateway_ids = {"gateway-A", "gateway-B"}
+
+        # Resource pointing to a deleted gateway
+        resource_with_deleted_gateway = MagicMock(spec=DbResource)
+        resource_with_deleted_gateway.gateway_id = "gateway-DELETED"  # Doesn't exist
+        resource_with_deleted_gateway.team_id = "team-123"
+        resource_with_deleted_gateway.owner_email = "user@example.com"
+        resource_with_deleted_gateway.uri = "file://resource/"
+
+        # Check if it's orphaned
+        is_orphaned = (
+            resource_with_deleted_gateway.gateway_id is None
+            or resource_with_deleted_gateway.gateway_id not in valid_gateway_ids
+        )
+
+        assert is_orphaned is True
+
+    def test_resource_with_active_gateway_is_not_orphaned(self):
+        """Test that a resource belonging to an active gateway is NOT considered orphaned."""
+        from mcpgateway.db import Resource as DbResource
+
+        # Valid gateways in the system
+        valid_gateway_ids = {"gateway-A", "gateway-B"}
+
+        # Resource belonging to an active gateway
+        active_resource = MagicMock(spec=DbResource)
+        active_resource.gateway_id = "gateway-A"  # Active gateway
+        active_resource.team_id = "team-123"
+        active_resource.owner_email = "user@example.com"
+        active_resource.uri = "file://resource/"
+        active_resource.name = "original_name"
+
+        # Check if it's orphaned
+        is_orphaned = active_resource.gateway_id is None or active_resource.gateway_id not in valid_gateway_ids
+
+        assert is_orphaned is False
+
+        # Simulate the orphan detection - this resource should NOT be in the map
+        orphaned_resources_map = {}
+        if is_orphaned:
+            key = (active_resource.team_id, active_resource.owner_email, active_resource.uri)
+            orphaned_resources_map[key] = active_resource
+
+        # Verify the active resource was NOT added to orphan map
+        assert len(orphaned_resources_map) == 0
+
+        # Resource name should be unchanged
+        assert active_resource.name == "original_name"
+
+    def test_per_resource_owner_override_in_lookup_key(self):
+        """Test that per-resource owner/team overrides are used in the lookup key.
+
+        This verifies the fix for the medium-severity finding where the lookup
+        used gateway-level owner but inserts could use per-resource overrides.
+        """
+        from mcpgateway.db import Resource as DbResource
+
+        # Gateway-level defaults
+        gateway_team_id = "gateway-team"
+        gateway_owner_email = "gateway-owner@example.com"
+
+        # Orphaned resource with DIFFERENT owner than gateway default
+        orphaned_resource = MagicMock(spec=DbResource)
+        orphaned_resource.gateway_id = None
+        orphaned_resource.team_id = "resource-specific-team"  # Different from gateway
+        orphaned_resource.owner_email = "resource-owner@example.com"  # Different from gateway
+        orphaned_resource.uri = "file://resource/"
+
+        # Simulate incoming resource with per-resource overrides
+        class IncomingResource:
+            uri = "file://resource/"
+            team_id = "resource-specific-team"  # Override
+            owner_email = "resource-owner@example.com"  # Override
+
+        incoming = IncomingResource()
+
+        # Build lookup key using per-resource values (the fix)
+        r_team_id = getattr(incoming, "team_id", None) or gateway_team_id
+        r_owner_email = getattr(incoming, "owner_email", None) or gateway_owner_email
+        lookup_key = (r_team_id, r_owner_email, incoming.uri)
+
+        # Build orphan map key
+        orphan_key = (orphaned_resource.team_id, orphaned_resource.owner_email, orphaned_resource.uri)
+
+        # Keys should match because we use per-resource values
+        assert lookup_key == orphan_key
+        assert lookup_key == ("resource-specific-team", "resource-owner@example.com", "file://resource/")

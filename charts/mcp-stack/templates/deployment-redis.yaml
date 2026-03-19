@@ -6,7 +6,7 @@
      - Adds resource requests / limits pulled from values.yaml.
      ------------------------------------------------------------------- */}}
 
-{{- if .Values.redis.enabled }}
+{{- if and .Values.redis.enabled (not .Values.redis.external.enabled) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -34,15 +34,30 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: redis
+          securityContext:
+            allowPrivilegeEscalation: false
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
 
-          {{- if .Values.redis.persistence.enabled }}
-          # Use custom redis.conf with persistence settings
-          command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-          {{- end }}
+          # Start Redis with optional persistence config and optional password auth.
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              AUTH_ARGS=""
+              if [ -n "${REDIS_PASSWORD:-}" ]; then
+                AUTH_ARGS="--requirepass ${REDIS_PASSWORD}"
+              fi
+              if [ -f /usr/local/etc/redis/redis.conf ]; then
+                exec redis-server /usr/local/etc/redis/redis.conf $AUTH_ARGS
+              fi
+              exec redis-server $AUTH_ARGS
 
           # Expose Redis TCP port inside the pod
           ports:
@@ -61,14 +76,23 @@ spec:
 {{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
           {{- end }}
 
+          {{- if .Values.redis.auth.enabled }}
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.redisSecretName" . | trim | quote }}
+                  key: {{ .Values.redis.auth.passwordKey | default "REDIS_PASSWORD" }}
+          {{- end }}
+
           # ─── Volume mounts for persistence ───
+          {{- if .Values.redis.persistence.enabled }}
           volumeMounts:
-            {{- if .Values.redis.persistence.enabled }}
             - name: redis-data
               mountPath: /data
             - name: redis-config
               mountPath: /usr/local/etc/redis
-            {{- end }}
+          {{- end }}
 
           # ─── Resource limits & requests ───
           {{- with .Values.redis.resources }}

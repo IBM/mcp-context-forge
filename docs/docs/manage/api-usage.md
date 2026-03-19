@@ -1,12 +1,12 @@
 # API Usage Guide
 
-This guide provides comprehensive examples for using the MCP Gateway REST API via `curl` to perform common operations like managing gateways (MCP servers), tools, resources, prompts, and more.
+This guide provides comprehensive examples for using ContextForge REST API via `curl` to perform common operations like managing gateways (MCP servers), tools, resources, prompts, and more.
 
 ## Prerequisites
 
 Before using the API, you need to:
 
-1. **Start the MCP Gateway server**:
+1. **Start ContextForge server**:
 
     ```bash
     # Development server (port 8000, auto-reload)
@@ -18,6 +18,10 @@ Before using the API, you need to:
 
 2. **Generate a JWT authentication token**:
 
+    !!! warning "Security Warning: CLI Token Generation"
+        The CLI token generator has access to `JWT_SECRET_KEY` and can create tokens with ANY claims, bypassing all API security controls. Only use for development/testing. For production, use the `/tokens` API endpoint.
+
+    **Simple Token (Basic Testing):**
     ```bash
     # Generate token (replace secret with your JWT_SECRET_KEY from .env)
     export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
@@ -29,22 +33,47 @@ Before using the API, you need to:
     echo "Token: ${TOKEN:0:50}..."
     ```
 
+    **Rich Token with Admin Privileges (⚠️ DEV/TEST ONLY):**
+    ```bash
+    # Generate admin token for testing admin operations
+    export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+      --username admin@example.com \
+      --admin \
+      --full-name "Admin User" \
+      --exp 10080 \
+      --secret my-test-key 2>/dev/null | head -1)
+    ```
+
+    **Team-Scoped Token (⚠️ DEV/TEST ONLY):**
+    ```bash
+    # Generate token scoped to specific teams
+    export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+      --username user@example.com \
+      --teams team-123,team-456 \
+      --full-name "Team User" \
+      --exp 10080 \
+      --secret my-test-key 2>/dev/null | head -1)
+    ```
+
     !!! tip "Token Expiration"
-        The `--exp` parameter sets token expiration in minutes. Use `--exp 0` for no expiration (development only).
+        The `--exp` parameter sets token expiration in minutes. Non-expiring tokens (`--exp 0`) require `REQUIRE_TOKEN_EXPIRATION=false` (disabled by default for security).
 
 3. **Set the base URL**:
 
     ```bash
-    # Development server
+    # Development server (make dev)
     export BASE_URL="http://localhost:8000"
 
-    # Production server
+    # Direct production server (make serve, uvx, or docker run)
     export BASE_URL="http://localhost:4444"
+
+    # Docker Compose with nginx proxy
+    # export BASE_URL="http://localhost:8080"
     ```
 
 ## Authentication
 
-All API requests require JWT Bearer token authentication:
+Most API requests require JWT Bearer token authentication (public endpoints include `/health` and `/ready`). Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) also require auth by default. The `/metrics` endpoint requires `admin.metrics` permission. The `/metrics/prometheus` Prometheus scrape endpoint requires JWT authentication and is disabled by default (`ENABLE_METRICS=false`); see the Prometheus Metrics section in `.env.example` for setup instructions.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
@@ -60,11 +89,13 @@ curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
 The API supports two pagination approaches:
 
 1. **Cursor-based pagination** (Main API endpoints: `/tools`, `/servers`, `/gateways`, etc.)
+
    - Uses opaque cursors for efficient traversal
    - Best for real-time data and large datasets
    - No knowledge of total pages required
 
 2. **Page-based pagination** (Admin API endpoints: `/admin/tools`, `/admin/servers`, etc.)
+
    - Uses page numbers and per-page limits
    - Provides total count and page information
    - Easier for UI components with page numbers
@@ -182,6 +213,23 @@ Expected output:
 ```bash
 # Readiness check (for load balancers)
 curl -s $BASE_URL/ready | jq '.'
+```
+
+Expected output:
+
+```json
+{
+  "status": "ready"
+}
+```
+
+If the gateway is not ready, this endpoint returns HTTP 503 with:
+
+```json
+{
+  "status": "not ready",
+  "error": "..."
+}
 ```
 
 ### Get Version Information
@@ -389,9 +437,21 @@ The `/tools` endpoint supports several query parameters for filtering and pagina
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/tools?gateway_id=<gateway-id>" | jq '.'
 
+# Get tools not associated with any gateway (REST tools, A2A agents, etc.)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?gateway_id=null" | jq '.'
+
+# Filter by visibility
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?visibility=public" | jq '.'
+
 # Filter by tags (paginated)
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/tools?tags=api,data" | jq '.'
+
+# Combine filters: all public tools from a specific gateway
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?gateway_id=<gateway-id>&visibility=public&limit=0" | jq '.'
 
 # Get up to 100 tools per page
 curl -s -H "Authorization: Bearer $TOKEN" \
@@ -577,6 +637,16 @@ export SERVER_ID="your-server-id"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/servers/$SERVER_ID | jq '.'
 ```
 
+**Response:**
+```json
+{
+  "id": "server123",
+  "name": "my-virtual-server",
+  "associatedTools": ["tool1", "tool2"],
+  "enabled": true
+}
+```
+
 
 
 #### Complete Example: Virtual Server Creation
@@ -703,6 +773,36 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/resources?include_pagination=false" | jq '.'
 ```
 
+#### Filtering and Pagination
+
+The `/resources` endpoint supports several query parameters for filtering and pagination:
+
+| Parameter | Description |
+|-----------|-------------|
+| `tags` | Comma-separated list of tags to filter by (matches any). |
+| `visibility` | Filter by visibility: `private`, `team`, or `public`. |
+| `team_id` | Filter by team ID. |
+| `include_inactive` | Include disabled resources (default: `false`). |
+| `limit` | Maximum resources to return. Use `0` for all resources (no limit). Default: 50. |
+| `cursor` | Pagination cursor for fetching the next page. |
+| `include_pagination` | Return paginated format with cursor (default: `true`). Set to `false` for array only. |
+
+**Examples:**
+
+```bash
+# Filter by visibility
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?visibility=public" | jq '.'
+
+# Filter by tags
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?tags=config,database" | jq '.'
+
+# Get ALL resources (no pagination - returns all as array)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?limit=0&include_pagination=false" | jq '.'
+```
+
 ### Register a Resource
 
 ```bash
@@ -728,6 +828,16 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 # Get specific resource
 export RESOURCE_ID="your-resource-id"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/resources/$RESOURCE_ID | jq '.'
+```
+
+**Response:**
+```json
+{
+  "id": "res123",
+  "name": "config-file",
+  "uri": "file:///etc/config.json",
+  "mimeType": "application/json"
+}
 ```
 
 
@@ -822,6 +932,36 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/prompts?include_pagination=false" | jq '.'
 ```
 
+#### Filtering and Pagination
+
+The `/prompts` endpoint supports several query parameters for filtering and pagination:
+
+| Parameter | Description |
+|-----------|-------------|
+| `tags` | Comma-separated list of tags to filter by (matches any). |
+| `visibility` | Filter by visibility: `private`, `team`, or `public`. |
+| `team_id` | Filter by team ID. |
+| `include_inactive` | Include disabled prompts (default: `false`). |
+| `limit` | Maximum prompts to return. Use `0` for all prompts (no limit). Default: 50. |
+| `cursor` | Pagination cursor for fetching the next page. |
+| `include_pagination` | Return paginated format with cursor (default: `true`). Set to `false` for array only. |
+
+**Examples:**
+
+```bash
+# Filter by visibility
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?visibility=public" | jq '.'
+
+# Filter by tags
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?tags=template,greeting" | jq '.'
+
+# Get ALL prompts (no pagination - returns all as array)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?limit=0&include_pagination=false" | jq '.'
+```
+
 ### Register a Prompt
 
 ```bash
@@ -850,6 +990,16 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 # Get specific prompt
 export PROMPT_ID="your-prompt-id"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/prompts/$PROMPT_ID | jq '.'
+```
+
+**Response:**
+```json
+{
+  "id": "prompt123",
+  "name": "code-review",
+  "template": "Review code: {{code}}",
+  "arguments": [{"name": "code", "required": true}]
+}
 ```
 
 ### Execute Prompt (Get Rendered Content)
@@ -1130,14 +1280,17 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 Access interactive Swagger UI documentation:
 
 ```
-http://localhost:8000/docs
+$BASE_URL/docs
 ```
 
 Access ReDoc documentation:
 
 ```
-http://localhost:8000/redoc
+$BASE_URL/redoc
 ```
+
+!!! tip "Docs authentication"
+    `/docs`, `/redoc`, and `/openapi.json` are JWT-protected by default. Log in to the Admin UI to get a session cookie, or enable `DOCS_ALLOW_BASIC_AUTH=true` and use Basic auth in the browser.
 
 ## End-to-End Workflow Example
 
@@ -1147,13 +1300,15 @@ This complete example demonstrates a typical workflow: registering a gateway, di
 #!/bin/bash
 
 # Configuration
-export BASE_URL="http://localhost:8000"
+export BASE_URL="http://localhost:4444"
+# export BASE_URL="http://localhost:8080"  # docker-compose with nginx
+# export BASE_URL="http://localhost:8000"  # make dev (uvicorn)
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --exp 10080 \
   --secret my-test-key 2>/dev/null | head -1)
 
-echo "=== MCP Gateway E2E Test ==="
+echo "=== ContextForge E2E Test ==="
 echo
 
 # 1. Check health
@@ -1353,7 +1508,9 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
 # batch-enable-tools.sh - Enable all tools from a specific gateway
 
 export TOKEN="your-token"
-export BASE_URL="http://localhost:8000"
+export BASE_URL="http://localhost:4444"
+# export BASE_URL="http://localhost:8080"  # docker-compose with nginx
+# export BASE_URL="http://localhost:8000"  # make dev (uvicorn)
 export GATEWAY_SLUG="my-gateway"
 
 # Get all tools from the gateway
@@ -1385,4 +1542,4 @@ For issues or questions:
 
 - [GitHub Issues](https://github.com/cmihai/mcp-context-forge/issues)
 - [Documentation](https://mcpgateway.org)
-- [API Reference](/openapi.json)
+- API Reference: `$BASE_URL/openapi.json`

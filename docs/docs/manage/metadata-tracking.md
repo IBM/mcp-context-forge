@@ -1,12 +1,12 @@
 # 📊 Metadata Tracking & Audit Trails
 
-MCP Gateway provides comprehensive metadata tracking for all entities (Tools, Resources, Prompts, Servers, Gateways) to enable enterprise-grade audit trails, compliance monitoring, and operational troubleshooting.
+ContextForge provides comprehensive metadata tracking for all entities (Tools, Resources, Prompts, Servers, Gateways) to enable enterprise-grade audit trails, compliance monitoring, and operational troubleshooting.
 
 ---
 
 ## 🎯 **Overview**
 
-Every entity in MCP Gateway now includes detailed metadata about:
+Every entity in ContextForge now includes detailed metadata about:
 
 - **Who** created or modified the entity
 - **When** the operation occurred
@@ -240,11 +240,13 @@ The system captures IP addresses and user agents for audit purposes:
    ```
 
 2. **Verify Migration**
+
    - Check admin UI - all entities show metadata sections
    - API responses include new metadata fields
    - Legacy entities display gracefully
 
 3. **No Downtime Required**
+
    - All metadata columns are nullable
    - Existing functionality unmodified
    - Gradual adoption of metadata features

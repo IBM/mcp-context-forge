@@ -32,10 +32,15 @@ from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
 import logging
+import os
+import re
+import socket
 import time
 from typing import Any, Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING
+import uuid
 
 # Third-Party
+import anyio
 import httpx
 from mcp import ClientSession, McpError
 from mcp.client.sse import sse_client
@@ -45,14 +50,43 @@ import mcp.types as mcp_types
 import orjson
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.config import settings
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 # JSON-RPC standard error code for method not found
 METHOD_NOT_FOUND = -32601
 
+# Shared session-id validation (downstream MCP session IDs used for affinity).
+# Intentionally strict: protects Redis key/channel construction and log lines.
+_MCP_SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+
+# Worker ID for multi-worker session affinity
+# Uses hostname + PID to be unique across Docker containers (each container has PID 1)
+# and across gunicorn workers within the same container
+WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
+
+
+def _get_cleanup_timeout() -> float:
+    """Get session cleanup timeout from config (lazy import to avoid circular deps).
+
+    This timeout controls how long to wait for session/transport __aexit__ calls
+    when closing sessions. It prevents CPU spin loops when internal tasks don't
+    respond to cancellation (anyio's _deliver_cancellation issue).
+
+    Returns:
+        Cleanup timeout in seconds (default: 5.0)
+    """
+    try:
+        # Lazy import to avoid circular dependency during startup
+        return settings.mcp_session_pool_cleanup_timeout
+    except Exception:
+        return 5.0  # Fallback default
+
+
 if TYPE_CHECKING:
     # Standard
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +118,8 @@ class PooledSession:
     last_used: float = field(default_factory=time.time)
     use_count: int = 0
     _closed: bool = field(default=False, repr=False)
+    _owner_task: Optional[asyncio.Task] = field(default=None, repr=False)
+    _shutdown_event: Optional[asyncio.Event] = field(default=None, repr=False)
 
     @property
     def age_seconds(self) -> float:
@@ -105,22 +141,59 @@ class PooledSession:
 
     @property
     def is_closed(self) -> bool:
-        """Return whether this session has been closed.
+        """Return whether this session has been closed or its transport is broken.
+
+        Checks both the internal closed flag and the underlying transport stream
+        state to detect sessions broken by server restarts or network drops before
+        they raise ClosedResourceError at the call site.
 
         Returns:
-            bool: True if session is closed, False otherwise.
+            bool: True if session is closed or transport is broken, False otherwise.
         """
-        return self._closed
+        if self._closed:
+            return True
+        # Check if the owner background task has died
+        if self._owner_task is not None and self._owner_task.done():
+            return True
+        # Detect externally-broken transport (e.g. server restart, network drop).
+        # MCP's BaseSession stores the write stream as _write_stream. Check it with
+        # getattr fallbacks so this degrades gracefully if MCP internals change.
+        try:
+            write_stream = getattr(self.session, "_write_stream", None)
+            if write_stream is not None:
+                if getattr(write_stream, "_closed", False) is True:
+                    return True
+                state = getattr(write_stream, "_state", None)
+                if state is not None:
+                    open_rx = getattr(state, "open_receive_channels", 1)
+                    if isinstance(open_rx, int) and open_rx == 0:
+                        return True
+        except Exception:  # nosec B110 - Graceful degradation if MCP internals change
+            pass
+        return False
 
     def mark_closed(self) -> None:
         """Mark this session as closed."""
         self._closed = True
+
+    @property
+    def owner_task(self) -> "Optional[asyncio.Task]":
+        """Return the background owner task, if any."""
+        return self._owner_task
+
+    @property
+    def shutdown_event(self) -> Optional[asyncio.Event]:
+        """Return the shutdown event for the owner task, if any."""
+        return self._shutdown_event
 
 
 # Type aliases
 # Pool key includes transport type and gateway_id to prevent returning wrong transport for same URL
 # and to ensure correct notification attribution when notifications are enabled
 PoolKey = Tuple[str, str, str, str, str]  # (user_identity_hash, url, identity_hash, transport_type, gateway_id)
+
+# Session affinity mapping key: (mcp_session_id, url, transport_type, gateway_id)
+SessionMappingKey = Tuple[str, str, str, str]
 HttpxClientFactory = Callable[
     [Optional[Dict[str, str]], Optional[httpx.Timeout], Optional[httpx.Auth]],
     httpx.AsyncClient,
@@ -207,6 +280,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             "x-user-id",
             "x-api-key",
             "cookie",
+            "x-mcp-session-id",
         ]
     )
 
@@ -297,6 +371,25 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         # Lifecycle
         self._closed = False
 
+        # Pre-registered session mappings for session affinity
+        # Mapping from (mcp_session_id, url, transport_type, gateway_id) -> pool_key
+        # Set by broadcast() before acquire() is called to enable session affinity lookup
+        self._mcp_session_mapping: Dict[SessionMappingKey, PoolKey] = {}
+        self._mcp_session_mapping_lock = asyncio.Lock()
+
+        # Multi-worker session affinity via Redis pub/sub
+        # Track pending responses for forwarded RPC requests
+        self._rpc_listener_task: Optional[asyncio.Task[None]] = None
+        self._pending_responses: Dict[str, asyncio.Future[Dict[str, Any]]] = {}
+
+        # Session affinity metrics
+        self._session_affinity_local_hits = 0
+        self._session_affinity_redis_hits = 0
+        self._session_affinity_misses = 0
+        self._forwarded_requests = 0
+        self._forwarded_request_failures = 0
+        self._forwarded_request_timeouts = 0
+
     async def __aenter__(self) -> "MCPSessionPool":
         """Async context manager entry.
 
@@ -323,9 +416,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         with different Authorization headers will have different identity hashes
         and thus separate session pools.
 
-        If an identity_extractor is configured, it is called first to extract
-        a stable identity (e.g., user_id from JWT). This prevents unbounded pool
-        growth when tokens rotate frequently.
+        Identity resolution order:
+        1. Custom identity_extractor (if configured) - for rotating tokens like JWTs
+        2. x-mcp-session-id header (if present) - for session affinity, ensures
+           requests with the same downstream session ID get the same upstream
+           session even when JWT tokens rotate (different jti values)
+        3. Configured identity headers - fallback to hashing all identity headers
 
         Args:
             headers: Request headers dict.
@@ -347,9 +443,21 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             except Exception as e:
                 logger.debug(f"Identity extractor failed, falling back to header hash: {e}")
 
-        # Normalize and extract identity headers (case-insensitive)
-        identity_parts = []
+        # Normalize headers for case-insensitive lookup
         headers_lower = {k.lower(): v for k, v in headers.items()}
+
+        # Session affinity: prioritize x-mcp-session-id for stable identity
+        # When present, use ONLY the session ID for identity hash. This ensures
+        # requests with the same downstream session ID get the same upstream session,
+        # even when JWT tokens rotate (different jti values per request).
+        if settings.mcpgateway_session_affinity_enabled:
+            session_id = headers_lower.get("x-mcp-session-id")
+            if session_id:
+                logger.debug(f"Using x-mcp-session-id for session affinity: {session_id[:8]}...")
+                return hashlib.sha256(session_id.encode()).hexdigest()
+
+        # Fallback: extract identity from configured headers
+        identity_parts = []
 
         for header in sorted(self._identity_headers):
             if header in headers_lower:
@@ -435,6 +543,152 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         """Record a success, resetting failure count."""
         self._failures[url] = 0
 
+    @staticmethod
+    def is_valid_mcp_session_id(session_id: str) -> bool:
+        """Validate downstream MCP session ID format for affinity.
+
+        Used for:
+        - Redis key construction (ownership + mapping)
+        - Pub/Sub channel naming
+        - Avoiding log spam / injection
+        """
+        if not session_id:
+            return False
+        return bool(_MCP_SESSION_ID_PATTERN.match(session_id))
+
+    def _sanitize_redis_key_component(self, value: str) -> str:
+        """Sanitize a value for use in Redis key construction.
+
+        Replaces any characters that could cause key collision or injection.
+
+        Args:
+            value: The value to sanitize.
+
+        Returns:
+            Sanitized value safe for Redis key construction.
+        """
+        if not value:
+            return ""
+
+        # Replace problematic characters with underscores
+        return re.sub(r"[^a-zA-Z0-9_-]", "_", value)
+
+    def _session_mapping_redis_key(self, mcp_session_id: str, url: str, transport_type: str, gateway_id: str) -> str:
+        """Compute a bounded Redis key for session mapping.
+
+        The URL is hashed to keep keys small and avoid special character issues.
+        """
+        sanitized_session_id = self._sanitize_redis_key_component(mcp_session_id)
+        url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
+        return f"mcpgw:session_mapping:{sanitized_session_id}:{url_hash}:{transport_type}:{gateway_id}"
+
+    @staticmethod
+    def _pool_owner_key(mcp_session_id: str) -> str:
+        """Return Redis key for session ownership tracking."""
+        return f"mcpgw:pool_owner:{mcp_session_id}"
+
+    async def register_session_mapping(
+        self,
+        mcp_session_id: str,
+        url: str,
+        gateway_id: str,
+        transport_type: str,
+        user_email: Optional[str] = None,
+    ) -> None:
+        """Pre-register session mapping for session affinity.
+
+        Called from respond() to set up mapping BEFORE acquire() is called.
+        This ensures acquire() can find the correct pool key for session affinity.
+
+        The mapping stores the relationship between an incoming MCP session ID
+        and the pool key that should be used for upstream connections. This
+        enables session affinity even when JWT tokens rotate (different jti values
+        per request).
+
+        For multi-worker deployments, the mapping is also stored in Redis with TTL
+        so that any worker can look it up during acquire().
+
+        Args:
+            mcp_session_id: The downstream MCP session ID from x-mcp-session-id header.
+            url: The upstream MCP server URL.
+            gateway_id: The gateway ID.
+            transport_type: The transport type (sse, streamablehttp).
+            user_email: The email of the authenticated user (or "system" for unauthenticated).
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+
+        # Validate mcp_session_id to prevent Redis key injection
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            logger.warning(f"Invalid mcp_session_id format, skipping session mapping: {mcp_session_id[:20]}...")
+            return
+
+        # Use user email for user_identity, or "anonymous" if not provided
+        user_identity = user_email or "anonymous"
+
+        # Normalize gateway_id to empty string if None for consistent key matching
+        normalized_gateway_id = gateway_id or ""
+
+        mapping_key: SessionMappingKey = (mcp_session_id, url, transport_type, normalized_gateway_id)
+
+        # Compute what the pool_key will be for this session
+        # Use mcp_session_id as the identity basis for affinity
+        identity_hash = hashlib.sha256(mcp_session_id.encode()).hexdigest()
+
+        # Hash user identity for privacy (unless it's "anonymous")
+        if user_identity == "anonymous":
+            user_hash = "anonymous"
+        else:
+            user_hash = hashlib.sha256(user_identity.encode()).hexdigest()
+
+        pool_key: PoolKey = (user_hash, url, identity_hash, transport_type, normalized_gateway_id)
+
+        # Store in local memory
+        async with self._mcp_session_mapping_lock:
+            self._mcp_session_mapping[mapping_key] = pool_key
+            logger.debug(f"Session affinity pre-registered (local): {mcp_session_id[:8]}... → {url}, user={SecurityValidator.sanitize_log_message(user_identity)}")
+
+        # Store in Redis for multi-worker support AND register ownership atomically
+        # Registering ownership HERE (during mapping) instead of in acquire() prevents
+        # a race condition where two workers could both start creating sessions before
+        # either registers ownership
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if redis:
+                redis_key = self._session_mapping_redis_key(mcp_session_id, url, transport_type, normalized_gateway_id)
+
+                # Store pool_key as JSON for easy deserialization
+                pool_key_data = {
+                    "user_hash": user_hash,
+                    "url": url,
+                    "identity_hash": identity_hash,
+                    "transport_type": transport_type,
+                    "gateway_id": normalized_gateway_id,
+                }
+                await redis.setex(redis_key, settings.mcpgateway_session_affinity_ttl, orjson.dumps(pool_key_data))  # TTL from config
+
+                # CRITICAL: Register ownership atomically with mapping.
+                # This claims ownership BEFORE any session creation attempt, preventing
+                # the race condition where two workers both start creating sessions
+                owner_key = self._pool_owner_key(mcp_session_id)
+                # Atomic claim with TTL (avoids the SETNX/EXPIRE crash window).
+                was_set = await redis.set(owner_key, WORKER_ID, nx=True, ex=settings.mcpgateway_session_affinity_ttl)
+                if was_set:
+                    logger.debug(f"Session ownership claimed (SET NX): {mcp_session_id[:8]}... → worker {WORKER_ID}")
+                else:
+                    # Another worker already claimed ownership
+                    existing_owner = await redis.get(owner_key)
+                    owner_id = existing_owner.decode() if isinstance(existing_owner, bytes) else existing_owner
+                    logger.debug(f"Session ownership already claimed by {owner_id}: {mcp_session_id[:8]}...")
+
+                logger.debug(f"Session affinity pre-registered (Redis): {mcp_session_id[:8]}... TTL={settings.mcpgateway_session_affinity_ttl}s")
+        except Exception as e:
+            # Redis failure is non-fatal - local mapping still works for same-worker requests
+            logger.debug(f"Failed to store session mapping in Redis: {e}")
+
     async def acquire(
         self,
         url: str,
@@ -478,7 +732,56 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         effective_timeout = timeout if timeout is not None else self._default_transport_timeout
 
         user_id = user_identity or "anonymous"
-        pool_key = self._make_pool_key(url, headers, transport_type, user_id, gateway_id)
+        pool_key: Optional[PoolKey] = None
+
+        # Check pre-registered mapping first (set by respond() for session affinity)
+        if settings.mcpgateway_session_affinity_enabled and headers:
+            headers_lower = {k.lower(): v for k, v in headers.items()}
+            mcp_session_id = headers_lower.get("x-mcp-session-id")
+            if mcp_session_id and self.is_valid_mcp_session_id(mcp_session_id):
+                normalized_gateway_id = gateway_id or ""
+                mapping_key: SessionMappingKey = (mcp_session_id, url, transport_type.value, normalized_gateway_id)
+
+                # Check local memory first (fast path - same worker)
+                async with self._mcp_session_mapping_lock:
+                    pool_key = self._mcp_session_mapping.get(mapping_key)
+                    if pool_key:
+                        self._session_affinity_local_hits += 1
+                        logger.debug(f"Session affinity hit (local): {mcp_session_id[:8]}...")
+
+                # If not in local memory, check Redis (multi-worker support)
+                if pool_key is None:
+                    try:
+                        # First-Party
+                        from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+                        redis = await get_redis_client()
+                        if redis:
+                            redis_key = self._session_mapping_redis_key(mcp_session_id, url, transport_type.value, normalized_gateway_id)
+                            pool_key_data = await redis.get(redis_key)
+                            if pool_key_data:
+                                # Deserialize pool_key from JSON
+                                data = orjson.loads(pool_key_data)
+                                pool_key = (
+                                    data["user_hash"],
+                                    data["url"],
+                                    data["identity_hash"],
+                                    data["transport_type"],
+                                    data["gateway_id"],
+                                )
+                                # Cache in local memory for future requests
+                                async with self._mcp_session_mapping_lock:
+                                    self._mcp_session_mapping[mapping_key] = pool_key
+                                self._session_affinity_redis_hits += 1
+                                logger.debug(f"Session affinity hit (Redis): {mcp_session_id[:8]}...")
+                    except Exception as e:
+                        logger.debug(f"Failed to check Redis for session mapping: {e}")
+
+        # Fallback to normal pool key computation
+        if pool_key is None:
+            self._session_affinity_misses += 1
+            pool_key = self._make_pool_key(url, headers, transport_type, user_id, gateway_id)
+
         pool = await self._get_or_create_pool(pool_key)
 
         # Update pool key last used time IMMEDIATELY after getting pool
@@ -531,6 +834,21 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         # Create new session (semaphore acquired)
         try:
+            # Verify we own this session before creating (prevents race condition)
+            # If another worker already claimed ownership, we should not create a new session
+            # Note: Ownership is registered atomically in register_session_mapping() using SETNX
+            if settings.mcpgateway_session_affinity_enabled and headers:
+                headers_lower = {k.lower(): v for k, v in headers.items()}
+                mcp_session_id = headers_lower.get("x-mcp-session-id")
+                if mcp_session_id and self.is_valid_mcp_session_id(mcp_session_id):
+                    owner = await self._get_pool_session_owner(mcp_session_id)
+                    if owner and owner != WORKER_ID:
+                        # Another worker claimed ownership - should have been forwarded
+                        # Release semaphore and raise to trigger forwarding
+                        semaphore.release()
+                        logger.warning(f"Session {mcp_session_id[:8]}... owned by worker {owner}, not us ({WORKER_ID})")
+                        raise RuntimeError(f"Session owned by another worker: {owner}")
+
             pooled = await asyncio.wait_for(
                 self._create_session(url, headers, transport_type, httpx_client_factory, effective_timeout, gateway_id),
                 timeout=self._session_create_timeout,
@@ -538,6 +856,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # Store identity components for key reconstruction
             pooled.identity_key = pool_key[2]
             pooled.user_identity = user_id
+
+            # Note: Ownership is now registered atomically in register_session_mapping()
+            # before acquire() is called, so we don't need to register it here
 
             self._misses += 1
             self._record_success(url)
@@ -553,16 +874,21 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 logger.warning(f"Failed to create session for {sanitize_url_for_logging(url)}: {e}")
             raise
 
-    async def release(self, pooled: PooledSession) -> None:
+    async def release(self, pooled: PooledSession, *, discard: bool = False) -> None:
         """
-        Return a session to the pool for reuse.
+        Return a session to the pool for reuse, or discard it.
 
         Args:
             pooled: The session to release.
+            discard: If True, close the session instead of returning it to the
+                pool.  Used when the caller detected a transport error
+                (e.g. ``ClosedResourceError``) to prevent recycling a
+                broken session.
         """
+        # Treat already-closed sessions (e.g. dead owner task) as discards —
+        # still need to remove from _active and release the semaphore slot.
         if pooled.is_closed:
-            logger.warning("Attempted to release already-closed session")
-            return
+            discard = True
 
         # Pool key includes transport type, user identity, and gateway_id
         # Re-compute user hash from stored raw identity (full hash for collision resistance)
@@ -582,6 +908,15 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # eviction sees recent activity.
             self._pool_last_used[pool_key] = time.time()
             self._active.get(pool_key, set()).discard(pooled)
+
+        # Discard broken sessions instead of recycling them
+        if discard:
+            logger.debug(f"Discarding broken session for {sanitize_url_for_logging(pooled.url)}")
+            await self._close_session(pooled)
+            if pool_key in self._semaphores:
+                self._semaphores[pool_key].release()
+            self._evictions += 1
+            return
 
         # Check if session should be returned to pool
         if self._closed or pooled.age_seconds > self._session_ttl:
@@ -731,19 +1066,23 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         for method in self._health_check_methods:
             try:
                 if method == "ping":
-                    await asyncio.wait_for(pooled.session.send_ping(), timeout=self._health_check_timeout)
+                    with anyio.fail_after(self._health_check_timeout):
+                        await pooled.session.send_ping()
                     logger.debug(f"Health check passed: ping (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "list_tools":
-                    await asyncio.wait_for(pooled.session.list_tools(), timeout=self._health_check_timeout)
+                    with anyio.fail_after(self._health_check_timeout):
+                        await pooled.session.list_tools()
                     logger.debug(f"Health check passed: list_tools (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "list_prompts":
-                    await asyncio.wait_for(pooled.session.list_prompts(), timeout=self._health_check_timeout)
+                    with anyio.fail_after(self._health_check_timeout):
+                        await pooled.session.list_prompts()
                     logger.debug(f"Health check passed: list_prompts (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "list_resources":
-                    await asyncio.wait_for(pooled.session.list_resources(), timeout=self._health_check_timeout)
+                    with anyio.fail_after(self._health_check_timeout):
+                        await pooled.session.list_resources()
                     logger.debug(f"Health check passed: list_resources (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "skip":
@@ -762,7 +1101,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 self._health_check_failures += 1
                 return False
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.debug(f"Health check '{method}' timed out after {self._health_check_timeout}s, trying next")
                 continue
 
@@ -776,6 +1115,68 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         self._health_check_failures += 1
         return False
 
+    async def _session_owner_coro(
+        self,
+        url: str,
+        transport_type: TransportType,
+        merged_headers: Dict[str, str],
+        httpx_client_factory: Optional[HttpxClientFactory],
+        timeout: Optional[float],
+        gateway_id: Optional[str],
+        ready_future: "asyncio.Future[Tuple[ClientSession, Any]]",
+        shutdown_event: asyncio.Event,
+    ) -> None:
+        """Background task that owns the transport and session lifecycle.
+
+        Runs transport and session inside proper ``async with`` blocks so that
+        anyio cancel scopes are bound to THIS task, not the request handler.
+        Signals readiness via *ready_future*, then blocks on *shutdown_event*
+        until the pool requests cleanup.
+        """
+        try:
+            # Build transport context
+            if transport_type == TransportType.SSE:
+                if httpx_client_factory:
+                    transport_ctx = sse_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory, timeout=timeout)
+                else:
+                    transport_ctx = sse_client(url=url, headers=merged_headers, timeout=timeout)
+            else:  # STREAMABLE_HTTP
+                if httpx_client_factory:
+                    transport_ctx = streamablehttp_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory, timeout=timeout)
+                else:
+                    transport_ctx = streamablehttp_client(url=url, headers=merged_headers, timeout=timeout)
+
+            async with transport_ctx as streams:
+                if transport_type == TransportType.SSE:
+                    read_stream, write_stream = streams[0], streams[1]
+                else:
+                    read_stream, write_stream = streams[0], streams[1]
+
+                # Create message handler if factory is configured
+                message_handler = None
+                if self._message_handler_factory:
+                    try:
+                        message_handler = self._message_handler_factory(url, gateway_id)
+                        logger.debug(f"Created message handler for session {sanitize_url_for_logging(url)} (gateway={SecurityValidator.sanitize_log_message(gateway_id)})")
+                    except Exception as e:
+                        logger.warning(f"Failed to create message handler for {sanitize_url_for_logging(url)}: {e}")
+
+                async with ClientSession(read_stream, write_stream, message_handler=message_handler) as session:
+                    await session.initialize()
+                    # Signal the session is ready for use
+                    if not ready_future.done():
+                        ready_future.set_result((session, transport_ctx))
+                    logger.info(f"Created new MCP session for {sanitize_url_for_logging(url)} (transport={transport_type.value})")
+                    # Block here until the pool asks us to shut down
+                    await shutdown_event.wait()
+                # async with ClientSession exits: session.__aexit__ unwinds properly
+            # async with transport_ctx exits: transport.__aexit__ unwinds properly
+
+        except BaseException as exc:
+            if not ready_future.done():
+                ready_future.set_exception(RuntimeError(f"Failed to create MCP session for {url}: {exc}"))
+            # Let the task finish; the pool will detect _owner_task.done()
+
     async def _create_session(
         self,
         url: str,
@@ -786,7 +1187,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         gateway_id: Optional[str] = None,
     ) -> PooledSession:
         """
-        Create a new initialized MCP session.
+        Create a new initialized MCP session via a dedicated background task.
+
+        The transport and session contexts are entered inside a background
+        ``asyncio.Task`` so that their anyio cancel scopes are bound to that
+        task, not to the HTTP request handler.  This prevents child-task
+        failures in the transport's TaskGroup from cancelling the request.
 
         Args:
             url: Server URL.
@@ -808,102 +1214,150 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         if headers:
             merged_headers.update(headers)
 
+        # Strip gateway-internal session affinity headers before sending to upstream
+        keys_to_remove = [k for k in merged_headers if k.lower() in ("x-mcp-session-id", "mcp-session-id")]
+        for k in keys_to_remove:
+            del merged_headers[k]
+
         identity_key = self._compute_identity_hash(headers)
-        transport_ctx = None
-        session = None
+        shutdown_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        ready_future: asyncio.Future[Tuple[ClientSession, Any]] = loop.create_future()
+
+        owner_task = asyncio.create_task(
+            self._session_owner_coro(url, transport_type, merged_headers, httpx_client_factory, timeout, gateway_id, ready_future, shutdown_event),
+            name=f"mcp-session-owner-{sanitize_url_for_logging(url)}",
+        )
+
         success = False
-
         try:
-            # Create transport context
-            if transport_type == TransportType.SSE:
-                if httpx_client_factory:
-                    transport_ctx = sse_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory, timeout=timeout)
-                else:
-                    transport_ctx = sse_client(url=url, headers=merged_headers, timeout=timeout)
-                # pylint: disable=unnecessary-dunder-call,no-member
-                streams = await transport_ctx.__aenter__()  # Must call directly for manual lifecycle management
-                read_stream, write_stream = streams[0], streams[1]
-            else:  # STREAMABLE_HTTP
-                if httpx_client_factory:
-                    transport_ctx = streamablehttp_client(url=url, headers=merged_headers, httpx_client_factory=httpx_client_factory, timeout=timeout)
-                else:
-                    transport_ctx = streamablehttp_client(url=url, headers=merged_headers, timeout=timeout)
-                # pylint: disable=unnecessary-dunder-call,no-member
-                read_stream, write_stream, _ = await transport_ctx.__aenter__()  # Must call directly for manual lifecycle management
-
-            # Create message handler if factory is configured
-            message_handler = None
-            if self._message_handler_factory:
-                try:
-                    message_handler = self._message_handler_factory(url, gateway_id)
-                    logger.debug(f"Created message handler for session {sanitize_url_for_logging(url)} (gateway={gateway_id})")
-                except Exception as e:
-                    logger.warning(f"Failed to create message handler for {sanitize_url_for_logging(url)}: {e}")
-
-            # Create and initialize session
-            session = ClientSession(read_stream, write_stream, message_handler=message_handler)
-            # pylint: disable=unnecessary-dunder-call
-            await session.__aenter__()  # Must call directly for manual lifecycle management
-            await session.initialize()
-
-            logger.info(f"Created new MCP session for {sanitize_url_for_logging(url)} (transport={transport_type.value})")
+            session, transport_ctx = await asyncio.wait_for(ready_future, timeout=self._session_create_timeout)
             success = True
-
-            return PooledSession(
-                session=session,
-                transport_context=transport_ctx,
-                url=url,
-                transport_type=transport_type,
-                headers=merged_headers,
-                identity_key=identity_key,
-                gateway_id=gateway_id or "",
-            )
-
-        except asyncio.CancelledError:  # pylint: disable=try-except-raise
-            # Re-raise CancelledError after cleanup (handled in finally)
-            raise
-
-        except Exception as e:
-            raise RuntimeError(f"Failed to create MCP session for {url}: {e}") from e
-
         finally:
-            # Clean up on ANY failure (Exception, CancelledError, etc.)
-            # Only clean up if we didn't succeed
+            # Clean up owner task on ANY failure (TimeoutError, Exception, CancelledError)
             if not success:
-                if session is not None:
+                shutdown_event.set()
+                owner_task.cancel()
+                cleanup_timeout = _get_cleanup_timeout()
+                with anyio.move_on_after(cleanup_timeout):
                     try:
-                        await session.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
-                    except Exception:  # nosec B110 - Best effort cleanup on connection failure
+                        await owner_task
+                    except BaseException:  # nosec B110 - Best effort cleanup
                         pass
-                if transport_ctx is not None:
-                    try:
-                        await transport_ctx.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
-                    except Exception:  # nosec B110 - Best effort cleanup on connection failure
-                        pass
+
+        return PooledSession(
+            session=session,
+            transport_context=transport_ctx,
+            url=url,
+            transport_type=transport_type,
+            headers=merged_headers,
+            identity_key=identity_key,
+            gateway_id=gateway_id or "",
+            _owner_task=owner_task,
+            _shutdown_event=shutdown_event,
+        )
 
     async def _close_session(self, pooled: PooledSession) -> None:
         """
         Close a session and its transport.
 
+        For sessions with a background owner task, signals the task to shut down
+        and waits for it to complete (which unwinds the ``async with`` contexts
+        naturally).  Falls back to manual ``__aexit__`` for legacy sessions
+        without an owner task.
+
         Args:
             pooled: The session to close.
         """
-        if pooled.is_closed:
+        if pooled.is_closed and pooled.shutdown_event is None:
+            # Truly closed (legacy path, no owner task) — nothing to clean up
             return
 
         pooled.mark_closed()
+        cleanup_timeout = _get_cleanup_timeout()
 
-        try:
-            await pooled.session.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
-        except Exception as e:
-            logger.debug(f"Error closing session: {e}")
+        if pooled.shutdown_event is not None and pooled.owner_task is not None:
+            # Signal the owner task to shut down gracefully
+            pooled.shutdown_event.set()
 
-        try:
-            await pooled.transport_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
-        except Exception as e:
-            logger.debug(f"Error closing transport: {e}")
+            if not pooled.owner_task.done():
+                # Wait for graceful exit
+                with anyio.move_on_after(cleanup_timeout) as scope:
+                    try:
+                        await pooled.owner_task
+                    except (asyncio.CancelledError, Exception):  # nosec B110
+                        pass
+                if scope.cancelled_caught:
+                    logger.warning(f"Session owner cleanup timed out for {sanitize_url_for_logging(pooled.url)} - force cancelling")
+                    pooled.owner_task.cancel()
+                    try:
+                        await pooled.owner_task
+                    except (asyncio.CancelledError, Exception):  # nosec B110
+                        pass
+        else:
+            # Legacy path: manual __aexit__ for sessions without owner task
+            with anyio.move_on_after(cleanup_timeout) as session_scope:
+                try:
+                    await pooled.session.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
+                except Exception as e:
+                    logger.debug(f"Error closing session: {e}")
+            if session_scope.cancelled_caught:
+                logger.warning(f"Session cleanup timed out for {sanitize_url_for_logging(pooled.url)} - proceeding anyway")
+
+            if pooled.transport_context is not None:
+                with anyio.move_on_after(cleanup_timeout) as transport_scope:
+                    try:
+                        await pooled.transport_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
+                    except Exception as e:
+                        logger.debug(f"Error closing transport: {e}")
+                if transport_scope.cancelled_caught:
+                    logger.warning(f"Transport cleanup timed out for {sanitize_url_for_logging(pooled.url)} - proceeding anyway")
 
         logger.debug(f"Closed session for {sanitize_url_for_logging(pooled.url)} (uses={pooled.use_count})")
+
+        # Clean up pool_owner key in Redis for session affinity
+        if settings.mcpgateway_session_affinity_enabled and pooled.headers:
+            headers_lower = {k.lower(): v for k, v in pooled.headers.items()}
+            mcp_session_id = headers_lower.get("x-mcp-session-id")
+            if mcp_session_id and self.is_valid_mcp_session_id(mcp_session_id):
+                await self._cleanup_pool_session_owner(mcp_session_id)
+
+    async def _cleanup_pool_session_owner(self, mcp_session_id: str) -> None:
+        """Clean up pool_owner key in Redis when session is closed.
+
+        Only deletes the key if this worker owns it (to prevent removing other workers' ownership).
+
+        Args:
+            mcp_session_id: The MCP session ID from x-mcp-session-id header.
+        """
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if redis:
+                key = self._pool_owner_key(mcp_session_id)
+                # Only delete if we own it
+                owner = await redis.get(key)
+                if owner:
+                    owner_id = owner.decode() if isinstance(owner, bytes) else owner
+                    if owner_id == WORKER_ID:
+                        await redis.delete(key)
+                        logger.debug(f"Cleaned up pool session owner: {mcp_session_id[:8]}...")
+        except Exception as e:
+            # Cleanup failure is non-fatal
+            logger.debug(f"Failed to cleanup pool session owner in Redis: {e}")
+
+    async def cleanup_streamable_http_session_owner(self, mcp_session_id: str) -> None:
+        """Public wrapper for cleaning up Streamable HTTP session ownership.
+
+        This is used by trusted internal MCP session teardown paths that need to
+        remove affinity ownership without reaching into private helpers.
+        """
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            logger.debug("Invalid mcp_session_id for owner cleanup, skipping")
+            return
+        await self._cleanup_pool_session_owner(mcp_session_id)
 
     async def close_all(self) -> None:
         """
@@ -934,7 +1388,509 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             self._locks.clear()
             self._semaphores.clear()
 
+        # Stop RPC listener if running
+        if self._rpc_listener_task and not self._rpc_listener_task.done():
+            self._rpc_listener_task.cancel()
+            try:
+                await self._rpc_listener_task
+            except asyncio.CancelledError:
+                pass
+            self._rpc_listener_task = None
+
         logger.info("All sessions closed")
+
+    async def register_pool_session_owner(self, mcp_session_id: str) -> None:
+        """Register this worker as owner of a pool session in Redis.
+
+        This enables multi-worker session affinity by tracking which worker owns
+        which pool session. When a request with x-mcp-session-id arrives at a
+        different worker, it can forward the request to the owner worker.
+
+        Note: This method is now primarily used for refreshing TTL on existing ownership.
+        Initial ownership is claimed atomically in register_session_mapping() using SETNX.
+
+        Args:
+            mcp_session_id: The MCP session ID from x-mcp-session-id header.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            logger.debug("Invalid mcp_session_id for owner registration, skipping")
+            return
+
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if redis:
+                key = self._pool_owner_key(mcp_session_id)
+
+                # Do not steal ownership: only claim if missing, or refresh TTL if we already own.
+                # Lua keeps this atomic.
+                script = """
+                local cur = redis.call('GET', KEYS[1])
+                if not cur then
+                  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+                  return 1
+                end
+                if cur == ARGV[1] then
+                  redis.call('EXPIRE', KEYS[1], ARGV[2])
+                  return 2
+                end
+                return 0
+                """
+                ttl = int(settings.mcpgateway_session_affinity_ttl)
+                outcome = await redis.eval(script, 1, key, WORKER_ID, ttl)
+                logger.debug(f"Owner registration outcome={outcome} for session {mcp_session_id[:8]}...")
+        except Exception as e:
+            # Redis failure is non-fatal - single worker mode still works
+            logger.debug(f"Failed to register pool session owner in Redis: {e}")
+
+    async def _get_pool_session_owner(self, mcp_session_id: str) -> Optional[str]:
+        """Get the worker ID that owns a pool session.
+
+        Args:
+            mcp_session_id: The MCP session ID from x-mcp-session-id header.
+
+        Returns:
+            The worker ID that owns this session, or None if not found or Redis unavailable.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return None
+
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            return None
+
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if redis:
+                key = self._pool_owner_key(mcp_session_id)
+                owner = await redis.get(key)
+                if owner:
+                    decoded = owner.decode() if isinstance(owner, bytes) else owner
+                    return decoded
+        except Exception as e:
+            logger.debug(f"Failed to get pool session owner from Redis: {e}")
+        return None
+
+    async def forward_request_to_owner(
+        self,
+        mcp_session_id: str,
+        request_data: Dict[str, Any],
+        timeout: Optional[float] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Forward RPC request to the worker that owns the pool session.
+
+        This method checks Redis to find which worker owns the pool session for
+        the given mcp_session_id. If owned by another worker, it forwards the
+        request via Redis pub/sub and waits for the response.
+
+        Args:
+            mcp_session_id: The MCP session ID from x-mcp-session-id header.
+            request_data: The RPC request data to forward.
+            timeout: Optional timeout in seconds (default from config).
+
+        Returns:
+            The response from the owner worker, or None if we own the session
+            (caller should execute locally) or if Redis is unavailable.
+
+        Raises:
+            asyncio.TimeoutError: If the forwarded request times out.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return None
+
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            return None
+
+        effective_timeout = timeout if timeout is not None else settings.mcpgateway_pool_rpc_forward_timeout
+
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if not redis:
+                return None  # Execute locally - no Redis
+
+            # Check who owns this session
+            owner = await redis.get(self._pool_owner_key(mcp_session_id))
+            method = request_data.get("method", "unknown")
+            if not owner:
+                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | No owner → execute locally (new session)")
+                return None  # No owner registered - execute locally (new session)
+
+            owner_id = owner.decode() if isinstance(owner, bytes) else owner
+            if owner_id == WORKER_ID:
+                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | We own it → execute locally")
+                return None  # We own it - execute locally
+
+            logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Owner: {owner_id} → forwarding")
+
+            # Forward to owner worker via pub/sub
+            response_id = str(uuid.uuid4())
+            response_channel = f"mcpgw:pool_rpc_response:{response_id}"
+
+            # Subscribe to response channel
+            pubsub = redis.pubsub()
+            await pubsub.subscribe(response_channel)
+
+            try:
+                # Prepare request with response channel
+                forward_data = {
+                    "type": "rpc_forward",
+                    **request_data,
+                    "response_channel": response_channel,
+                    "mcp_session_id": mcp_session_id,
+                }
+
+                # Publish request to owner's channel
+                await redis.publish(f"mcpgw:pool_rpc:{owner_id}", orjson.dumps(forward_data))
+                self._forwarded_requests += 1
+                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Published to worker {owner_id}")
+
+                # Wait for response
+                async with asyncio.timeout(effective_timeout):
+                    while True:
+                        msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+                        if msg and msg["type"] == "message":
+                            return orjson.loads(msg["data"])
+            finally:
+                await pubsub.unsubscribe(response_channel)
+
+        except asyncio.TimeoutError:
+            self._forwarded_request_timeouts += 1
+            logger.warning(f"Timeout forwarding request to owner for session {mcp_session_id[:8]}...")
+            raise
+        except Exception as e:
+            self._forwarded_request_failures += 1
+            logger.debug(f"Error forwarding request to owner: {e}")
+            return None  # Execute locally on error
+
+    async def start_rpc_listener(self) -> None:
+        """Start listening for forwarded RPC and HTTP requests on this worker's channels.
+
+        This method subscribes to Redis pub/sub channels specific to this worker
+        and processes incoming forwarded requests from other workers:
+        - mcpgw:pool_rpc:{WORKER_ID} - for SSE transport JSON-RPC forwards
+        - mcpgw:pool_http:{WORKER_ID} - for Streamable HTTP request forwards
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if not redis:
+                logger.debug("Redis not available, RPC listener not started")
+                return
+
+            rpc_channel = f"mcpgw:pool_rpc:{WORKER_ID}"
+            http_channel = f"mcpgw:pool_http:{WORKER_ID}"
+            pubsub = redis.pubsub()
+            await pubsub.subscribe(rpc_channel, http_channel)
+            logger.info(f"RPC/HTTP listener started for worker {WORKER_ID} on channels: {rpc_channel}, {http_channel}")
+
+            try:
+                while not self._closed:
+                    try:
+                        msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                        if msg and msg["type"] == "message":
+                            request = orjson.loads(msg["data"])
+                            forward_type = request.get("type")
+                            response_channel = request.get("response_channel")
+
+                            if response_channel:
+                                if forward_type == "rpc_forward":
+                                    # Execute forwarded RPC request for SSE transport
+                                    response = await self._execute_forwarded_request(request)
+                                    await redis.publish(response_channel, orjson.dumps(response))
+                                    logger.debug(f"Processed forwarded RPC request, response sent to {response_channel}")
+                                elif forward_type == "http_forward":
+                                    # Execute forwarded HTTP request for Streamable HTTP transport
+                                    await self._execute_forwarded_http_request(request, redis)
+                                else:
+                                    logger.warning(f"Unknown forward type: {forward_type}")
+                    except Exception as e:
+                        logger.warning(f"Error processing forwarded request: {e}")
+            finally:
+                await pubsub.unsubscribe(rpc_channel, http_channel)
+                logger.info(f"RPC/HTTP listener stopped for worker {WORKER_ID}")
+
+        except Exception as e:
+            logger.warning(f"RPC/HTTP listener failed: {e}")
+
+    async def _execute_forwarded_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a forwarded RPC request locally via internal HTTP call.
+
+        This method handles RPC requests that were forwarded from another worker.
+        Instead of handling specific methods here, we make an internal HTTP call
+        to the local /rpc endpoint which reuses ALL existing method handling logic.
+
+        The x-forwarded-internally header prevents infinite forwarding loops.
+
+        Args:
+            request: The forwarded RPC request containing method, params, headers, req_id, etc.
+
+        Returns:
+            The JSON-RPC response from the local endpoint.
+        """
+        try:
+            method = request.get("method")
+            params = request.get("params", {})
+            headers = request.get("headers", {})
+            req_id = request.get("req_id", 1)
+            mcp_session_id = request.get("mcp_session_id", "unknown")
+            session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
+
+            logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Received forwarded request, executing locally")
+
+            # Make internal HTTP call to local /rpc endpoint
+            # This reuses ALL existing method handling logic without duplication
+            async with httpx.AsyncClient() as client:
+                # Build headers for internal request - forward original headers
+                # but add x-forwarded-internally to prevent infinite loops
+                internal_headers = dict(headers)
+                internal_headers["x-forwarded-internally"] = "true"
+                # Ensure content-type is set
+                internal_headers["content-type"] = "application/json"
+
+                response = await client.post(
+                    f"http://127.0.0.1:{settings.port}/rpc",
+                    json={"jsonrpc": "2.0", "method": method, "params": params, "id": req_id},
+                    headers=internal_headers,
+                    timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                )
+
+                # Treat non-2xx HTTP responses as errors
+                if not response.is_success:
+                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
+                    return {"error": {"code": -32603, "message": f"Internal request failed with HTTP {response.status_code}"}}
+
+                # Parse response
+                response_data = response.json()
+
+                # Extract result or error from JSON-RPC response
+                if "error" in response_data:
+                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error")
+                    return {"error": response_data["error"]}
+                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed successfully")
+                return {"result": response_data.get("result", {})}
+
+        except httpx.TimeoutException:
+            logger.warning(f"Timeout executing forwarded request: {request.get('method')}")
+            return {"error": {"code": -32603, "message": "Internal request timeout"}}
+        except Exception as e:
+            logger.warning(f"Error executing forwarded request: {e}")
+            return {"error": {"code": -32603, "message": str(e)}}
+
+    async def _execute_forwarded_http_request(self, request: Dict[str, Any], redis: Any) -> None:
+        """Execute a forwarded HTTP request locally and return response via Redis.
+
+        This method handles full HTTP requests forwarded from other workers for
+        Streamable HTTP transport session affinity. It reconstructs the HTTP request,
+        makes an internal call to the appropriate endpoint, and publishes the response
+        back through Redis.
+
+        Args:
+            request: Serialized HTTP request data from Redis Pub/Sub containing:
+                - type: "http_forward"
+                - response_channel: Redis channel to publish response to
+                - mcp_session_id: Session identifier
+                - method: HTTP method (GET, POST, DELETE)
+                - path: Request path (e.g., /mcp)
+                - query_string: Query parameters
+                - headers: Request headers dict
+                - body: Hex-encoded request body
+            redis: Redis client for publishing response
+        """
+        response_channel = None
+        try:
+            response_channel = request.get("response_channel")
+            method = request.get("method")
+            path = request.get("path")
+            query_string = request.get("query_string", "")
+            headers = request.get("headers", {})
+            body_hex = request.get("body", "")
+            mcp_session_id = request.get("mcp_session_id")
+
+            # Decode hex body back to bytes
+            body = bytes.fromhex(body_hex) if body_hex else b""
+
+            session_short = mcp_session_id[:8] if mcp_session_id and len(mcp_session_id) >= 8 else "unknown"
+            logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Received forwarded HTTP request: {method} {path}")
+
+            # Add internal forwarding headers to prevent loops
+            internal_headers = dict(headers)
+            internal_headers["x-forwarded-internally"] = "true"
+            internal_headers["x-original-worker"] = request.get("original_worker", "unknown")
+
+            # Make internal HTTP request to local endpoint
+            url = f"http://127.0.0.1:{settings.port}{path}"
+            if query_string:
+                url = f"{url}?{query_string}"
+
+            async with httpx.AsyncClient() as client:
+                response = await client.request(
+                    method=method,
+                    url=url,
+                    headers=internal_headers,
+                    content=body,
+                    timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                )
+
+                logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Executed locally: {response.status_code}")
+
+                # Serialize response for Redis transport
+                response_data = {
+                    "status": response.status_code,
+                    "headers": dict(response.headers),
+                    "body": response.content.hex(),  # Hex encode binary response
+                }
+
+                # Publish response back to requesting worker
+                if redis and response_channel:
+                    await redis.publish(response_channel, orjson.dumps(response_data))
+                    logger.debug(f"[HTTP_AFFINITY] Published HTTP response to Redis channel: {response_channel}")
+
+        except Exception as e:
+            logger.error(f"Error executing forwarded HTTP request: {e}")
+            # Try to send error response if possible
+            if redis and response_channel:
+                error_response = {
+                    "status": 500,
+                    "headers": {"content-type": "application/json"},
+                    "body": orjson.dumps({"error": "Internal forwarding error"}).hex(),
+                }
+                try:
+                    await redis.publish(response_channel, orjson.dumps(error_response))
+                except Exception as publish_error:
+                    logger.debug(f"Failed to publish error response via Redis: {publish_error}")
+
+    async def get_streamable_http_session_owner(self, mcp_session_id: str) -> Optional[str]:
+        """Get the worker ID that owns a Streamable HTTP session.
+
+        This is a public wrapper around _get_pool_session_owner for use by
+        streamablehttp_transport to check session ownership before handling requests.
+
+        Args:
+            mcp_session_id: The MCP session ID from mcp-session-id header.
+
+        Returns:
+            Worker ID if found, None otherwise.
+        """
+        return await self._get_pool_session_owner(mcp_session_id)
+
+    async def forward_streamable_http_to_owner(
+        self,
+        owner_worker_id: str,
+        mcp_session_id: str,
+        method: str,
+        path: str,
+        headers: Dict[str, str],
+        body: bytes,
+        query_string: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """Forward a Streamable HTTP request to the worker that owns the session via Redis Pub/Sub.
+
+        This method forwards the entire HTTP request to another worker using Redis
+        Pub/Sub channels, similar to forward_request_to_owner() for SSE transport.
+        This ensures session affinity works correctly in single-host multi-worker
+        deployments where hostname-based routing fails.
+
+        Args:
+            owner_worker_id: The worker ID that owns the session.
+            mcp_session_id: The MCP session ID.
+            method: HTTP method (GET, POST, DELETE).
+            path: Request path (e.g., /mcp).
+            headers: Request headers.
+            body: Request body bytes.
+            query_string: Query string if any.
+
+        Returns:
+            Dict with 'status', 'headers', and 'body' from the owner worker's response,
+            or None if forwarding fails.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return None
+
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            return None
+
+        session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
+        logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | {method} {path} | Forwarding to worker {owner_worker_id}")
+
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if not redis:
+                logger.warning("Redis unavailable for HTTP forwarding, executing locally")
+                return None  # Fall back to local execution
+
+            # Generate unique response channel for this request
+            response_uuid = uuid.uuid4().hex
+            response_channel = f"mcpgw:pool_http_response:{response_uuid}"
+
+            # Serialize HTTP request for Redis transport
+            forward_data = {
+                "type": "http_forward",
+                "response_channel": response_channel,
+                "mcp_session_id": mcp_session_id,
+                "method": method,
+                "path": path,
+                "query_string": query_string,
+                "headers": headers,
+                "body": body.hex() if body else "",  # Hex encode binary body
+                "original_worker": WORKER_ID,
+                "timestamp": time.time(),
+            }
+
+            # Subscribe to response channel BEFORE publishing request (prevent race)
+            pubsub = redis.pubsub()
+            await pubsub.subscribe(response_channel)
+
+            try:
+                # Publish forwarded request to owner worker's HTTP channel
+                owner_channel = f"mcpgw:pool_http:{owner_worker_id}"
+                await redis.publish(owner_channel, orjson.dumps(forward_data))
+                logger.debug(f"[HTTP_AFFINITY] Published HTTP request to Redis channel: {owner_channel}")
+
+                # Wait for response with timeout
+                timeout = settings.mcpgateway_pool_rpc_forward_timeout
+                async with asyncio.timeout(timeout):
+                    while True:
+                        msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+                        if msg and msg["type"] == "message":
+                            response_data = orjson.loads(msg["data"])
+                            logger.debug(f"[HTTP_AFFINITY] Received HTTP response via Redis: status={response_data.get('status')}")
+
+                            # Decode hex body back to bytes
+                            body_hex = response_data.get("body", "")
+                            response_data["body"] = bytes.fromhex(body_hex) if body_hex else b""
+
+                            self._forwarded_requests += 1
+                            return response_data
+
+            finally:
+                await pubsub.unsubscribe(response_channel)
+
+        except asyncio.TimeoutError:
+            self._forwarded_request_timeouts += 1
+            logger.warning(f"Timeout forwarding HTTP request to owner {owner_worker_id}")
+            return None
+        except Exception as e:
+            self._forwarded_request_failures += 1
+            logger.warning(f"Error forwarding HTTP request via Redis: {e}")
+            return None
 
     def get_metrics(self) -> Dict[str, Any]:
         """
@@ -944,6 +1900,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             Dict with hits, misses, evictions, hit_rate, and per-pool stats.
         """
         total_requests = self._hits + self._misses
+        total_affinity_requests = self._session_affinity_local_hits + self._session_affinity_redis_hits + self._session_affinity_misses
         return {
             "hits": self._hits,
             "misses": self._misses,
@@ -955,6 +1912,16 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             "anonymous_identity_count": self._anonymous_identity_count,
             "hit_rate": self._hits / total_requests if total_requests > 0 else 0.0,
             "pool_key_count": len(self._pools),
+            # Session affinity metrics
+            "session_affinity": {
+                "local_hits": self._session_affinity_local_hits,
+                "redis_hits": self._session_affinity_redis_hits,
+                "misses": self._session_affinity_misses,
+                "hit_rate": (self._session_affinity_local_hits + self._session_affinity_redis_hits) / total_affinity_requests if total_affinity_requests > 0 else 0.0,
+                "forwarded_requests": self._forwarded_requests,
+                "forwarded_failures": self._forwarded_request_failures,
+                "forwarded_timeouts": self._forwarded_request_timeouts,
+            },
             "pools": {
                 f"{url}|{identity[:8]}|{transport}|{user}|{gw_id[:8] if gw_id else 'none'}": {
                     "available": pool.qsize(),
@@ -1003,10 +1970,16 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             PooledSession ready for use.
         """
         pooled = await self.acquire(url, headers, transport_type, httpx_client_factory, timeout, user_identity, gateway_id)
+        failed = False
         try:
             yield pooled
+        except BaseException:
+            # Session encountered an error (e.g. ClosedResourceError) — evict it
+            # instead of returning a broken session to the pool.
+            failed = True
+            raise
         finally:
-            await self.release(pooled)
+            await self.release(pooled, discard=failed)
 
 
 # Global pool instance - initialized by FastAPI lifespan

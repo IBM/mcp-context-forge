@@ -34,8 +34,24 @@ def _column_exists(table_name: str, column_name: str) -> bool:
     """
     bind = op.get_bind()
     inspector = sa.inspect(bind)
+    if table_name not in inspector.get_table_names():
+        return False
     columns = inspector.get_columns(table_name)
     return any(col["name"] == column_name for col in columns)
+
+
+def _table_exists(table_name: str) -> bool:
+    """Check whether a table exists in the current database.
+
+    Args:
+        table_name: Name of the database table to check.
+
+    Returns:
+        True if the table exists, False otherwise.
+    """
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    return table_name in inspector.get_table_names()
 
 
 def upgrade() -> None:
@@ -48,6 +64,8 @@ def upgrade() -> None:
     Columns are added only if they do not already exist, allowing the
     migration to be safely re-run or applied to partially migrated schemas.
     """
+    if not _table_exists("gateways"):
+        return
 
     if not _column_exists("gateways", "refresh_interval_seconds"):
         op.add_column(
@@ -82,6 +100,8 @@ def downgrade() -> None:
     Columns are removed only if they exist, ensuring safe downgrade behavior
     across different schema states.
     """
+    if not _table_exists("gateways"):
+        return
 
     if _column_exists("gateways", "last_refresh_at"):
         op.drop_column("gateways", "last_refresh_at")

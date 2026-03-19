@@ -1,4 +1,4 @@
-# Promtail configuration for MCP Gateway stack
+# Promtail configuration for ContextForge stack
 # Collects logs from Docker containers and sends to Loki
 # See: https://grafana.com/docs/loki/latest/clients/promtail/configuration/
 
@@ -37,14 +37,13 @@ scrape_configs:
       - source_labels: ['__meta_docker_container_id']
         target_label: container_id
     pipeline_stages:
-      # Try to parse JSON logs (MCP Gateway uses structured logging)
+      # Try to parse JSON logs (ContextForge uses structured logging)
       - json:
           expressions:
-            level: level
+            level: levelname
             message: message
-            timestamp: timestamp
-            logger: logger
-            correlation_id: correlation_id
-      # Fall back to raw log if not JSON
-      - output:
-          source: message
+            timestamp: "@timestamp"
+            logger: name
+            request_id: request_id
+            trace_id: trace_id
+            span_id: span_id

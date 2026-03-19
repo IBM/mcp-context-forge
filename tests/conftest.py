@@ -7,7 +7,10 @@ Authors: Mihai Criveti
 
 # Standard
 import os
+import socket
+import sys
 import tempfile
+import warnings
 from unittest.mock import AsyncMock
 
 # Third-Party
@@ -17,9 +20,59 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+TEST_SQLITE_MEMORY_URL = "sqlite:///:memory:"
+EXTERNAL_TEST_DB_OPT_IN_ENV = "MCPGATEWAY_TEST_ALLOW_EXTERNAL_DB"
+EXTERNAL_TEST_DB_OPT_IN_FLAGS = {"--allow-external-db", "--yes-external-db"}
+_TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
+
+
+def _is_external_db_opted_in() -> bool:
+    """Return True when external test DB usage is explicitly enabled."""
+    env_opt_in = os.getenv(EXTERNAL_TEST_DB_OPT_IN_ENV, "").strip().lower() in _TRUTHY_ENV_VALUES
+    cli_opt_in = any(flag in sys.argv for flag in EXTERNAL_TEST_DB_OPT_IN_FLAGS)
+    return env_opt_in or cli_opt_in
+
+
+def _force_safe_test_db_defaults() -> None:
+    """Force hermetic in-memory SQLite defaults unless external DB is explicitly enabled."""
+    if _is_external_db_opted_in():
+        return
+
+    configured = []
+
+    db_env = os.getenv("DB")
+    if db_env and db_env.strip().lower() in {"postgres", "mariadb"}:
+        configured.append(f"DB={db_env}")
+
+    database_url_env = os.getenv("DATABASE_URL")
+    if database_url_env and database_url_env != TEST_SQLITE_MEMORY_URL:
+        configured.append("DATABASE_URL=<set>")
+
+    test_database_url_env = os.getenv("TEST_DATABASE_URL")
+    if test_database_url_env and test_database_url_env != TEST_SQLITE_MEMORY_URL:
+        configured.append("TEST_DATABASE_URL=<set>")
+
+    if configured:
+        warnings.warn(
+            "External DB-related test env ignored "
+            f"({', '.join(configured)}). "
+            f"Set {EXTERNAL_TEST_DB_OPT_IN_ENV}=1 or pass --allow-external-db to allow it. "
+            f"Using {TEST_SQLITE_MEMORY_URL}.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    # Hard-force hermetic defaults even if host env has DB/DATABASE_URL configured.
+    os.environ["DB"] = "sqlite"
+    os.environ["DATABASE_URL"] = TEST_SQLITE_MEMORY_URL
+    os.environ["TEST_DATABASE_URL"] = TEST_SQLITE_MEMORY_URL
+
+
+_force_safe_test_db_defaults()
+
 # First-Party
-import mcpgateway.db as db_mod
-from mcpgateway.config import Settings
+import mcpgateway.db as db_mod  # noqa: E402  # must load after test DB env hardening
+from mcpgateway.config import Settings  # noqa: E402  # must load after test DB env hardening
 
 # Local
 
@@ -27,12 +80,35 @@ from mcpgateway.config import Settings
 # _session_rbac_originals = patch_rbac_decorators()
 
 
+def pytest_addoption(parser):
+    """Add explicit opt-in flags for running tests against external databases."""
+    parser.addoption(
+        "--allow-external-db",
+        "--yes-external-db",
+        action="store_true",
+        default=False,
+        help=f"Allow external test DB backends (same as setting {EXTERNAL_TEST_DB_OPT_IN_ENV}=1).",
+    )
+
+
 def resolve_test_db_url():
-    """Return DB URL based on GitHub Actions matrix or default to SQLite."""
+    """Return DB URL for tests.
+
+    Default behavior is hermetic in-memory SQLite.
+    External DB backends are only allowed when explicitly enabled with:
+      MCPGATEWAY_TEST_ALLOW_EXTERNAL_DB=1
+    """
+    if not _is_external_db_opted_in():
+        return TEST_SQLITE_MEMORY_URL
+
+    explicit_test_url = os.getenv("TEST_DATABASE_URL")
+    if explicit_test_url:
+        return explicit_test_url
+
     db = os.getenv("DB", "sqlite").lower()
 
     if db == "sqlite":
-        return "sqlite:///:memory:"
+        return TEST_SQLITE_MEMORY_URL
 
     if db == "postgres":
         # Matches GitHub Service container
@@ -64,9 +140,12 @@ def test_engine(test_db_url):
 
     db_mod.Base.metadata.create_all(bind=engine)
     yield engine
-    db_mod.Base.metadata.drop_all(bind=engine)
-    if os.path.exists("./test.db"):
-        os.remove("./test.db")
+    try:
+        db_mod.Base.metadata.drop_all(bind=engine)
+    finally:
+        engine.dispose()
+        if os.path.exists("./test.db"):
+            os.remove("./test.db")
 
 
 @pytest.fixture
@@ -107,6 +186,8 @@ def app():
     from mcpgateway.config import settings
 
     mp.setattr(settings, "database_url", url, raising=False)
+    # Disable auth for tests - allows dependency injection mocking to work
+    mp.setattr(settings, "auth_required", False, raising=False)
 
     engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -181,6 +262,8 @@ def app_with_temp_db():
     from mcpgateway.config import settings
 
     mp.setattr(settings, "database_url", url, raising=False)
+    # Disable auth for tests - allows dependency injection mocking to work
+    mp.setattr(settings, "auth_required", False, raising=False)
 
     engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -298,6 +381,60 @@ def assert_max_queries(test_engine):
 # ---------------------------------------------------------------------------
 # Cache invalidation fixtures for test isolation
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Deterministic DNS for SSRF validation (network-independent)
+# ---------------------------------------------------------------------------
+# The SSRF validator resolves hostnames via socket.getaddrinfo(). On CI runners
+# (GitHub Actions) external domains like example.com may not resolve, causing
+# Pydantic schema construction to fail with SSRF_DNS_FAIL_CLOSED errors.
+# This fixture returns a well-known public IP so the full SSRF validation
+# pipeline runs without requiring real network access.
+_REAL_GETADDRINFO = socket.getaddrinfo
+_STUB_PUBLIC_IP = "93.184.215.14"  # IANA example.com
+
+
+def _stub_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    """Return a deterministic public IP for non-loopback hostnames.
+
+    Trade-off: this returns a fixed AF_INET/SOCK_STREAM tuple regardless of
+    the requested family/type/proto, which reduces fidelity for non-SSRF tests
+    that care about DNS details. Tests that validate actual DNS behavior should
+    patch ``mcpgateway.common.validators.socket.getaddrinfo`` (or ``socket.getaddrinfo``
+    directly) which takes precedence within the patch context.
+    """
+    if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        return _REAL_GETADDRINFO(host, port, family, type, proto, flags)
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (_STUB_PUBLIC_IP, port or 0))]
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _deterministic_dns():
+    """Stub DNS globally so SSRF URL validators work without network access."""
+    socket.getaddrinfo = _stub_getaddrinfo
+    yield
+    socket.getaddrinfo = _REAL_GETADDRINFO
+
+
+@pytest.fixture(autouse=True)
+def _test_ssrf_defaults():
+    """Relax strict SSRF defaults for tests that use localhost/example URLs.
+
+    Production defaults block localhost and fail-closed on DNS errors.
+    Tests need localhost URLs for plugin/transport tests and deterministic
+    DNS behavior. Tests that specifically validate SSRF behavior override
+    these settings themselves via mock or monkeypatch.
+    """
+    from mcpgateway.config import settings
+
+    orig_localhost = settings.ssrf_allow_localhost
+    orig_private = settings.ssrf_allow_private_networks
+    settings.ssrf_allow_localhost = True
+    settings.ssrf_allow_private_networks = True
+    yield
+    settings.ssrf_allow_localhost = orig_localhost
+    settings.ssrf_allow_private_networks = orig_private
 
 
 @pytest.fixture(autouse=True)

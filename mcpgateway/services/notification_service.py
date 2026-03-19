@@ -514,6 +514,9 @@ class NotificationService:
 
         Continuously runs until shutdown is triggered, picking up pending
         refreshes from the queue and executing them.
+
+        Raises:
+            asyncio.CancelledError: If the task is cancelled during shutdown.
         """
         logger.info("NotificationService refresh worker started")
 
@@ -533,7 +536,7 @@ class NotificationService:
 
             except asyncio.CancelledError:
                 logger.debug("Refresh worker cancelled")
-                break
+                raise
             except Exception as e:
                 logger.exception("Error in refresh worker: %s", e)
 

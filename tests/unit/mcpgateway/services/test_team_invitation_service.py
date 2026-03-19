@@ -30,7 +30,10 @@ class TestTeamInvitationService:
     @pytest.fixture
     def service(self, mock_db):
         """Create team invitation service instance."""
-        return TeamInvitationService(mock_db)
+        svc = TeamInvitationService(mock_db)
+        # Default: user is below max teams limit (0 teams)
+        svc._get_user_team_count = MagicMock(return_value=0)
+        return svc
 
     @pytest.fixture
     def mock_team(self):
@@ -460,7 +463,7 @@ class TestTeamInvitationService:
 
             result = await service.accept_invitation("secure_token_123")
 
-            assert result is True
+            assert result is mock_membership_instance
             assert mock_invitation.is_active is False
             mock_db.add.assert_called_once_with(mock_membership_instance)
             mock_db.commit.assert_called_once()

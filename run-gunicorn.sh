@@ -2,7 +2,7 @@
 #───────────────────────────────────────────────────────────────────────────────
 #  Script : run-gunicorn.sh
 #  Author : Mihai Criveti
-#  Purpose: Launch the MCP Gateway API under Gunicorn with optional TLS support
+#  Purpose: Launch ContextForge API under Gunicorn with optional TLS support
 #
 #  Description:
 #    This script provides a robust way to launch a production API server using
@@ -24,7 +24,7 @@
 #    GUNICORN_TIMEOUT             : Worker timeout in seconds (default: 600)
 #    GUNICORN_MAX_REQUESTS        : Max requests per worker before restart (default: 100000)
 #    GUNICORN_MAX_REQUESTS_JITTER : Random jitter for max requests (default: 100)
-#    GUNICORN_PRELOAD_APP         : Preload app before forking workers (default: true)
+#    GUNICORN_PRELOAD_APP         : Preload app before forking workers (default: true, false on macOS)
 #    GUNICORN_DEV_MODE            : Enable developer mode with hot reload (default: false)
 #    SSL                          : Enable TLS/SSL (true/false, default: false)
 #    CERT_FILE                    : Path to SSL certificate (default: certs/cert.pem)
@@ -43,6 +43,17 @@
 
 # Exit immediately on error, undefined variable, or pipe failure
 set -euo pipefail
+
+#────────────────────────────────────────────────────────────────────────────────
+# SECTION 0: macOS Fork Safety Fix
+# On macOS, Objective-C is not fork-safe. When gunicorn forks workers after
+# certain libraries (SSL, cryptography) have initialized Objective-C, it causes
+# crashes with "+[NSCharacterSet initialize] may have been in progress".
+# This disables the safety check that causes those crashes.
+#────────────────────────────────────────────────────────────────────────────────
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+fi
 
 #────────────────────────────────────────────────────────────────────────────────
 # SECTION 1: Script Location Detection
@@ -71,12 +82,12 @@ check_existing_process() {
 
         # Check if the process is actually running
         if kill -0 "${pid}" 2>/dev/null; then
-            echo "⚠️  WARNING: Another instance of MCP Gateway appears to be running (PID: ${pid})"
+            echo "⚠️  WARNING: Another instance of ContextForge appears to be running (PID: ${pid})"
 
             # Check if it's actually gunicorn
             if ps -p "${pid}" -o comm= | grep -q gunicorn; then
                 if [[ "${FORCE_START}" != "true" ]]; then
-                    echo "❌  FATAL: MCP Gateway is already running!"
+                    echo "❌  FATAL: ContextForge is already running!"
                     echo "   To stop it: kill ${pid}"
                     echo "   To force start anyway: FORCE_START=true $0"
                     exit 1
@@ -201,7 +212,7 @@ fi
 
 #────────────────────────────────────────────────────────────────────────────────
 # SECTION 5: Display Application Banner
-# Show a fancy ASCII art banner for the MCP Gateway
+# Show a fancy ASCII art banner for ContextForge
 #────────────────────────────────────────────────────────────────────────────────
 cat <<'EOF'
 ███╗   ███╗ ██████╗██████╗      ██████╗  █████╗ ████████╗███████╗██╗    ██╗ █████╗ ██╗   ██╗
@@ -250,7 +261,12 @@ GUNICORN_MAX_REQUESTS=${GUNICORN_MAX_REQUESTS:-100000}
 GUNICORN_MAX_REQUESTS_JITTER=${GUNICORN_MAX_REQUESTS_JITTER:-100}
 
 # Preload application before forking workers (saves memory but slower reload)
-GUNICORN_PRELOAD_APP=${GUNICORN_PRELOAD_APP:-true}
+# On macOS, disable preload by default due to fork-safety issues with async libraries
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    GUNICORN_PRELOAD_APP=${GUNICORN_PRELOAD_APP:-false}
+else
+    GUNICORN_PRELOAD_APP=${GUNICORN_PRELOAD_APP:-true}
+fi
 
 # Developer mode with hot reload (disables preload, enables file watching)
 GUNICORN_DEV_MODE=${GUNICORN_DEV_MODE:-false}
@@ -316,6 +332,7 @@ if [[ "${SSL}" == "true" ]]; then
         echo "🔑  Passphrase-protected key detected"
         echo "   Note: Key will be decrypted by Python SSL key manager"
         # Export for Python to access
+        export KEY_FILE="${KEY_FILE}"
         export SSL_KEY_PASSWORD="${KEY_FILE_PASSWORD}"
     fi
 

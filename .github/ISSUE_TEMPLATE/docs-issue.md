@@ -1,7 +1,7 @@
 ---
 name: Docs issue
 about: Report a typo, outdated info, unclear instructions, or missing documentation
-title: "[Docs]:"
+title: "[DOCS]: "
 labels: documentation, triage
 assignees: ''
 
@@ -53,5 +53,5 @@ If related to platform-specific behavior (e.g. a command not working on macOS), 
 
 ---
 
-### 🧩 Additional Notes (optional)
+### 🧩 Additional Context (optional)
 Any screenshots, logs, or related issues?

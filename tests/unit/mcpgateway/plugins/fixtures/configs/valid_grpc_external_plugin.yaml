@@ -1,0 +1,19 @@
+# gRPC external plugin client configuration
+plugins:
+  - name: "ReplaceBadWordsPlugin"
+    kind: "external"
+    grpc:
+      target: "127.0.0.1:50051"
+
+# Plugin directories to scan
+plugin_dirs:
+  - "plugins/native"
+  - "plugins/custom"
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: false
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

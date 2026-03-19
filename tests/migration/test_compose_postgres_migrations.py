@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 PostgreSQL docker-compose migration tests.
 
 This module tests database migrations using PostgreSQL via docker-compose
-stacks across different MCP Gateway versions with comprehensive validation.
+stacks across different ContextForge versions with comprehensive validation.
 """
 
 # Standard
@@ -554,7 +554,10 @@ class TestPostgreSQLMigrations:
     def _stop_compose_stack(self, container_manager, compose_file):
         """Stop and clean up compose stack."""
         try:
-            cmd = [f"{container_manager.runtime}-compose", "-f", compose_file, "down", "-v", "--remove-orphans"]
+            if container_manager.runtime == "docker":
+                cmd = [container_manager.runtime, "compose", "-f", compose_file, "down", "-v", "--remove-orphans"]
+            else:
+                cmd = [f"{container_manager.runtime}-compose", "-f", compose_file, "down", "-v", "--remove-orphans"]
             container_manager._run_command(cmd, check=False)
         except Exception as e:
             logger.warning(f"⚠️ Error stopping compose stack: {e}")

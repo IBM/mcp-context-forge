@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Performance Tracking Service.
 
 This module provides performance tracking and analytics for all operations
-across the MCP Gateway, enabling identification of bottlenecks and
+across ContextForge, enabling identification of bottlenecks and
 optimization opportunities.
 """
 
@@ -343,7 +343,8 @@ class PerformanceTracker:
         timings_list = list(timings)
         recent_count = min(10, len(timings_list))
         recent_timings = timings_list[-recent_count:]
-        historical_timings = timings_list[:-recent_count] if len(timings_list) > recent_count else timings_list
+        # If we don't have more than the "recent" window worth of samples, we don't have a historical baseline.
+        historical_timings = timings_list[:-recent_count] if len(timings_list) > recent_count else []
 
         if not historical_timings:
             return {"degraded": False, "reason": "insufficient_historical_data"}

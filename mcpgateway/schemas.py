@@ -4,8 +4,8 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-MCP Gateway Schema Definitions.
-This module provides Pydantic models for request/response validation in the MCP Gateway.
+ContextForge Schema Definitions.
+This module provides Pydantic models for request/response validation in ContextForge.
 It implements schemas for:
 - Tool registration and invocation
 - Resource management and subscriptions
@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, SecretStr, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
@@ -38,7 +38,8 @@ from mcpgateway.common.models import Prompt as MCPPrompt
 from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
+from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -247,6 +248,68 @@ class A2AAgentMetrics(BaseModelWithConfigDict):
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent interaction")
 
 
+class A2AAgentAggregateMetrics(BaseModelWithConfigDict):
+    """
+    Represents aggregated metrics for all A2A agents in the system.
+
+    This model is used for the /metrics endpoint to provide system-wide A2A agent statistics
+    with consistent camelCase field naming.
+
+    Attributes:
+        total_agents (int): Total number of A2A agents registered.
+        active_agents (int): Number of currently active A2A agents.
+        total_interactions (int): Total number of agent interactions.
+        successful_interactions (int): Number of successful agent interactions.
+        failed_interactions (int): Number of failed agent interactions.
+        success_rate (float): Success rate as a percentage (0-100).
+        avg_response_time (float): Average response time in seconds.
+        min_response_time (float): Minimum response time in seconds.
+        max_response_time (float): Maximum response time in seconds.
+    """
+
+    total_agents: int = Field(..., description="Total number of A2A agents registered")
+    active_agents: int = Field(..., description="Number of currently active A2A agents")
+    total_interactions: int = Field(..., description="Total number of agent interactions")
+    successful_interactions: int = Field(..., description="Number of successful agent interactions")
+    failed_interactions: int = Field(..., description="Number of failed agent interactions")
+    success_rate: float = Field(..., description="Success rate as a percentage (0-100)")
+    avg_response_time: float = Field(..., description="Average response time in seconds")
+    min_response_time: float = Field(..., description="Minimum response time in seconds")
+    max_response_time: float = Field(..., description="Maximum response time in seconds")
+
+
+class MetricsResponse(BaseModelWithConfigDict):
+    """
+    Response model for the aggregated metrics endpoint.
+
+    Contains metrics for all entity types with consistent camelCase field names.
+    When A2A metrics are disabled, the a2a_agents key is omitted entirely
+    to preserve backwards compatibility with existing consumers.
+    """
+
+    tools: ToolMetrics
+    resources: ResourceMetrics
+    servers: ServerMetrics
+    prompts: PromptMetrics
+    a2a_agents: Optional[A2AAgentAggregateMetrics] = None
+
+    @model_serializer(mode="wrap")
+    def _exclude_none_a2a(self, handler):
+        """Omit the A2A metrics field when that feature is disabled.
+
+        Args:
+            handler: Pydantic serializer callback for the wrapped model.
+
+        Returns:
+            Dict[str, Any]: Serialized metrics payload without empty A2A fields.
+        """
+        result = handler(self)
+        if self.a2a_agents is None:
+            result.pop("a2aAgents", None)
+            result.pop("a2a_agents", None)
+        return result
+
+
 # --- JSON Path API modifier Schema
 
 
@@ -256,6 +319,7 @@ class JsonPathModifier(BaseModelWithConfigDict):
     Provides the structure for parsing JSONPath queries and optional mapping.
     """
 
+    model_config = ConfigDict(extra="forbid")  # ← rejects unknown fields
     jsonpath: Optional[str] = Field(None, description="JSONPath expression for querying JSON data.")
     mapping: Optional[Dict[str, str]] = Field(None, description="Mapping of fields from original data to output.")
 
@@ -267,15 +331,16 @@ class AuthenticationValues(BaseModelWithConfigDict):
     Provides the authentication values for different types of authentication.
     """
 
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers or None")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders or None")
     auth_value: Optional[str] = Field(None, description="Encoded Authentication values")
 
     # Only For tool read and view tool
     username: Optional[str] = Field("", description="Username for basic authentication")
     password: Optional[str] = Field("", description="Password for basic authentication")
     token: Optional[str] = Field("", description="Bearer token for authentication")
-    auth_header_key: Optional[str] = Field("", description="Key for custom headers authentication")
-    auth_header_value: Optional[str] = Field("", description="Value for custom headers authentication")
+    auth_header_key: Optional[str] = Field("", description="Key for custom headers authentication (legacy single header)")
+    auth_header_value: Optional[str] = Field("", description="Value for custom headers authentication (legacy single header)")
+    authHeaders: Optional[List[Dict[str, str]]] = Field(None, alias="authHeaders", description="List of custom headers for authentication (multi-header format)")  # noqa: N815
 
 
 class ToolCreate(BaseModel):
@@ -398,7 +463,7 @@ class ToolCreate(BaseModel):
         """
         if v is None:
             return v
-        return SecurityValidator.validate_url(v, "Tool URL")
+        return validate_core_url(v, "Tool URL")
 
     @field_validator("description")
     @classmethod
@@ -429,7 +494,9 @@ class ToolCreate(BaseModel):
         if v is None:
             return v
 
-        forbidden_patterns = ["&&", ";", "||", "$(", "`", "|", "> ", "< "]
+        # Note: backticks (`) are allowed as they are commonly used in Markdown
+        # for inline code examples in tool descriptions
+        forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
         for pat in forbidden_patterns:
             if pat in v:
                 raise ValueError(f"Description contains unsafe characters: '{pat}'")
@@ -624,10 +691,8 @@ class ToolCreate(BaseModel):
             extra={
                 "auth_type": values.get("auth_type"),
                 "auth_username": values.get("auth_username"),
-                "auth_password": values.get("auth_password"),
-                "auth_token": values.get("auth_token"),
                 "auth_header_key": values.get("auth_header_key"),
-                "auth_header_value": values.get("auth_header_value"),
+                "auth_assembled": bool(values.get("auth_type") and str(values.get("auth_type")).lower() != "one_time_auth"),
             },
         )
 
@@ -836,11 +901,10 @@ class ToolCreate(BaseModel):
             ValueError: If any plugin is not in the allowed set.
         """
         allowed_plugins = {"deny_filter", "rate_limit", "pii_filter", "response_shape", "regex_filter", "resource_filter"}
-        if v is None:
-            return v
-        for plugin in v:
-            if plugin not in allowed_plugins:
-                raise ValueError(f"Unknown plugin: {plugin}")
+        if v is not None:
+            for plugin in v:
+                if plugin not in allowed_plugins:
+                    raise ValueError(f"Unknown plugin: {plugin}")
         return v
 
     @model_validator(mode="after")
@@ -877,7 +941,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
-    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
@@ -942,7 +1006,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         """
         if v is None:
             return v
-        return SecurityValidator.validate_url(v, "Tool URL")
+        return validate_core_url(v, "Tool URL")
 
     @field_validator("description")
     @classmethod
@@ -1044,10 +1108,8 @@ class ToolUpdate(BaseModelWithConfigDict):
             extra={
                 "auth_type": values.get("auth_type"),
                 "auth_username": values.get("auth_username"),
-                "auth_password": values.get("auth_password"),
-                "auth_token": values.get("auth_token"),
                 "auth_header_key": values.get("auth_header_key"),
-                "auth_header_value": values.get("auth_header_value"),
+                "auth_assembled": bool(values.get("auth_type") and str(values.get("auth_type")).lower() != "one_time_auth"),
             },
         )
 
@@ -1145,9 +1207,7 @@ class ToolUpdate(BaseModelWithConfigDict):
             base_url = f"{parsed.scheme}://{parsed.netloc}"
             path_template = parsed.path
             # Ensure path_template starts with a single '/'
-            if path_template and not path_template.startswith("/"):
-                path_template = "/" + path_template.lstrip("/")
-            elif path_template:
+            if path_template:
                 path_template = "/" + path_template.lstrip("/")
             if not values.get("base_url"):
                 values["base_url"] = base_url
@@ -1258,11 +1318,10 @@ class ToolUpdate(BaseModelWithConfigDict):
             ValueError: If any plugin is not in the allowed set.
         """
         allowed_plugins = {"deny_filter", "rate_limit", "pii_filter", "response_shape", "regex_filter", "resource_filter"}
-        if v is None:
-            return v
-        for plugin in v:
-            if plugin not in allowed_plugins:
-                raise ValueError(f"Unknown plugin: {plugin}")
+        if v is not None:
+            for plugin in v:
+                if plugin not in allowed_plugins:
+                    raise ValueError(f"Unknown plugin: {plugin}")
         return v
 
 
@@ -1284,6 +1343,7 @@ class ToolRead(BaseModelWithConfigDict):
     original_name: str
     url: Optional[str]
     description: Optional[str]
+    original_description: Optional[str] = None
     request_type: str
     integration_type: str
     headers: Optional[Dict[str, str]]
@@ -1354,9 +1414,9 @@ class ToolInvocation(BaseModelWithConfigDict):
     - Arguments matching tool's input schema (validated for depth limits)
 
     Validation Rules:
-    - Tool names must start with a letter and contain only letters, numbers,
-      underscores, and hyphens
-    - Tool names cannot contain HTML special characters (<, >, ", ', /)
+    - Tool names must start with a letter, number, or underscore and contain only
+      letters, numbers, periods, underscores, hyphens, and slashes (per SEP-986)
+    - Tool names cannot contain HTML special characters (<, >, ", ')
     - Arguments are validated to prevent excessively deep nesting (default max: 10 levels)
 
     Attributes:
@@ -1392,12 +1452,22 @@ class ToolInvocation(BaseModelWithConfigDict):
         ...     print("Validation failed: HTML tags not allowed")
         Validation failed: HTML tags not allowed
 
-        >>> # Invalid: Tool name starting with number
+        >>> # Valid: Tool name starting with number (per MCP spec)
+        >>> tool_num = ToolInvocation(name="123_tool", arguments={})
+        >>> tool_num.name
+        '123_tool'
+
+        >>> # Valid: Tool name starting with underscore (per MCP spec)
+        >>> tool_underscore = ToolInvocation(name="_5gpt_query", arguments={})
+        >>> tool_underscore.name
+        '_5gpt_query'
+
+        >>> # Invalid: Tool name starting with hyphen
         >>> try:
-        ...     ToolInvocation(name="123_tool", arguments={})
+        ...     ToolInvocation(name="-invalid_tool", arguments={})
         ... except ValidationError as e:
-        ...     print("Validation failed: Must start with letter")
-        Validation failed: Must start with letter
+        ...     print("Validation failed: Must start with letter, number, or underscore")
+        Validation failed: Must start with letter, number, or underscore
 
         >>> # Valid: Complex but not too deep arguments
         >>> args = {"level1": {"level2": {"level3": {"data": "value"}}}}
@@ -1529,6 +1599,7 @@ class ResourceCreate(BaseModel):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the resource owner")
     visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
 
     @field_validator("tags")
     @classmethod
@@ -1804,7 +1875,7 @@ class ResourceRead(BaseModelWithConfigDict):
     updated_at: datetime
     enabled: bool
     metrics: Optional[ResourceMetrics] = Field(None, description="Resource metrics (may be None in list operations)")
-    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the resource")
+    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the resource")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -1975,7 +2046,8 @@ class ResourceSubscription(BaseModelWithConfigDict):
 
         Ensures the subscriber ID:
         - Is not empty
-        - Contains only alphanumeric characters, underscores, hyphens, and dots
+        - Contains only safe identifier characters
+        - Allows email-style IDs for authenticated subscribers
         - Does not contain HTML special characters
         - Follows standard identifier naming conventions
         - Does not exceed maximum length (255 characters)
@@ -1992,6 +2064,17 @@ class ResourceSubscription(BaseModelWithConfigDict):
         Raises:
             ValueError: If the subscriber ID violates naming conventions
         """
+        if not v:
+            raise ValueError("Subscriber ID cannot be empty")
+
+        # Allow email-like subscriber IDs while keeping strict character controls.
+        if re.match(r"^[A-Za-z0-9_.@+-]+$", v):
+            if re.search(SecurityValidator.VALIDATION_UNSAFE_URI_PATTERN, v):
+                raise ValueError("Subscriber ID cannot contain HTML special characters")
+            if len(v) > SecurityValidator.MAX_NAME_LENGTH:
+                raise ValueError(f"Subscriber ID exceeds maximum length of {SecurityValidator.MAX_NAME_LENGTH}")
+            return v
+
         return SecurityValidator.validate_identifier(v, "Subscriber ID")
 
 
@@ -2069,6 +2152,7 @@ class PromptCreate(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
     visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
 
     @field_validator("tags")
     @classmethod
@@ -2473,7 +2557,7 @@ class GatewayCreate(BaseModel):
         url (Union[str, AnyHttpUrl]): Gateway endpoint URL.
         description (Optional[str]): Optional description of the gateway.
         transport (str): Transport used by the MCP server, default is "SSE".
-        auth_type (Optional[str]): Type of authentication (basic, bearer, headers, or none).
+        auth_type (Optional[str]): Type of authentication (basic, bearer, authheaders, or none).
         auth_username (Optional[str]): Username for basic authentication.
         auth_password (Optional[str]): Password for basic authentication.
         auth_token (Optional[str]): Token for bearer authentication.
@@ -2492,7 +2576,7 @@ class GatewayCreate(BaseModel):
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, query_param, or none")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders, oauth, query_param, or none")
     # Fields for various types of authentication
     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
@@ -2521,7 +2605,7 @@ class GatewayCreate(BaseModel):
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
 
-    tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the gateway")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the gateway")
 
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
@@ -2535,6 +2619,22 @@ class GatewayCreate(BaseModel):
 
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
+
+    # Gateway mode configuration
+    gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)", pattern="^(cache|direct_proxy)$")
+
+    @field_validator("gateway_mode", mode="before")
+    @classmethod
+    def default_gateway_mode(cls, v: Optional[str]) -> str:
+        """Default gateway_mode to 'cache' when None is provided.
+
+        Args:
+            v: Gateway mode value (may be None).
+
+        Returns:
+            The validated gateway mode string, defaulting to 'cache'.
+        """
+        return v if v is not None else "cache"
 
     @field_validator("tags")
     @classmethod
@@ -2573,7 +2673,7 @@ class GatewayCreate(BaseModel):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Gateway URL")
+        return validate_core_url(v, "Gateway URL")
 
     @field_validator("description")
     @classmethod
@@ -2736,7 +2836,7 @@ class GatewayCreate(BaseModel):
 
                 # Ensure at least one valid header
                 if not header_dict:
-                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
@@ -2753,7 +2853,7 @@ class GatewayCreate(BaseModel):
             header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
-                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+                raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
             return encode_auth({header_key: header_value})
 
@@ -2765,7 +2865,7 @@ class GatewayCreate(BaseModel):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayCreate":
@@ -2799,7 +2899,7 @@ class GatewayCreate(BaseModel):
 
             if hostname not in settings.insecure_queryparam_auth_allowed_hosts:
                 allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. " f"Allowed hosts: {allowed}")
+                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. Allowed hosts: {allowed}")
 
         return self
 
@@ -2813,12 +2913,12 @@ class GatewayUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the gateway")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
-    transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
+    transport: Optional[str] = Field(None, description="Transport used by MCP server: SSE or STREAMABLEHTTP")
 
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, authheaders or None")
     auth_username: Optional[str] = Field(None, description="username for basic authentication")
     auth_password: Optional[str] = Field(None, description="password for basic authentication")
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
@@ -2846,7 +2946,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
 
-    tags: Optional[List[str]] = Field(None, description="Tags for categorizing the gateway")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Tags for categorizing the gateway")
 
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
@@ -2855,6 +2955,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
+
+    # Gateway mode configuration
+    gateway_mode: Optional[str] = Field(None, description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)", pattern="^(cache|direct_proxy)$")
 
     @field_validator("tags")
     @classmethod
@@ -2893,7 +2996,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Gateway URL")
+        return validate_core_url(v, "Gateway URL")
 
     @field_validator("description", mode="before")
     @classmethod
@@ -3030,7 +3133,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
                 # Ensure at least one valid header
                 if not header_dict:
-                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
@@ -3047,7 +3150,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
             header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
-                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+                raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
             return encode_auth({header_key: header_value})
 
@@ -3059,7 +3162,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayUpdate":
@@ -3075,15 +3178,43 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If required fields are missing when setting query_param auth.
         """
-        if self.auth_type != "query_param":
-            return self
-        # Validate fields are provided when explicitly setting query_param auth
-        # Feature flag/allowlist check happens in service layer (has access to existing gateway)
-        if not self.auth_query_param_key:
-            raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
-        if not self.auth_query_param_value:
-            raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+        if self.auth_type == "query_param":
+            # Validate fields are provided when explicitly setting query_param auth
+            # Feature flag/allowlist check happens in service layer (has access to existing gateway)
+            if not self.auth_query_param_key:
+                raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
+            if not self.auth_query_param_value:
+                raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+
         return self
+
+
+# ---------------------------------------------------------------------------
+# OAuth config masking helper (used by GatewayRead.masked / A2AAgentRead.masked)
+# ---------------------------------------------------------------------------
+_SENSITIVE_OAUTH_KEYS = OAUTH_SENSITIVE_KEYS
+
+
+def _mask_oauth_config(oauth_config: Any) -> Any:
+    """Recursively mask sensitive keys inside an ``oauth_config`` dict.
+
+    Args:
+        oauth_config: The oauth_config value to mask (dict, list, or scalar).
+
+    Returns:
+        The masked copy with sensitive values replaced.
+    """
+    if isinstance(oauth_config, dict):
+        out: Dict[str, Any] = {}
+        for k, v in oauth_config.items():
+            if isinstance(k, str) and k.lower() in _SENSITIVE_OAUTH_KEYS:
+                out[k] = settings.masked_auth_value if v else v
+            else:
+                out[k] = _mask_oauth_config(v)
+        return out
+    if isinstance(oauth_config, list):
+        return [_mask_oauth_config(x) for x in oauth_config]
+    return oauth_config
 
 
 class GatewayRead(BaseModelWithConfigDict):
@@ -3096,7 +3227,7 @@ class GatewayRead(BaseModelWithConfigDict):
     - enabled status
     - reachable status
     - Last seen timestamp
-    - Authentication type: basic, bearer, headers, oauth
+    - Authentication type: basic, bearer, authheaders, oauth
     - Authentication value: username/password or token or custom headers
     - OAuth configuration for OAuth 2.0 authentication
 
@@ -3104,8 +3235,8 @@ class GatewayRead(BaseModelWithConfigDict):
     - Authentication username: for basic auth
     - Authentication password: for basic auth
     - Authentication token: for bearer auth
-    - Authentication header key: for headers auth
-    - Authentication header value: for headers auth
+    - Authentication header key: for authheaders auth
+    - Authentication header value: for authheaders auth
     """
 
     id: Optional[str] = Field(None, description="Unique ID of the gateway")
@@ -3123,7 +3254,7 @@ class GatewayRead(BaseModelWithConfigDict):
 
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, query_param, or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, authheaders, oauth, query_param, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
     auth_headers: Optional[List[Dict[str, str]]] = Field(default=None, description="List of custom headers for authentication")
     auth_headers_unmasked: Optional[List[Dict[str, str]]] = Field(default=None, description="Unmasked custom headers for administrative views")
@@ -3179,6 +3310,9 @@ class GatewayRead(BaseModelWithConfigDict):
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(None, description="Per-gateway refresh interval in seconds")
     last_refresh_at: Optional[datetime] = Field(None, description="Timestamp of last successful refresh")
+
+    # Gateway mode configuration
+    gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)")
 
     @model_validator(mode="before")
     @classmethod
@@ -3380,10 +3514,15 @@ class GatewayRead(BaseModelWithConfigDict):
                 for header in masked_data["auth_headers"]
             ]
 
-        masked_data["auth_password_unmasked"] = self.auth_password_unmasked
-        masked_data["auth_token_unmasked"] = self.auth_token_unmasked
-        masked_data["auth_header_value_unmasked"] = self.auth_header_value_unmasked
-        masked_data["auth_headers_unmasked"] = [header.copy() for header in self.auth_headers_unmasked] if self.auth_headers_unmasked else None
+        # Mask sensitive keys inside oauth_config (e.g. password, client_secret)
+        if masked_data.get("oauth_config"):
+            masked_data["oauth_config"] = _mask_oauth_config(masked_data["oauth_config"])
+
+        # SECURITY: Never expose unmasked credentials in API responses
+        masked_data["auth_password_unmasked"] = None
+        masked_data["auth_token_unmasked"] = None
+        masked_data["auth_header_value_unmasked"] = None
+        masked_data["auth_headers_unmasked"] = None
         return GatewayRead.model_validate(masked_data)
 
 
@@ -3456,6 +3595,8 @@ class FederatedPrompt(BaseModelWithConfigDict):
 # --- RPC Schemas ---
 class RPCRequest(BaseModel):
     """MCP-compliant RPC request validation"""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     jsonrpc: Literal["2.0"]
     method: str
@@ -3778,7 +3919,7 @@ class ServerCreate(BaseModel):
         """
         if v is None or v == "":
             return v
-        return SecurityValidator.validate_url(v, "Icon URL")
+        return validate_core_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
@@ -3957,7 +4098,7 @@ class ServerUpdate(BaseModelWithConfigDict):
         """
         if v is None or v == "":
             return v
-        return SecurityValidator.validate_url(v, "Icon URL")
+        return validate_core_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
@@ -3996,6 +4137,7 @@ class ServerRead(BaseModelWithConfigDict):
     # is_active: bool
     enabled: bool
     associated_tools: List[str] = []
+    associated_tool_ids: List[str] = []
     associated_resources: List[str] = []
     associated_prompts: List[str] = []
     associated_a2a_agents: List[str] = []
@@ -4062,6 +4204,17 @@ class ServerRead(BaseModelWithConfigDict):
         if data.get("associated_a2a_agents"):
             data["associated_a2a_agents"] = [getattr(agent, "id", agent) for agent in data["associated_a2a_agents"]]
         return data
+
+    def masked(self) -> "ServerRead":
+        """Return a masked model with oauth_config secrets redacted.
+
+        Returns:
+            ServerRead: Masked server model.
+        """
+        masked_data = self.model_dump()
+        if masked_data.get("oauth_config"):
+            masked_data["oauth_config"] = _mask_oauth_config(masked_data["oauth_config"])
+        return ServerRead.model_validate(masked_data)
 
 
 class GatewayTestRequest(BaseModelWithConfigDict):
@@ -4184,7 +4337,7 @@ class A2AAgentCreate(BaseModel):
     config: Dict[str, Any] = Field(default_factory=dict, description="Agent-specific configuration parameters")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, query_param, or none")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders, oauth, query_param, or none")
     # Fields for various types of authentication
     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
@@ -4252,7 +4405,7 @@ class A2AAgentCreate(BaseModel):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Agent endpoint URL")
+        return validate_core_url(v, "Agent endpoint URL")
 
     @field_validator("description")
     @classmethod
@@ -4436,7 +4589,7 @@ class A2AAgentCreate(BaseModel):
 
                 # Ensure at least one valid header
                 if not header_dict:
-                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
@@ -4453,7 +4606,7 @@ class A2AAgentCreate(BaseModel):
             header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
-                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+                raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
             return encode_auth({header_key: header_value})
 
@@ -4466,7 +4619,7 @@ class A2AAgentCreate(BaseModel):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "A2AAgentCreate":
@@ -4500,7 +4653,7 @@ class A2AAgentCreate(BaseModel):
 
             if hostname_lower not in settings.insecure_queryparam_auth_allowed_hosts:
                 allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. " f"Allowed hosts: {allowed}")
+                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. Allowed hosts: {allowed}")
 
         return self
 
@@ -4589,7 +4742,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Agent endpoint URL")
+        return validate_core_url(v, "Agent endpoint URL")
 
     @field_validator("description")
     @classmethod
@@ -4775,7 +4928,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
 
                 # Ensure at least one valid header
                 if not header_dict:
-                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
@@ -4792,7 +4945,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
-                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+                raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
             return encode_auth({header_key: header_value})
 
@@ -4805,7 +4958,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "A2AAgentUpdate":
@@ -4821,14 +4974,14 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If required fields are missing when setting query_param auth.
         """
-        if self.auth_type != "query_param":
-            return self
-        # Validate fields are provided when explicitly setting query_param auth
-        # Feature flag/allowlist check happens in service layer (has access to existing agent)
-        if not self.auth_query_param_key:
-            raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
-        if not self.auth_query_param_value:
-            raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+        if self.auth_type == "query_param":
+            # Validate fields are provided when explicitly setting query_param auth
+            # Feature flag/allowlist check happens in service layer (has access to existing agent)
+            if not self.auth_query_param_key:
+                raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
+            if not self.auth_query_param_value:
+                raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+
         return self
 
 
@@ -4841,7 +4994,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Creation/update timestamps
     - Enabled/reachable status
     - Metrics
-    - Authentication type: basic, bearer, headers, oauth, query_param
+    - Authentication type: basic, bearer, authheaders, oauth, query_param
     - Authentication value: username/password or token or custom headers
     - OAuth configuration for OAuth 2.0 authentication
     - Query parameter authentication (key name and masked value)
@@ -4850,8 +5003,8 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Authentication username: for basic auth
     - Authentication password: for basic auth
     - Authentication token: for bearer auth
-    - Authentication header key: for headers auth
-    - Authentication header value: for headers auth
+    - Authentication header key: for authheaders auth
+    - Authentication header value: for authheaders auth
     - Query param key: for query_param auth
     - Query param value (masked): for query_param auth
     """
@@ -4874,7 +5027,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     metrics: Optional[A2AAgentMetrics] = Field(None, description="Agent metrics (may be None in list operations)")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, query_param, or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, authheaders, oauth, query_param, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
 
     # OAuth 2.0 configuration
@@ -4886,6 +5039,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
+    auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
 
     # Query Parameter Authentication (masked for security)
     auth_query_param_key: Optional[str] = Field(
@@ -5064,8 +5218,11 @@ class A2AAgentRead(BaseModelWithConfigDict):
 
         elif auth_type == "authheaders":
             # For backward compatibility, populate first header in key/value fields
-            if len(auth_value) == 0:
+            if not isinstance(auth_value, dict) or len(auth_value) == 0:
                 raise ValueError("authheaders requires at least one key/value pair")
+            # Populate auth_headers list for multi-header support
+            self.auth_headers = [{"key": str(key), "value": "" if value is None else str(value)} for key, value in auth_value.items()]
+            # Maintain backward compatibility with single header fields
             k, v = next(iter(auth_value.items()))
             self.auth_header_key, self.auth_header_value = k, v
         return self
@@ -5101,6 +5258,18 @@ class A2AAgentRead(BaseModelWithConfigDict):
         masked_data["auth_password"] = settings.masked_auth_value if masked_data.get("auth_password") else None
         masked_data["auth_token"] = settings.masked_auth_value if masked_data.get("auth_token") else None
         masked_data["auth_header_value"] = settings.masked_auth_value if masked_data.get("auth_header_value") else None
+        if masked_data.get("auth_headers"):
+            masked_data["auth_headers"] = [
+                {
+                    "key": header.get("key"),
+                    "value": settings.masked_auth_value if header.get("value") else header.get("value"),
+                }
+                for header in masked_data["auth_headers"]
+            ]
+
+        # Mask sensitive keys inside oauth_config (e.g. password, client_secret)
+        if masked_data.get("oauth_config"):
+            masked_data["oauth_config"] = _mask_oauth_config(masked_data["oauth_config"])
 
         return A2AAgentRead.model_validate(masked_data)
 
@@ -5175,17 +5344,49 @@ class EmailLoginRequest(BaseModel):
     password: str = Field(..., min_length=1, description="User's password")
 
 
-class EmailRegistrationRequest(BaseModel):
-    """Request schema for user registration.
+class PublicRegistrationRequest(BaseModel):
+    """Public self-registration request — minimal fields, password required.
+
+    Extra fields are rejected (extra="forbid") so clients cannot submit
+    admin-only fields like is_admin or is_active.
 
     Attributes:
         email: User's email address
-        password: User's password
+        password: User's password (required, min 8 chars)
         full_name: Optional full name for display
-        is_admin: Whether user should have admin privileges (default: False)
 
     Examples:
-        >>> request = EmailRegistrationRequest(
+        >>> request = PublicRegistrationRequest(
+        ...     email="new@example.com",
+        ...     password="secure123",
+        ...     full_name="New User"
+        ... )
+        >>> request.email
+        'new@example.com'
+        >>> request.full_name
+        'New User'
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    email: EmailStr = Field(..., description="User's email address")
+    password: str = Field(..., min_length=8, description="User's password")
+    full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
+
+
+class AdminCreateUserRequest(BaseModel):
+    """Admin user creation request — all fields, password required.
+
+    Attributes:
+        email: User's email address
+        password: User's password (required, min 8 chars)
+        full_name: Optional full name for display
+        is_admin: Whether user should have admin privileges (default: False)
+        is_active: Whether user account is active (default: True)
+        password_change_required: Whether user must change password on next login (default: False)
+
+    Examples:
+        >>> request = AdminCreateUserRequest(
         ...     email="new@example.com",
         ...     password="secure123",
         ...     full_name="New User"
@@ -5196,6 +5397,10 @@ class EmailRegistrationRequest(BaseModel):
         'New User'
         >>> request.is_admin
         False
+        >>> request.is_active
+        True
+        >>> request.password_change_required
+        False
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -5204,24 +5409,12 @@ class EmailRegistrationRequest(BaseModel):
     password: str = Field(..., min_length=8, description="User's password")
     full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
     is_admin: bool = Field(False, description="Grant admin privileges to user")
+    is_active: bool = Field(True, description="Whether user account is active")
+    password_change_required: bool = Field(False, description="Whether user must change password on next login")
 
-    @field_validator("password")
-    @classmethod
-    def validate_password(cls, v: str) -> str:
-        """Validate password meets minimum requirements.
 
-        Args:
-            v: Password string to validate
-
-        Returns:
-            str: Validated password
-
-        Raises:
-            ValueError: If password doesn't meet requirements
-        """
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters long")
-        return v
+# Deprecated alias — use AdminCreateUserRequest or PublicRegistrationRequest instead
+EmailRegistrationRequest = AdminCreateUserRequest
 
 
 class ChangePasswordRequest(BaseModel):
@@ -5266,6 +5459,45 @@ class ChangePasswordRequest(BaseModel):
         return v
 
 
+class ForgotPasswordRequest(BaseModel):
+    """Request schema for forgot-password flow."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    email: EmailStr = Field(..., description="Email address for password reset")
+
+
+class ResetPasswordRequest(BaseModel):
+    """Request schema for completing password reset."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    new_password: str = Field(..., min_length=8, description="New password to set")
+    confirm_password: str = Field(..., min_length=8, description="Password confirmation")
+
+    @model_validator(mode="after")
+    def validate_password_match(self):
+        """Ensure password and confirmation are identical.
+
+        Returns:
+            ResetPasswordRequest: Validated request instance.
+
+        Raises:
+            ValueError: If the password and confirmation do not match.
+        """
+        if self.new_password != self.confirm_password:
+            raise ValueError("Passwords do not match")
+        return self
+
+
+class PasswordResetTokenValidationResponse(BaseModel):
+    """Response schema for reset-token validation."""
+
+    valid: bool = Field(..., description="Whether token is currently valid")
+    message: str = Field(..., description="Validation status message")
+    expires_at: Optional[datetime] = Field(None, description="Token expiration timestamp when valid")
+
+
 class EmailUserResponse(BaseModel):
     """Response schema for user information.
 
@@ -5278,6 +5510,7 @@ class EmailUserResponse(BaseModel):
         created_at: Account creation timestamp
         last_login: Last successful login timestamp
         email_verified: Whether email is verified
+        password_change_required: Whether user must change password on next login
 
     Examples:
         >>> user = EmailUserResponse(
@@ -5307,6 +5540,9 @@ class EmailUserResponse(BaseModel):
     last_login: Optional[datetime] = Field(None, description="Last successful login")
     email_verified: bool = Field(False, description="Whether email is verified")
     password_change_required: bool = Field(False, description="Whether user must change password on next login")
+    failed_login_attempts: int = Field(0, description="Current failed login attempts counter")
+    locked_until: Optional[datetime] = Field(None, description="Account lock expiration timestamp")
+    is_locked: bool = Field(False, description="Whether the account is currently locked")
 
     @classmethod
     def from_email_user(cls, user) -> "EmailUserResponse":
@@ -5318,6 +5554,14 @@ class EmailUserResponse(BaseModel):
         Returns:
             EmailUserResponse: Response schema instance
         """
+        is_locked = user.is_account_locked()
+        locked_until_raw = getattr(user, "locked_until", None)
+        locked_until = locked_until_raw if isinstance(locked_until_raw, datetime) else None
+        failed_attempts_raw = getattr(user, "failed_login_attempts", 0)
+        try:
+            failed_attempts = int(failed_attempts_raw or 0)
+        except (TypeError, ValueError):
+            failed_attempts = 0
         return cls(
             email=user.email,
             full_name=user.full_name,
@@ -5328,6 +5572,9 @@ class EmailUserResponse(BaseModel):
             last_login=user.last_login,
             email_verified=user.is_email_verified(),
             password_change_required=user.password_change_required,
+            failed_login_attempts=failed_attempts,
+            locked_until=locked_until,
+            is_locked=is_locked,
         )
 
 
@@ -5437,36 +5684,6 @@ class UserListResponse(BaseModel):
     offset: int = Field(..., description="Request offset")
 
 
-class AdminUserCreateRequest(BaseModel):
-    """Request schema for admin user creation.
-
-    Attributes:
-        email: User's email address
-        password: User's password
-        full_name: Optional full name
-        is_admin: Whether user should have admin privileges
-
-    Examples:
-        >>> request = AdminUserCreateRequest(
-        ...     email="admin@example.com",
-        ...     password="admin_password",
-        ...     full_name="Admin User",
-        ...     is_admin=True
-        ... )
-        >>> request.email
-        'admin@example.com'
-        >>> request.is_admin
-        True
-    """
-
-    model_config = ConfigDict(str_strip_whitespace=True)
-
-    email: EmailStr = Field(..., description="User's email address")
-    password: str = Field(..., min_length=8, description="User's password")
-    full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
-    is_admin: bool = Field(default=False, description="Whether user has admin privileges")
-
-
 class AdminUserUpdateRequest(BaseModel):
     """Request schema for admin user updates.
 
@@ -5474,6 +5691,8 @@ class AdminUserUpdateRequest(BaseModel):
         full_name: User's full name
         is_admin: Whether user has admin privileges
         is_active: Whether account is active
+        password_change_required: Whether user must change password on next login
+        password: New password (admin can reset without old password)
 
     Examples:
         >>> request = AdminUserUpdateRequest(
@@ -5492,6 +5711,9 @@ class AdminUserUpdateRequest(BaseModel):
     full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
     is_admin: Optional[bool] = Field(None, description="Whether user has admin privileges")
     is_active: Optional[bool] = Field(None, description="Whether account is active")
+    email_verified: Optional[bool] = Field(None, description="Whether user's email is verified")
+    password_change_required: Optional[bool] = Field(None, description="Whether user must change password on next login")
+    password: Optional[str] = Field(None, min_length=8, description="New password (admin reset)")
 
 
 class ErrorResponse(BaseModel):
@@ -5827,6 +6049,8 @@ class TeamMemberResponse(BaseModel):
         'member'
     """
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: str = Field(..., description="Member UUID")
     team_id: str = Field(..., description="Team UUID")
     user_email: str = Field(..., description="Member email address")
@@ -5937,6 +6161,18 @@ class TeamInvitationResponse(BaseModel):
     token: str = Field(..., description="Invitation token")
     is_active: bool = Field(..., description="Whether the invitation is active")
     is_expired: bool = Field(..., description="Whether the invitation has expired")
+
+
+class TeamMemberAddRequest(BaseModel):
+    """Schema for adding a team member.
+
+    Attributes:
+        email: Email address of user to be added to the team
+        role: New role for the team member
+    """
+
+    email: EmailStr = Field(..., description="Email address of user to be added to the team")
+    role: Literal["owner", "member"] = Field(..., description="New role for the team member")
 
 
 class TeamMemberUpdateRequest(BaseModel):
@@ -6151,6 +6387,7 @@ class TokenCreateRequest(BaseModel):
         expires_in_days: Optional expiry in days
         scope: Optional token scoping configuration
         tags: Optional organizational tags
+        is_active: Token active status (defaults to True)
 
     Examples:
         >>> request = TokenCreateRequest(
@@ -6165,10 +6402,11 @@ class TokenCreateRequest(BaseModel):
 
     name: str = Field(..., description="Human-readable token name", min_length=1, max_length=255)
     description: Optional[str] = Field(None, description="Token description", max_length=1000)
-    expires_in_days: Optional[int] = Field(default=None, description="Expiry in days")
+    expires_in_days: Optional[int] = Field(default=None, ge=1, description="Expiry in days (must be >= 1 if specified)")
     scope: Optional[TokenScopeRequest] = Field(None, description="Token scoping configuration")
     tags: List[str] = Field(default_factory=list, description="Organizational tags")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
+    is_active: bool = Field(default=True, description="Token active status")
 
 
 class TokenUpdateRequest(BaseModel):
@@ -6179,6 +6417,7 @@ class TokenUpdateRequest(BaseModel):
         description: New token description
         scope: New token scoping configuration
         tags: New organizational tags
+        is_active: New token active status
 
     Examples:
         >>> request = TokenUpdateRequest(
@@ -6193,6 +6432,7 @@ class TokenUpdateRequest(BaseModel):
     description: Optional[str] = Field(None, description="New token description", max_length=1000)
     scope: Optional[TokenScopeRequest] = Field(None, description="New token scoping configuration")
     tags: Optional[List[str]] = Field(None, description="New organizational tags")
+    is_active: Optional[bool] = Field(None, description="New token active status")
 
 
 class TokenResponse(BaseModel):
@@ -6538,6 +6778,7 @@ class UserRoleResponse(BaseModel):
     granted_at: datetime = Field(..., description="When role was granted")
     expires_at: Optional[datetime] = Field(None, description="Optional expiration")
     is_active: bool = Field(..., description="Whether assignment is active")
+    grant_source: Optional[str] = Field(None, description="Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')")
 
 
 class PermissionCheckRequest(BaseModel):
@@ -6653,6 +6894,7 @@ class SSOProviderResponse(BaseModelWithConfigDict):
     provider_type: Optional[str] = Field(None, description="Provider type (oauth2, oidc)")
     is_enabled: Optional[bool] = Field(None, description="Whether provider is enabled")
     authorization_url: Optional[str] = Field(None, description="OAuth authorization URL")
+    jwks_uri: Optional[str] = Field(None, description="OIDC JWKS endpoint for token signature verification")
 
 
 class SSOLoginResponse(BaseModelWithConfigDict):
@@ -6871,7 +7113,7 @@ class GrpcServiceRead(BaseModel):
     last_reflection: Optional[datetime] = Field(None, description="Last reflection timestamp")
 
     # Tags
-    tags: List[Dict[str, str]] = Field(default_factory=list, description="Service tags")
+    tags: List[str] = Field(default_factory=list, description="Service tags")
 
     # Timestamps
     created_at: datetime = Field(..., description="Creation timestamp")
@@ -6879,6 +7121,7 @@ class GrpcServiceRead(BaseModel):
 
     # Team scoping
     team_id: Optional[str] = Field(None, description="Team ID")
+    team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Owner email")
     visibility: str = Field(default="public", description="Visibility level")
 
@@ -7070,6 +7313,7 @@ class PaginationMeta(BaseModel):
     total_pages: int = Field(..., description="Total number of pages", ge=0)
     has_next: bool = Field(..., description="Whether there is a next page")
     has_prev: bool = Field(..., description="Whether there is a previous page")
+    page_items: Optional[int] = Field(None, description="Actual number of items on current page (after conversion failures)", ge=0)
     next_cursor: Optional[str] = Field(None, description="Cursor for next page (cursor-based only)")
     prev_cursor: Optional[str] = Field(None, description="Cursor for previous page (cursor-based only)")
 

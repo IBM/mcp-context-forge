@@ -142,7 +142,7 @@ plugins:
     kind: plugins.resource_filter.resource_filter.ResourceFilterPlugin
     description: Demonstrates resource pre/post fetch hooks for filtering and validation
     version: 1.0.0
-    author: MCP Gateway Team
+    author: ContextForge Team
     hooks: [resource_pre_fetch, resource_post_fetch]
     tags: [resource, filter, security, example]
     mode: permissive  # Block resources that violate rules
@@ -517,7 +517,7 @@ plugins:
       threshold_chars: 800
       hard_truncate_chars: 24000
       tool_allowlist: [search, retrieve]
-      resource_uri_prefixes: [http://, https://]
+      resource_uri_prefixes: ["http://", "https://"]
 
   # ClamAV Remote Scanner (external MCP) - DISABLED due to script path issue
   # - name: "ClamAVRemote"

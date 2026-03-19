@@ -29,6 +29,18 @@ class RootServiceError(Exception):
     """Base class for root service errors."""
 
 
+class RootServiceNotFoundError(RootServiceError):
+    """Raised when a requested root is not found.
+
+    Examples:
+        >>> error = RootServiceNotFoundError("Root Service not found")
+        >>> str(error)
+        'Root Service not found'
+        >>> isinstance(error, RootServiceError)
+        True
+    """
+
+
 class RootService:
     """MCP root service.
 
@@ -169,18 +181,105 @@ class RootService:
         except ValueError as e:
             raise RootServiceError(f"Invalid root URI: {e}")
 
-        if root_uri in self._roots:
-            raise RootServiceError(f"Root already exists: {root_uri}")
-
         # Skip any access check; just store the key/value.
         root_obj = Root(
             uri=root_uri,
             name=name or os.path.basename(urlparse(root_uri).path) or root_uri,
         )
-        self._roots[root_uri] = root_obj
+
+        # NORMALIZED URI from the Root object as the dictionary key
+        normalized_key = str(root_obj.uri)
+
+        if normalized_key in self._roots:
+            raise RootServiceError(f"Root already exists: {root_uri}")
+
+        self._roots[normalized_key] = root_obj
 
         await self._notify_root_added(root_obj)
         logger.info(f"Added root: {root_uri}")
+        return root_obj
+
+    async def get_root_by_uri(self, root_uri: str) -> Root:
+        """Get a root by URI.
+
+        Args:
+            root_uri: Root URI to retrieve
+
+        Returns:
+            Root: The found root object
+
+        Raises:
+            RootServiceNotFoundError: If root not found
+
+        Examples:
+            >>> from mcpgateway.services.root_service import RootService
+            >>> import asyncio
+            >>> service = RootService()
+            >>> _ = asyncio.run(service.add_root('file:///tmp'))
+            >>> root = asyncio.run(service.get_root_by_uri('file:///tmp'))
+            >>> root.uri == 'file:///tmp'
+            True
+
+            Test root not found error:
+            >>> service = RootService()
+            >>> try:
+            ...     asyncio.run(service.get_root_by_uri('file:///nonexistent'))
+            ... except RootServiceError as e:
+            ...     str(e)
+            'Root not found: file:///nonexistent'
+        """
+        # Normalize the URI to match how it was stored
+        normalized_uri = self._make_root_uri(root_uri)
+        if normalized_uri not in self._roots:
+            raise RootServiceNotFoundError(f"Root not found: {root_uri}")
+        return self._roots[normalized_uri]
+
+    async def update_root(self, root_uri: str, name: Optional[str] = None) -> Root:
+        """Update an existing root.
+
+        Args:
+            root_uri: Root URI to update
+            name: New name for the root
+
+        Returns:
+            Root: The updated root object
+
+        Raises:
+            RootServiceNotFoundError: If root is not found
+
+        Examples:
+            >>> from mcpgateway.services.root_service import RootService
+            >>> import asyncio
+            >>> service = RootService()
+            >>> _ = asyncio.run(service.add_root('file:///tmp', 'Temp'))
+            >>> updated = asyncio.run(service.update_root('file:///tmp', 'Updated Temp'))
+            >>> updated.name
+            'Updated Temp'
+
+            Test root not found error:
+            >>> service = RootService()
+            >>> try:
+            ...     asyncio.run(service.update_root('file:///nonexistent', 'New Name'))
+            ... except RootServiceError as e:
+            ...     str(e)
+            'Root not found: file:///nonexistent'
+        """
+        # Normalize the URI to match how it was stored
+        normalized_uri = self._make_root_uri(root_uri)
+        if normalized_uri not in self._roots:
+            raise RootServiceNotFoundError(f"Root not found: {root_uri}")
+
+        root_obj = self._roots[normalized_uri]
+
+        # Update name if provided
+        if name is not None:
+            root_obj.name = name
+
+        # Notify subscribers of the update
+        event = {"type": "root_updated", "data": {"uri": root_obj.uri, "name": root_obj.name}}
+        await self._notify_subscribers(event)
+
+        logger.info(f"Updated root: {root_uri}, name: {name}")
         return root_obj
 
     async def remove_root(self, root_uri: str) -> None:
@@ -207,9 +306,11 @@ class RootService:
             ...     str(e)
             'Root not found: file:///nonexistent'
         """
-        if root_uri not in self._roots:
+        # Normalize the URI to match how it was stored
+        normalized_uri = self._make_root_uri(root_uri)
+        if normalized_uri not in self._roots:
             raise RootServiceError(f"Root not found: {root_uri}")
-        root_obj = self._roots.pop(root_uri)
+        root_obj = self._roots.pop(normalized_uri)
         await self._notify_root_removed(root_obj)
         logger.info(f"Removed root: {root_uri}")
 
@@ -278,7 +379,7 @@ class RootService:
         """
         parsed = urlparse(uri)
         if not parsed.scheme:
-            # No scheme provided; assume a file URI.
+            # No scheme provided; assume a file URI and add file:// prefix
             return f"file://{uri}"
         # If a scheme is present (e.g., http, https, ftp, etc.), return the URI as-is.
         return uri
@@ -356,15 +457,43 @@ class RootService:
             True
 
             Test error handling with closed queue:
+            >>> import logging
+            >>> logging.disable(logging.CRITICAL)
             >>> from unittest.mock import AsyncMock
             >>> service = RootService()
             >>> bad_queue = AsyncMock()
             >>> bad_queue.put.side_effect = Exception("Queue error")
             >>> service._subscribers.append(bad_queue)
             >>> asyncio.run(service._notify_subscribers({"type": "test"}))
+            >>> logging.disable(logging.NOTSET)
         """
         for queue in self._subscribers:
             try:
                 await queue.put(event)
             except Exception as e:
                 logger.error(f"Failed to notify subscriber: {e}")
+
+
+# Lazy singleton - created on first access, not at module import time.
+# This avoids instantiation when only exception classes are imported.
+_root_service_instance = None  # pylint: disable=invalid-name
+
+
+def __getattr__(name: str):
+    """Module-level __getattr__ for lazy singleton creation.
+
+    Args:
+        name: The attribute name being accessed.
+
+    Returns:
+        The root_service singleton instance if name is "root_service".
+
+    Raises:
+        AttributeError: If the attribute name is not "root_service".
+    """
+    global _root_service_instance  # pylint: disable=global-statement
+    if name == "root_service":
+        if _root_service_instance is None:
+            _root_service_instance = RootService()
+        return _root_service_instance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

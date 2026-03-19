@@ -15,7 +15,7 @@ from typing import Optional
 
 # First-Party
 from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
-from mcpgateway.plugins.framework.external.mcp.client import ExternalHookRef, ExternalPlugin
+from mcpgateway.plugins.framework.external.mcp.client import ExternalHookRef
 
 # Use standard logging to avoid circular imports (plugins -> services -> plugins)
 logger = logging.getLogger(__name__)
@@ -85,7 +85,9 @@ class PluginInstanceRegistry:
 
         plugin_hooks = {}
 
-        external = isinstance(plugin, ExternalPlugin)
+        # Check if this is an external plugin by looking for the invoke_hook method
+        # External plugins (MCP, gRPC, Unix socket) use invoke_hook instead of direct hook methods
+        external = hasattr(plugin, "invoke_hook") and callable(getattr(plugin, "invoke_hook"))
 
         # Register hooks
         for hook_type in plugin.hooks:

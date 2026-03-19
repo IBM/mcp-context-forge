@@ -25,9 +25,14 @@ def client():
     # Import here to avoid module-level import issues
     from mcpgateway.main import app
     from mcpgateway.auth import get_current_user
+    from mcpgateway.config import settings
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
     from mcpgateway.services.permission_service import PermissionService
     from mcpgateway.db import EmailUser
+
+    # Disable auth_required so AdminAuthMiddleware skips its check
+    original_auth_required = settings.auth_required
+    settings.auth_required = False
 
     # Mock user object
     mock_user = EmailUser(
@@ -48,8 +53,8 @@ def client():
     # Override auth dependencies
     app.dependency_overrides[get_current_user] = lambda credentials=None, db=None: mock_user
 
-    def mock_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None, db=None):
-        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test", "db": db}
+    def mock_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None):
+        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test"}
 
     app.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
 
@@ -57,20 +62,57 @@ def client():
     if not hasattr(PermissionService, "_original_check_permission"):
         PermissionService._original_check_permission = PermissionService.check_permission
 
-    async def mock_check_permission(self, user_email: str, permission: str, resource_type=None, resource_id=None, team_id=None, ip_address=None, user_agent=None) -> bool:
+    async def mock_check_permission(
+        self,
+        user_email: str,
+        permission: str,
+        resource_type=None,
+        resource_id=None,
+        team_id=None,
+        token_teams=None,
+        ip_address=None,
+        user_agent=None,
+        allow_admin_bypass=True,
+        check_any_team=False,
+        **_kwargs,
+    ) -> bool:
         return True
 
     PermissionService.check_permission = mock_check_permission
 
-    with TestClient(app) as test_client:
-        yield test_client
+    # Avoid StreamableHTTPSessionManager reuse errors during repeated lifespan runs
+    streamable_init = patch("mcpgateway.main.streamable_http_session.initialize", new_callable=AsyncMock)
+    streamable_shutdown = patch("mcpgateway.main.streamable_http_session.shutdown", new_callable=AsyncMock)
+    streamable_init.start()
+    streamable_shutdown.start()
+
+    # Avoid SharedHttpClient shutdown errors when other tests monkeypatch the singleton
+    from mcpgateway.services.http_client_service import SharedHttpClient
+    shared_client = MagicMock()
+    shared_client.close = AsyncMock()
+    original_shared_instance = SharedHttpClient._instance
+    SharedHttpClient._instance = shared_client
+    shared_get_instance = patch("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", new=AsyncMock(return_value=shared_client))
+    shared_shutdown = patch("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", new=AsyncMock())
+    shared_get_instance.start()
+    shared_shutdown.start()
+
+    # Skip lifespan to avoid parallel test hangs (no `with` context manager)
+    test_client = TestClient(app)
+    yield test_client
 
     # Cleanup
     app.dependency_overrides.pop(get_current_user, None)
     app.dependency_overrides.pop(get_current_user_with_permissions, None)
     sec_patcher.stop()
+    streamable_init.stop()
+    streamable_shutdown.stop()
+    shared_get_instance.stop()
+    shared_shutdown.stop()
+    SharedHttpClient._instance = original_shared_instance
     if hasattr(PermissionService, "_original_check_permission"):
         PermissionService.check_permission = PermissionService._original_check_permission
+    settings.auth_required = original_auth_required
 
 
 def test_register_catalog_server_htmx_success(client):

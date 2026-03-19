@@ -124,11 +124,30 @@ def sanitize_url_for_logging(
         ...     "https://api.example.com?api_key=secret&q=search"
         ... )
         'https://api.example.com?api_key=REDACTED&q=search'
+
+        >>> # Also redacts userinfo (user:pass@host)
+        >>> sanitize_url_for_logging(
+        ...     "https://admin:secret123@api.example.com/endpoint"
+        ... )
+        'https://REDACTED:REDACTED@api.example.com/endpoint'
+
+        >>> # Preserves IPv6 bracket formatting
+        >>> sanitize_url_for_logging(
+        ...     "https://user:pass@[::1]:8080/path"
+        ... )
+        'https://REDACTED:REDACTED@[::1]:8080/path'
     """
     parsed = urlparse(url)
 
+    # Redact userinfo (user:pass@host) if present - defense in depth
+    if parsed.username or parsed.password:
+        # Extract host:port from original netloc (preserves IPv6 brackets, handles None hostname)
+        host_part = parsed.netloc.split("@", 1)[-1] if "@" in parsed.netloc else parsed.netloc
+        netloc = f"REDACTED:REDACTED@{host_part}"
+        parsed = parsed._replace(netloc=netloc)
+
     if not parsed.query:
-        return url
+        return urlunparse(parsed) if (parsed.username or parsed.password) else url
 
     # Build set of param names to redact
     sensitive_names = set(STATIC_SENSITIVE_PARAMS)

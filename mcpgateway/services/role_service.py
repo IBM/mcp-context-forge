@@ -16,7 +16,7 @@ import logging
 from typing import List, Optional
 
 # Third-Party
-from sqlalchemy import and_, select
+from sqlalchemy import and_, delete, select, update
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -519,14 +519,16 @@ class RoleService:
         role.updated_at = utc_now()
 
         # Deactivate all user assignments of this role
-        self.db.execute(select(UserRole).where(UserRole.role_id == role_id)).update({"is_active": False})
+        self.db.execute(update(UserRole).where(UserRole.role_id == role_id).values(is_active=False))
 
         self.db.commit()
 
         logger.info(f"Deleted role: {role.name} (id: {role.id})")
         return True
 
-    async def assign_role_to_user(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str], granted_by: str, expires_at: Optional[datetime] = None) -> UserRole:
+    async def assign_role_to_user(
+        self, user_email: str, role_id: str, scope: str, scope_id: Optional[str], granted_by: str, expires_at: Optional[datetime] = None, grant_source: Optional[str] = None
+    ) -> UserRole:
         """Assign a role to a user.
 
         Args:
@@ -536,6 +538,7 @@ class RoleService:
             scope_id: Team ID if team-scoped
             granted_by: Email of user granting the role
             expires_at: Optional expiration datetime
+            grant_source: Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
 
         Returns:
             UserRole: The role assignment
@@ -619,7 +622,7 @@ class RoleService:
             raise ValueError("User already has this role assignment")
 
         # Create the assignment
-        user_role = UserRole(user_email=user_email, role_id=role_id, scope=scope, scope_id=scope_id, granted_by=granted_by, expires_at=expires_at)
+        user_role = UserRole(user_email=user_email, role_id=role_id, scope=scope, scope_id=scope_id, granted_by=granted_by, expires_at=expires_at, grant_source=grant_source)
 
         self.db.add(user_role)
         self.db.commit()
@@ -691,7 +694,7 @@ class RoleService:
             >>> asyncio.iscoroutinefunction(service.get_user_role_assignment)
             True
         """
-        conditions = [UserRole.user_email == user_email, UserRole.role_id == role_id, UserRole.scope == scope]
+        conditions = [UserRole.user_email == user_email, UserRole.role_id == role_id, UserRole.scope == scope, UserRole.is_active.is_(True)]  # FIX #3505: Only return active assignments
 
         if scope_id:
             conditions.append(UserRole.scope_id == scope_id)
@@ -869,3 +872,24 @@ class RoleService:
             current = result.scalar_one_or_none()
 
         return False
+
+    async def delete_all_user_roles(self, user_email: str) -> int:
+        """Delete all role assignments for a user.
+
+        Hard-deletes all role assignments (active and inactive) for the given user.
+        Intended for use when permanently deleting a user account.
+
+        Note: Does not commit the transaction. The caller is responsible for
+        committing (e.g., as part of a larger user deletion operation).
+
+        Args:
+            user_email: Email of user whose roles should be deleted
+
+        Returns:
+            int: Number of role assignments deleted
+        """
+        stmt = delete(UserRole).where(UserRole.user_email == user_email)
+        result = self.db.execute(stmt)
+        deleted_count = result.rowcount
+        logger.info(f"Deleted {deleted_count} role assignment(s) for user {user_email}")
+        return deleted_count

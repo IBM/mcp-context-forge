@@ -9,7 +9,6 @@ The Terraform MCP Server is a [Model Context Protocol (MCP)](https://modelcontex
 ➡️ **Supports two transport mechanisms:**
 
 * **Stdio**: Standard input/output streams for direct process communication between local processes on the same machine, providing optimal performance with no network overhead.
-
 * **Streamable HTTP**: Uses HTTP POST for client-to-server messages with optional Server-Sent Events (SSE) for streaming capabilities. This is the recommended transport for remote/distributed setups.
 
 ➡️ **Terraform Provider Discovery**: Query and explore Terraform providers and their documentation
@@ -105,16 +104,16 @@ Given your configuration, the endpoint could be the following:
 
 * Server: `http://{hostname}:8080/mcp`
 
-## MCP Gateway Integration
+## ContextForge Integration
 
-> Set the following environment variables on your system, as they will be used in subsequent commands for the MCP Gateway integration.
+> Set the following environment variables on your system, as they will be used in subsequent commands for ContextForge integration.
 
 ```shell
 export MCPGATEWAY_BASE_URL=""       # e.g: http://mcp.gateway.com:4444
 export MCPGATEWAY_BEARER_TOKEN=""   # e.g: gateway-bearer-token
 ```
 
-### Registration With MCP Gateway
+### Registration With ContextForge
 
 ```shell
 # Registering the Terraform Server in Streamable HTTP mode
@@ -404,4 +403,4 @@ docker ps --filter "ancestor=terraform-mcp-server:dev" --format "{{.ID}}"
 ## Additional Resources
 
 * [Terraform MCP Server Repository](https://github.com/hashicorp/terraform-mcp-server/tree/main)
-* [MCP Gateway Documentation](https://github.com/IBM/mcp-context-forge/blob/main/docs/docs/using/index.md)
+* [ContextForge Documentation](https://github.com/IBM/mcp-context-forge/blob/main/docs/docs/using/index.md)

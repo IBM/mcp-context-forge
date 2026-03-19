@@ -7,6 +7,12 @@
 
 A **MCP server** providing the most comprehensive AI evaluation platform in the ecosystem. Features **63 specialized tools** across **14 categories** for complete AI system assessment using **LLM-as-a-judge techniques** combined with rule-based metrics.
 
+> **Warning:** This is an unsupported sample server for demonstration and testing only.
+> Never run untrusted MCP servers directly on your local filesystem — always use a
+> sandbox, container, or microVM (e.g. Docker, gVisor, Firecracker) with restricted
+> capabilities. Perform your own security evaluation before registering any remote MCP
+> server, including servers from public catalogs.
+
 ## 🎯 **Tool Categories Overview**
 
 ### **📊 Core Evaluation (15 tools)**

@@ -6,15 +6,17 @@
 
 ## Context
 
-MCP Gateway uses Gunicorn with Uvicorn workers (`uvicorn.workers.UvicornWorker`) as its production ASGI server stack. The base `uvicorn` package provides functional async HTTP serving, but lacks optional performance-enhancing components that can provide 15-30% throughput improvements with zero code changes.
+ContextForge uses Gunicorn with Uvicorn workers (`uvicorn.workers.UvicornWorker`) as its production ASGI server stack. The base `uvicorn` package provides functional async HTTP serving, but lacks optional performance-enhancing components that can provide 15-30% throughput improvements with zero code changes.
 
 The uvicorn package offers a `[standard]` extras bundle that includes:
+
 - **uvloop**: A Cython/libuv-based event loop (2-4x faster than asyncio on Linux/macOS)
 - **httptools**: A C extension for HTTP parsing (based on Node.js http-parser)
 - **websockets**: WebSocket protocol implementation
 - **watchfiles**: Efficient file watching for development `--reload`
 
 Without these extras, Uvicorn falls back to:
+
 - Python's standard `asyncio` event loop
 - Python's pure-Python HTTP parser
 - Basic file watching mechanisms
@@ -40,6 +42,7 @@ We will adopt **uvicorn[standard]** as the default uvicorn installation to enabl
 | `watchfiles` | Fast file watching for --reload | All platforms |
 
 **How it works:**
+
 - When Gunicorn spawns `UvicornWorker` processes, Uvicorn automatically detects and uses these high-performance components
 - No configuration changes required - detection is automatic
 - On Windows, `uvloop` gracefully skips (unavailable), but `httptools` still provides benefits
@@ -51,7 +54,7 @@ We will adopt **uvicorn[standard]** as the default uvicorn installation to enabl
 - **15-30% higher throughput** - Faster event loop and HTTP parsing reduce per-request overhead
 - **Lower latency** - uvloop provides 20-40% lower event loop latency
 - **Zero code changes** - Drop-in enhancement, automatically detected by Uvicorn
-- **Consistency** - Matches other projects in the repository (langchain_agent, mcp_eval_server)
+- **Consistency** - Matches other projects in the repository (mcp_eval_server)
 - **Better development experience** - watchfiles provides faster, more reliable `--reload`
 - **Production-ready** - Used by major deployments (Microsoft, Mozilla, Sentry)
 
@@ -78,6 +81,7 @@ Based on uvloop and httptools benchmarks:
 | `--reload` responsiveness | Baseline | Faster | watchfiles |
 
 **Real-world impact:**
+
 - Simple JSON endpoints: 15-25% faster
 - WebSocket connections: Better handling via optimized websockets library
 - Development cycle: Faster file change detection with watchfiles
@@ -95,6 +99,7 @@ Based on uvloop and httptools benchmarks:
 ## Relationship to Granian Migration
 
 This change is complementary to the potential Granian migration (#1695):
+
 - **uvicorn[standard]**: Low-effort optimization (this ADR) - implement now
 - **Granian**: Larger migration to Rust-based server - evaluate separately
 

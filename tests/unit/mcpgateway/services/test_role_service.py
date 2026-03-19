@@ -10,6 +10,7 @@ Comprehensive unit tests for RoleService.
 # Standard
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock, patch
+import uuid
 
 # Third-Party
 import pytest
@@ -580,7 +581,7 @@ class TestAssignRoleToUser:
                         user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", granted_by="admin@example.com", expires_at=expires_at
                     )
 
-                    MockUserRole.assert_called_once_with(user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", granted_by="admin@example.com", expires_at=expires_at)
+                    MockUserRole.assert_called_once_with(user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", granted_by="admin@example.com", expires_at=expires_at, grant_source=None)
 
     @pytest.mark.asyncio
     async def test_assign_personal_role_with_scope_id(self, role_service, sample_role):
@@ -662,6 +663,42 @@ class TestGetUserRoleAssignment:
 
         assert result == sample_user_role
 
+    @pytest.mark.asyncio
+    async def test_get_user_role_assignment_filters_inactive_duplicates(self, role_service, mock_db, sample_role):
+        """Test that get_user_role_assignment query includes is_active filter (#3505).
+
+        Verifies the query sent to the database includes an is_active=True
+        filter, preventing MultipleResultsFound when both active and inactive
+        rows exist for the same (user_email, role_id, scope, scope_id) tuple.
+        """
+        active_assignment = UserRole(
+            id=str(uuid.uuid4()),
+            user_email="user@example.com",
+            role_id=sample_role.id,
+            scope="team",
+            scope_id="team-789",
+            granted_by="admin@example.com",
+            is_active=True
+        )
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = active_assignment
+
+        result = await role_service.get_user_role_assignment(
+            user_email="user@example.com",
+            role_id=sample_role.id,
+            scope="team",
+            scope_id="team-789"
+        )
+
+        assert result is not None
+        assert result.is_active is True
+        assert result.id == active_assignment.id
+
+        # Verify query includes is_active filter
+        call_args = mock_db.execute.call_args
+        query_str = str(call_args[0][0])
+        assert "is_active" in query_str.lower()
+
 
 class TestListUserRoles:
     """Test list_user_roles method."""
@@ -741,6 +778,34 @@ class TestListRoleAssignments:
         result = await role_service.list_role_assignments("role-123", include_expired=True)
 
         assert result == all_assignments
+
+
+class TestDeleteAllUserRoles:
+    """Test delete_all_user_roles method."""
+
+    @pytest.mark.asyncio
+    async def test_delete_all_user_roles_success(self, role_service, mock_db):
+        """Test successful deletion of all user role assignments."""
+        mock_result = Mock()
+        mock_result.rowcount = 3
+        mock_db.execute.return_value = mock_result
+
+        result = await role_service.delete_all_user_roles("user@example.com")
+
+        assert result == 3
+        mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_all_user_roles_no_roles(self, role_service, mock_db):
+        """Test deletion when user has no role assignments."""
+        mock_result = Mock()
+        mock_result.rowcount = 0
+        mock_db.execute.return_value = mock_result
+
+        result = await role_service.delete_all_user_roles("noroles@example.com")
+
+        assert result == 0
+        mock_db.execute.assert_called_once()
 
 
 class TestWouldCreateCycle:

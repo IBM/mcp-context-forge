@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Permissions, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_admin_permission, require_permission
 from mcpgateway.schemas import PermissionCheckRequest, PermissionCheckResponse, PermissionListResponse, RoleCreateRequest, RoleResponse, RoleUpdateRequest, UserRoleAssignRequest, UserRoleResponse
@@ -110,8 +111,10 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
             is_system_role=role_data.is_system_role or False,
         )
 
-        logger.info(f"Role created: {role.id} by {user['email']}")
-        return RoleResponse.from_orm(role)
+        logger.info(f"Role created: {role.id} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        db.commit()
+        db.close()
+        return RoleResponse.model_validate(role)
 
     except ValueError as e:
         logger.error(f"Role creation validation error: {e}")
@@ -151,8 +154,11 @@ async def list_roles(
     try:
         role_service = RoleService(db)
         roles = await role_service.list_roles(scope=scope)
+        # Release transaction before response serialization
+        db.commit()
+        db.close()
 
-        return [RoleResponse.from_orm(role) for role in roles]
+        return [RoleResponse.model_validate(role) for role in roles]
 
     except Exception as e:
         logger.error(f"Failed to list roles: {e}")
@@ -187,7 +193,9 @@ async def get_role(role_id: str, user=Depends(get_current_user_with_permissions)
         if not role:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
-        return RoleResponse.from_orm(role)
+        db.commit()
+        db.close()
+        return RoleResponse.model_validate(role)
 
     except HTTPException:
         raise
@@ -220,13 +228,15 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
     """
     try:
         role_service = RoleService(db)
-        role = await role_service.update_role(role_id, **role_data.dict(exclude_unset=True))
+        role = await role_service.update_role(role_id, **role_data.model_dump(exclude_unset=True))
 
         if not role:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
-        logger.info(f"Role updated: {role_id} by {user['email']}")
-        return RoleResponse.from_orm(role)
+        logger.info(f"Role updated: {role_id} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        db.commit()
+        db.close()
+        return RoleResponse.model_validate(role)
 
     except HTTPException:
         raise
@@ -266,11 +276,15 @@ async def delete_role(role_id: str, user=Depends(get_current_user_with_permissio
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
-        logger.info(f"Role deleted: {role_id} by {user['email']}")
+        logger.info(f"Role deleted: {role_id} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        db.commit()
+        db.close()
         return {"message": "Role deleted successfully"}
 
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Role deletion failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete role")
@@ -307,8 +321,10 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
             user_email=user_email, role_id=assignment_data.role_id, scope=assignment_data.scope, scope_id=assignment_data.scope_id, granted_by=user["email"], expires_at=assignment_data.expires_at
         )
 
-        logger.info(f"Role assigned: {assignment_data.role_id} to {user_email} by {user['email']}")
-        return UserRoleResponse.from_orm(user_role)
+        logger.info(f"Role assigned: {assignment_data.role_id} to {SecurityValidator.sanitize_log_message(user_email)} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        db.commit()
+        db.close()
+        return UserRoleResponse.model_validate(user_role)
 
     except ValueError as e:
         logger.error(f"Role assignment validation error: {e}")
@@ -351,10 +367,13 @@ async def get_user_roles(
         permission_service = PermissionService(db)
         user_roles = await permission_service.get_user_roles(user_email=user_email, scope=scope, include_expired=not active_only)
 
-        return [UserRoleResponse.from_orm(user_role) for user_role in user_roles]
+        result = [UserRoleResponse.model_validate(user_role) for user_role in user_roles]
+        db.commit()
+        db.close()
+        return result
 
     except Exception as e:
-        logger.error(f"Failed to get user roles for {user_email}: {e}")
+        logger.error(f"Failed to get user roles for {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user roles")
 
 
@@ -396,7 +415,9 @@ async def revoke_user_role(
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role assignment not found")
 
-        logger.info(f"Role revoked: {role_id} from {user_email} by {user['email']}")
+        logger.info(f"Role revoked: {role_id} from {SecurityValidator.sanitize_log_message(user_email)} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        db.commit()
+        db.close()
         return {"message": "Role revoked successfully"}
 
     except HTTPException:
@@ -442,6 +463,8 @@ async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_
             user_agent=user.get("user_agent"),
         )
 
+        db.commit()
+        db.close()
         return PermissionCheckResponse(user_email=check_data.user_email, permission=check_data.permission, granted=granted, checked_at=datetime.now(tz=timezone.utc), checked_by=user["email"])
 
     except Exception as e:
@@ -475,10 +498,13 @@ async def get_user_permissions(user_email: str, team_id: Optional[str] = Query(N
         permission_service = PermissionService(db)
         permissions = await permission_service.get_user_permissions(user_email=user_email, team_id=team_id)
 
-        return sorted(list(permissions))
+        result = sorted(list(permissions))
+        db.commit()
+        db.close()
+        return result
 
     except Exception as e:
-        logger.error(f"Failed to get user permissions for {user_email}: {e}")
+        logger.error(f"Failed to get user permissions for {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user permissions")
 
 
@@ -532,10 +558,13 @@ async def get_my_roles(user=Depends(get_current_user_with_permissions), db: Sess
         permission_service = PermissionService(db)
         user_roles = await permission_service.get_user_roles(user_email=user["email"], include_expired=False)
 
-        return [UserRoleResponse.from_orm(user_role) for user_role in user_roles]
+        result = [UserRoleResponse.model_validate(user_role) for user_role in user_roles]
+        db.commit()
+        db.close()
+        return result
 
     except Exception as e:
-        logger.error(f"Failed to get my roles for {user['email']}: {e}")
+        logger.error(f"Failed to get my roles for {SecurityValidator.sanitize_log_message(user['email'])}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve your roles")
 
 
@@ -563,8 +592,11 @@ async def get_my_permissions(team_id: Optional[str] = Query(None, description="T
         permission_service = PermissionService(db)
         permissions = await permission_service.get_user_permissions(user_email=user["email"], team_id=team_id)
 
-        return sorted(list(permissions))
+        result = sorted(list(permissions))
+        db.commit()
+        db.close()
+        return result
 
     except Exception as e:
-        logger.error(f"Failed to get my permissions for {user['email']}: {e}")
+        logger.error(f"Failed to get my permissions for {SecurityValidator.sanitize_log_message(user['email'])}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve your permissions")

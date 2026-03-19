@@ -7,11 +7,31 @@ Authors: Mihai Criveti
 Unit tests for cancellation router endpoints.
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from fastapi import HTTPException
+
 from mcpgateway.services.cancellation_service import CancellationService, cancellation_service
+
+
+@pytest.fixture
+def allow_permission(monkeypatch):
+    """Bypass RBAC permission checks for router unit tests."""
+    # First-Party
+    import mcpgateway.middleware.rbac as rbac_module
+    import mcpgateway.plugins.framework as plugins_framework
+
+    class DummyPermissionService:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_permission(self, **_):
+            return True
+
+    monkeypatch.setattr(rbac_module, "PermissionService", DummyPermissionService)
+    monkeypatch.setattr(plugins_framework, "get_plugin_manager", lambda: None)
 
 
 @pytest.mark.asyncio
@@ -133,3 +153,117 @@ async def test_cancel_callback_exception_is_handled():
 
     status = await svc.get_status("fail-cb-test")
     assert status["cancelled"] is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_run_broadcasts_notifications(allow_permission, monkeypatch):
+    """Ensure cancel_run broadcasts notifications to active sessions."""
+    # First-Party
+    from mcpgateway.routers.cancellation_router import CancelRequest, cancel_run
+
+    mock_registry = MagicMock()
+    mock_registry.get_all_session_ids = AsyncMock(return_value=["s1", "s2"])
+    mock_registry.broadcast = AsyncMock()
+
+    monkeypatch.setattr("mcpgateway.routers.cancellation_router.main_module", MagicMock(session_registry=mock_registry))
+    monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", MagicMock(cancel_run=AsyncMock(return_value=True)))
+
+    payload = CancelRequest(requestId="req-1", reason="test")
+    result = await cancel_run(payload, _user={"email": "user@example.com"})
+
+    assert result.status == "cancelled"
+    assert mock_registry.broadcast.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_cancel_run_handles_session_errors(allow_permission, monkeypatch):
+    """Ensure cancel_run returns even when session registry fails."""
+    # First-Party
+    from mcpgateway.routers.cancellation_router import CancelRequest, cancel_run
+
+    mock_registry = MagicMock()
+    mock_registry.get_all_session_ids = AsyncMock(side_effect=Exception("boom"))
+
+    monkeypatch.setattr("mcpgateway.routers.cancellation_router.main_module", MagicMock(session_registry=mock_registry))
+    monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", MagicMock(cancel_run=AsyncMock(return_value=False)))
+
+    payload = CancelRequest(requestId="req-2", reason=None)
+    result = await cancel_run(payload, _user={"email": "user@example.com"})
+
+    assert result.status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_cancel_run_handles_per_session_broadcast_errors(allow_permission, monkeypatch):
+    """Ensure per-session broadcast failures are logged and ignored."""
+    # First-Party
+    from mcpgateway.routers.cancellation_router import CancelRequest, cancel_run
+
+    mock_registry = MagicMock()
+    mock_registry.get_all_session_ids = AsyncMock(return_value=["s1", "s2"])
+    mock_registry.broadcast = AsyncMock(side_effect=[Exception("boom"), None])
+
+    monkeypatch.setattr("mcpgateway.routers.cancellation_router.main_module", MagicMock(session_registry=mock_registry))
+    monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", MagicMock(cancel_run=AsyncMock(return_value=True)))
+
+    payload = CancelRequest(requestId="req-err", reason="test")
+    result = await cancel_run(payload, _user={"email": "user@example.com"})
+
+    assert result.status == "cancelled"
+    assert mock_registry.broadcast.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_status_not_found(allow_permission, monkeypatch):
+    """Ensure get_status raises 404 when run is not registered."""
+    # First-Party
+    from mcpgateway.routers.cancellation_router import get_status
+
+    mock_service = MagicMock()
+    mock_service.is_registered = AsyncMock(return_value=False)
+
+    monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", mock_service)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_status("missing", _user={"email": "user@example.com"})
+
+    assert "Run not found" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_get_status_filters_cancel_callback(allow_permission, monkeypatch):
+    """Ensure cancel_callback is removed from status payload."""
+    # First-Party
+    from mcpgateway.routers.cancellation_router import get_status
+
+    mock_service = MagicMock()
+    mock_service.is_registered = AsyncMock(return_value=True)
+    mock_service.get_status = AsyncMock(
+        return_value={
+            "name": "tool",
+            "cancelled": False,
+            "cancel_callback": lambda: None,
+        }
+    )
+    monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", mock_service)
+
+    result = await get_status("req-3", _user={"email": "user@example.com"})
+
+    assert "cancel_callback" not in result
+
+
+@pytest.mark.asyncio
+async def test_get_status_not_found_when_status_is_none(allow_permission, monkeypatch):
+    """Ensure get_status raises 404 when status lookup returns None."""
+    # First-Party
+    from mcpgateway.routers.cancellation_router import get_status
+
+    mock_service = MagicMock()
+    mock_service.is_registered = AsyncMock(return_value=True)
+    mock_service.get_status = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", mock_service)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_status("req-none", _user={"email": "user@example.com"})
+
+    assert exc_info.value.status_code == 404

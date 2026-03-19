@@ -8,6 +8,7 @@ Tests for CLI export/import to improve coverage.
 """
 
 # Standard
+from contextlib import asynccontextmanager
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+import httpx
 import pytest
 
 # First-Party
@@ -30,15 +32,31 @@ async def test_get_auth_token_from_env():
 
 
 @pytest.mark.asyncio
-async def test_get_auth_token_basic_fallback():
-    """Test fallback to basic auth."""
+async def test_get_auth_token_basic_fallback_when_enabled():
+    """Test fallback to basic auth when API_ALLOW_BASIC_AUTH=true."""
     with patch.dict("os.environ", {}, clear=True):
         with patch("mcpgateway.cli_export_import.settings") as mock_settings:
+            mock_settings.api_allow_basic_auth = True  # Enable basic auth for API
             mock_settings.basic_auth_user = "admin"
             mock_settings.basic_auth_password = "secret"
 
             token = await get_auth_token()
+            assert token is not None
             assert token.startswith("Basic ")
+
+
+@pytest.mark.asyncio
+async def test_get_auth_token_basic_fallback_disabled_by_default():
+    """Test that basic auth fallback is skipped when API_ALLOW_BASIC_AUTH=false (default)."""
+    with patch.dict("os.environ", {}, clear=True):
+        with patch("mcpgateway.cli_export_import.settings") as mock_settings:
+            mock_settings.api_allow_basic_auth = False  # Disabled by default
+            mock_settings.basic_auth_user = "admin"
+            mock_settings.basic_auth_password = "secret"
+
+            token = await get_auth_token()
+            # Should return None because API_ALLOW_BASIC_AUTH=false
+            assert token is None
 
 
 @pytest.mark.asyncio
@@ -46,11 +64,27 @@ async def test_get_auth_token_no_config():
     """Test when no auth is configured."""
     with patch.dict("os.environ", {}, clear=True):
         with patch("mcpgateway.cli_export_import.settings") as mock_settings:
+            mock_settings.api_allow_basic_auth = True
             mock_settings.basic_auth_user = None
             mock_settings.basic_auth_password = None
 
             token = await get_auth_token()
             assert token is None
+
+
+@pytest.mark.asyncio
+async def test_get_auth_token_prefers_jwt_over_basic():
+    """Test that JWT token from environment is preferred over basic auth."""
+    with patch.dict("os.environ", {"MCPGATEWAY_BEARER_TOKEN": "jwt-token"}):
+        with patch("mcpgateway.cli_export_import.settings") as mock_settings:
+            mock_settings.api_allow_basic_auth = True
+            mock_settings.basic_auth_user = "admin"
+            mock_settings.basic_auth_password = "secret"
+
+            token = await get_auth_token()
+            # JWT should be preferred over Basic auth
+            assert token == "jwt-token"
+            assert not token.startswith("Basic ")
 
 
 def test_create_parser():
@@ -221,6 +255,121 @@ async def test_make_authenticated_request_no_auth():
     with patch("mcpgateway.cli_export_import.get_auth_token", return_value=None):
         with pytest.raises(AuthenticationError, match="No authentication configured"):
             await make_authenticated_request("GET", "/test")
+
+
+class _FakeResponse:
+    def __init__(self, status_code: int, json_data: dict, text: str = ""):
+        self.status_code = status_code
+        self._json_data = json_data
+        self.text = text
+
+    def json(self):
+        return self._json_data
+
+
+class _FakeClient:
+    def __init__(self, response: _FakeResponse | None = None, exc: Exception | None = None):
+        self._response = response
+        self._exc = exc
+        self.requests: list[dict] = []
+
+    async def request(self, method: str, url: str, json=None, params=None):
+        self.requests.append({"method": method, "url": url, "json": json, "params": params})
+        if self._exc:
+            raise self._exc
+        assert self._response is not None
+        return self._response
+
+
+@pytest.mark.asyncio
+async def test_make_authenticated_request_basic_auth_success():
+    # First-Party
+    from mcpgateway.cli_export_import import make_authenticated_request
+
+    captured: dict = {}
+    fake_client = _FakeClient(response=_FakeResponse(200, {"ok": True}))
+
+    @asynccontextmanager
+    async def fake_get_isolated_http_client(*, headers=None, **_kwargs):
+        captured["headers"] = headers
+        yield fake_client
+
+    with patch("mcpgateway.cli_export_import.get_auth_token", return_value="Basic abc123"):
+        with patch("mcpgateway.cli_export_import.settings") as mock_settings:
+            mock_settings.host = "gw"
+            mock_settings.port = 1234
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", new=fake_get_isolated_http_client):
+                result = await make_authenticated_request("GET", "/health", params={"a": "b"})
+
+    assert result == {"ok": True}
+    assert captured["headers"]["Authorization"] == "Basic abc123"
+    assert captured["headers"]["Content-Type"] == "application/json"
+    assert fake_client.requests == [{"method": "GET", "url": "http://gw:1234/health", "json": None, "params": {"a": "b"}}]
+
+
+@pytest.mark.asyncio
+async def test_make_authenticated_request_bearer_auth_success():
+    # First-Party
+    from mcpgateway.cli_export_import import make_authenticated_request
+
+    captured: dict = {}
+    fake_client = _FakeClient(response=_FakeResponse(200, {"ok": True}))
+
+    @asynccontextmanager
+    async def fake_get_isolated_http_client(*, headers=None, **_kwargs):
+        captured["headers"] = headers
+        yield fake_client
+
+    with patch("mcpgateway.cli_export_import.get_auth_token", return_value="jwt-token"):
+        with patch("mcpgateway.cli_export_import.settings") as mock_settings:
+            mock_settings.host = "localhost"
+            mock_settings.port = 8000
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", new=fake_get_isolated_http_client):
+                result = await make_authenticated_request("POST", "/export", json_data={"x": 1})
+
+    assert result == {"ok": True}
+    assert captured["headers"]["Authorization"] == "Bearer jwt-token"
+    assert fake_client.requests[0]["url"] == "http://localhost:8000/export"
+
+
+@pytest.mark.asyncio
+async def test_make_authenticated_request_http_error_status_raises_cli_error():
+    # First-Party
+    from mcpgateway.cli_export_import import make_authenticated_request
+
+    fake_client = _FakeClient(response=_FakeResponse(500, {"ok": False}, text="server down"))
+
+    @asynccontextmanager
+    async def fake_get_isolated_http_client(**_kwargs):
+        yield fake_client
+
+    with patch("mcpgateway.cli_export_import.get_auth_token", return_value="jwt-token"):
+        with patch("mcpgateway.cli_export_import.settings") as mock_settings:
+            mock_settings.host = "gw"
+            mock_settings.port = 4444
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", new=fake_get_isolated_http_client):
+                with pytest.raises(CLIError, match=r"API request failed \(500\): server down"):
+                    await make_authenticated_request("GET", "/export")
+
+
+@pytest.mark.asyncio
+async def test_make_authenticated_request_httpx_error_raises_cli_error():
+    # First-Party
+    from mcpgateway.cli_export_import import make_authenticated_request
+
+    fake_client = _FakeClient(exc=httpx.HTTPError("boom"))
+
+    @asynccontextmanager
+    async def fake_get_isolated_http_client(**_kwargs):
+        yield fake_client
+
+    with patch("mcpgateway.cli_export_import.get_auth_token", return_value="jwt-token"):
+        with patch("mcpgateway.cli_export_import.settings") as mock_settings:
+            mock_settings.host = "gw"
+            mock_settings.port = 4444
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", new=fake_get_isolated_http_client):
+                with pytest.raises(CLIError, match=r"Failed to connect to gateway at http://gw:4444: boom"):
+                    await make_authenticated_request("GET", "/export")
 
 
 # Test the authentication flow by testing the token logic without the full HTTP call

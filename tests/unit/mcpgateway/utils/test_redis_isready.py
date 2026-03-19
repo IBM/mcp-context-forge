@@ -256,6 +256,32 @@ def test_logging_config(monkeypatch):
     redis_isready_mod.wait_for_redis_ready(logger=dummy_logger, sync=True)
 
 
+def test_logging_config_skips_basicconfig_when_handlers_present(monkeypatch):
+    """Logger with handlers should not trigger basicConfig."""
+    # Standard
+    import logging
+
+    dummy_logger = logging.getLogger("dummy_logger_for_test_logging_config_handlers_present")
+    dummy_logger.handlers.clear()
+    dummy_logger.addHandler(logging.NullHandler())
+
+    class DummyRedis:
+        @classmethod
+        def from_url(cls, url):
+            return cls()
+
+        def ping(self):
+            return True
+
+    monkeypatch.setattr("redis.Redis", DummyRedis)
+    monkeypatch.setattr("mcpgateway.utils.redis_isready.time.sleep", lambda *_: None)
+
+    # First-Party
+    import mcpgateway.utils.redis_isready as redis_isready_mod
+
+    redis_isready_mod.wait_for_redis_ready(logger=dummy_logger, sync=True)
+
+
 def test_parse_cli_and_main_success(monkeypatch):
     """Test CLI parse and main() success path (exit 0)."""
     # First-Party

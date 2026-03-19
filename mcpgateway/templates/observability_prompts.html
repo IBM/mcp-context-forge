@@ -177,6 +177,7 @@ window.createPromptsController = function() {
             return;
           }
 
+          const defaults = getChartDefaults();
           const chart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -199,6 +200,7 @@ window.createPromptsController = function() {
             title: {
               display: true,
               text: `Prompt Rendering Frequency (Last ${this.timeRange}h)`,
+              color: defaults.titleColor,
             },
             legend: {
               display: false,
@@ -221,6 +223,21 @@ window.createPromptsController = function() {
               title: {
                 display: true,
                 text: 'Number of Renders',
+                color: defaults.titleColor,
+              },
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
+              },
+            },
+            y: {
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
               },
             },
           },
@@ -241,17 +258,17 @@ window.createPromptsController = function() {
       tbody.innerHTML = data.prompts
         .map(
           (prompt, idx) => `
-            <tr>
-              <td class="px-4 py-2 text-sm text-gray-700">${idx + 1}</td>
-              <td class="px-4 py-2 text-sm font-mono text-gray-900">${prompt.prompt_id}</td>
-              <td class="px-4 py-2 text-sm text-gray-600">${prompt.count}</td>
-              <td class="px-4 py-2 text-sm text-orange-600 font-medium">${prompt.avg_duration_ms} ms</td>
-              <td class="px-4 py-2 text-sm text-green-600">${prompt.min_duration_ms} ms</td>
-              <td class="px-4 py-2 text-sm text-blue-600">${prompt.p50} ms</td>
-              <td class="px-4 py-2 text-sm text-indigo-600">${prompt.p90} ms</td>
-              <td class="px-4 py-2 text-sm text-purple-600">${prompt.p95} ms</td>
-              <td class="px-4 py-2 text-sm text-pink-600">${prompt.p99} ms</td>
-              <td class="px-4 py-2 text-sm text-red-600">${prompt.max_duration_ms} ms</td>
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+              <td class="px-4 py-2 text-sm text-gray-700 dark:text-gray-400">${idx + 1}</td>
+              <td class="px-4 py-2 text-sm font-mono text-gray-900 dark:text-gray-200">${prompt.prompt_id}</td>
+              <td class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">${prompt.count}</td>
+              <td class="px-4 py-2 text-sm text-orange-600 dark:text-orange-400 font-medium">${prompt.avg_duration_ms} ms</td>
+              <td class="px-4 py-2 text-sm text-green-600 dark:text-green-400">${prompt.min_duration_ms} ms</td>
+              <td class="px-4 py-2 text-sm text-blue-600 dark:text-blue-400">${prompt.p50} ms</td>
+              <td class="px-4 py-2 text-sm text-indigo-600 dark:text-indigo-400">${prompt.p90} ms</td>
+              <td class="px-4 py-2 text-sm text-purple-600 dark:text-purple-400">${prompt.p95} ms</td>
+              <td class="px-4 py-2 text-sm text-pink-600 dark:text-pink-400">${prompt.p99} ms</td>
+              <td class="px-4 py-2 text-sm text-red-600 dark:text-red-400">${prompt.max_duration_ms} ms</td>
             </tr>
           `
         )
@@ -297,6 +314,7 @@ window.createPromptsController = function() {
             return;
           }
 
+          const defaults = getChartDefaults();
           const chart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -326,10 +344,14 @@ window.createPromptsController = function() {
             title: {
               display: true,
               text: `Top 10 Slowest Prompts (Last ${this.timeRange}h)`,
+              color: defaults.titleColor,
             },
             legend: {
               display: true,
               position: 'top',
+              labels: {
+                color: defaults.color,
+              },
             },
             tooltip: {
               callbacks: {
@@ -351,6 +373,21 @@ window.createPromptsController = function() {
               title: {
                 display: true,
                 text: 'Latency (ms)',
+                color: defaults.titleColor,
+              },
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
+              },
+            },
+            y: {
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
               },
             },
           },
@@ -394,7 +431,14 @@ window.createPromptsController = function() {
         const ctx = canvas.getContext('2d');
         if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
         const parent = canvas.parentElement;
-        if (parent) parent.innerHTML = '<p style="text-align: center; color: #10b981; padding: 2rem;">✓ No errors found - all prompts rendering successfully!</p>';
+        if (parent) {
+          // Use safe DOM manipulation instead of innerHTML with static content
+          parent.textContent = '';
+          const p = document.createElement('p');
+          p.className = 'text-center text-emerald-500 p-8';
+          p.textContent = '✓ No errors found - all prompts rendering successfully!';
+          parent.appendChild(p);
+        }
         return;
       }
 
@@ -413,6 +457,7 @@ window.createPromptsController = function() {
             return;
           }
 
+          const defaults = getChartDefaults();
           const chart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -435,6 +480,7 @@ window.createPromptsController = function() {
             title: {
               display: true,
               text: `Top 10 Error-Prone Prompts (Last ${this.timeRange}h)`,
+              color: defaults.titleColor,
             },
             legend: {
               display: false,
@@ -460,6 +506,21 @@ window.createPromptsController = function() {
               title: {
                 display: true,
                 text: 'Error Rate (%)',
+                color: defaults.titleColor,
+              },
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
+              },
+            },
+            y: {
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
               },
             },
           },
@@ -502,11 +563,11 @@ window.createPromptsController = function() {
 
 <div class="prompts-dashboard" x-data="createPromptsController()" x-init="init()">
   <!-- Header with filters -->
-  <div class="mb-6 bg-white rounded-lg shadow-sm p-4">
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-4">
     <div class="flex flex-wrap gap-4 items-end">
       <div class="flex-1 min-w-[200px]">
-        <label class="block text-sm font-medium text-gray-700 mb-1">Time Range</label>
-        <select x-model="timeRange" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Time Range</label>
+        <select x-model="timeRange" class="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400">
           <option value="1">Last 1 Hour</option>
           <option value="6">Last 6 Hours</option>
           <option value="24">Last 24 Hours</option>
@@ -515,8 +576,8 @@ window.createPromptsController = function() {
         </select>
       </div>
       <div class="flex-1 min-w-[200px]">
-        <label class="block text-sm font-medium text-gray-700 mb-1">Results Limit</label>
-        <select x-model="limit" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Results Limit</label>
+        <select x-model="limit" class="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400">
           <option value="10">Top 10</option>
           <option value="20">Top 20</option>
           <option value="50">Top 50</option>
@@ -524,68 +585,68 @@ window.createPromptsController = function() {
         </select>
       </div>
       <div class="flex-shrink-0">
-        <button @click="applyFilters()" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <button @click="applyFilters()" class="px-4 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded-md hover:bg-blue-700 dark:hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 transition-colors">
           Apply Filters
         </button>
       </div>
     </div>
-    <div x-show="loading" class="mt-3 text-sm text-gray-600">
+    <div x-show="loading" class="mt-3 text-sm text-gray-600 dark:text-gray-400">
       Loading prompt metrics...
     </div>
-    <div x-show="error" class="mt-3 text-sm text-red-600" x-text="error"></div>
+    <div x-show="error" class="mt-3 text-sm text-red-600 dark:text-red-400" x-text="error"></div>
   </div>
 
   <!-- Summary Cards -->
   <div class="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
     <!-- Overall Health Card -->
-    <div class="bg-white rounded-lg shadow-sm p-6 border-l-4" :class="{
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6 border-l-4" :class="{
       'border-green-500': summaryCards.overallHealth === 'good',
       'border-yellow-500': summaryCards.overallHealth === 'warning',
       'border-red-500': summaryCards.overallHealth === 'critical'
     }">
       <div class="flex items-center justify-between">
         <div>
-          <p class="text-sm font-medium text-gray-600">Overall Health</p>
+          <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Overall Health</p>
           <p class="mt-2 text-3xl font-bold" :class="{
-            'text-green-600': summaryCards.overallHealth === 'good',
-            'text-yellow-600': summaryCards.overallHealth === 'warning',
-            'text-red-600': summaryCards.overallHealth === 'critical'
+            'text-green-600 dark:text-green-400': summaryCards.overallHealth === 'good',
+            'text-yellow-600 dark:text-yellow-400': summaryCards.overallHealth === 'warning',
+            'text-red-600 dark:text-red-400': summaryCards.overallHealth === 'critical'
           }" x-text="summaryCards.overallHealth === 'good' ? '🟢 Healthy' : summaryCards.overallHealth === 'warning' ? '🟡 Warning' : '🔴 Critical'"></p>
         </div>
       </div>
     </div>
 
     <!-- Most Used Prompt Card -->
-    <div class="bg-white rounded-lg shadow-sm p-6 border-l-4 border-purple-500">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6 border-l-4 border-purple-500">
       <div class="flex items-center justify-between">
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium text-gray-600">Most Rendered</p>
-          <p class="mt-2 text-lg font-semibold text-gray-900 truncate" x-text="summaryCards.mostUsed?.name || 'N/A'"></p>
-          <p class="text-sm text-purple-600 font-medium" x-text="summaryCards.mostUsed ? `${summaryCards.mostUsed.value} ${summaryCards.mostUsed.metric}` : ''"></p>
+          <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Most Rendered</p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.mostUsed?.name || 'N/A'"></p>
+          <p class="text-sm text-purple-600 dark:text-purple-400 font-medium" x-text="summaryCards.mostUsed ? `${summaryCards.mostUsed.value} ${summaryCards.mostUsed.metric}` : ''"></p>
         </div>
         <div class="text-3xl">💬</div>
       </div>
     </div>
 
     <!-- Slowest Prompt Card -->
-    <div class="bg-white rounded-lg shadow-sm p-6 border-l-4 border-orange-500">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6 border-l-4 border-orange-500">
       <div class="flex items-center justify-between">
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium text-gray-600">Slowest Prompt</p>
-          <p class="mt-2 text-lg font-semibold text-gray-900 truncate" x-text="summaryCards.slowest?.name || 'N/A'"></p>
-          <p class="text-sm text-orange-600 font-medium" x-text="summaryCards.slowest ? `${summaryCards.slowest.value} ${summaryCards.slowest.metric}` : ''"></p>
+          <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Slowest Prompt</p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.slowest?.name || 'N/A'"></p>
+          <p class="text-sm text-orange-600 dark:text-orange-400 font-medium" x-text="summaryCards.slowest ? `${summaryCards.slowest.value} ${summaryCards.slowest.metric}` : ''"></p>
         </div>
         <div class="text-3xl">🐌</div>
       </div>
     </div>
 
     <!-- Most Error-Prone Prompt Card -->
-    <div class="bg-white rounded-lg shadow-sm p-6 border-l-4 border-red-500">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6 border-l-4 border-red-500">
       <div class="flex items-center justify-between">
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium text-gray-600">Most Error-Prone</p>
-          <p class="mt-2 text-lg font-semibold text-gray-900 truncate" x-text="summaryCards.mostErrorProne?.name || 'None'"></p>
-          <p class="text-sm text-red-600 font-medium" x-text="summaryCards.mostErrorProne ? `${summaryCards.mostErrorProne.value}${summaryCards.mostErrorProne.metric}` : '0% errors'"></p>
+          <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Most Error-Prone</p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.mostErrorProne?.name || 'None'"></p>
+          <p class="text-sm text-red-600 dark:text-red-400 font-medium" x-text="summaryCards.mostErrorProne ? `${summaryCards.mostErrorProne.value}${summaryCards.mostErrorProne.metric}` : '0% errors'"></p>
         </div>
         <div class="text-3xl">⚠️</div>
       </div>
@@ -593,46 +654,46 @@ window.createPromptsController = function() {
   </div>
 
   <!-- Prompt Usage Chart -->
-  <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
-    <div style="height: 400px;">
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6">
+    <div class="h-[400px]">
       <canvas id="promptUsageChart"></canvas>
     </div>
   </div>
 
   <!-- Top 10 Slowest Prompts Chart -->
-  <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
-    <div style="height: 400px;">
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6">
+    <div class="h-[400px]">
       <canvas id="promptSlownessChart"></canvas>
     </div>
   </div>
 
   <!-- Top 10 Error-Prone Prompts Chart -->
-  <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
-    <div style="height: 400px;">
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6">
+    <div class="h-[400px]">
       <canvas id="promptErrorProneChart"></canvas>
     </div>
   </div>
 
   <!-- Prompt Performance Table -->
-  <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
-    <h3 class="text-lg font-semibold text-gray-900 mb-4">Prompt Performance Metrics</h3>
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6">
+    <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Prompt Performance Metrics</h3>
     <div class="overflow-x-auto">
-      <table id="promptPerformanceTable" class="min-w-full divide-y divide-gray-200">
-        <thead class="bg-gray-50">
+      <table id="promptPerformanceTable" class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-700/50">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">#</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Prompt ID</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Count</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Min</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p50</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p90</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p95</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p99</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Max</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">#</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Prompt ID</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Count</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Avg</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Min</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">p50</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">p90</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">p95</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">p99</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Max</th>
           </tr>
         </thead>
-        <tbody class="bg-white divide-y divide-gray-200"></tbody>
+        <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700"></tbody>
       </table>
     </div>
   </div>

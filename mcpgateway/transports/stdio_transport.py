@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 stdio Transport Implementation.
-This module implements standard input/output (stdio) transport for MCP Gateway, enabling
+This module implements standard input/output (stdio) transport for ContextForge, enabling
 communication over stdin/stdout streams. This transport is particularly useful
 for command-line tools, subprocess communication, and scenarios where processes
 need to communicate via standard I/O channels.
@@ -190,6 +190,7 @@ class StdioTransport(Transport):
             Received messages
 
         Raises:
+            asyncio.CancelledError: If the receive loop is cancelled.
             RuntimeError: If transport is not connected
 
         Examples:
@@ -226,8 +227,6 @@ class StdioTransport(Transport):
                 message = orjson.loads(line.strip())
                 yield message
 
-            except asyncio.CancelledError:
-                break
             except Exception as e:
                 logger.error(f"Failed to receive message: {e}")
                 continue

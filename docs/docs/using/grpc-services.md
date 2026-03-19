@@ -3,7 +3,7 @@
 !!! warning "Experimental Feature"
     gRPC support is an **experimental opt-in feature** that is disabled by default. It requires additional dependencies and explicit enablement.
 
-MCP Gateway supports automatic translation of gRPC services into MCP tools via the gRPC Server Reflection Protocol. This enables seamless integration of gRPC microservices into your MCP ecosystem without manual schema definition.
+ContextForge supports automatic translation of gRPC services into MCP tools via the gRPC Server Reflection Protocol. This enables seamless integration of gRPC microservices into your MCP ecosystem without manual schema definition.
 
 ## Installation & Setup
 
@@ -23,6 +23,7 @@ mcp-contextforge-gateway[grpc]>=0.9.0
 ```
 
 This installs the following packages:
+
 - `grpcio>=1.62.0,<1.68.0`
 - `grpcio-reflection>=1.62.0,<1.68.0`
 - `grpcio-tools>=1.62.0,<1.68.0`
@@ -46,7 +47,7 @@ environment:
 
 ### 3. Restart the Gateway
 
-After installing dependencies and enabling the feature, restart MCP Gateway:
+After installing dependencies and enabling the feature, restart ContextForge:
 
 ```bash
 # Development mode
@@ -109,11 +110,13 @@ python3 -m mcpgateway.translate \
 1. Navigate to the **Admin UI** at `http://localhost:4444/admin`
 2. Click the **🔌 gRPC Services** tab
 3. Fill in the registration form:
+
    - **Service Name**: `my-grpc-service`
    - **Target**: `localhost:50051`
    - **Description**: Optional service description
    - **Enable Server Reflection**: ✓ (recommended)
    - **Enable TLS**: Optional for secure connections
+
 4. Click **Register gRPC Service**
 
 ### 3. REST API: Register Programmatically
@@ -152,7 +155,7 @@ The gateway translates between protocols automatically:
 
 ```
 ┌─────────────┐         ┌──────────────┐         ┌─────────────┐
-│  MCP Client │────────▶│  MCP Gateway │────────▶│ gRPC Server │
+│  MCP Client │────────▶│  ContextForge │────────▶│ gRPC Server │
 │  (JSON)     │  HTTP   │  (Translate) │  gRPC   │ (Protobuf)  │
 └─────────────┘         └──────────────┘         └─────────────┘
                               │
@@ -163,6 +166,7 @@ The gateway translates between protocols automatically:
 ```
 
 **Request Flow:**
+
 1. Client calls MCP tool: `payment-service.ProcessPayment`
 2. Gateway looks up gRPC service and method
 3. Gateway converts JSON request → Protobuf message
@@ -214,6 +218,7 @@ Each gRPC service supports the following configuration:
 ### View Registered Services
 
 The gRPC Services tab displays:
+
 - **Service name** and description
 - **Status badges**: Active/Inactive, Reachable/Unreachable
 - **Configuration**: TLS enabled, Reflection enabled
@@ -223,6 +228,7 @@ The gRPC Services tab displays:
 ### Re-Reflect a Service
 
 Click the **Re-Reflect** button to trigger a new discovery:
+
 - Updates service and method counts
 - Refreshes discovered service metadata
 - Marks service as reachable/unreachable
@@ -231,6 +237,7 @@ Click the **Re-Reflect** button to trigger a new discovery:
 ### View Methods
 
 Click **View Methods** to see all discovered gRPC methods:
+
 - Full method name (e.g., `payment.PaymentService.ProcessPayment`)
 - Input message type
 - Output message type
@@ -239,12 +246,14 @@ Click **View Methods** to see all discovered gRPC methods:
 ### Toggle Service
 
 Use **Activate/Deactivate** to enable/disable a service:
+
 - Disabled services are not available for tool invocation
 - Useful for maintenance or testing
 
 ### Delete Service
 
 Click **Delete** to permanently remove a service:
+
 - Removes service from database
 - Does not affect the actual gRPC server
 - Confirmation required
@@ -371,6 +380,7 @@ gRPC services support team-scoped access control:
 ```
 
 **Visibility options:**
+
 - `public`: Accessible to all users
 - `private`: Only accessible to owner
 - `team`: Accessible to team members
@@ -419,6 +429,7 @@ Use gRPC metadata for authentication:
 **Problem:** Service shows as "Unreachable" after registration.
 
 **Solutions:**
+
 1. Verify the target address is correct: `telnet host port`
 2. Check if server reflection is enabled on the gRPC server
 3. Verify network connectivity and firewall rules
@@ -430,6 +441,7 @@ Use gRPC metadata for authentication:
 **Problem:** Reflection returns zero services.
 
 **Solutions:**
+
 1. Ensure the gRPC server has reflection enabled
 2. For Go servers: import `google.golang.org/grpc/reflection`
 3. For Python servers: use `grpc_reflection.v1alpha.reflection`
@@ -440,6 +452,7 @@ Use gRPC metadata for authentication:
 **Problem:** TLS connection fails.
 
 **Solutions:**
+
 1. Verify certificate paths are correct
 2. Ensure certificates are readable by the gateway
 3. Check certificate expiration dates
@@ -451,6 +464,7 @@ Use gRPC metadata for authentication:
 **Problem:** Calling a gRPC method returns "method not found".
 
 **Solutions:**
+
 1. Click **Re-Reflect** to refresh service discovery
 2. Verify the method name matches exactly (case-sensitive)
 3. Check the service is enabled
@@ -464,7 +478,7 @@ Use gRPC metadata for authentication:
 # Start a test gRPC server on localhost:50051
 # (Assuming it has reflection enabled)
 
-# Expose via MCP Gateway CLI
+# Expose via ContextForge CLI
 python3 -m mcpgateway.translate \
   --grpc localhost:50051 \
   --port 9000
@@ -539,5 +553,5 @@ for svc in services:
 
 - [mcpgateway.translate CLI](mcpgateway-translate.md)
 - [Features Overview](../overview/features.md)
-- [REST API Reference](../api/rest-api.md)
+- [REST API Reference](../manage/api-usage.md)
 - [gRPC Server Reflection Protocol](https://grpc.io/docs/guides/reflection/)

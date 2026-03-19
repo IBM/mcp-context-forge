@@ -19,10 +19,10 @@ from __future__ import annotations
 
 # Standard
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Pattern
 
 # Third-Party
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -44,13 +44,20 @@ _DEFAULT_BLOCKED = [
     r"\bREVOKE\b",
 ]
 
+# Precompiled regex patterns for better performance
+_LINE_COMMENT_RE = re.compile(r"--.*?$", flags=re.MULTILINE)
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", flags=re.DOTALL)
+_DELETE_FROM_RE = re.compile(r"\bDELETE\b\s+\bFROM\b", flags=re.IGNORECASE)
+_UPDATE_RE = re.compile(r"\bUPDATE\b\s+\w+", flags=re.IGNORECASE)
+_WHERE_RE = re.compile(r"\bWHERE\b", flags=re.IGNORECASE)
+
 
 class SQLSanitizerConfig(BaseModel):
     """Configuration for SQL sanitization.
 
     Attributes:
         fields: Argument fields to scan for SQL (None = all strings).
-        blocked_statements: List of regex patterns for blocked SQL statements.
+        blocked_statements: List of compiled regex patterns for blocked SQL statements.
         block_delete_without_where: Whether to block DELETE without WHERE.
         block_update_without_where: Whether to block UPDATE without WHERE.
         strip_comments: Whether to remove SQL comments.
@@ -59,12 +66,37 @@ class SQLSanitizerConfig(BaseModel):
     """
 
     fields: Optional[list[str]] = None  # which arg keys to scan; None = all strings
-    blocked_statements: list[str] = _DEFAULT_BLOCKED
+    blocked_statements: list[Pattern[str]] = [re.compile(pat, re.IGNORECASE) for pat in _DEFAULT_BLOCKED]
     block_delete_without_where: bool = True
     block_update_without_where: bool = True
     strip_comments: bool = True
     require_parameterization: bool = False
     block_on_violation: bool = True
+
+    @field_validator('blocked_statements', mode='before')
+    @classmethod
+    def compile_patterns(cls, v: Any) -> list[Pattern[str]]:
+        """Compile string patterns to regex Pattern objects.
+
+        Args:
+            v: List of regex pattern strings or Pattern objects.
+
+        Returns:
+            List of compiled Pattern objects.
+        """
+        if not isinstance(v, list):
+            return v
+        compiled = []
+        for item in v:
+            if isinstance(item, str):
+                compiled.append(re.compile(item, re.IGNORECASE))
+            elif isinstance(item, Pattern):
+                compiled.append(item)
+            else:
+                compiled.append(item)
+        return compiled
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 def _strip_sql_comments(sql: str) -> str:
@@ -77,8 +109,8 @@ def _strip_sql_comments(sql: str) -> str:
         SQL string with comments removed.
     """
     # Remove -- line comments and /* */ block comments
-    sql = re.sub(r"--.*?$", "", sql, flags=re.MULTILINE)
-    sql = re.sub(r"/\*.*?\*/", "", sql, flags=re.DOTALL)
+    sql = _LINE_COMMENT_RE.sub("", sql)
+    sql = _BLOCK_COMMENT_RE.sub("", sql)
     return sql
 
 
@@ -111,17 +143,17 @@ def _find_issues(sql: str, cfg: SQLSanitizerConfig) -> list[str]:
     if cfg.strip_comments:
         sql = _strip_sql_comments(sql)
     issues: list[str] = []
-    # Dangerous statements
+    # Dangerous statements - patterns are already compiled
     for pat in cfg.blocked_statements:
-        if re.search(pat, sql, flags=re.IGNORECASE):
-            issues.append(f"Blocked statement matched: {pat}")
+        if pat.search(sql):
+            issues.append(f"Blocked statement matched: {pat.pattern}")
     # DELETE without WHERE
-    if cfg.block_delete_without_where and re.search(r"\bDELETE\b\s+\bFROM\b", sql, flags=re.IGNORECASE):
-        if not re.search(r"\bWHERE\b", sql, flags=re.IGNORECASE):
+    if cfg.block_delete_without_where and _DELETE_FROM_RE.search(sql):
+        if not _WHERE_RE.search(sql):
             issues.append("DELETE without WHERE clause")
     # UPDATE without WHERE
-    if cfg.block_update_without_where and re.search(r"\bUPDATE\b\s+\w+", sql, flags=re.IGNORECASE):
-        if not re.search(r"\bWHERE\b", sql, flags=re.IGNORECASE):
+    if cfg.block_update_without_where and _UPDATE_RE.search(sql):
+        if not _WHERE_RE.search(sql):
             issues.append("UPDATE without WHERE clause")
     # Parameterization / interpolation checks
     if cfg.require_parameterization and _has_interpolation(original):

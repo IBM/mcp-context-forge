@@ -85,7 +85,7 @@ config:
   payload_templates:
     violation: |
       {
-        "alert": "MCP Gateway Violation",
+        "alert": "ContextForge Violation",
         "severity": "warning",
         "message": "{{violation.reason}}: {{violation.description}}",
         "plugin": "{{plugin_name}}",

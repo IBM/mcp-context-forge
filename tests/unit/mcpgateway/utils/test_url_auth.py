@@ -145,6 +145,15 @@ class TestSanitizeUrlForLogging:
         assert "tavilyApiKey=REDACTED" in result
         assert "mykey" not in result
 
+    def test_redacts_userinfo_in_netloc(self):
+        url = "https://user:pass@api.example.com/endpoint"
+        result = sanitize_url_for_logging(url)
+        assert result == "https://REDACTED:REDACTED@api.example.com/endpoint"
+
+        url_v6 = "https://user:pass@[::1]:8080/path"
+        result_v6 = sanitize_url_for_logging(url_v6)
+        assert result_v6 == "https://REDACTED:REDACTED@[::1]:8080/path"
+
 
 class TestStaticSensitiveParams:
     """Test the STATIC_SENSITIVE_PARAMS constant."""

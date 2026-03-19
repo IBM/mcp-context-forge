@@ -19,7 +19,20 @@ import pytest
 
 # First-Party
 from mcpgateway.common.models import LogLevel
+import mcpgateway.services.structured_logger as structured_logger
 from mcpgateway.services.logging_service import _get_file_handler, _get_text_handler, LoggingService
+
+
+@pytest.fixture(autouse=True)
+def _restore_root_logger_level():
+    """Prevent set_level() calls from leaking global root logger state into other test modules."""
+    root = logging.getLogger()
+    saved_level = root.level
+    saved_handler_levels = [(h, h.level) for h in root.handlers]
+    yield
+    root.setLevel(saved_level)
+    for handler, level in saved_handler_levels:
+        handler.setLevel(level)
 
 # ---------------------------------------------------------------------------
 # Test file handler creation
@@ -120,6 +133,12 @@ async def test_initialize_with_file_logging_enabled():
             mock_settings.mcpgateway_admin_api_enabled = False
             mock_settings.log_level = "INFO"
             mock_settings.log_buffer_size_mb = 1.0
+
+            # Reset cached file handler so rotation settings apply for this test
+            # First-Party
+            import mcpgateway.services.logging_service as ls
+
+            ls._file_handler = None
 
             service = LoggingService()
             await service.initialize()
@@ -663,3 +682,96 @@ async def test_notify_with_storage():
     # Check storage was called (once by notify directly, and potentially once by StorageHandler)
     # Note: add_log may be called twice - once directly from notify(), and once from StorageHandler.emit()
     assert mock_storage.add_log.call_count >= 1
+
+
+def test_should_log_respects_settings(monkeypatch: pytest.MonkeyPatch):
+    """_should_log should honor configured log level."""
+    monkeypatch.setattr(structured_logger.settings, "log_level", "WARNING")
+
+    assert structured_logger._should_log("INFO") is False
+    assert structured_logger._should_log("ERROR") is True
+
+
+def test_log_enricher_adds_context(monkeypatch: pytest.MonkeyPatch):
+    """LogEnricher should add correlation ID and optional trace context."""
+    monkeypatch.setattr(structured_logger, "get_correlation_id", lambda: "cid-123")
+
+    class DummyTracker:
+        def get_current_operations(self, _cid):
+            return ["op1", "op2"]
+
+    monkeypatch.setattr(structured_logger, "get_performance_tracker", lambda: DummyTracker())
+    monkeypatch.setattr(structured_logger, "_OTEL_AVAILABLE", True)
+
+    class DummySpanContext:
+        is_valid = True
+        trace_id = 1
+        span_id = 2
+
+    class DummySpan:
+        def get_span_context(self):
+            return DummySpanContext()
+
+    class DummyOtel:
+        @staticmethod
+        def get_current_span():
+            return DummySpan()
+
+    monkeypatch.setattr(structured_logger, "otel_trace", DummyOtel())
+
+    enriched = structured_logger.LogEnricher.enrich({"message": "hello"})
+    assert enriched["correlation_id"] == "cid-123"
+    assert enriched["active_operations"] == 2
+    assert enriched["trace_id"] == "00000000000000000000000000000001"
+    assert enriched["span_id"] == "0000000000000002"
+
+
+def test_log_router_persist_success(monkeypatch: pytest.MonkeyPatch):
+    """LogRouter should persist to DB using a fresh session, not the caller's db."""
+    router = structured_logger.LogRouter()
+    mock_session = MagicMock()
+    mock_fresh = MagicMock()
+    mock_fresh.return_value.__enter__ = MagicMock(return_value=mock_session)
+    mock_fresh.return_value.__exit__ = MagicMock(return_value=False)
+    monkeypatch.setattr(structured_logger, "fresh_db_session", mock_fresh)
+    monkeypatch.setattr(structured_logger, "StructuredLogEntry", MagicMock(return_value="entry"))
+
+    router._persist_to_database({"level": "INFO", "message": "ok"})
+
+    mock_fresh.assert_called_once()
+    mock_session.add.assert_called_once_with("entry")
+
+
+def test_log_router_persist_failure_does_not_raise(monkeypatch: pytest.MonkeyPatch):
+    """LogRouter should catch persistence failures without raising."""
+    router = structured_logger.LogRouter()
+    monkeypatch.setattr(structured_logger, "fresh_db_session", MagicMock(side_effect=Exception("boom")))
+
+    # Should not raise
+    router._persist_to_database({"level": "INFO", "message": "fail"})
+
+
+def test_structured_logger_log_routes(monkeypatch: pytest.MonkeyPatch):
+    """StructuredLogger should enrich and route entries."""
+    logger = structured_logger.StructuredLogger("component")
+    router = MagicMock()
+    logger.router = router
+    monkeypatch.setattr(structured_logger, "_should_log", lambda _lvl: True)
+
+    logger.log("INFO", "hello", error=ValueError("boom"), custom_fields={"k": "v"})
+
+    assert router.route.called
+    entry = router.route.call_args[0][0]
+    assert entry["error_type"] == "ValueError"
+    assert entry["custom_fields"] == {"k": "v"}
+
+
+def test_structured_logger_log_filtered(monkeypatch: pytest.MonkeyPatch):
+    """StructuredLogger should return early when filtered."""
+    logger = structured_logger.StructuredLogger("component")
+    router = MagicMock()
+    logger.router = router
+    monkeypatch.setattr(structured_logger, "_should_log", lambda _lvl: False)
+
+    logger.log("DEBUG", "skip")
+    router.route.assert_not_called()

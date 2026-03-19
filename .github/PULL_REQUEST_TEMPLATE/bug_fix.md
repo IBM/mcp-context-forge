@@ -4,7 +4,7 @@ Before opening this PR please:
 
 1. `make lint`            - passes `ruff`, `mypy`, `pylint`
 2. `make test`            - all unit + integration tests green
-3. `make coverage`        - ≥ 90 %
+3. `make coverage`        - ≥ 80 %
 4. `make docker docker-run-ssl` or `make podman podman-run-ssl`
 5. Update relevant documentation.
 6. Tested with sqlite and postgres + redis.
@@ -30,7 +30,7 @@ _How did you solve it?  Key design points._
 |---------------------------------------|----------------------|--------|
 | Lint suite                            | `make lint`          |        |
 | Unit tests                            | `make test`          |        |
-| Coverage ≥ 90 %                       | `make coverage`      |        |
+| Coverage ≥ 80 %                       | `make coverage`      |        |
 | Manual regression no longer fails     | steps / screenshots  |        |
 
 ## 📐 MCP Compliance (if relevant)

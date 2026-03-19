@@ -1,0 +1,4 @@
+title: Operations
+nav:
+  - "Config Validation": config-validation.md
+  - "CPU Spin Loop Mitigation": cpu-spin-loop-mitigation.md

@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-MCP Gateway Database Models.
+ContextForge Database Models.
 This module defines SQLAlchemy models for storing MCP entities including:
 - Tools with input schema validation
 - Resources with subscription tracking
@@ -33,7 +33,7 @@ import uuid
 import jsonschema
 from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
+from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint, VARCHAR
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -41,6 +41,7 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import NullPool, QueuePool
+from sqlalchemy.types import TypeDecorator
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
@@ -270,6 +271,123 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class TokenEncryptionWriteError(ValueError):
+    """Raised when OAuth token encryption fails during DB write binding."""
+
+
+class EncryptedText(TypeDecorator):  # pylint: disable=too-many-ancestors
+    """Text type that applies best-effort encryption/decryption at ORM boundary.
+
+    This preserves compatibility with service-layer encryption:
+    - Pre-encrypted values pass through unchanged.
+    - Plaintext values are encrypted when possible before persistence.
+    - On read, encrypted values are decrypted for runtime usage.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    @property
+    def python_type(self):
+        """Return the Python type represented by this SQLAlchemy type.
+
+        Returns:
+            type: Python ``str`` type.
+        """
+        return str
+
+    @staticmethod
+    def _get_encryption():
+        """Resolve encryption service for column-level token protection.
+
+        Returns:
+            Optional[EncryptionService]: Encryption service instance when configured,
+                otherwise ``None``.
+        """
+        secret = getattr(settings, "auth_encryption_secret", None)
+        if not secret:
+            return None
+        try:
+            # First-Party
+            from mcpgateway.services.encryption_service import get_encryption_service  # pylint: disable=import-outside-toplevel
+
+            return get_encryption_service(secret)
+        except Exception as exc:
+            logger.debug("Unable to initialize encryption service for EncryptedText: %s", exc)
+            return None
+
+    def process_literal_param(self, value, _dialect):  # pylint: disable=unused-argument
+        """Render literal SQL parameter value via encrypted bind processing.
+
+        Args:
+            value (Any): Raw value from SQLAlchemy.
+            _dialect: SQLAlchemy dialect (unused).
+
+        Returns:
+            Any: Bound parameter value after encryption handling.
+        """
+        processed = self.process_bind_param(value, _dialect)
+        return processed
+
+    def process_bind_param(self, value, _dialect):  # pylint: disable=unused-argument
+        """Encrypt plaintext values before persistence when encryption is available.
+
+        Args:
+            value (Any): Raw value from SQLAlchemy.
+            _dialect: SQLAlchemy dialect (unused).
+
+        Returns:
+            Any: Encrypted value for persistence or unchanged value when no
+                encryption is applied.
+
+        Raises:
+            TokenEncryptionWriteError: If encryption is configured and token
+                encryption fails.
+        """
+        if value in (None, "") or not isinstance(value, str):
+            return value
+
+        encryption = self._get_encryption()
+        if not encryption:
+            return value
+
+        try:
+            if encryption.is_encrypted(value):
+                return value
+            return encryption.encrypt_secret(value)
+        except Exception as exc:
+            logger.warning("EncryptedText bind encryption failed; rejecting token write")
+            logger.debug("EncryptedText bind encryption exception: %s", exc)
+            raise TokenEncryptionWriteError("OAuth token encryption failed during write") from exc
+
+    def process_result_value(self, value, _dialect):  # pylint: disable=unused-argument
+        """Decrypt stored encrypted values when reading rows.
+
+        Args:
+            value (Any): Raw value loaded from database.
+            _dialect: SQLAlchemy dialect (unused).
+
+        Returns:
+            Any: Decrypted value when encrypted, otherwise unchanged.
+        """
+        if value in (None, "") or not isinstance(value, str):
+            return value
+
+        encryption = self._get_encryption()
+        if not encryption:
+            return value
+
+        try:
+            if not encryption.is_encrypted(value):
+                return value
+            decrypted = encryption.decrypt_secret_or_plaintext(value)
+            return decrypted if decrypted is not None else value
+        except Exception as exc:
+            logger.warning("EncryptedText result decryption failed, returning stored value")
+            logger.debug("EncryptedText result decryption exception: %s", exc)
+            return value
+
+
 # Configure SQLite for better concurrency if using SQLite
 if backend == "sqlite":
 
@@ -288,8 +406,8 @@ if backend == "sqlite":
         cursor = dbapi_conn.cursor()
         # Enable WAL mode for better concurrency
         cursor.execute("PRAGMA journal_mode=WAL")
-        # Set busy timeout to 30 seconds (30000 ms) to handle lock contention from observability
-        cursor.execute("PRAGMA busy_timeout=30000")
+        # Configure SQLite lock wait upper bound (ms) to prevent prolonged blocking under contention
+        cursor.execute(f"PRAGMA busy_timeout={settings.db_sqlite_busy_timeout}")
         # Synchronous=NORMAL is safe with WAL mode and improves performance
         cursor.execute("PRAGMA synchronous=NORMAL")
         # Increase cache size for better performance (negative value = KB)
@@ -472,15 +590,13 @@ def before_commit_handler(session):
     """Handler before commit to ensure transaction is in good state.
 
     This is called before COMMIT, ensuring any pending work is flushed.
+    If the flush fails, the exception is propagated so the commit also fails
+    and the caller's error handling (e.g. get_db rollback) can clean up properly.
 
     Args:
         session: The SQLAlchemy session about to commit.
     """
-    try:
-        session.flush()
-    except Exception:  # nosec B110
-        # If flush fails, the commit will also fail and trigger rollback
-        pass
+    session.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -598,7 +714,7 @@ def reset_connection_on_checkin(dbapi_connection, _connection_record):
 
 
 @event.listens_for(engine, "reset")
-def reset_connection_on_reset(dbapi_connection, _connection_record):
+def reset_connection_on_reset(dbapi_connection, _connection_record, _reset_state):
     """Reset connection state when the pool resets a connection.
 
     This handles the case where a connection is being reset before reuse.
@@ -862,6 +978,7 @@ class UserRole(Base):
     granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    grant_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)
 
     # Relationships
     role: Mapped["Role"] = relationship("Role", back_populates="user_assignments")
@@ -872,9 +989,13 @@ class UserRole(Base):
         Returns:
             True if assignment has expired, False otherwise
         """
-        if not self.expires_at:
+        if self.expires_at is None:
             return False
-        return utc_now() > self.expires_at
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        return utc_now() > expires_at
 
 
 class PermissionAuditLog(Base):
@@ -937,6 +1058,12 @@ class Permissions:
     RESOURCES_DELETE = "resources.delete"
     RESOURCES_SHARE = "resources.share"
 
+    # Gateway permissions
+    GATEWAYS_CREATE = "gateways.create"
+    GATEWAYS_READ = "gateways.read"
+    GATEWAYS_UPDATE = "gateways.update"
+    GATEWAYS_DELETE = "gateways.delete"
+
     # Prompt permissions
     PROMPTS_CREATE = "prompts.create"
     PROMPTS_READ = "prompts.read"
@@ -944,9 +1071,18 @@ class Permissions:
     PROMPTS_DELETE = "prompts.delete"
     PROMPTS_EXECUTE = "prompts.execute"
 
+    # MCP method permission prefixes — used by token_catalog_service (generation-time)
+    # and token_scoping middleware (runtime) to auto-grant servers.use transport access.
+    MCP_METHOD_PREFIXES = ("tools.", "resources.", "prompts.")
+
+    # LLM proxy permissions
+    LLM_READ = "llm.read"
+    LLM_INVOKE = "llm.invoke"
+
     # Server permissions
     SERVERS_CREATE = "servers.create"
     SERVERS_READ = "servers.read"
+    SERVERS_USE = "servers.use"
     SERVERS_UPDATE = "servers.update"
     SERVERS_DELETE = "servers.delete"
     SERVERS_MANAGE = "servers.manage"
@@ -961,6 +1097,37 @@ class Permissions:
     ADMIN_SYSTEM_CONFIG = "admin.system_config"
     ADMIN_USER_MANAGEMENT = "admin.user_management"
     ADMIN_SECURITY_AUDIT = "admin.security_audit"
+    ADMIN_OVERVIEW = "admin.overview"
+    ADMIN_DASHBOARD = "admin.dashboard"
+    ADMIN_EVENTS = "admin.events"
+    ADMIN_GRPC = "admin.grpc"
+    ADMIN_PLUGINS = "admin.plugins"
+    ADMIN_METRICS = "admin.metrics"
+    ADMIN_EXPORT = "admin.export"
+    ADMIN_IMPORT = "admin.import"
+    ADMIN_SSO_PROVIDERS_CREATE = "admin.sso_providers:create"
+    ADMIN_SSO_PROVIDERS_READ = "admin.sso_providers:read"
+    ADMIN_SSO_PROVIDERS_UPDATE = "admin.sso_providers:update"
+    ADMIN_SSO_PROVIDERS_DELETE = "admin.sso_providers:delete"
+
+    # Observability and audit read permissions
+    LOGS_READ = "logs:read"
+    METRICS_READ = "metrics:read"
+    AUDIT_READ = "audit:read"
+    SECURITY_READ = "security:read"
+
+    # A2A Agent permissions
+    A2A_CREATE = "a2a.create"
+    A2A_READ = "a2a.read"
+    A2A_UPDATE = "a2a.update"
+    A2A_DELETE = "a2a.delete"
+    A2A_INVOKE = "a2a.invoke"
+
+    # Tag permissions
+    TAGS_READ = "tags.read"
+    TAGS_CREATE = "tags.create"
+    TAGS_UPDATE = "tags.update"
+    TAGS_DELETE = "tags.delete"
 
     # Special permissions
     ALL_PERMISSIONS = "*"  # Wildcard for all permissions
@@ -976,7 +1143,7 @@ class Permissions:
         for attr_name in dir(cls):
             if not attr_name.startswith("_") and attr_name.isupper() and attr_name != "ALL_PERMISSIONS":
                 attr_value = getattr(cls, attr_name)
-                if isinstance(attr_value, str) and "." in attr_value:
+                if isinstance(attr_value, str):
                     permissions.append(attr_value)
         return sorted(permissions)
 
@@ -989,7 +1156,12 @@ class Permissions:
         """
         resource_permissions = {}
         for permission in cls.get_all_permissions():
-            resource_type = permission.split(".")[0]
+            if "." in permission:
+                resource_type = permission.split(".", 1)[0]
+            elif ":" in permission:
+                resource_type = permission.split(":", 1)[0]
+            else:
+                resource_type = permission
             if resource_type not in resource_permissions:
                 resource_permissions[resource_type] = []
             resource_permissions[resource_type].append(permission)
@@ -1045,6 +1217,8 @@ class EmailUser(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Track how admin status was granted: "sso" (synced from IdP), "manual" (Admin UI), "api" (API grant), or None (legacy)
+    admin_origin: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Status fields
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -1104,7 +1278,16 @@ class EmailUser(Base):
         """
         if self.locked_until is None:
             return False
-        return utc_now() < self.locked_until
+        locked_until = self.locked_until
+        if locked_until.tzinfo is None:
+            # Treat naive datetimes as UTC (SQLite strips timezone info)
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+        if utc_now() >= locked_until:
+            # Lockout expired: reset counters so users get a fresh attempt window.
+            self.failed_login_attempts = 0
+            self.locked_until = None
+            return False
+        return True
 
     def get_display_name(self) -> str:
         """Get the user's display name.
@@ -1382,6 +1565,51 @@ class EmailAuthEvent(Base):
             EmailAuthEvent: New authentication event
         """
         return cls(user_email=user_email, event_type="password_change", success=success, ip_address=ip_address, user_agent=user_agent)
+
+
+class PasswordResetToken(Base):
+    """One-time password reset token record.
+
+    Stores only a SHA-256 hash of the user-facing token. Tokens are one-time use
+    and expire after a configured duration.
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    user: Mapped["EmailUser"] = relationship("EmailUser")
+
+    __table_args__ = (Index("ix_password_reset_tokens_expires_at", "expires_at"),)
+
+    def is_expired(self) -> bool:
+        """Return whether the reset token has expired.
+
+        Returns:
+            bool: True when `expires_at` is in the past.
+        """
+        if self.expires_at is None:
+            return False
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        return expires_at <= utc_now()
+
+    def is_used(self) -> bool:
+        """Return whether the reset token was already consumed.
+
+        Returns:
+            bool: True when `used_at` is set.
+        """
+        return self.used_at is not None
 
 
 class EmailTeam(Base):
@@ -2751,6 +2979,7 @@ class Tool(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str] = mapped_column(String(767), nullable=True)
+    original_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     integration_type: Mapped[str] = mapped_column(String(20), default="MCP")
     request_type: Mapped[str] = mapped_column(String(20), default="SSE")
@@ -3210,7 +3439,8 @@ class Resource(Base):
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
     __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),
+        UniqueConstraint("team_id", "owner_email", "gateway_id", "uri", name="uq_team_owner_gateway_uri_resource"),
+        Index("uq_team_owner_uri_resource_local", "team_id", "owner_email", "uri", unique=True, postgresql_where=text("gateway_id IS NULL"), sqlite_where=text("gateway_id IS NULL")),
         Index("idx_resources_created_at_id", "created_at", "id"),
     )
 
@@ -3626,8 +3856,9 @@ class Prompt(Base):
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
     __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),
+        UniqueConstraint("team_id", "owner_email", "gateway_id", "name", name="uq_team_owner_gateway_name_prompt"),
         UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name_prompt"),
+        Index("uq_team_owner_name_prompt_local", "team_id", "owner_email", "name", unique=True, postgresql_where=text("gateway_id IS NULL"), sqlite_where=text("gateway_id IS NULL")),
         Index("idx_prompts_created_at_id", "created_at", "id"),
     )
 
@@ -4334,7 +4565,7 @@ class Gateway(Base):
     # federated_prompts: Mapped[List["Prompt"]] = relationship(secondary=prompt_gateway_table, back_populates="federated_with")
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
@@ -4373,6 +4604,11 @@ class Gateway(Base):
     # Per-gateway refresh configuration
     refresh_interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="Per-gateway refresh interval in seconds; NULL uses global default")
     last_refresh_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, comment="Timestamp of the last successful tools/resources/prompts refresh")
+
+    # Gateway mode: 'cache' (default) or 'direct_proxy'
+    # - 'cache': Tools/resources/prompts are cached in database upon gateway registration (current behavior)
+    # - 'direct_proxy': All RPC calls are proxied directly to remote MCP server with no database caching
+    gateway_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="cache", comment="Gateway mode: 'cache' (database caching) or 'direct_proxy' (pass-through mode)")
 
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
@@ -4478,8 +4714,8 @@ class A2AAgent(Base):
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
-    auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param" or None
+    auth_value: Mapped[Optional[str]] = mapped_column(Text)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
         nullable=True,
@@ -4747,9 +4983,9 @@ class OAuthToken(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # OAuth provider's user ID
-    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # MCP Gateway user
-    access_token: Mapped[str] = mapped_column(Text, nullable=False)
-    refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # ContextForge user
+    access_token: Mapped[str] = mapped_column(EncryptedText(), nullable=False)
+    refresh_token: Mapped[Optional[str]] = mapped_column(EncryptedText(), nullable=True)
     token_type: Mapped[str] = mapped_column(String(50), default="Bearer")
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     scopes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
@@ -4773,6 +5009,7 @@ class OAuthState(Base):
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     state: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)  # The state parameter
     code_verifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # PKCE code verifier (RFC 7636)
+    app_user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Requesting user context for token association
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -4890,9 +5127,13 @@ class EmailApiToken(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
 
-    # Unique constraint for user+name combination
+    # Unique constraint for user+name+team_id combination (per-team scope).
+    # The composite UniqueConstraint handles non-NULL team_id rows.  SQL NULL != NULL
+    # semantics mean it cannot protect global-scope tokens (team_id IS NULL), so we add
+    # a partial unique index for that case — matching the pattern used by resources/prompts.
     __table_args__ = (
-        UniqueConstraint("user_email", "name", name="uq_email_api_tokens_user_name"),
+        UniqueConstraint("user_email", "name", "team_id", name="uq_email_api_tokens_user_name_team"),
+        Index("uq_email_api_tokens_user_name_global", "user_email", "name", unique=True, postgresql_where=text("team_id IS NULL"), sqlite_where=text("team_id IS NULL")),
         Index("idx_email_api_tokens_user_email", "user_email"),
         Index("idx_email_api_tokens_jti", "jti"),
         Index("idx_email_api_tokens_expires_at", "expires_at"),
@@ -4957,7 +5198,10 @@ class EmailApiToken(Base):
         """
         if not self.expires_at:
             return False
-        return utc_now() > self.expires_at
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return utc_now() > expires_at
 
     def is_valid(self) -> bool:
         """Check if token is valid (active and not expired).
@@ -5086,6 +5330,7 @@ class SSOProvider(Base):
         token_url (str): OAuth token endpoint
         userinfo_url (str): User info endpoint
         issuer (str): OIDC issuer (optional)
+        jwks_uri (str): OIDC JWKS endpoint for token signature verification (optional)
         trusted_domains (List[str]): Auto-approved email domains
         scope (str): OAuth scope string
         auto_create_users (bool): Auto-create users on first login
@@ -5123,6 +5368,7 @@ class SSOProvider(Base):
     token_url: Mapped[str] = mapped_column(String(500), nullable=False)
     userinfo_url: Mapped[str] = mapped_column(String(500), nullable=False)
     issuer: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # For OIDC
+    jwks_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # OIDC JWKS endpoint for token signature verification
 
     # Provider Settings
     trusted_domains: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
@@ -5233,15 +5479,40 @@ def validate_tool_schema(mapper, connection, target):
 
     Raises:
         ValueError: If the tool input schema is invalid.
+
     """
     # You can use mapper and connection later, if required.
     _ = mapper
     _ = connection
+
+    allowed_validator_names = {
+        "Draft4Validator",
+        "Draft6Validator",
+        "Draft7Validator",
+        "Draft201909Validator",
+        "Draft202012Validator",
+    }
+
     if hasattr(target, "input_schema"):
+        schema = target.input_schema
+        if schema is None:
+            return
+
         try:
-            jsonschema.Draft7Validator.check_schema(target.input_schema)
+            # If $schema is missing, default to Draft 2020-12 as per MCP spec.
+            if schema.get("$schema") is None:
+                validator_cls = jsonschema.Draft202012Validator
+            else:
+                validator_cls = jsonschema.validators.validator_for(schema)
+
+            if validator_cls.__name__ not in allowed_validator_names:
+                logger.warning(f"Unsupported JSON Schema draft: {validator_cls.__name__}")
+
+            validator_cls.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
-            raise ValueError(f"Invalid tool input schema: {str(e)}") from e
+            logger.warning(f"Invalid tool input schema: {str(e)}")
+            if settings.json_schema_validation_strict:
+                raise ValueError(f"Invalid tool input schema: {str(e)}") from e
 
 
 def validate_tool_name(mapper, connection, target):
@@ -5281,11 +5552,35 @@ def validate_prompt_schema(mapper, connection, target):
     # You can use mapper and connection later, if required.
     _ = mapper
     _ = connection
+
+    allowed_validator_names = {
+        "Draft4Validator",
+        "Draft6Validator",
+        "Draft7Validator",
+        "Draft201909Validator",
+        "Draft202012Validator",
+    }
+
     if hasattr(target, "argument_schema"):
+        schema = target.argument_schema
+        if schema is None:
+            return
+
         try:
-            jsonschema.Draft7Validator.check_schema(target.argument_schema)
+            # If $schema is missing, default to Draft 2020-12 as per MCP spec.
+            if schema.get("$schema") is None:
+                validator_cls = jsonschema.Draft202012Validator
+            else:
+                validator_cls = jsonschema.validators.validator_for(schema)
+
+            if validator_cls.__name__ not in allowed_validator_names:
+                logger.warning(f"Unsupported JSON Schema draft: {validator_cls.__name__}")
+
+            validator_cls.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
-            raise ValueError(f"Invalid prompt argument schema: {str(e)}") from e
+            logger.warning(f"Invalid prompt argument schema: {str(e)}")
+            if settings.json_schema_validation_strict:
+                raise ValueError(f"Invalid prompt argument schema: {str(e)}") from e
 
 
 # Register validation listeners
@@ -5338,7 +5633,16 @@ def get_db() -> Generator[Session, Any, None]:
         db.close()
 
 
-def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = None, skip_locked: bool = False, options: Optional[List] = None):
+def get_for_update(
+    db: Session,
+    model,
+    entity_id=None,
+    where: Optional[Any] = None,
+    skip_locked: bool = False,
+    nowait: bool = False,
+    lock_timeout_ms: Optional[int] = None,
+    options: Optional[List] = None,
+):
     """Get entity with row lock for update operations.
 
     Args:
@@ -5349,10 +5653,19 @@ def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = No
         skip_locked: If False (default), wait for locked rows. If True, skip locked
             rows (returns None if row is locked). Use False for conflict checks and
             entity updates to ensure consistency. Use True only for job-queue patterns.
+        nowait: If True, fail immediately if row is locked (raises OperationalError).
+            Use this for operations that should not block. Default False.
+        lock_timeout_ms: Optional lock timeout in milliseconds for PostgreSQL.
+            If set, the query will wait at most this long for locks before failing.
+            Only applies to PostgreSQL. Default None (use database default).
         options: Optional list of loader options (e.g., selectinload(...))
 
     Returns:
         The model instance or None
+
+    Raises:
+        sqlalchemy.exc.OperationalError: If nowait=True and row is locked, or if
+            lock_timeout_ms is exceeded.
 
     Notes:
         - On PostgreSQL this acquires a FOR UPDATE row lock.
@@ -5385,54 +5698,17 @@ def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = No
             return db.get(model, entity_id)
         return db.execute(stmt).scalar_one_or_none()
 
-    # PostgreSQL: apply FOR UPDATE
-    stmt = stmt.with_for_update(skip_locked=skip_locked)
+    # PostgreSQL: set lock timeout if specified
+    if lock_timeout_ms is not None:
+        db.execute(text(f"SET LOCAL lock_timeout = '{lock_timeout_ms}ms'"))
+
+    # PostgreSQL: apply FOR UPDATE with optional nowait
+    stmt = stmt.with_for_update(skip_locked=skip_locked, nowait=nowait)
     return db.execute(stmt).scalar_one_or_none()
 
 
-@contextmanager
-def fresh_db_session() -> Generator[Session, Any, None]:
-    """Get a fresh database session for isolated operations.
-
-    Use this when you need a new session independent of the request lifecycle,
-    such as for metrics recording after releasing the main session.
-
-    This is a synchronous context manager that creates a new database session
-    from the SessionLocal factory. The session is automatically committed on
-    successful exit or rolled back on exception, then closed.
-
-    Note: Prior to this fix, sessions were closed without commit, causing
-    PostgreSQL to implicitly rollback all transactions (even read-only SELECTs).
-    This was causing ~40% rollback rate under load.
-
-    Yields:
-        Session: A fresh SQLAlchemy database session.
-
-    Raises:
-        Exception: Any exception raised during database operations is re-raised
-            after rolling back the transaction.
-
-    Examples:
-        >>> from mcpgateway.db import fresh_db_session
-        >>> with fresh_db_session() as db:
-        ...     hasattr(db, 'query')
-        True
-    """
-    db = SessionLocal()
-    try:
-        yield db
-        db.commit()  # Commit on successful exit (even for read-only operations)
-    except Exception:
-        try:
-            db.rollback()  # Explicit rollback on exception
-        except Exception:
-            try:
-                db.invalidate()  # Connection broken, discard from pool
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
-    finally:
-        db.close()
+# Using the existing get_db generator to create a context manager for fresh sessions
+fresh_db_session = contextmanager(get_db)  # type: ignore
 
 
 def patch_string_columns_for_mariadb(base, engine_) -> None:
@@ -6121,7 +6397,8 @@ def set_email_team_slug(_mapper, _conn, target):
         _conn: Connection
         target: Target EmailTeam instance
     """
-    target.slug = slugify(target.name)
+    if not target.slug:
+        target.slug = slugify(target.name)
 
 
 @event.listens_for(Tool, "before_insert")
@@ -6134,6 +6411,11 @@ def set_custom_name_and_slug(mapper, connection, target):  # pylint: disable=unu
     - Calculates custom_name_slug from custom_name using slugify.
     - Updates name to gateway_slug + separator + custom_name_slug.
     - Sets display_name to custom_name if not provided.
+
+    Note: The gateway relationship must be explicitly set (via target.gateway = gateway_obj)
+    before adding the tool to the session if gateway namespacing is needed. If only
+    gateway_id is set without the relationship, we look up the gateway name via a direct
+    SQL query.
 
     Args:
         mapper: SQLAlchemy mapper for the Tool model.
@@ -6148,8 +6430,27 @@ def set_custom_name_and_slug(mapper, connection, target):  # pylint: disable=unu
         target.display_name = target.custom_name
     # Always update custom_name_slug from custom_name
     target.custom_name_slug = slugify(target.custom_name)
-    # Update name field
-    gateway_slug = slugify(target.gateway.name) if target.gateway else ""
+
+    # Get gateway_slug - check for explicitly set gateway relationship first
+    gateway_slug = ""
+    if target.gateway:
+        # Gateway relationship is already loaded
+        gateway_slug = slugify(target.gateway.name)
+    elif target.gateway_id:
+        # Gateway relationship not loaded but gateway_id is set
+        # Use a cached gateway name if available from gateway_name_cache attribute
+        if hasattr(target, "gateway_name_cache") and target.gateway_name_cache:
+            gateway_slug = slugify(target.gateway_name_cache)
+        else:
+            # Fall back to querying the database
+            try:
+                result = connection.execute(text("SELECT name FROM gateways WHERE id = :gw_id"), {"gw_id": target.gateway_id})
+                row = result.fetchone()
+                if row:
+                    gateway_slug = slugify(row[0])
+            except Exception:  # nosec B110 - intentionally proceed without prefix on failure
+                pass
+
     if gateway_slug:
         sep = settings.gateway_tool_name_separator
         target.name = f"{gateway_slug}{sep}{target.custom_name_slug}"
@@ -6168,6 +6469,11 @@ def set_prompt_name_and_slug(mapper, connection, target):  # pylint: disable=unu
     - Calculates custom_name_slug from custom_name.
     - Updates name to gateway_slug + separator + custom_name_slug.
 
+    Note: The gateway relationship must be explicitly set (via target.gateway = gateway_obj)
+    before adding the prompt to the session if gateway namespacing is needed. If only
+    gateway_id is set without the relationship, we look up the gateway name via a direct
+    SQL query.
+
     Args:
         mapper: SQLAlchemy mapper for the Prompt model.
         connection: Database connection for the insert/update.
@@ -6180,7 +6486,27 @@ def set_prompt_name_and_slug(mapper, connection, target):  # pylint: disable=unu
     if not target.display_name:
         target.display_name = target.custom_name
     target.custom_name_slug = slugify(target.custom_name)
-    gateway_slug = slugify(target.gateway.name) if target.gateway else ""
+
+    # Get gateway_slug - check for explicitly set gateway relationship first
+    gateway_slug = ""
+    if target.gateway:
+        # Gateway relationship is already loaded
+        gateway_slug = slugify(target.gateway.name)
+    elif target.gateway_id:
+        # Gateway relationship not loaded but gateway_id is set
+        # Use a cached gateway name if available from gateway_name_cache attribute
+        if hasattr(target, "gateway_name_cache") and target.gateway_name_cache:
+            gateway_slug = slugify(target.gateway_name_cache)
+        else:
+            # Fall back to querying the database
+            try:
+                result = connection.execute(text("SELECT name FROM gateways WHERE id = :gw_id"), {"gw_id": target.gateway_id})
+                row = result.fetchone()
+                if row:
+                    gateway_slug = slugify(row[0])
+            except Exception:  # nosec B110 - intentionally proceed without prefix on failure
+                pass
+
     if gateway_slug:
         sep = settings.gateway_tool_name_separator
         target.name = f"{gateway_slug}{sep}{target.custom_name_slug}"

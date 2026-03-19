@@ -1,6 +1,6 @@
 # Performance Profiling Guide
 
-This guide covers tools and techniques for profiling MCP Gateway performance under load. Use these methods to identify bottlenecks, optimize queries, and diagnose production issues.
+This guide covers tools and techniques for profiling ContextForge performance under load. Use these methods to identify bottlenecks, optimize queries, and diagnose production issues.
 
 ---
 
@@ -16,6 +16,7 @@ This guide covers tools and techniques for profiling MCP Gateway performance und
 | **memray** | Python memory profiling | Find memory leaks and allocation hotspots |
 | **docker stats** | Resource monitoring | Track CPU/memory usage |
 | **Redis CLI** | Cache analysis | Check hit rates |
+| **perf / cargo flamegraph** | Rust CPU profiling | Inspect Rust MCP runtime hotspots |
 
 ---
 
@@ -237,6 +238,39 @@ py-spy record -o flamegraph.svg -- python -m mcpgateway
 
 ---
 
+## Rust MCP Runtime Profiling
+
+For Rust-local profiling of the MCP runtime crate:
+
+```bash
+make -C tools_rust/mcp_runtime setup-profiling
+make -C tools_rust/mcp_runtime flamegraph-test
+make -C tools_rust/mcp_runtime flamegraph-test-rmcp
+```
+
+These targets generate flamegraphs under:
+
+```text
+tools_rust/mcp_runtime/profiles/
+```
+
+Use them to inspect Rust-internal startup and hot-path behavior in the runtime
+crate itself.
+
+For live profiling of the compose-backed Rust runtime under load:
+
+```bash
+ps -eo pid,cmd | grep contextforge-mcp-runtime
+sudo perf record -F 99 -g -p <pid> -- sleep 20
+sudo perf report --stdio
+```
+
+Use live `perf` during a real benchmark when you want steady-state behavior.
+Use the crate-local flamegraph targets when you want in-process Rust visibility
+without the rest of the stack.
+
+---
+
 ## Memory Profiling with memray
 
 [memray](https://github.com/bloomberg/memray) is a memory profiler for Python that tracks allocations in Python code, native extension modules, and the Python interpreter itself. It's ideal for finding memory leaks, high-water marks, and allocation hotspots.
@@ -343,6 +377,7 @@ memray table worker_profile.bin | head -50
 - Python version must match between memray and the target process (e.g., memray compiled for Python 3.13 won't work with Python 3.12 containers)
 - Requires ptrace permissions (`--cap-add=SYS_PTRACE` or privileged mode)
 - For production containers without pip, consider:
+
   1. Building a debug image with memray pre-installed
   2. Using `memray run` locally to reproduce the issue
   3. Using py-spy for CPU profiling (works cross-version and is more portable)
@@ -350,16 +385,19 @@ memray table worker_profile.bin | head -50
 ### Interpreting memray Output
 
 **Flamegraph:**
+
 - **Width** = amount of memory allocated by that call stack
 - **Color**: Red = Python code, Green = C extensions, Blue = Python internals
 - Click on frames to zoom in
 
 **Table view columns:**
+
 - `Total memory` = all memory allocated by this function and its callees
 - `Own memory` = memory allocated directly by this function
 - `Allocations` = number of allocation calls
 
 **Common patterns to look for:**
+
 - Large allocations in template rendering (Jinja2)
 - JSON serialization of large datasets
 - ORM model instantiation (SQLAlchemy)
@@ -535,6 +573,71 @@ ORDER BY seq_tup_read DESC LIMIT 10;
 
 ---
 
+## MCP Protocol Profiling
+
+The MCP Streamable HTTP transport (`/servers/{id}/mcp`) has a different performance profile from the REST API (`/rpc`). Use the dedicated MCP load test to isolate protocol overhead.
+
+### MCP vs REST: Quick Comparison
+
+```bash
+# Run MCP-only load test
+make load-test-mcp-protocol
+
+# Compare with general load test (includes REST + admin)
+make load-test-cli
+```
+
+The MCP path processes requests through the MCP SDK session manager, which adds JSON-RPC parsing, context variable management, and per-request auth/RBAC database queries. The `/rpc` endpoint uses Redis-backed caching for tool lookups and auth, which the MCP transport path does not fully leverage. Under load, this manifests as significantly higher PgBouncer and PostgreSQL CPU on MCP workloads vs REST workloads for the same RPS.
+
+### Bottleneck Triage Table
+
+Use this table to identify which layer is the bottleneck:
+
+| Symptom | Bottleneck Layer | Investigation |
+|---------|-----------------|---------------|
+| Gateway CPU >300% per replica | Gateway compute (middleware, MCP SDK) | py-spy flamegraph on a gateway worker |
+| PgBouncer CPU >80% | Database connection pressure | Check `pg_stat_activity`, reduce DB queries per request |
+| PostgreSQL CPU >100% | Query overhead (seq scans, RBAC lookups) | `pg_stat_user_tables` for seq scan counts |
+| Redis CPU <1% during MCP load | MCP path not using Redis cache | Compare with `/rpc` which does use Redis |
+| Upstream MCP server CPU high | Tool execution overhead | Profile the upstream MCP server separately |
+| nginx CPU >30% | Proxy overhead (unlikely) | Check keepalive, connection reuse |
+| High p99 but low p50 | Tail latency from GC or lock contention | py-spy dump to check for blocked threads |
+
+### MCP Profiling Session
+
+```bash
+# 1. Reset DB stats
+docker exec mcp-context-forge-postgres-1 psql -U postgres -d mcp -c "SELECT pg_stat_reset();"
+
+# 2. Start MCP-specific load test in background
+make load-test-mcp-protocol &
+
+# 3. Capture container stats during load
+docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" \
+  | grep -E "gateway|postgres|redis|pgbouncer|nginx"
+
+# 4. py-spy flamegraph on a gateway worker
+WORKER_PID=$(docker top mcp-context-forge-gateway-1 | grep worker | head -1 | awk '{print $2}')
+sudo py-spy record -o mcp_flamegraph.svg --pid $WORKER_PID -d 15 --subprocesses
+
+# 5. Check which DB tables are hammered
+docker exec mcp-context-forge-postgres-1 psql -U postgres -d mcp -c "
+SELECT relname, seq_scan, seq_tup_read, idx_scan
+FROM pg_stat_user_tables WHERE seq_tup_read > 0
+ORDER BY seq_tup_read DESC LIMIT 10;"
+
+# 6. Check Redis cache utilization
+docker exec mcp-context-forge-redis-1 redis-cli info stats | grep -E "hits|misses"
+```
+
+**What to look for:**
+
+- If PgBouncer/PostgreSQL CPU is high but Redis is idle, the MCP path is bypassing the cache layer.
+- If gateway CPU is the constraint, look at middleware overhead (auth, RBAC, validation) in the flamegraph.
+- If upstream MCP server CPU is the constraint, the bottleneck is in tool execution, not the gateway.
+
+---
+
 ## Common Performance Issues
 
 ### Issue: High Sequential Scan Count
@@ -542,11 +645,13 @@ ORDER BY seq_tup_read DESC LIMIT 10;
 **Symptom:** `seq_tup_read` in billions
 
 **Causes:**
+
 - Missing index
 - Non-selective filter (e.g., 7-day filter matches all recent data)
 - Short cache TTL causing repeated queries
 
 **Solutions:**
+
 - Add covering index
 - Increase cache TTL
 - Add materialized view for aggregations
@@ -556,11 +661,13 @@ ORDER BY seq_tup_read DESC LIMIT 10;
 **Symptom:** 50+ connections in `idle in transaction` state
 
 **Causes:**
+
 - N+1 query patterns
 - Long-running requests holding transactions
 - Missing connection pool limits
 
 **Solutions:**
+
 - Use batch queries instead of loops
 - Set `idle_in_transaction_session_timeout`
 - Optimize slow queries
@@ -581,6 +688,7 @@ GROUP BY left(query, 50);
 ```
 
 **Causes:**
+
 - PgBouncer in `transaction` mode holds backend connections until `COMMIT`/`ROLLBACK`
 - Health endpoints using `Depends(get_db)` rely on dependency cleanup, which may not execute on timeout/cancellation
 - `async def` endpoints calling blocking SQLAlchemy code on event loop thread
@@ -680,20 +788,27 @@ except Exception as e:
 **Symptom:** Gateway at 600%+ CPU
 
 **Causes:**
-- Template rendering overhead
+
+- Template rendering overhead (admin UI)
 - JSON serialization of large responses
 - Pydantic validation overhead
+- Middleware overhead from enabled-but-unused features
+- Too many gunicorn workers causing context switching
 
 **Solutions:**
+
 - Enable response caching
 - Paginate large result sets
 - Use orjson for serialization (enabled by default)
+- Disable unused features (A2A, catalog, LLM chat, admin UI) — see [disable unused features](../manage/tuning.md#10---disable-unused-features) in the tuning guide
+- Tune `GUNICORN_WORKERS` to match CPU cores (not exceed them)
 
 ---
 
 ## See Also
 
+- [Gateway Tuning Guide](../manage/tuning.md) - Environment variables, session pool, connection pool tuning
 - [Database Performance Guide](db-performance.md) - N+1 detection and query logging
+- [Performance Architecture](../architecture/performance-architecture.md) - MCP request path, caching layers, scaling capacity
 - [Performance Testing](../testing/performance.md) - Load testing with hey
 - [Scaling Guide](../manage/scale.md) - Production scaling configuration
-- [Issue #1906](https://github.com/IBM/mcp-context-forge/issues/1906) - Metrics cache optimization

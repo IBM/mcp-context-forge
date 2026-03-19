@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #───────────────────────────────────────────────────────────────────────────────
 #  Script : run-server.sh
-#  Purpose: Launch the MCP Gateway's Plugin API
+#  Purpose: Launch ContextForge's Plugin API
 #
 #  Description:
 #    This script launches an API server using
@@ -40,4 +40,4 @@ CHUK_MCP_CONFIG_PATH=${CHUK_MCP_CONFIG_PATH:-./resources/runtime/config.yaml}
 
 echo "✓  Using plugin config from: ${PLUGINS_CONFIG_PATH}"
 echo "✓  Running API server with config from: ${CHUK_MCP_CONFIG_PATH}"
-python ${API_SERVER_SCRIPT}
+TRANSFORMERS_NO_TF=1 python ${API_SERVER_SCRIPT}

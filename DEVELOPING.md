@@ -1,6 +1,6 @@
-# MCP Gateway Development Guide
+# ContextForge Development Guide
 
-This guide provides comprehensive information for developers working on the MCP Gateway (ContextForge) project.
+This guide provides comprehensive information for developers working on ContextForge project.
 
 ## Table of Contents
 - [Quick Start](#quick-start)
@@ -217,6 +217,43 @@ make doctest test htmlcov smoketest
 make flake8 bandit interrogate pylint verify
 ```
 
+### Nginx Cache Management
+
+The nginx cache in docker-compose is **ephemeral** (not persisted to a volume) for local development. This means the cache is automatically cleared when containers are removed (via `compose-down` / `compose-up`), eliminating stale content issues after rebuilding the gateway.
+
+```bash
+# Standard development workflow (cache clears on container removal)
+make docker-prod                    # Rebuild gateway image
+make compose-down                   # Remove containers (ephemeral cache cleared)
+make compose-up                     # Start with fresh cache
+
+# Manual cache clearing while containers are running
+make compose-cache-clear            # Clears cache inside running nginx container
+
+# For development without nginx proxy
+# Use port 4444 directly (bypasses nginx and cache entirely)
+# Uncomment in docker-compose.yml:
+#   gateway:
+#     ports:
+#       - "4444:4444"
+```
+
+**Cache behavior:**
+
+- **Ephemeral storage**: Cache exists only in the container's writable layer
+- **Auto-cleared**: Removed when containers are destroyed (`compose-down` / `compose-up`)
+- **Static assets**: Cached for 30 days (while container runs)
+- **API responses**: Cached for 5 minutes
+- **Admin UI pages**: Cached for 5 seconds
+
+**For production deployments:**
+Uncomment the `nginx_cache` volume in `docker-compose.yml` to persist cache across restarts:
+
+```yaml
+volumes:
+  - nginx_cache:/var/cache/nginx # Persistent cache storage
+```
+
 ## Code Quality
 
 ### Style Guidelines
@@ -234,11 +271,12 @@ make flake8 bandit interrogate pylint verify
 
 ```bash
 # Format code
-make black              # Python formatter
-make isort              # Import sorter
+make black              # Python formatter (CHECK=1 for dry-run)
+make isort              # Import sorter (CHECK=1 for dry-run)
 make autoflake          # Remove unused imports
 
 # Lint code
+make ruff               # Ruff linter (RUFF_MODE=check|fix|format)
 make flake8             # Style checker
 make pylint             # Advanced linting
 make mypy               # Type checking
@@ -421,7 +459,7 @@ plugins:
 ```bash
 # Enable plugin system
 export PLUGINS_ENABLED=true
-export PLUGIN_CONFIG_FILE=plugins/config.yaml
+export PLUGINS_CONFIG_FILE=plugins/config.yaml
 
 # Test plugin
 make dev
@@ -474,7 +512,7 @@ curl -X POST http://localhost:4444/gateways \
 npm install -g supergateway
 npx supergateway --stdio "uvx mcp-server-git"
 
-# Register with MCP Gateway
+# Register with ContextForge
 curl -X POST http://localhost:4444/gateways \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -505,7 +543,7 @@ python3 -m debugpy --listen 5678 --wait-for-client -m mcpgateway
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug MCP Gateway",
+            "name": "Debug ContextForge",
             "type": "python",
             "request": "launch",
             "module": "mcpgateway",

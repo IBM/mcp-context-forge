@@ -1,6 +1,10 @@
 # Cline (VS Code Extension)
 
-[Cline](https://cline.bot/) is a Visual Studio Code extension that brings AI-powered coding assistance directly into your editor. It supports the Model Context Protocol (MCP), enabling seamless integration with MCP-compatible servers like MCP Gateway.
+[Cline](https://cline.bot/) is a Visual Studio Code extension that brings AI-powered coding assistance directly into your editor. It supports the Model Context Protocol (MCP), enabling seamless integration with MCP-compatible servers like ContextForge.
+
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
 
 ---
 
@@ -16,22 +20,25 @@
 ## 🛠 Installation
 
 1. **Install Cline Extension**:
+
    - Open VS Code.
    - Navigate to the Extensions view (`Ctrl+Shift+X` or `Cmd+Shift+X`).
    - Search for "Cline" and click "Install".
 
 2. **Sign In to Cline**:
+
    - Click the Cline icon in the Activity Bar.
    - Follow the prompts to sign in or create a new account at [app.cline.bot](https://app.cline.bot/).
    - New users receive free credits; no credit card required.
 
 ---
 
-## 🔗 Connecting to MCP Gateway
+## 🔗 Connecting to ContextForge
 
-To integrate Cline with your MCP Gateway:
+To integrate Cline with your ContextForge:
 
 1. **Configure MCP Server**:
+
    - Open the Cline settings in VS Code.
    - Navigate to the MCP Servers section.
    - Add a new MCP server with the following configuration under mcpServers as shown below:
@@ -60,11 +67,13 @@ To integrate Cline with your MCP Gateway:
      ```
 
 2. **Enable the MCP Server**:
+
    - Ensure the newly added MCP server is enabled in the Cline settings.
 
 3. **Verify Connection**:
+
    - In the Cline interface, navigate to the MCP Servers section.
-   - Confirm that the MCP Gateway server is listed and shows a green status indicator.
+   - Confirm that ContextForge server is listed and shows a green status indicator.
 
 ---
 
@@ -72,9 +81,11 @@ To integrate Cline with your MCP Gateway:
 
 Once connected:
 
-- **Discover Tools**: Cline will automatically fetch and list available tools from the MCP Gateway.
+- **Discover Tools**: Cline will automatically fetch and list available tools from ContextForge.
 - **Invoke Tools**: Use natural language prompts in Cline to invoke tools. For example:
+
   - "Run the `hello_world` tool with the argument `name: Alice`."
+
 - **Monitor Responses**: Cline will display the tool's output directly within the chat interface.
 
 ---

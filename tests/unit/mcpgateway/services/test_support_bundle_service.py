@@ -8,6 +8,7 @@ Tests bundle generation, sanitization, and file operations.
 """
 
 # Standard
+import builtins
 from pathlib import Path
 import tempfile
 import zipfile
@@ -127,6 +128,22 @@ class TestSupportBundleService:
         assert info["platform"]["system"]
         assert info["python"]["version"]
 
+    def test_collect_system_info_without_psutil(self, monkeypatch: pytest.MonkeyPatch):
+        """Test system info collection falls back when psutil isn't installed."""
+        service = SupportBundleService()
+
+        real_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
+            if name == "psutil":
+                raise ImportError("psutil missing")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        info = service._collect_system_info()
+        assert info["system"]["note"].startswith("psutil not installed")
+
     def test_collect_env_config(self):
         """Test environment configuration collection with sanitization."""
         service = SupportBundleService()
@@ -159,6 +176,34 @@ class TestSupportBundleService:
         assert "sso_entra_client_secret" not in config
         assert "sso_generic_client_secret" not in config
 
+    def test_collect_settings_sanitizes_only_database_url(self, monkeypatch: pytest.MonkeyPatch):
+        """Cover database_url present / redis_url absent branches."""
+        service = SupportBundleService()
+
+        def fake_dump(*, exclude=None):  # noqa: ARG001
+            return {"database_url": "postgresql://user:password@localhost:5432/db"}
+
+        monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.model_dump", fake_dump)
+
+        config = service._collect_settings()
+        assert "database_url" in config
+        assert "password" not in config["database_url"]
+        assert "redis_url" not in config
+
+    def test_collect_settings_sanitizes_only_redis_url(self, monkeypatch: pytest.MonkeyPatch):
+        """Cover redis_url present / database_url absent branches."""
+        service = SupportBundleService()
+
+        def fake_dump(*, exclude=None):  # noqa: ARG001
+            return {"redis_url": "redis://admin:secret123@redis.example.com:6379/0"}
+
+        monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.model_dump", fake_dump)
+
+        config = service._collect_settings()
+        assert "redis_url" in config
+        assert "secret123" not in config["redis_url"]
+        assert "database_url" not in config
+
     def test_collect_logs_file_not_found(self):
         """Test log collection when file doesn't exist."""
         service = SupportBundleService()
@@ -171,6 +216,79 @@ class TestSupportBundleService:
             # Should return a message about missing file
             for log_content in logs.values():
                 assert "[Log file not found]" in log_content or "[Showing last" in log_content or isinstance(log_content, str)
+
+    def test_collect_logs_file_too_large(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Cover log collection branch for log files exceeding max_log_size_mb."""
+        service = SupportBundleService()
+
+        log_file = "mcpgateway.log"
+        (tmp_path / log_file).write_text("x" * 256, encoding="utf-8")  # ~0.0002 MB
+
+        monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.log_folder", str(tmp_path))
+        monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.log_file", log_file)
+
+        config = SupportBundleConfig(log_tail_lines=100, max_log_size_mb=0.00001)
+        logs = service._collect_logs(config)
+        assert "too large" in logs[log_file]
+
+    def test_collect_logs_tails_and_sanitizes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Cover tailing and sanitization when log file exists and is within size limit."""
+        service = SupportBundleService()
+
+        log_file = "mcpgateway.log"
+        log_path = tmp_path / log_file
+        log_path.write_text(
+            "line0\nline1\nline2\npassword: \"secret123\"\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.log_folder", str(tmp_path))
+        monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.log_file", log_file)
+
+        config = SupportBundleConfig(log_tail_lines=2, max_log_size_mb=10.0)
+        logs = service._collect_logs(config)
+
+        content = logs[log_file]
+        assert "[Showing last 2 lines]" in content
+        assert "secret123" not in content
+        assert "*****" in content
+
+    def test_collect_logs_read_error_is_reported(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Cover exception path when reading an existing log file fails."""
+        service = SupportBundleService()
+
+        log_file = "mcpgateway.log"
+        (tmp_path / log_file).write_text("ok\n", encoding="utf-8")
+
+        monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.log_folder", str(tmp_path))
+        monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.log_file", log_file)
+
+        def bad_open(*args, **kwargs):  # noqa: ARG001
+            raise OSError("read failed")
+
+        monkeypatch.setattr(builtins, "open", bad_open)
+
+        config = SupportBundleConfig(log_tail_lines=100, max_log_size_mb=10.0)
+        logs = service._collect_logs(config)
+        assert "Error reading log file" in logs[log_file]
+
+    def test_collect_logs_does_not_tail_when_few_lines(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Cover branch where log file is shorter than log_tail_lines (no tailing)."""
+        service = SupportBundleService()
+
+        log_file = "mcpgateway.log"
+        (tmp_path / log_file).write_text("password: secret123\nline1\n", encoding="utf-8")
+
+        monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.log_folder", str(tmp_path))
+        monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.log_file", log_file)
+
+        config = SupportBundleConfig(log_tail_lines=100, max_log_size_mb=10.0)
+        logs = service._collect_logs(config)
+
+        content = logs[log_file]
+        assert "[Showing last" not in content
+        assert "secret123" not in content
+        assert "*****" in content
 
     def test_create_manifest(self):
         """Test manifest creation."""

@@ -1,13 +1,13 @@
-# Using MCP Gateway
+# Using ContextForge
 
-This section focuses on how to use MCP Gateway effectively as a developer, integrator, or end user.
+This section focuses on how to use ContextForge effectively as a developer, integrator, or end user.
 
 ---
 
 ## 👨💻 Typical Use Cases
 
 - You want to expose tools, prompts, or resources via MCP.
-- You want to use `mcpgateway-wrapper` to connect to any MCP Gateway service using `stdio`, while still supporting authentication to the gateway.
+- You want to use `mcpgateway-wrapper` to connect to any ContextForge service using `stdio`, while still supporting authentication to the gateway.
 - You're building a client or agent framework that speaks the MCP protocol.
 - You want to consume Gateway APIs from an LLM agent, browser app, or CLI tool.
 
@@ -32,6 +32,10 @@ All Gateway usage requires authentication unless `AUTH_REQUIRED=false`. Refer to
 curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/tools
 ```
 
-Or use Basic Auth for the Admin UI and `/admin` routes.
+The Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`). Basic auth is only used if you explicitly enable `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`.
+
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
 
 ---

@@ -31,8 +31,18 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: pgadmin
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           image: "{{ .Values.pgadmin.image.repository }}:{{ .Values.pgadmin.image.tag }}"
           imagePullPolicy: {{ .Values.pgadmin.image.pullPolicy }}
 
@@ -60,8 +70,8 @@ spec:
             - name: PGADMIN_DEFAULT_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.passwordKey | default "password" }}{{ else }}POSTGRES_PASSWORD{{ end }}
+                  name: {{ include "mcp-stack.pgadminSecretName" . | trim }}
+                  key: {{ .Values.pgadmin.passwordKey | default "PGADMIN_DEFAULT_PASSWORD" }}
             - name: PGADMIN_LISTEN_PORT
               value: "{{ .Values.pgadmin.service.port }}"
 

@@ -13,6 +13,7 @@ spec:
   selector:
     app: {{ include "mcp-stack.fullname" . }}-mcpgateway
   ports:
-    - port: {{ .Values.mcpContextForge.service.port }}
+    - name: http
+      port: {{ .Values.mcpContextForge.service.port }}
       targetPort: {{ .Values.mcpContextForge.containerPort }}
       protocol: TCP

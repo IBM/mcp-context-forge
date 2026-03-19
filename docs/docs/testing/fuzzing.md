@@ -1,6 +1,6 @@
 # Fuzz Testing
 
-MCP Gateway includes comprehensive fuzz testing to automatically discover edge cases, security vulnerabilities, and crashes through property-based testing, coverage-guided fuzzing, and security-focused validation.
+ContextForge includes comprehensive fuzz testing to automatically discover edge cases, security vulnerabilities, and crashes through property-based testing, coverage-guided fuzzing, and security-focused validation.
 
 ## Overview
 
@@ -271,6 +271,7 @@ Notes:
 - Ensure the server exposes `http://localhost:4444/openapi.json`.
 - For authenticated specs, supply tokens/headers to RESTler as needed.
 - Increase `--time_budget` for deeper exploration in nightly runs.
+
  - In CI, prefer running `fuzz-restler-auto` only on runners with Docker available, or skip otherwise.
 
 ## Understanding Results

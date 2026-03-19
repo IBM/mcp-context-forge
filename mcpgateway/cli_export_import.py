@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Export/Import CLI Commands.
-This module provides CLI commands for exporting and importing MCP Gateway configuration.
+This module provides CLI commands for exporting and importing ContextForge configuration.
 It implements the export/import CLI functionality according to the specification including:
 - Complete configuration export with filtering options
 - Configuration import with conflict resolution strategies
@@ -47,16 +47,20 @@ class AuthenticationError(CLIError):
 async def get_auth_token() -> Optional[str]:
     """Get authentication token from environment or config.
 
+    Preference order:
+    1. MCPGATEWAY_BEARER_TOKEN environment variable (JWT) - preferred
+    2. Basic auth fallback (only if API_ALLOW_BASIC_AUTH=true)
+
     Returns:
         Authentication token string or None if not configured
     """
-    # Try environment variable first
+    # Try environment variable first (preferred)
     token = os.getenv("MCPGATEWAY_BEARER_TOKEN")
     if token:
         return token
 
-    # Fallback to basic auth if configured
-    if settings.basic_auth_user and settings.basic_auth_password:
+    # Fallback to basic auth only if enabled and configured
+    if settings.api_allow_basic_auth and settings.basic_auth_user and settings.basic_auth_password:
         creds = base64.b64encode(f"{settings.basic_auth_user}:{settings.basic_auth_password}".encode()).decode()
         return f"Basic {creds}"
 
@@ -265,7 +269,7 @@ def create_parser() -> argparse.ArgumentParser:
     Returns:
         Configured argument parser
     """
-    parser = argparse.ArgumentParser(prog="mcpgateway", description="MCP Gateway configuration export/import tool")
+    parser = argparse.ArgumentParser(prog="mcpgateway", description="ContextForge configuration export/import tool")
 
     parser.add_argument("--version", "-V", action="version", version=f"mcpgateway {__version__}")
 

@@ -33,10 +33,28 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: mcp-fast-time-server
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           image: "{{ .Values.mcpFastTimeServer.image.repository }}:{{ .Values.mcpFastTimeServer.image.tag }}"
           imagePullPolicy: {{ .Values.mcpFastTimeServer.image.pullPolicy }}
+          {{- if .Values.mcpFastTimeServer.command }}
+          command:
+{{- toYaml .Values.mcpFastTimeServer.command | nindent 12 }}
+          {{- end }}
+          {{- if .Values.mcpFastTimeServer.args }}
+          args:
+{{- toYaml .Values.mcpFastTimeServer.args | nindent 12 }}
+          {{- end }}
 
           # ─── Service port exposed inside the pod ───
           ports:

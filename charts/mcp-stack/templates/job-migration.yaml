@@ -26,9 +26,19 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
 
       containers:
         - name: migration
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
           imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
 
@@ -103,6 +113,14 @@ spec:
             # ---------- LOGGING ----------
             - name: LOG_LEVEL
               value: "INFO"
+          envFrom:
+            - secretRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-secret
+            - configMapRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-config
+            {{- if .Values.mcpContextForge.extraEnvFrom }}
+            {{- toYaml .Values.mcpContextForge.extraEnvFrom | nindent 12 }}
+            {{- end }}
           # Resource limits
           resources:
 {{- toYaml .Values.migration.resources | nindent 12 }}

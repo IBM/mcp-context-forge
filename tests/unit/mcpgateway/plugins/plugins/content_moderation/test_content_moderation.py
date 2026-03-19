@@ -473,7 +473,10 @@ class TestContentModerationPlugin:
 
         long_text = "This is a very long text " * 20  # Much longer than 50 chars
 
-        # Mock the actual moderation call to verify truncated text length
+        # Mock all providers so no real HTTP calls are made.
+        # Primary (ibm_watson) raises to trigger fallback chain down to patterns.
+        plugin._moderate_with_ibm_watson = AsyncMock(side_effect=Exception("mocked"))
+        plugin._moderate_with_ibm_granite = AsyncMock(side_effect=Exception("mocked"))
         plugin._moderate_with_patterns = AsyncMock(return_value=MagicMock(
             flagged=False,
             action=ModerationAction.WARN,

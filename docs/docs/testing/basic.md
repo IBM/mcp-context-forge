@@ -1,6 +1,6 @@
-# MCP Gateway - Basic
+# ContextForge - Basic
 
-Test script for MCP Gateway development environments.
+Test script for ContextForge development environments.
 Verifies API readiness, JWT auth, Gateway/Tool/Server lifecycle, and RPC invocation.
 
 ---
@@ -29,6 +29,9 @@ Gateway will listen on:
 * Swagger   → [https://localhost:4444/docs](https://localhost:4444/docs)
 * ReDoc     → [https://localhost:4444/redoc](https://localhost:4444/redoc)
 
+!!! tip "Docs authentication"
+    `/docs` and `/redoc` are JWT-protected by default. Log in to the Admin UI to get a session cookie, or set `DOCS_ALLOW_BASIC_AUTH=true` for Basic auth.
+
 ---
 
 ## 🔑 Authentication
@@ -42,7 +45,7 @@ export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u
 curl -s -k -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" https://localhost:4444/health
 ```
 
-Expected: `{"status":"ok"}`
+Expected: `{"status":"healthy"}`
 
 #### Remote gateway token (peer)
 
@@ -239,7 +242,7 @@ This starts:
 * SSE endpoint: `http://localhost:8000/sse`
 * Message POST: `http://localhost:8000/message`
 
-To register it with the MCP Gateway:
+To register it with ContextForge:
 
 ```bash
 export MY_MCP_TOKEN="optional-auth-header-if-needed"
@@ -311,7 +314,7 @@ This smoke test validates:
 * ✅ Virtual server creation
 * ✅ SSE subscription and live messaging
 * ✅ JSON-RPC invocation flow
-* ✅ Connecting MCP Inspector to the MCP Gateway
+* ✅ Connecting MCP Inspector to ContextForge
 * ✅ Connecting the official GitHub MCP server to the Gateway
 
 ---
