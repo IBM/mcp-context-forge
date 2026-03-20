@@ -78,7 +78,10 @@ from mcpgateway.utils.validate_signature import validate_signature
 
 # Plugin support imports (conditional)
 try:
+    # Third-Party
     from cpex.framework import GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
+
+    # First-Party
     from mcpgateway.plugins import get_plugin_manager
 
     PLUGINS_AVAILABLE = True
