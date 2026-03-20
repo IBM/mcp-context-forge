@@ -1,10 +1,10 @@
 # ----------------------------------------------------------------
 # 💡 Build system (PEP 517)
-#     - setuptools ≥ 77 gives SPDX licence support (PEP 639)
+#     - setuptools ≥ 78.1.1 gives SPDX licence support (PEP 639) and fixes CVE-2025-47273
 #     - wheel is needed by most build front-ends
 # ----------------------------------------------------------------
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = ["setuptools>=78.1.1", "wheel>=0.46.2"]
 build-backend = "setuptools.build_meta"
 
 # ----------------------------------------------------------------
