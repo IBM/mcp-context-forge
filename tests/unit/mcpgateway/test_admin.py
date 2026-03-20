@@ -9383,14 +9383,32 @@ async def test_admin_servers_partial_html_conversion_error_is_logged_and_skipped
 
 @pytest.mark.asyncio
 async def test_admin_servers_partial_html_default_includes_inactive(monkeypatch, mock_request, mock_db):
-    """Test that include_inactive defaults to True for servers (issue #3234)."""
-    # Import the function to get the default value
-    import inspect
-    sig = inspect.signature(admin_servers_partial_html)
-    default_value = sig.parameters['include_inactive'].default
+    """Verify include_inactive defaults to True so inactive servers appear on first load (issue #3234)."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="srv-1", name="Server 1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    server_service = MagicMock()
+    server_service.convert_server_to_read.return_value = {"id": "srv-1", "name": "Server 1"}
+    monkeypatch.setattr("mcpgateway.admin.server_service", server_service)
 
-    # Verify the default is True (this is what we're testing)
-    assert default_value is True, f"Expected include_inactive default to be True, but got {default_value}"
+    mock_request.app.state.templates.TemplateResponse.reset_mock()
+    mock_request.headers = {}
+    # Call without include_inactive — let the default kick in
+    response = await admin_servers_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        render="controls",
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+    context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+    assert context["query_params"]["include_inactive"] == "true"
 
 
 
@@ -9987,14 +10005,32 @@ async def test_admin_gateways_partial_html_team_filter_denied(monkeypatch, mock_
 
 @pytest.mark.asyncio
 async def test_admin_gateways_partial_html_default_includes_inactive(monkeypatch, mock_request, mock_db):
-    """Test that include_inactive defaults to True for gateways (issue #3234)."""
-    # Import the function to get the default value
-    import inspect
-    sig = inspect.signature(admin_gateways_partial_html)
-    default_value = sig.parameters['include_inactive'].default
+    """Verify include_inactive defaults to True so inactive gateways appear on first load (issue #3234)."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="gw-1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    gateway_service = MagicMock()
+    gateway_service.convert_gateway_to_read.return_value = {"id": "gw-1", "name": "Gateway 1"}
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
 
-    # Verify the default is True (this is what we're testing)
-    assert default_value is True, f"Expected include_inactive default to be True, but got {default_value}"
+    mock_request.app.state.templates.TemplateResponse.reset_mock()
+    mock_request.headers = {}
+    # Call without include_inactive — let the default kick in
+    response = await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        render="controls",
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+    context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+    assert context["query_params"]["include_inactive"] == "true"
 
 
 @pytest.mark.asyncio
