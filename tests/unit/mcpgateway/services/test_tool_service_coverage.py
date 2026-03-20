@@ -4788,11 +4788,11 @@ def _make_tool_payload(
     }
 
 
-def _make_gateway_payload(*, auth_type=None, auth_value=None, auth_query_params=None, oauth_config=None, ca_certificate=None, ca_certificate_sig=None, passthrough_headers=None):
+def _make_gateway_payload(*, auth_type=None, auth_value=None, auth_query_params=None, oauth_config=None, ca_certificate=None, ca_certificate_sig=None, passthrough_headers=None, url=None, client_cert=None, client_key=None):
     return {
         "id": "gw-uuid-1",
         "name": "test_gw",
-        "url": "http://gateway:9000",
+        "url": url or "http://gateway:9000",
         "auth_type": auth_type,
         "auth_value": auth_value,
         "auth_query_params": auth_query_params,
@@ -4800,6 +4800,8 @@ def _make_gateway_payload(*, auth_type=None, auth_value=None, auth_query_params=
         "ca_certificate": ca_certificate,
         "ca_certificate_sig": ca_certificate_sig,
         "passthrough_headers": passthrough_headers,
+        "client_cert": client_cert,
+        "client_key": client_key,
     }
 
 
@@ -6840,6 +6842,138 @@ class TestInvokeToolMcpSse:
 
             with pytest.raises(ToolInvocationError, match="OAuth authentication failed for gateway"):
                 await tool_service.invoke_tool(db, "test_tool", {})
+    @pytest.mark.asyncio
+    async def test_mcp_http_url_bypasses_ssl_context_creation(self, tool_service):
+        """HTTP URLs should skip SSL context creation entirely (line 3986-3988)."""
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(
+            url="http://localhost:9000/sse",  # HTTP URL - should bypass SSL
+            auth_type="basic",
+            ca_certificate="dummy-ca",  # Even with CA cert, should skip for HTTP
+        )
+        db = MagicMock()
+
+        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    # Call the factory to trigger SSL context logic
+                    if httpx_client_factory is not None:
+                        client = httpx_client_factory(headers=headers)
+                        # Verify no SSL context was created for HTTP URL
+                        assert client is not None
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+            patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
+            patch.object(settings, "mcp_session_pool_enabled", False),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            result = await tool_service.invoke_tool(db, "test_tool", {}, request_headers=None)
+
+        assert result is not None
+        # Verify SSL context was NOT created for HTTP URL
+        assert mock_get_ssl.call_count == 0, "SSL context should not be created for HTTP URLs"
+
+    @pytest.mark.asyncio
+    async def test_mcp_https_url_with_mtls_creates_ssl_context(self, tool_service):
+        """HTTPS URLs with client cert/key should create SSL context with mTLS (lines 3990-3994)."""
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(
+            url="https://localhost:9000/sse",  # HTTPS URL - should create SSL context
+            auth_type="basic",
+            ca_certificate="dummy-ca",
+            client_cert="client-cert-data",  # mTLS client cert
+            client_key="client-key-data",    # mTLS client key
+        )
+        db = MagicMock()
+
+        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    if httpx_client_factory is not None:
+                        httpx_client_factory(headers=headers)
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+            patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
+            patch.object(settings, "enable_ed25519_signing", False),
+            patch.object(settings, "mcp_session_pool_enabled", False),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+            mock_get_ssl.return_value = MagicMock()  # Mock SSL context
+
+            result = await tool_service.invoke_tool(db, "test_tool", {}, request_headers=None)
+
+        assert result is not None
+        # Verify SSL context WAS created for HTTPS URL with mTLS
+        assert mock_get_ssl.call_count == 1, "SSL context should be created for HTTPS URLs"
+        # Verify client cert and key were passed
+        call_args = mock_get_ssl.call_args
+        assert call_args is not None
+        assert call_args[1].get("client_cert") == "client-cert-data"
+        assert call_args[1].get("client_key") == "client-key-data"
+
 
     @pytest.mark.asyncio
     async def test_mcp_sse_httpx_factory_validates_ed25519_signature(self, tool_service):

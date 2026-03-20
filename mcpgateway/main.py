@@ -1722,7 +1722,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             except Exception as exc:  # pragma: no cover - defensive
                 logger.error(f"SIGHUP handler failed to clear SSL context cache: {exc}")
 
-        def _sighup_handler(signum: int, frame: Any) -> None:  # pylint: disable=unused-argument
+        def _sighup_handler(_signum: int, _frame: Any) -> None:  # pylint: disable=unused-argument
             """Handle SIGHUP signal by scheduling async SSL cache reload.
 
             Signal handler that safely schedules an asynchronous task to clear
@@ -1730,8 +1730,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             for the async reload operation.
 
             Args:
-                signum: Signal number (should be signal.SIGHUP)
-                frame: Current stack frame (unused but required by signal handler signature)
+                _signum: Signal number (should be signal.SIGHUP, unused but required by signature)
+                _frame: Current stack frame (unused but required by signal handler signature)
             """
             logger.info("Received SIGHUP signal, scheduling SSL context cache refresh")
             try:
