@@ -569,7 +569,6 @@ class OAuthManager:
 
         # Store tokens if storage service is available
         if self.token_storage:
-
             token_record = await self.token_storage.store_tokens(
                 gateway_id=gateway_id,
                 user_id=user_id,

@@ -119,7 +119,6 @@ The gateway configuration form maps user inputs to the OAuth configuration struc
 
 ## Token Verification
 
-
 ### Gateway OAuth Tokens
 
 OAuth tokens obtained through the Authorization Code flow are used to authenticate requests to upstream MCP servers. These tokens are:
