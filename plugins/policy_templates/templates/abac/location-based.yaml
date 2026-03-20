@@ -1,0 +1,161 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: abac-location-based
+  version: 1.0.0
+  description: "Location-based access control policy — restricts resource access based on network origin, geographic location, and VPN/trusted network status"
+  category: abac
+  compliance_frameworks: [NIST]
+  risk_level: high
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [abac, location, network, geo-restriction, vpn, zero-trust]
+spec:
+  engine: cedar
+  parameters:
+    - name: resource_pattern
+      type: string
+      description: "Pattern matching resources with location-based access restrictions"
+      default: "*"
+      required: true
+    - name: allowed_country_codes
+      type: list
+      description: "ISO 3166-1 alpha-2 country codes from which access is permitted"
+      default: ["US", "CA", "GB"]
+      required: true
+    - name: vpn_required_for_remote
+      type: boolean
+      description: "Require VPN connection for access from outside the corporate network"
+      default: true
+    - name: corporate_network_cidr
+      type: string
+      description: "Corporate network CIDR block for trusted network detection"
+      default: "10.0.0.0/8"
+    - name: high_sensitivity_resources
+      type: string
+      description: "Pattern matching high-sensitivity resources requiring on-premise access"
+      default: "sensitive-*"
+  template: |
+    // Location-Based Access Control Policy
+    // Template: {name} v{version}
+    // Allowed countries: {allowed_country_codes}
+
+    // Permit access from trusted corporate network (on-premise)
+    permit(
+      principal,
+      action in [Action::"read", Action::"create", Action::"update", Action::"list"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      context.source_network == "{corporate_network_cidr}" &&
+      principal.account_active == true
+    };
+
+    // Permit remote access via VPN from allowed countries
+    permit(
+      principal,
+      action in [Action::"read", Action::"list"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      context.vpn_connected == true &&
+      context.country_code in ["US", "CA", "GB"] &&
+      principal.account_active == true &&
+      principal.vpn_authorized == true
+    };
+
+    // Administrators may access from approved locations with MFA
+    permit(
+      principal in [Role::"admin", Role::"security_admin"],
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      (context.source_network == "{corporate_network_cidr}" ||
+       context.vpn_connected == true) &&
+      principal.mfa_verified == true &&
+      context.country_code in ["US", "CA", "GB"] &&
+      principal.account_active == true
+    };
+
+    // Highly sensitive resources require on-premise access only
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{high_sensitivity_resources}"
+    ) when {
+      context.source_network != "{corporate_network_cidr}"
+    };
+
+    // Deny access from blocked geographic regions
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      context.country_code not in ["US", "CA", "GB"]
+    };
+
+    // Deny remote access without VPN when VPN is required
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      context.source_network != "{corporate_network_cidr}" &&
+      context.vpn_connected == false
+    };
+  validation:
+    - rule: "allowed_country_codes must not be empty"
+      check: "len(parameters.get('allowed_country_codes', [])) > 0"
+    - rule: "corporate_network_cidr must not be empty"
+      check: "len(parameters.get('corporate_network_cidr', '')) > 0"
+  tests:
+    - name: "On-premise access is permitted"
+      given:
+        principal:
+          role: employee
+          account_active: true
+        action: read
+        resource: internal-doc
+        context:
+          source_network: "10.0.0.0/8"
+          country_code: US
+          vpn_connected: false
+      expect: allow
+    - name: "Remote VPN access from allowed country is permitted"
+      given:
+        principal:
+          role: employee
+          account_active: true
+          vpn_authorized: true
+        action: read
+        resource: internal-doc
+        context:
+          source_network: "203.0.113.0/24"
+          country_code: US
+          vpn_connected: true
+      expect: allow
+    - name: "Access from disallowed country is denied"
+      given:
+        principal:
+          role: employee
+          account_active: true
+          vpn_authorized: false
+        action: read
+        resource: internal-doc
+        context:
+          source_network: "1.2.3.0/24"
+          country_code: CN
+          vpn_connected: false
+      expect: deny
+    - name: "Remote access without VPN is denied"
+      given:
+        principal:
+          role: employee
+          account_active: true
+          vpn_authorized: true
+        action: read
+        resource: internal-doc
+        context:
+          source_network: "203.0.113.0/24"
+          country_code: US
+          vpn_connected: false
+      expect: deny

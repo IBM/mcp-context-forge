@@ -1,0 +1,130 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: gdpr-consent-management
+  version: 1.0.0
+  description: "GDPR consent management policy — enforces that personal data processing is lawful and consent-based, supporting Article 6 lawful basis and Article 7 consent requirements"
+  category: compliance/gdpr
+  compliance_frameworks: [GDPR]
+  risk_level: high
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [gdpr, consent, lawful-basis, data-processing, privacy]
+spec:
+  engine: cedar
+  parameters:
+    - name: personal_data_pattern
+      type: string
+      description: "Pattern matching personal data resources requiring consent"
+      default: "pdata-*"
+      required: true
+    - name: marketing_data_pattern
+      type: string
+      description: "Pattern matching marketing and analytics personal data"
+      default: "pdata-marketing-*"
+    - name: required_consent_categories
+      type: list
+      description: "Consent categories that must be active for general processing"
+      default: ["analytics", "personalization", "third_party_sharing"]
+    - name: special_category_pattern
+      type: string
+      description: "Pattern matching special category data (health, biometric, etc.)"
+      default: "pdata-special-*"
+  template: |
+    // GDPR Consent Management Policy
+    // Template: {name} v{version}
+    // Compliance: GDPR Articles 6, 7, 9
+
+    // Permit processing when valid consent is on record (Article 6(1)(a))
+    permit(
+      principal,
+      action in [Action::"process_personal_data", Action::"analyze_behavior"],
+      resource matches Resource::"{personal_data_pattern}"
+    ) when {
+      context.consent_given == true &&
+      context.consent_timestamp != "" &&
+      context.consent_scope includes context.processing_purpose
+    };
+
+    // Permit processing under contract performance (Article 6(1)(b))
+    permit(
+      principal in [Role::"service_operator", Role::"fulfillment_service"],
+      action == Action::"process_personal_data",
+      resource matches Resource::"{personal_data_pattern}"
+    ) when {
+      context.legal_basis == "contract_performance" &&
+      context.contract_id != ""
+    };
+
+    // Permit processing under legal obligation (Article 6(1)(c))
+    permit(
+      principal in [Role::"compliance_service", Role::"legal_team"],
+      action == Action::"process_personal_data",
+      resource matches Resource::"{personal_data_pattern}"
+    ) when {
+      context.legal_basis == "legal_obligation" &&
+      context.legal_reference != ""
+    };
+
+    // Marketing processing requires explicit opt-in
+    forbid(
+      principal,
+      action in [Action::"send_marketing", Action::"track_behavior", Action::"profile_user"],
+      resource matches Resource::"{marketing_data_pattern}"
+    ) when {
+      context.marketing_consent == false ||
+      context.marketing_consent == null
+    };
+
+    // Special category data (health, biometric) requires explicit consent
+    forbid(
+      principal,
+      action == Action::"process_personal_data",
+      resource matches Resource::"{special_category_pattern}"
+    ) unless {
+      context.explicit_special_category_consent == true &&
+      context.dpo_approved == true
+    };
+
+    // Deny sharing with third parties without specific consent
+    forbid(
+      principal,
+      action == Action::"share_with_third_party",
+      resource matches Resource::"{personal_data_pattern}"
+    ) when {
+      context.third_party_sharing_consent == false
+    };
+  validation:
+    - rule: "personal_data_pattern must not be empty"
+      check: "len(parameters.get('personal_data_pattern', '')) > 0"
+  tests:
+    - name: "Processing with valid consent is permitted"
+      given:
+        principal:
+          role: analytics_service
+        action: process_personal_data
+        resource: pdata-user-001
+        context:
+          consent_given: true
+          consent_timestamp: "2024-01-01T00:00:00Z"
+          consent_scope: ["analytics"]
+          processing_purpose: analytics
+      expect: allow
+    - name: "Marketing email without consent is denied"
+      given:
+        principal:
+          role: marketing_service
+        action: send_marketing
+        resource: pdata-marketing-user-002
+        context:
+          marketing_consent: false
+      expect: deny
+    - name: "Third-party sharing without consent is denied"
+      given:
+        principal:
+          role: partner_integration
+        action: share_with_third_party
+        resource: pdata-user-003
+        context:
+          third_party_sharing_consent: false
+      expect: deny

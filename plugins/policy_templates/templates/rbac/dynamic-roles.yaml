@@ -1,0 +1,125 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: rbac-dynamic-roles
+  version: 1.0.0
+  description: "Dynamic RBAC policy — roles and permissions are computed at runtime from context (team membership, project assignment, temporary grants) rather than static role lists"
+  category: rbac
+  compliance_frameworks: []
+  risk_level: medium
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [rbac, dynamic-roles, just-in-time, context-aware]
+spec:
+  engine: cedar
+  parameters:
+    - name: resource_pattern
+      type: string
+      description: "Pattern matching resources governed by dynamic roles"
+      default: "proj-*"
+      required: true
+    - name: temporary_grant_max_hours
+      type: integer
+      description: "Maximum duration in hours for a temporary access grant"
+      default: 8
+    - name: team_resource_prefix
+      type: string
+      description: "Resource prefix format for team-scoped resources"
+      default: "proj-team-"
+  template: |
+    // Dynamic RBAC Policy
+    // Template: {name} v{version}
+
+    // Project members have access to their project resources
+    permit(
+      principal,
+      action in [Action::"read", Action::"create", Action::"update", Action::"list"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      context.resource_project_id in principal.project_memberships &&
+      principal.account_active == true
+    };
+
+    // Project owners have full control over their project
+    permit(
+      principal,
+      action in [Action::"read", Action::"create", Action::"update", Action::"delete", Action::"manage"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      context.resource_project_id in principal.owned_projects &&
+      principal.account_active == true
+    };
+
+    // Temporary grants allow time-bounded elevated access
+    permit(
+      principal,
+      action in [Action::"read", Action::"create", Action::"update"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.temp_grant_active == true &&
+      context.current_timestamp < principal.temp_grant_expiry &&
+      context.resource_project_id == principal.temp_grant_project_id
+    };
+
+    // Team leads can manage all resources in their team's namespace
+    permit(
+      principal,
+      action,
+      resource matches Resource::"{team_resource_prefix}{resource_pattern}"
+    ) when {
+      principal.is_team_lead == true &&
+      context.resource_team_id == principal.team_id &&
+      principal.account_active == true
+    };
+
+    // Expired temporary grants are revoked immediately
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.temp_grant_active == true &&
+      context.current_timestamp >= principal.temp_grant_expiry
+    };
+  validation:
+    - rule: "temporary_grant_max_hours must be positive"
+      check: "int(parameters.get('temporary_grant_max_hours', 8)) > 0"
+    - rule: "resource_pattern must not be empty"
+      check: "len(parameters.get('resource_pattern', '')) > 0"
+  tests:
+    - name: "Project member can read project resource"
+      given:
+        principal:
+          role: developer
+          account_active: true
+          project_memberships: ["proj-alpha"]
+        action: read
+        resource: proj-alpha-config
+        context:
+          resource_project_id: proj-alpha
+      expect: allow
+    - name: "User without project membership is denied"
+      given:
+        principal:
+          role: developer
+          account_active: true
+          project_memberships: ["proj-beta"]
+        action: read
+        resource: proj-alpha-config
+        context:
+          resource_project_id: proj-alpha
+      expect: deny
+    - name: "Expired temporary grant is denied"
+      given:
+        principal:
+          role: contractor
+          account_active: true
+          temp_grant_active: true
+          temp_grant_expiry: "2024-01-01T00:00:00Z"
+          temp_grant_project_id: proj-alpha
+        action: read
+        resource: proj-alpha-data
+        context:
+          resource_project_id: proj-alpha
+          current_timestamp: "2024-06-01T00:00:00Z"
+      expect: deny

@@ -1,0 +1,134 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: sox-separation-of-duties
+  version: 1.0.0
+  description: "SOX separation of duties policy — prevents conflicts of interest by ensuring no single user can both initiate and approve financial transactions"
+  category: compliance/sox
+  compliance_frameworks: [SOX]
+  risk_level: high
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [sox, separation-of-duties, dual-control, financial-controls]
+spec:
+  engine: cedar
+  parameters:
+    - name: financial_resource_pattern
+      type: string
+      description: "Pattern matching financial resources requiring dual control"
+      default: "fin-*"
+      required: true
+    - name: high_value_threshold_resource
+      type: string
+      description: "Resource pattern for high-value transactions requiring extra controls"
+      default: "fin-hv-*"
+    - name: initiator_roles
+      type: list
+      description: "Roles that may initiate financial transactions"
+      default: ["accountant", "ap_clerk", "ar_clerk"]
+      required: true
+    - name: approver_roles
+      type: list
+      description: "Roles that may approve financial transactions (must differ from initiators)"
+      default: ["controller", "cfo", "finance_manager"]
+      required: true
+  template: |
+    // SOX Separation of Duties Policy
+    // Template: {name} v{version}
+    // Compliance: Sarbanes-Oxley Act Section 404 — Internal Controls
+
+    // Permit transaction initiators to create and submit transactions
+    permit(
+      principal in [Role::"accountant", Role::"ap_clerk", Role::"ar_clerk"],
+      action in [Action::"create_transaction", Action::"submit_for_approval"],
+      resource matches Resource::"{financial_resource_pattern}"
+    ) when {
+      principal.sox_training_complete == true
+    };
+
+    // Permit approvers to review and authorize transactions
+    permit(
+      principal in [Role::"controller", Role::"cfo", Role::"finance_manager"],
+      action in [Action::"approve_transaction", Action::"reject_transaction"],
+      resource matches Resource::"{financial_resource_pattern}"
+    ) when {
+      principal.sox_training_complete == true &&
+      principal.mfa_verified == true &&
+      context.initiator_id != principal.user_id
+    };
+
+    // Enforce SoD: deny self-approval of own transactions
+    forbid(
+      principal,
+      action == Action::"approve_transaction",
+      resource matches Resource::"{financial_resource_pattern}"
+    ) when {
+      context.initiator_id == principal.user_id
+    };
+
+    // High-value transactions require two separate approvers
+    forbid(
+      principal,
+      action == Action::"final_authorize_transaction",
+      resource matches Resource::"{high_value_threshold_resource}"
+    ) unless {
+      context.first_approver_id != "" &&
+      context.second_approver_id != "" &&
+      context.first_approver_id != principal.user_id &&
+      context.second_approver_id != principal.user_id &&
+      context.first_approver_id != context.second_approver_id
+    };
+
+    // Deny IT/admin from approving financial transactions (IT-Finance SoD)
+    forbid(
+      principal in [Role::"it_admin", Role::"system_admin", Role::"developer"],
+      action in [Action::"approve_transaction", Action::"create_transaction"],
+      resource matches Resource::"{financial_resource_pattern}"
+    );
+  validation:
+    - rule: "initiator_roles must not be empty"
+      check: "len(parameters.get('initiator_roles', [])) > 0"
+    - rule: "approver_roles must not be empty"
+      check: "len(parameters.get('approver_roles', [])) > 0"
+  tests:
+    - name: "Accountant can create transaction"
+      given:
+        principal:
+          role: accountant
+          sox_training_complete: true
+          user_id: "user-001"
+        action: create_transaction
+        resource: fin-ap-invoice-100
+      expect: allow
+    - name: "Controller can approve transaction initiated by different user"
+      given:
+        principal:
+          role: controller
+          sox_training_complete: true
+          mfa_verified: true
+          user_id: "user-002"
+        action: approve_transaction
+        resource: fin-ap-invoice-100
+        context:
+          initiator_id: "user-001"
+      expect: allow
+    - name: "Self-approval is denied"
+      given:
+        principal:
+          role: controller
+          sox_training_complete: true
+          mfa_verified: true
+          user_id: "user-001"
+        action: approve_transaction
+        resource: fin-ap-invoice-100
+        context:
+          initiator_id: "user-001"
+      expect: deny
+    - name: "IT admin cannot approve financial transactions"
+      given:
+        principal:
+          role: it_admin
+          user_id: "user-100"
+        action: approve_transaction
+        resource: fin-payment-batch
+      expect: deny

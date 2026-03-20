@@ -1,0 +1,140 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: abac-attribute-based
+  version: 1.0.0
+  description: "Attribute-Based Access Control policy — grants or denies access based on subject attributes, resource classification labels, and environmental context rather than static roles"
+  category: abac
+  compliance_frameworks: [NIST, ISO27001]
+  risk_level: medium
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [abac, attributes, classification, labels, context-aware]
+spec:
+  engine: cedar
+  parameters:
+    - name: resource_pattern
+      type: string
+      description: "Pattern matching resources governed by ABAC"
+      default: "*"
+      required: true
+    - name: max_classification_level
+      type: integer
+      description: "Maximum resource classification level in the system (e.g., 3=confidential)"
+      default: 3
+    - name: department_isolation
+      type: boolean
+      description: "Enforce department-level data isolation"
+      default: true
+    - name: sensitivity_labels
+      type: list
+      description: "Sensitivity labels applied to resources in this environment"
+      default: ["public", "internal", "confidential", "restricted"]
+  template: |
+    // Attribute-Based Access Control (ABAC) Policy
+    // Template: {name} v{version}
+    // Compliance: NIST SP 800-162
+
+    // Grant access when subject clearance meets or exceeds resource classification
+    permit(
+      principal,
+      action in [Action::"read", Action::"list"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.clearance_level >= context.resource_classification_level &&
+      principal.account_active == true &&
+      principal.department == context.resource_owner_department
+    };
+
+    // Write access requires higher clearance than read
+    permit(
+      principal,
+      action in [Action::"create", Action::"update"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.clearance_level >= context.resource_classification_level &&
+      principal.clearance_level >= 2 &&
+      principal.account_active == true &&
+      principal.department == context.resource_owner_department &&
+      principal.write_authorized == true
+    };
+
+    // Cross-department access requires explicit data sharing agreement
+    permit(
+      principal,
+      action in [Action::"read", Action::"list"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.clearance_level >= context.resource_classification_level &&
+      principal.department != context.resource_owner_department &&
+      context.data_sharing_agreement == true &&
+      context.sharing_approved_by != ""
+    };
+
+    // Deny access if clearance is insufficient regardless of other attributes
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.clearance_level < context.resource_classification_level
+    };
+
+    // Deny cross-department access without data sharing agreement
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.department != context.resource_owner_department &&
+      context.data_sharing_agreement == false
+    };
+  validation:
+    - rule: "max_classification_level must be at least 1"
+      check: "int(parameters.get('max_classification_level', 3)) >= 1"
+    - rule: "sensitivity_labels must not be empty"
+      check: "len(parameters.get('sensitivity_labels', [])) > 0"
+  tests:
+    - name: "High-clearance same-department user can read"
+      given:
+        principal:
+          role: analyst
+          clearance_level: 3
+          department: engineering
+          account_active: true
+          write_authorized: false
+        action: read
+        resource: confidential-report-001
+        context:
+          resource_classification_level: 2
+          resource_owner_department: engineering
+          data_sharing_agreement: false
+      expect: allow
+    - name: "Low-clearance user cannot access high-classification resource"
+      given:
+        principal:
+          role: intern
+          clearance_level: 1
+          department: engineering
+          account_active: true
+        action: read
+        resource: restricted-doc-001
+        context:
+          resource_classification_level: 3
+          resource_owner_department: engineering
+          data_sharing_agreement: false
+      expect: deny
+    - name: "Cross-department access without agreement is denied"
+      given:
+        principal:
+          role: analyst
+          clearance_level: 3
+          department: marketing
+          account_active: true
+        action: read
+        resource: engineering-doc-001
+        context:
+          resource_classification_level: 2
+          resource_owner_department: engineering
+          data_sharing_agreement: false
+      expect: deny

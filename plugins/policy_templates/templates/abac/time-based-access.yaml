@@ -1,0 +1,154 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: abac-time-based-access
+  version: 1.0.0
+  description: "Time-based access control policy — restricts resource access to defined business hours, scheduled maintenance windows, and embargo periods"
+  category: abac
+  compliance_frameworks: []
+  risk_level: medium
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [abac, time-based, business-hours, scheduling, temporal]
+spec:
+  engine: cedar
+  parameters:
+    - name: resource_pattern
+      type: string
+      description: "Pattern matching resources with time-based access restrictions"
+      default: "*"
+      required: true
+    - name: business_hour_start
+      type: integer
+      description: "Business hours start (24-hour clock, e.g., 8 for 08:00)"
+      default: 8
+    - name: business_hour_end
+      type: integer
+      description: "Business hours end (24-hour clock, e.g., 18 for 18:00)"
+      default: 18
+    - name: timezone
+      type: string
+      description: "Timezone for business hours evaluation"
+      default: "UTC"
+    - name: allow_weekend_access
+      type: boolean
+      description: "Allow access on weekends for authorized roles"
+      default: false
+  template: |
+    // Time-Based Access Control Policy
+    // Template: {name} v{version}
+    // Business hours: {business_hour_start}:00 - {business_hour_end}:00 {timezone}
+
+    // Standard business hours access for regular staff
+    permit(
+      principal,
+      action in [Action::"read", Action::"create", Action::"update", Action::"list"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.account_active == true &&
+      context.hour_of_day >= {business_hour_start} &&
+      context.hour_of_day < {business_hour_end} &&
+      context.is_weekend == false
+    };
+
+    // On-call staff may access outside business hours
+    permit(
+      principal,
+      action in [Action::"read", Action::"update"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.on_call == true &&
+      principal.account_active == true
+    };
+
+    // Administrators can access at any time with MFA
+    permit(
+      principal in [Role::"admin", Role::"ops_engineer"],
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.account_active == true &&
+      principal.mfa_verified == true
+    };
+
+    // Deny weekend access for non-on-call staff
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      context.is_weekend == true &&
+      principal.on_call == false &&
+      principal.role != "admin" &&
+      principal.role != "ops_engineer"
+    };
+
+    // Deny access during maintenance windows
+    forbid(
+      principal,
+      action in [Action::"create", Action::"update", Action::"delete"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      context.maintenance_window_active == true &&
+      principal.role != "ops_engineer"
+    };
+
+    // Deny access outside business hours for regular staff
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      context.hour_of_day < {business_hour_start} ||
+      context.hour_of_day >= {business_hour_end} &&
+      principal.on_call == false &&
+      principal.role != "admin" &&
+      principal.role != "ops_engineer"
+    };
+  validation:
+    - rule: "business_hour_start must be between 0 and 23"
+      check: "0 <= int(parameters.get('business_hour_start', 8)) <= 23"
+    - rule: "business_hour_end must be between 1 and 24"
+      check: "1 <= int(parameters.get('business_hour_end', 18)) <= 24"
+    - rule: "business_hour_start must be before business_hour_end"
+      check: "int(parameters.get('business_hour_start', 8)) < int(parameters.get('business_hour_end', 18))"
+  tests:
+    - name: "Active user can access during business hours on weekday"
+      given:
+        principal:
+          role: developer
+          account_active: true
+          on_call: false
+        action: read
+        resource: app-database
+        context:
+          hour_of_day: 10
+          is_weekend: false
+          maintenance_window_active: false
+      expect: allow
+    - name: "Regular user denied outside business hours"
+      given:
+        principal:
+          role: developer
+          account_active: true
+          on_call: false
+        action: read
+        resource: app-database
+        context:
+          hour_of_day: 22
+          is_weekend: false
+          maintenance_window_active: false
+      expect: deny
+    - name: "On-call engineer can access outside hours"
+      given:
+        principal:
+          role: developer
+          account_active: true
+          on_call: true
+        action: read
+        resource: app-database
+        context:
+          hour_of_day: 2
+          is_weekend: true
+          maintenance_window_active: false
+      expect: allow

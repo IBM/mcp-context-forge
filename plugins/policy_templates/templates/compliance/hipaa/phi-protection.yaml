@@ -1,0 +1,120 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: hipaa-phi-protection
+  version: 1.0.0
+  description: "HIPAA-compliant PHI access control — restricts access to Protected Health Information to authorized clinical roles with mandatory training verification"
+  category: compliance/hipaa
+  compliance_frameworks: [HIPAA, HITECH]
+  risk_level: high
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [phi, hipaa, healthcare, access-control]
+spec:
+  engine: cedar
+  parameters:
+    - name: phi_resource_pattern
+      type: string
+      description: "Glob pattern matching PHI resource identifiers"
+      default: "phi-*"
+      required: true
+    - name: healthcare_roles
+      type: list
+      description: "Roles authorized to access PHI"
+      default: ["physician", "nurse", "admin"]
+      required: true
+    - name: audit_all_access
+      type: boolean
+      description: "Enable comprehensive audit logging for all PHI access"
+      default: true
+    - name: require_hipaa_training
+      type: boolean
+      description: "Require HIPAA training certification before granting access"
+      default: true
+  template: |
+    // HIPAA PHI Protection Policy
+    // Template: {name} v{version}
+    // Compliance: HIPAA Security Rule 45 CFR §164.312
+
+    // Permit trained clinical staff read access to PHI
+    permit(
+      principal in [Role::"physician", Role::"nurse"],
+      action in [Action::"read_phi", Action::"view_record"],
+      resource matches Resource::"{phi_resource_pattern}"
+    ) when {
+      principal.has_hipaa_training == true &&
+      principal.account_active == true
+    };
+
+    // Permit authorized administrators full PHI access with training requirement
+    permit(
+      principal in [Role::"admin", Role::"health_information_manager"],
+      action in [Action::"read_phi", Action::"write_phi", Action::"export_phi"],
+      resource matches Resource::"{phi_resource_pattern}"
+    ) when {
+      principal.has_hipaa_training == true &&
+      principal.account_active == true &&
+      principal.mfa_verified == true
+    };
+
+    // Explicit deny for untrained users regardless of role
+    forbid(
+      principal,
+      action in [Action::"read_phi", Action::"write_phi", Action::"export_phi"],
+      resource matches Resource::"{phi_resource_pattern}"
+    ) unless {
+      principal.has_hipaa_training == true
+    };
+
+    // Deny PHI export outside business hours without emergency override
+    forbid(
+      principal,
+      action == Action::"export_phi",
+      resource matches Resource::"{phi_resource_pattern}"
+    ) when {
+      principal.is_emergency_override == false &&
+      context.hour_of_day < 8 || context.hour_of_day > 18
+    };
+  validation:
+    - rule: "healthcare_roles must not be empty"
+      check: "len(parameters.get('healthcare_roles', [])) > 0"
+    - rule: "phi_resource_pattern must not be empty"
+      check: "len(parameters.get('phi_resource_pattern', '')) > 0"
+  tests:
+    - name: "Trained physician can read PHI"
+      given:
+        principal:
+          role: physician
+          has_hipaa_training: true
+          account_active: true
+        action: read_phi
+        resource: phi-patient-123
+      expect: allow
+    - name: "Untrained physician is denied PHI access"
+      given:
+        principal:
+          role: physician
+          has_hipaa_training: false
+          account_active: true
+        action: read_phi
+        resource: phi-patient-123
+      expect: deny
+    - name: "Admin with training and MFA can export PHI"
+      given:
+        principal:
+          role: admin
+          has_hipaa_training: true
+          account_active: true
+          mfa_verified: true
+        action: export_phi
+        resource: phi-patient-batch
+      expect: allow
+    - name: "Unauthorized role denied PHI access"
+      given:
+        principal:
+          role: billing_clerk
+          has_hipaa_training: false
+          account_active: true
+        action: read_phi
+        resource: phi-patient-456
+      expect: deny

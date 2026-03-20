@@ -1,0 +1,144 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: gdpr-data-subject-rights
+  version: 1.0.0
+  description: "GDPR data subject rights policy — enforces access controls to support Articles 15-22 rights including access, rectification, erasure, portability, and objection"
+  category: compliance/gdpr
+  compliance_frameworks: [GDPR, CCPA]
+  risk_level: high
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [gdpr, data-subject-rights, erasure, portability, ccpa]
+spec:
+  engine: cedar
+  parameters:
+    - name: personal_data_pattern
+      type: string
+      description: "Pattern matching personal data resources"
+      default: "pdata-*"
+      required: true
+    - name: dpo_role
+      type: string
+      description: "Data Protection Officer role identifier"
+      default: "data_protection_officer"
+    - name: response_deadline_days
+      type: integer
+      description: "Maximum days to fulfill a data subject request (GDPR requires 30)"
+      default: 30
+    - name: allow_automated_decisions
+      type: boolean
+      description: "Allow automated processing for decision-making affecting data subjects"
+      default: false
+  template: |
+    // GDPR Data Subject Rights Policy
+    // Template: {name} v{version}
+    // Compliance: GDPR Articles 15-22
+
+    // Permit data subjects to access their own personal data (Article 15)
+    permit(
+      principal,
+      action in [Action::"request_data_access", Action::"view_own_data"],
+      resource matches Resource::"{personal_data_pattern}"
+    ) when {
+      context.data_subject_id == principal.user_id &&
+      context.identity_verified == true
+    };
+
+    // Permit data subjects to request rectification of inaccurate data (Article 16)
+    permit(
+      principal,
+      action == Action::"request_rectification",
+      resource matches Resource::"{personal_data_pattern}"
+    ) when {
+      context.data_subject_id == principal.user_id &&
+      context.identity_verified == true
+    };
+
+    // Permit data subjects to request erasure — right to be forgotten (Article 17)
+    permit(
+      principal,
+      action == Action::"request_erasure",
+      resource matches Resource::"{personal_data_pattern}"
+    ) when {
+      context.data_subject_id == principal.user_id &&
+      context.identity_verified == true &&
+      context.legal_hold_active == false
+    };
+
+    // Permit data portability export (Article 20)
+    permit(
+      principal,
+      action == Action::"request_data_portability",
+      resource matches Resource::"{personal_data_pattern}"
+    ) when {
+      context.data_subject_id == principal.user_id &&
+      context.identity_verified == true
+    };
+
+    // DPO may access all personal data for compliance purposes
+    permit(
+      principal in [Role::"data_protection_officer", Role::"privacy_officer"],
+      action in [Action::"view_all_personal_data", Action::"fulfill_dsr", Action::"audit_processing"],
+      resource matches Resource::"{personal_data_pattern}"
+    ) when {
+      principal.gdpr_training_complete == true &&
+      principal.mfa_verified == true
+    };
+
+    // Deny automated individual decision-making without explicit consent (Article 22)
+    forbid(
+      principal,
+      action == Action::"automated_decision",
+      resource matches Resource::"{personal_data_pattern}"
+    ) when {
+      context.explicit_consent == false &&
+      context.legal_exception_applies == false
+    };
+
+    // Deny processing after data subject withdrawal of consent
+    forbid(
+      principal,
+      action in [Action::"process_personal_data", Action::"share_personal_data"],
+      resource matches Resource::"{personal_data_pattern}"
+    ) when {
+      context.consent_withdrawn == true &&
+      context.legal_basis != "legitimate_interest" &&
+      context.legal_basis != "legal_obligation"
+    };
+  validation:
+    - rule: "personal_data_pattern must not be empty"
+      check: "len(parameters.get('personal_data_pattern', '')) > 0"
+    - rule: "response_deadline_days must be 30 or fewer per GDPR"
+      check: "int(parameters.get('response_deadline_days', 30)) <= 30"
+  tests:
+    - name: "Verified data subject can access own data"
+      given:
+        principal:
+          role: data_subject
+          user_id: "subject-001"
+        action: request_data_access
+        resource: pdata-subject-001
+        context:
+          data_subject_id: "subject-001"
+          identity_verified: true
+      expect: allow
+    - name: "Automated decision denied without consent"
+      given:
+        principal:
+          role: ml_service
+        action: automated_decision
+        resource: pdata-subject-002
+        context:
+          explicit_consent: false
+          legal_exception_applies: false
+      expect: deny
+    - name: "DPO can access all personal data for compliance"
+      given:
+        principal:
+          role: data_protection_officer
+          gdpr_training_complete: true
+          mfa_verified: true
+        action: view_all_personal_data
+        resource: pdata-all-subjects
+      expect: allow

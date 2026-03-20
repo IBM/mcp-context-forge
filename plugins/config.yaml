@@ -139,7 +139,7 @@ plugins:
     kind: "plugins.resource_filter.resource_filter.ResourceFilterPlugin"
     description: "Demonstrates resource pre/post fetch hooks for filtering and validation"
     version: "1.0.0"
-    author: "ContextForge Team"
+    author: "MCP Gateway Team"
     hooks: ["resource_pre_fetch", "resource_post_fetch", "prompt_post_fetch", "tool_post_invoke"]
     tags: ["resource", "filter", "security", "example"]
     mode: "disabled"  # Block resources that violate rules
@@ -663,38 +663,6 @@ plugins:
       block_on_detection: true
       min_findings_to_block: 1
 
-  # Encoded Exfil Detector - detect suspicious encoded payloads in prompts/tool outputs
-  - name: "EncodedExfilDetector"
-    kind: "plugins.encoded_exfil_detection.encoded_exfil_detector.EncodedExfilDetectorPlugin"
-    description: "Detects suspicious encoded exfiltration patterns in prompt args and tool outputs"
-    version: "0.1.0"
-    author: "Mihai Criveti"
-    hooks: ["prompt_pre_fetch", "tool_post_invoke"]
-    tags: ["security", "exfiltration", "dlp", "encoding"]
-    # mode: "enforce"
-    mode: "disabled"
-    priority: 52
-    conditions: []
-    config:
-      enabled:
-        base64: true
-        base64url: true
-        hex: true
-        percent_encoding: true
-        escaped_hex: true
-      min_encoded_length: 24
-      min_decoded_length: 12
-      min_entropy: 3.3
-      min_printable_ratio: 0.70
-      min_suspicion_score: 3
-      max_scan_string_length: 200000
-      max_findings_per_value: 50
-      redact: false
-      redaction_text: "***ENCODED_REDACTED***"
-      block_on_detection: true
-      min_findings_to_block: 1
-      include_detection_details: true
-
   # Header Injector - add custom headers for resource fetch
   - name: "HeaderInjector"
     kind: "plugins.header_injector.header_injector.HeaderInjectorPlugin"
@@ -1049,16 +1017,18 @@ plugins:
         timeout_ms: 1000
         parallel_evaluation: true
 
-  # JWT Claims Extraction — extracts claims for downstream Cedar/OPA authorization
-  - name: "JwtClaimsExtractionPlugin"
-    kind: "plugins.jwt_claims_extraction.jwt_claims_extraction.JwtClaimsExtractionPlugin"
-    description: "Extracts JWT claims and stores them in global context state for downstream authorization plugins"
-    version: "1.0.0"
-    author: "yiannis2804"
-    hooks: ["http_auth_resolve_user"]
-    tags: ["auth", "jwt", "claims", "rbac", "abac", "rfc9396"]
-    mode: "disabled"  # set to "permissive" to activate
-    priority: 10  # Run early — before other auth plugins
-    conditions: []
+  # Policy Templates Library - pre-built compliance-ready policy templates
+  - name: "PolicyTemplateLibrary"
+    kind: "plugins.policy_templates.policy_templates.PolicyTemplateLibraryPlugin"
+    description: "Pre-built compliance-ready policy templates library for HIPAA, PCI-DSS, SOX, GDPR, RBAC, ABAC, and MCP-specific access control"
+    version: "0.1.0"
+    author: "ContextForge Security Team"
+    hooks: ["startup"]
+    tags: ["policy", "templates", "compliance", "hipaa", "pci-dss", "gdpr", "sox", "rbac", "abac", "mcp"]
+    mode: "disabled"
+    priority: 90
     config:
-      context_key: jwt_claims
+      template_dirs:
+        - "plugins/policy_templates/templates"
+      validate_on_instantiate: true
+      run_tests_before_deploy: true

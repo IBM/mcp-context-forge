@@ -1,0 +1,121 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: rbac-basic-roles
+  version: 1.0.0
+  description: "Basic RBAC policy — defines viewer, editor, and admin roles with standard CRUD permissions for any resource type"
+  category: rbac
+  compliance_frameworks: []
+  risk_level: medium
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [rbac, roles, basic, crud, access-control]
+spec:
+  engine: cedar
+  parameters:
+    - name: resource_pattern
+      type: string
+      description: "Pattern matching resources this policy governs"
+      default: "*"
+      required: true
+    - name: admin_roles
+      type: list
+      description: "Roles with full administrative access"
+      default: ["admin", "superuser"]
+      required: true
+    - name: editor_roles
+      type: list
+      description: "Roles with read and write access"
+      default: ["editor", "contributor"]
+      required: true
+    - name: viewer_roles
+      type: list
+      description: "Roles with read-only access"
+      default: ["viewer", "reader"]
+      required: true
+  template: |
+    // Basic RBAC Policy
+    // Template: {name} v{version}
+
+    // Administrators have full access
+    permit(
+      principal in [Role::"admin", Role::"superuser"],
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.account_active == true
+    };
+
+    // Editors can read and write but not delete or administer
+    permit(
+      principal in [Role::"editor", Role::"contributor"],
+      action in [Action::"read", Action::"create", Action::"update", Action::"list"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.account_active == true
+    };
+
+    // Viewers have read-only access
+    permit(
+      principal in [Role::"viewer", Role::"reader"],
+      action in [Action::"read", Action::"list"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.account_active == true
+    };
+
+    // Deny all access for inactive accounts regardless of role
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.account_active == false
+    };
+
+    // Deny delete to non-admin roles
+    forbid(
+      principal,
+      action == Action::"delete",
+      resource matches Resource::"{resource_pattern}"
+    ) unless {
+      principal.role == "admin" || principal.role == "superuser"
+    };
+  validation:
+    - rule: "admin_roles must not be empty"
+      check: "len(parameters.get('admin_roles', [])) > 0"
+    - rule: "viewer_roles must not be empty"
+      check: "len(parameters.get('viewer_roles', [])) > 0"
+  tests:
+    - name: "Active admin can delete resources"
+      given:
+        principal:
+          role: admin
+          account_active: true
+        action: delete
+        resource: my-resource-001
+      expect: allow
+    - name: "Active viewer can read resources"
+      given:
+        principal:
+          role: viewer
+          account_active: true
+        action: read
+        resource: my-resource-001
+      expect: allow
+    - name: "Inactive user is denied access"
+      given:
+        principal:
+          role: admin
+          account_active: false
+        action: read
+        resource: my-resource-001
+      expect: deny
+    - name: "Editor cannot delete resources"
+      given:
+        principal:
+          role: editor
+          account_active: true
+        action: delete
+        resource: my-resource-001
+      expect: deny

@@ -1,0 +1,112 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: hipaa-audit-logging
+  version: 1.0.0
+  description: "HIPAA-compliant audit logging policy — ensures all PHI access events are recorded with required metadata per the HIPAA Security Rule"
+  category: compliance/hipaa
+  compliance_frameworks: [HIPAA, HITECH]
+  risk_level: high
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [audit, hipaa, logging, compliance]
+spec:
+  engine: cedar
+  parameters:
+    - name: audit_log_destination
+      type: string
+      description: "Destination identifier for audit log events"
+      default: "hipaa-audit-log"
+      required: true
+    - name: phi_resource_pattern
+      type: string
+      description: "Pattern matching PHI resources that require audit logging"
+      default: "phi-*"
+      required: true
+    - name: retain_days
+      type: integer
+      description: "Number of days to retain audit log entries (minimum 6 years per HIPAA)"
+      default: 2190
+    - name: require_audit_context
+      type: boolean
+      description: "Require audit justification context for sensitive access"
+      default: true
+  template: |
+    // HIPAA Audit Logging Policy
+    // Template: {name} v{version}
+    // Compliance: HIPAA Security Rule 45 CFR §164.312(b) — Audit Controls
+
+    // Permit audit log write operations by the audit service
+    permit(
+      principal in [Role::"audit_service", Role::"hipaa_compliance_officer"],
+      action in [Action::"write_audit_log", Action::"read_audit_log"],
+      resource == Resource::"{audit_log_destination}"
+    ) when {
+      principal.service_account == true
+    };
+
+    // Require audit context annotation for all PHI access
+    permit(
+      principal,
+      action in [Action::"read_phi", Action::"write_phi", Action::"export_phi"],
+      resource matches Resource::"{phi_resource_pattern}"
+    ) when {
+      context.audit_justification != "" &&
+      context.audit_justification != null
+    };
+
+    // Deny PHI access when audit context is missing and required
+    forbid(
+      principal,
+      action in [Action::"read_phi", Action::"write_phi", Action::"export_phi"],
+      resource matches Resource::"{phi_resource_pattern}"
+    ) when {
+      context.audit_justification == "" ||
+      context.audit_justification == null
+    };
+
+    // Permit compliance officers to review audit trails
+    permit(
+      principal in [Role::"hipaa_compliance_officer", Role::"security_officer"],
+      action == Action::"read_audit_log",
+      resource == Resource::"{audit_log_destination}"
+    );
+
+    // Deny deletion of audit logs (immutability requirement)
+    forbid(
+      principal,
+      action == Action::"delete_audit_log",
+      resource == Resource::"{audit_log_destination}"
+    );
+  validation:
+    - rule: "retain_days must be at least 2190 (6 years per HIPAA)"
+      check: "int(parameters.get('retain_days', 2190)) >= 2190"
+    - rule: "audit_log_destination must not be empty"
+      check: "len(parameters.get('audit_log_destination', '')) > 0"
+  tests:
+    - name: "Audit service can write audit log"
+      given:
+        principal:
+          role: audit_service
+          service_account: true
+        action: write_audit_log
+        resource: hipaa-audit-log
+      expect: allow
+    - name: "PHI access with audit justification is permitted"
+      given:
+        principal:
+          role: physician
+          has_hipaa_training: true
+        action: read_phi
+        resource: phi-patient-789
+        context:
+          audit_justification: "Clinical care for admitted patient"
+      expect: allow
+    - name: "Audit log deletion is denied for all principals"
+      given:
+        principal:
+          role: admin
+          has_hipaa_training: true
+        action: delete_audit_log
+        resource: hipaa-audit-log
+      expect: deny

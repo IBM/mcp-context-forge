@@ -1,0 +1,130 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: rbac-hierarchical-roles
+  version: 1.0.0
+  description: "Hierarchical RBAC policy — implements role inheritance where senior roles inherit all permissions of junior roles in a chain: viewer < editor < manager < admin"
+  category: rbac
+  compliance_frameworks: []
+  risk_level: medium
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [rbac, hierarchical, role-inheritance, access-control]
+spec:
+  engine: cedar
+  parameters:
+    - name: resource_pattern
+      type: string
+      description: "Pattern matching resources governed by this hierarchy"
+      default: "*"
+      required: true
+    - name: organization_id
+      type: string
+      description: "Organization scope for the role hierarchy"
+      default: "default-org"
+    - name: require_mfa_for_admin
+      type: boolean
+      description: "Require MFA for admin-level actions"
+      default: true
+  template: |
+    // Hierarchical RBAC Policy
+    // Template: {name} v{version}
+    // Role chain: viewer < editor < manager < admin
+
+    // Viewer permissions (base level — inherited by all higher roles)
+    permit(
+      principal,
+      action in [Action::"read", Action::"list", Action::"search"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.role in ["viewer", "editor", "manager", "admin"] &&
+      principal.account_active == true &&
+      principal.org_id == "{organization_id}"
+    };
+
+    // Editor permissions (includes viewer permissions)
+    permit(
+      principal,
+      action in [Action::"create", Action::"update"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.role in ["editor", "manager", "admin"] &&
+      principal.account_active == true &&
+      principal.org_id == "{organization_id}"
+    };
+
+    // Manager permissions (includes editor permissions)
+    permit(
+      principal,
+      action in [Action::"delete", Action::"archive", Action::"assign"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.role in ["manager", "admin"] &&
+      principal.account_active == true &&
+      principal.org_id == "{organization_id}"
+    };
+
+    // Admin permissions (full control, includes all manager permissions)
+    permit(
+      principal,
+      action in [Action::"configure", Action::"manage_permissions", Action::"bulk_delete", Action::"restore"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.role == "admin" &&
+      principal.account_active == true &&
+      principal.org_id == "{organization_id}" &&
+      principal.mfa_verified == true
+    };
+
+    // Cross-organization access is denied
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.org_id != "{organization_id}"
+    };
+  validation:
+    - rule: "resource_pattern must not be empty"
+      check: "len(parameters.get('resource_pattern', '')) > 0"
+    - rule: "organization_id must not be empty"
+      check: "len(parameters.get('organization_id', '')) > 0"
+  tests:
+    - name: "Admin can configure resources"
+      given:
+        principal:
+          role: admin
+          account_active: true
+          org_id: default-org
+          mfa_verified: true
+        action: configure
+        resource: app-settings
+      expect: allow
+    - name: "Editor can create but not delete"
+      given:
+        principal:
+          role: editor
+          account_active: true
+          org_id: default-org
+        action: create
+        resource: document-001
+      expect: allow
+    - name: "Viewer cannot create resources"
+      given:
+        principal:
+          role: viewer
+          account_active: true
+          org_id: default-org
+        action: create
+        resource: document-001
+      expect: deny
+    - name: "Cross-org access is denied"
+      given:
+        principal:
+          role: admin
+          account_active: true
+          org_id: other-org
+          mfa_verified: true
+        action: read
+        resource: document-001
+      expect: deny

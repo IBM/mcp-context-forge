@@ -1,0 +1,152 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: mcp-agent-permissions
+  version: 1.0.0
+  description: "MCP agent permissions policy — defines a permission model for AI agents differentiating read-only discovery agents, task-execution agents, and autonomous agents with different privilege levels"
+  category: mcp-specific
+  compliance_frameworks: []
+  risk_level: high
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [mcp, agents, ai-safety, permissions, autonomy, guardrails]
+spec:
+  engine: cedar
+  parameters:
+    - name: resource_pattern
+      type: string
+      description: "Pattern matching resources accessible to agents"
+      default: "*"
+      required: true
+    - name: human_approval_required_actions
+      type: list
+      description: "Actions that require human-in-the-loop approval before execution"
+      default: ["send_email", "deploy_code", "delete_data", "make_purchase", "create_user"]
+      required: true
+    - name: agent_max_autonomy_level
+      type: integer
+      description: "Maximum autonomy level (1=discovery only, 2=read-write, 3=fully autonomous)"
+      default: 2
+    - name: allow_agent_delegation
+      type: boolean
+      description: "Allow agents to delegate sub-tasks to other agents"
+      default: false
+  template: |
+    // MCP Agent Permissions Policy
+    // Template: {name} v{version}
+
+    // Level 1 agents (discovery only) can list and read
+    permit(
+      principal,
+      action in [Action::"list_tools", Action::"list_servers", Action::"list_resources", Action::"get_schema", Action::"read_resource"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.authenticated == true &&
+      principal.agent_autonomy_level >= 1
+    };
+
+    // Level 2 agents (task execution) can invoke tools and write
+    permit(
+      principal,
+      action in [Action::"invoke_tool", Action::"call_api", Action::"write_resource", Action::"search"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.authenticated == true &&
+      principal.agent_autonomy_level >= 2 &&
+      principal.task_approved == true
+    };
+
+    // Level 3 agents (autonomous) can perform high-impact actions
+    permit(
+      principal,
+      action in [Action::"send_email", Action::"make_purchase", Action::"deploy_code"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.authenticated == true &&
+      principal.agent_autonomy_level >= 3 &&
+      principal.human_supervisor_id != "" &&
+      context.human_approved == true
+    };
+
+    // Actions requiring human approval must always have approval token
+    forbid(
+      principal,
+      action in [Action::"send_email", Action::"deploy_code", Action::"delete_data", Action::"make_purchase", Action::"create_user"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      context.human_approved == false &&
+      context.approval_token == ""
+    };
+
+    // Deny agent delegation unless explicitly enabled
+    forbid(
+      principal,
+      action == Action::"delegate_to_agent",
+      resource matches Resource::"{resource_pattern}"
+    );
+
+    // Deny agents from modifying their own permission grants
+    forbid(
+      principal,
+      action in [Action::"grant_permission", Action::"modify_policy", Action::"escalate_privileges"],
+      resource matches Resource::"{resource_pattern}"
+    );
+
+    // Deny unauthenticated agent requests
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.authenticated == false
+    };
+  validation:
+    - rule: "human_approval_required_actions must not be empty"
+      check: "len(parameters.get('human_approval_required_actions', [])) > 0"
+    - rule: "agent_max_autonomy_level must be between 1 and 3"
+      check: "1 <= int(parameters.get('agent_max_autonomy_level', 2)) <= 3"
+  tests:
+    - name: "Level-1 agent can list tools"
+      given:
+        principal:
+          role: discovery_agent
+          authenticated: true
+          agent_autonomy_level: 1
+        action: list_tools
+        resource: mcp-server-alpha
+      expect: allow
+    - name: "Level-2 agent with task approval can invoke tool"
+      given:
+        principal:
+          role: task_agent
+          authenticated: true
+          agent_autonomy_level: 2
+          task_approved: true
+        action: invoke_tool
+        resource: search-tool
+      expect: allow
+    - name: "Agent cannot modify its own permissions"
+      given:
+        principal:
+          role: autonomous_agent
+          authenticated: true
+          agent_autonomy_level: 3
+        action: grant_permission
+        resource: policy-store
+        context:
+          human_approved: true
+          approval_token: "tok-001"
+      expect: deny
+    - name: "High-impact action without human approval is denied"
+      given:
+        principal:
+          role: autonomous_agent
+          authenticated: true
+          agent_autonomy_level: 3
+          human_supervisor_id: "user-100"
+        action: deploy_code
+        resource: production-app
+        context:
+          human_approved: false
+          approval_token: ""
+      expect: deny
