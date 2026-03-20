@@ -4215,12 +4215,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Update existing resource if there are changes
                     fields_to_update = False
 
+                    upstream_visibility = getattr(resource, "visibility", None)
                     if (
                         existing_resource.name != resource.name
                         or existing_resource.description != resource.description
                         or existing_resource.mime_type != resource.mime_type
                         or existing_resource.uri_template != resource.uri_template
-                        or (update_visibility and existing_resource.visibility != (getattr(resource, "visibility", None) or gateway.visibility))
+                        or (update_visibility and upstream_visibility is not None and existing_resource.visibility != upstream_visibility)
                     ):
                         fields_to_update = True
 
@@ -4229,8 +4230,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_resource.description = resource.description
                         existing_resource.mime_type = resource.mime_type
                         existing_resource.uri_template = resource.uri_template
-                        if update_visibility:
-                            existing_resource.visibility = getattr(resource, "visibility", None) or gateway.visibility
+                        if update_visibility and upstream_visibility is not None:
+                            existing_resource.visibility = upstream_visibility
                         logger.debug(f"Updated existing resource: {resource.uri}")
                 else:
                     # Create new resource if it doesn't exist

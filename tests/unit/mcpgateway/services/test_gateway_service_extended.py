@@ -859,11 +859,12 @@ class TestGatewayServiceExtended:
         # Should return empty list (no new resources)
         assert len(result) == 0
 
-        # Existing resource should be updated; gateway visibility wins when resource has no override
+        # Existing resource fields should be updated, but visibility preserved
+        # (upstream has no explicit visibility; pre-propagation handles inherited changes)
         assert existing_resource.description == "Updated description"
         assert existing_resource.mime_type == "application/json"
         assert existing_resource.uri_template == "template_content"
-        assert existing_resource.visibility == "public"
+        assert existing_resource.visibility == "private"
 
     @pytest.mark.asyncio
     async def test_update_or_create_resources_preserves_resource_visibility_on_update(self):
@@ -1882,17 +1883,21 @@ class TestGatewayServiceExtended:
         assert existing_prompt.visibility == "private"
 
         # --- Test 2: MANUAL UPDATE with explicit visibility change ---
+        # Tools and prompts inherit gateway visibility (no per-item override support)
         mock_db.execute.side_effect = [
             create_mock_result(existing_tool),
         ]
         service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=True)
         assert existing_tool.visibility == "public"
 
+        # Resources: upstream has visibility=None, so the helper preserves the
+        # existing visibility. Pre-propagation (in update_gateway) handles
+        # updating inherited resources before the helper runs.
         mock_db.execute.side_effect = [
             create_mock_result(existing_res),
         ]
         service._update_or_create_resources(mock_db, [res_from_server], mock_gateway, "update", update_visibility=True)
-        assert existing_res.visibility == "public"
+        assert existing_res.visibility == "team"
 
         mock_db.execute.side_effect = [
             create_mock_result(existing_prompt),
