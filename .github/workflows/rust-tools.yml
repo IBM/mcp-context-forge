@@ -85,9 +85,9 @@ jobs:
       - name: Install cargo-deny
         run: cargo install cargo-deny
 
-      - name: Run license check
+      - name: Run cargo-deny policy checks
         working-directory: tools_rust/wrapper
-        run: make licenses
+        run: make deny
 
   coverage:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
