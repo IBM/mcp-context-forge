@@ -1553,6 +1553,8 @@ demo-a2a-apikey:                           ## Start only X-API-Key demo agent
 # help: resilience-logs        - Show resilience stack logs
 # help: resilience-locust      - Run Locust load test against slow-time-server (10 users, 120s)
 # help: resilience-locust-ui   - Start Locust web UI for slow-time-server
+# help: test-secrets-detection-plugin - Validate the secrets detection plugin end to end
+# help: test-pii-filter-plugin        - Validate the PII filter plugin changes
 # help: resilience-jmeter      - Run JMeter baseline test against slow-time-server (20 threads, 5min)
 
 RESILIENCE_HOST ?= http://localhost:8889
@@ -1867,6 +1869,17 @@ LOADTEST_UI_PORT ?= 8090
 LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
 LOADTEST_HTML_REPORT := reports/locust_report.html
 LOADTEST_CSV_PREFIX := reports/locust
+SECRET_DETECTION_LOCUSTFILE := tests/loadtest/locustfile_secret_detection.py
+SECRET_DETECTION_LOADTEST_HOST ?= http://localhost:8080
+SECRET_DETECTION_LOADTEST_USERS ?= 100
+SECRET_DETECTION_LOADTEST_SPAWN_RATE ?= 10
+SECRET_DETECTION_LOADTEST_RUN_TIME ?= 60s
+SECRET_DETECTION_BENCH_GATEWAY_REPLICAS ?= 1
+SECRET_DETECTION_BENCH_GUNICORN_WORKERS ?= 2
+SECRET_DETECTION_BENCH_CPU_LIMIT ?= 1
+SECRET_DETECTION_BENCH_CPU_RESERVATION ?= 0.5
+SECRET_DETECTION_BENCH_MEM_LIMIT ?= 3G
+SECRET_DETECTION_BENCH_MEM_RESERVATION ?= 1G
 # Auto-detect c-ares resolver availability (empty string if unavailable)
 LOADTEST_GEVENT_RESOLVER := $(shell python3 -c "from gevent.resolver.cares import Resolver; print('ares')" 2>/dev/null || echo "")
 
@@ -2154,6 +2167,45 @@ load-test-fasttime:                        ## Load test fast_time MCP tools (50 
 			FastTimeUser \
 			--only-summary"
 	@echo "✅ Report: reports/loadtest_fasttime.html"
+
+.PHONY: test-secrets-detection-plugin
+test-secrets-detection-plugin: rust-ensure-deps ## Validate the secrets detection plugin end to end
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@echo "🧪 Validating secrets detection plugin..."
+	@cd plugins_rust/secrets_detection && cargo test
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && maturin develop --manifest-path plugins_rust/secrets_detection/Cargo.toml"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pytest tests/unit/plugins/test_secrets_detection.py -q"
+
+.PHONY: test-pii-filter-plugin
+test-pii-filter-plugin: rust-ensure-deps ## Validate the PII filter plugin changes
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@echo "🧪 Validating PII filter plugin..."
+	@cd plugins_rust/pii_filter && cargo test
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && maturin develop --manifest-path plugins_rust/pii_filter/Cargo.toml"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py -q -k 'secret_like_values_are_not_pii or prompt_post_fetch'"
+
+.PHONY: load-test-secret-detection-compare
+load-test-secret-detection-compare:        ## Focused secrets-detection benchmark: Rust run first, then forced Python fallback
+	@echo "🔐 Running focused secrets-detection benchmark..."
+	@echo "   Host: $(SECRET_DETECTION_LOADTEST_HOST)"
+	@echo "   Users: $(SECRET_DETECTION_LOADTEST_USERS)"
+	@echo "   Spawn rate: $(SECRET_DETECTION_LOADTEST_SPAWN_RATE)/s"
+	@echo "   Duration: $(SECRET_DETECTION_LOADTEST_RUN_TIME)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@VENV_DIR="$(VENV_DIR)" \
+	COMPOSE_CMD="$(COMPOSE_CMD)" \
+	IMAGE_LOCAL_NAME="$(call get_image_name)" \
+	SECRET_DETECTION_LOADTEST_HOST="$(SECRET_DETECTION_LOADTEST_HOST)" \
+	SECRET_DETECTION_LOADTEST_USERS="$(SECRET_DETECTION_LOADTEST_USERS)" \
+	SECRET_DETECTION_LOADTEST_SPAWN_RATE="$(SECRET_DETECTION_LOADTEST_SPAWN_RATE)" \
+	SECRET_DETECTION_LOADTEST_RUN_TIME="$(SECRET_DETECTION_LOADTEST_RUN_TIME)" \
+	SECRET_DETECTION_BENCH_GATEWAY_REPLICAS="$(SECRET_DETECTION_BENCH_GATEWAY_REPLICAS)" \
+	SECRET_DETECTION_BENCH_GUNICORN_WORKERS="$(SECRET_DETECTION_BENCH_GUNICORN_WORKERS)" \
+	SECRET_DETECTION_BENCH_CPU_LIMIT="$(SECRET_DETECTION_BENCH_CPU_LIMIT)" \
+	SECRET_DETECTION_BENCH_CPU_RESERVATION="$(SECRET_DETECTION_BENCH_CPU_RESERVATION)" \
+	SECRET_DETECTION_BENCH_MEM_LIMIT="$(SECRET_DETECTION_BENCH_MEM_LIMIT)" \
+	SECRET_DETECTION_BENCH_MEM_RESERVATION="$(SECRET_DETECTION_BENCH_MEM_RESERVATION)" \
+	bash tests/loadtest/run_secret_detection_compare.sh
 
 load-test-1000:                            ## High-load test (1000 users, 120s) - requires tuned compose
 	@echo "🔥 Running HIGH LOAD test (1000 users, ~1000 RPS)..."
@@ -7091,8 +7143,6 @@ test-full: coverage test-js test-ui-report
 # help: pip-audit           - Audit Python dependencies for published CVEs
 # help: gitleaks-install    - Install gitleaks secret scanner
 # help: gitleaks            - Scan git history for secrets
-# help: detect-secrets-scan    - detect-secrets scan for secrets in repository using baseline file .secrets.baseline
-# help: detect-secrets-audit   - detect-secrets audit for unverified secrets detected in baseline file .secrets.baseline
 # help: devskim-install-dotnet - Install .NET SDK and DevSkim CLI (security patterns scanner)
 # help: sri-generate        - Generate SRI hashes for CDN resources
 # help: sri-verify          - Verify SRI hashes match current CDN content
@@ -7312,20 +7362,6 @@ gitleaks:                           ## 🔍 Scan for secrets in git history
 	@gitleaks detect --source . -v || true
 	@echo "💡 To scan git history: gitleaks detect --source . --log-opts='--all'"
 
-.PHONY: detect-secrets-scan
-detect-secrets-scan: install-dev             ## 🔍  detect-secrets scan for secrets in repository
-	@echo "🔍 Running detect-secrets scan..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets scan --update .secrets.baseline --use-all-plugins"
-
-.PHONY: detect-secrets-audit
-detect-secrets-audit: install-dev            ## 🔎  detect-secrets audit for reviewing findings
-	@echo "🔎 Running detect-secrets audit..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets audit .secrets.baseline"
-
-.PHONY: detect-secrets-hook
-detect-secrets-hook: install-dev              ## 🔎  detect-secrets pre-commit hook equivalent
-	@echo "🔎 Running detect-secrets-hook pre-commit hook equivalent..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets-hook --baseline .secrets.baseline --use-all-plugins --fail-on-unaudited"
 
 ## --------------------------------------------------------------------------- ##
 ##  DevSkim (.NET-based security patterns scanner)

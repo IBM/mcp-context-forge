@@ -18,9 +18,9 @@ A plugin for detecting and masking Personally Identifiable Information (PII) in 
 - **Driver's License Numbers** - US state formats
 - **Bank Account Numbers** - Including IBAN
 - **Medical Record Numbers** - MRN formats
-- **AWS Access Keys** - AKIA prefixed keys and secrets
-- **API Keys** - Generic API key patterns
 - **Custom Patterns** - Define your own PII patterns
+
+Secret-style credentials such as AWS keys and generic API tokens are handled by the `secrets_detection` plugin, not the PII filter.
 
 ### Masking Strategies
 - **REDACT** - Complete replacement with `[REDACTED]` or custom text
@@ -62,8 +62,6 @@ plugins:
       detect_email: true
       detect_phone: true
       detect_ip_address: true
-      detect_aws_keys: true
-      detect_api_keys: true
       # Masking Settings
       default_mask_strategy: "partial"
       redaction_text: "[PII_REDACTED]"
@@ -102,16 +100,15 @@ config:
   # ... enable all detection types
 ```
 
-### API Keys Only
+### PII Only
 ```yaml
 config:
   detect_ssn: false
   detect_credit_card: false
   detect_email: false
   detect_phone: false
-  detect_aws_keys: true  # Only detect API keys
-  detect_api_keys: true
-  block_on_detection: true  # Always block if keys detected
+  detect_ip_address: true
+  block_on_detection: true
   default_mask_strategy: "redact"
 ```
 

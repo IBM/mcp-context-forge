@@ -650,8 +650,7 @@ plugins:
     author: "ContextForge"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "secrets", "dlp"]
-    # mode: "enforce"
-    mode: "disabled"
+    mode: "enforce"
     priority: 51
     conditions: []
     config:

@@ -12,7 +12,9 @@ pub struct SecretsDetectionConfig {
 
 impl Default for SecretsDetectionConfig {
     fn default() -> Self {
-        let enabled = PATTERNS.keys().map(|&k| (k.to_string(), true)).collect();
+        let mut enabled: HashMap<String, bool> =
+            PATTERNS.keys().map(|&k| (k.to_string(), true)).collect();
+        enabled.insert("generic_api_key_assignment".to_string(), false);
 
         Self {
             enabled,
@@ -38,9 +40,20 @@ mod tests {
         assert!(config.block_on_detection);
         assert_eq!(config.min_findings_to_block, 1);
 
-        // Verify all patterns are enabled by default
-        assert_eq!(config.enabled.len(), 8, "Should have 8 patterns enabled");
+        assert_eq!(
+            config.enabled.len(),
+            11,
+            "Should have 11 patterns configured"
+        );
+        assert_eq!(
+            config.enabled.get("generic_api_key_assignment"),
+            Some(&false),
+            "Broad generic API-key detection should be opt-in"
+        );
         for (pattern_name, enabled) in config.enabled.iter() {
+            if pattern_name == "generic_api_key_assignment" {
+                continue;
+            }
             assert!(
                 enabled,
                 "Pattern '{}' should be enabled by default",

@@ -19,6 +19,9 @@ Configuration (example)
       aws_access_key_id: true
       aws_secret_access_key: true
       google_api_key: true
+      github_token: true
+      stripe_secret_key: true
+      generic_api_key_assignment: false  # Broad heuristic; enable only if you want generic header/assignment coverage
       slack_token: true
       private_key_block: true
       jwt_like: true
@@ -33,6 +36,19 @@ Configuration (example)
 Notes
 - Emits metadata (`secrets_findings`, `count`) when not blocking; includes up to 5 example types.
 - Uses conservative regexes; combine with PII filter for broader coverage.
+- High-confidence, label-independent detectors include `aws_access_key_id`, `google_api_key`, `github_token`, `stripe_secret_key`, and `slack_token`.
+- `generic_api_key_assignment`, `jwt_like`, `hex_secret_32`, and `base64_24` are broader heuristics and can increase false positives.
+- When broad heuristics are enabled, the plugin logs a warning at initialization so operators know blocking behavior may become noisier.
+
+What it can do
+- Reliably catch supported vendor formats that have strong intrinsic prefixes or structure, even when pasted without labels.
+- Catch generic key/value assignments such as `X-API-Key: ...` or `api_key=...` when `generic_api_key_assignment` is enabled.
+- Redact or block when matches are found.
+
+What it cannot do
+- It cannot guarantee 100% detection for every possible secret format across every vendor without increasing false positives.
+- It does not try to detect arbitrary high-entropy strings with no recognizable structure or provider prefix.
+- The generic assignment heuristic intentionally favors lower false positives over maximum recall; some unlabeled vendor-specific tokens will still require adding a dedicated pattern.
 
 ## Testing
 

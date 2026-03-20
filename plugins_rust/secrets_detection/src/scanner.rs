@@ -1,3 +1,4 @@
+use log::{debug, trace};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
 
@@ -22,6 +23,7 @@ pub fn scan_container<'py>(
     container: &Bound<'py, PyAny>,
     cfg: &SecretsDetectionConfig,
 ) -> PyResult<(usize, Bound<'py, PyAny>, Bound<'py, PyList>)> {
+    trace!("Scanning nested Python container in Rust");
     let mut total = 0;
     let findings = PyList::empty(py);
 
@@ -98,6 +100,8 @@ pub fn detect_and_redact(text: &str, cfg: &SecretsDetectionConfig) -> (Vec<Findi
             continue;
         }
 
+        let findings_before = findings.len();
+
         // Always detect from the original text to avoid false positives from redaction
         for m in pat.find_iter(text) {
             let mat = m.as_str();
@@ -113,12 +117,24 @@ pub fn detect_and_redact(text: &str, cfg: &SecretsDetectionConfig) -> (Vec<Findi
             });
         }
 
+        let findings_added = findings.len() - findings_before;
+        if findings_added > 0 {
+            debug!(
+                "Pattern '{}' matched {} finding(s) in Rust secrets detection",
+                name, findings_added
+            );
+        }
+
         // Redact matches if redaction is enabled
         if cfg.redact {
             redacted = pat.replace_all(&redacted, &cfg.redaction_text).into_owned();
         }
     }
 
+    debug!(
+        "Rust detect_and_redact completed with {} total finding(s)",
+        findings.len()
+    );
     (findings, redacted)
 }
 

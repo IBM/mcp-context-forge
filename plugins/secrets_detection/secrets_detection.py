@@ -58,12 +58,33 @@ PATTERNS = {
     "aws_access_key_id": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     "aws_secret_access_key": re.compile(r"(?i)aws.{0,20}(?:secret|access).{0,20}=\s*([A-Za-z0-9/+=]{40})"),
     "google_api_key": re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b"),
+    "github_token": re.compile(r"\bgh[opusr]_[A-Za-z0-9]{36}\b"),
+    "stripe_secret_key": re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b"),
+    "generic_api_key_assignment": re.compile(
+        r"""(?ix)
+        \b(?:(?:x[-_])?api[-_]?key|apikey|api[_-]?token|access[_-]?token|bearer[_-]?token|auth[_-]?token)
+        \b\s*[:=]\s*['"]?[A-Za-z0-9_\-]{20,}['"]?
+        """
+    ),
     "slack_token": re.compile(r"\bxox[abpqr]-[0-9A-Za-z\-]{10,48}\b"),
     "private_key_block": re.compile(r"-----BEGIN (?:RSA|DSA|EC|OPENSSH) PRIVATE KEY-----"),
     "jwt_like": re.compile(r"\beyJ[a-zA-Z0-9_\-]{10,}\.eyJ[a-zA-Z0-9_\-]{10,}\.[a-zA-Z0-9_\-]{10,}\b"),
     "hex_secret_32": re.compile(r"\b[a-f0-9]{32,}\b", re.IGNORECASE),
     "base64_24": re.compile(r"\b[A-Za-z0-9+/]{24,}={0,2}\b"),
 }
+
+BROAD_PATTERNS = {
+    "generic_api_key_assignment",
+    "jwt_like",
+    "hex_secret_32",
+    "base64_24",
+}
+
+
+def _default_enabled_patterns() -> Dict[str, bool]:
+    enabled = {k: True for k in PATTERNS.keys()}
+    enabled["generic_api_key_assignment"] = False
+    return enabled
 
 
 class SecretsDetectionConfig(BaseModel):
@@ -77,7 +98,7 @@ class SecretsDetectionConfig(BaseModel):
         min_findings_to_block: Minimum number of findings required to block.
     """
 
-    enabled: Dict[str, bool] = {k: True for k in PATTERNS.keys()}
+    enabled: Dict[str, bool] = _default_enabled_patterns()
     redact: bool = False
     redaction_text: str = "***REDACTED***"
     block_on_detection: bool = True
@@ -121,7 +142,7 @@ def _scan_container(container: Any, cfg: SecretsDetectionConfig, use_rust: bool 
             # Pass Pydantic model directly - Rust extracts attributes
             return secrets_detection(container, cfg)
         except Exception as e:
-            logger.warning(f"Rust scan failed, falling back to Python: {e}")
+            logger.warning("Rust scan failed, falling back to Python: %s", e, exc_info=True)
             # Fall through to Python implementation
 
     # Python implementation
@@ -169,6 +190,7 @@ class SecretsDetectionPlugin(Plugin):
         """
         super().__init__(config)
         self._cfg = SecretsDetectionConfig(**(config.config or {}))
+        self._warn_on_broad_patterns()
 
         # Set implementation type based on Rust availability
         if _RUST_AVAILABLE:
@@ -177,6 +199,18 @@ class SecretsDetectionPlugin(Plugin):
         else:
             self.implementation = "Python"
             logger.info("🐍 SecretsDetectionPlugin initialized with Python implementation")
+
+    def _warn_on_broad_patterns(self) -> None:
+        enabled_broad_patterns = sorted(
+            pattern_name
+            for pattern_name in BROAD_PATTERNS
+            if self._cfg.enabled.get(pattern_name, False)
+        )
+        if enabled_broad_patterns:
+            logger.warning(
+                "Broad secrets heuristics enabled: %s. These patterns are useful for generic API key/token coverage but can increase false positives.",
+                ", ".join(enabled_broad_patterns),
+            )
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """Detect secrets in prompt arguments.
