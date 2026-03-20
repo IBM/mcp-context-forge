@@ -3058,9 +3058,14 @@ a2a_router = APIRouter(prefix="/a2a", tags=["A2A Agents"])
 
 
 # Database dependency
-def get_db():
+def get_db(request: Request = None):
     """
     Dependency function to provide a database session.
+
+    When observability is enabled, this reuses the session created by
+    ObservabilityMiddleware (stored in request.state.db) to avoid duplicate
+    session creation. When observability is disabled or the
+    middleware hasn't created a session, this creates its own session.
 
     Commits the transaction on successful completion to avoid implicit rollbacks
     for read-only operations. Rolls back explicitly on exception.
@@ -3070,6 +3075,9 @@ def get_db():
     network issues), the rollback will fail. In this case, we invalidate the
     session to ensure the broken connection is discarded from the pool rather
     than being returned in a bad state.
+
+    Args:
+        request: Optional FastAPI request object (injected automatically)
 
     Yields:
         Session: A SQLAlchemy session object for interacting with the database.
@@ -3096,7 +3104,20 @@ def get_db():
         ...         pass  # Expected - generator cleanup
         'ResilientSession'
     """
+    # Check if ObservabilityMiddleware already created a request-scoped session
+    # This eliminates duplicate session creation when observability is enabled (Issue #3467)
+    if request is not None and hasattr(request, "state") and hasattr(request.state, "db"):
+        db = request.state.db
+        if db is not None:
+            logger.debug(f"[GET_DB] Reusing session from middleware: {id(db)}")
+            # Yield the middleware's session without closing it
+            # The middleware will handle commit/rollback/close
+            yield db
+            return
+
+    # Fallback: Create our own session (observability disabled or middleware didn't create one)
     db = SessionLocal()
+    logger.debug(f"[GET_DB] DB session created: {id(db)}")
     try:
         yield db
         # Only commit if the transaction is still active.
