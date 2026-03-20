@@ -547,9 +547,13 @@ class OAuthManager:
         code_verifier = state_data.get("code_verifier")
         app_user_email = state_data.get("app_user_email")
 
-        # Backward compatibility for in-flight legacy states that embedded
-        # gateway context.  Identity fields (app_user_email) are intentionally
-        # NOT extracted from unsigned legacy payloads (CWE-345).
+        # Defence-in-depth: if app_user_email is absent from server-side
+        # state (e.g. state stored by an older code path), attempt a
+        # gateway-mismatch check via the legacy state parser but NEVER
+        # extract identity fields from unsigned payloads (CWE-345).
+        # Note: the /oauth/callback router rejects pure legacy states
+        # before reaching here (allow_legacy_fallback=False), so this
+        # block only fires for server-stored states that lack the email.
         if not app_user_email:
             legacy_state_payload = self._extract_legacy_state_payload(state)
             if legacy_state_payload:
