@@ -893,6 +893,7 @@ def _compute_metrics_summary(
     entity_id: Optional[str] = None,
     raw_metric_class: Optional[Any] = None,
     hourly_metric_class: Optional[Any] = None,
+    server_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Compute aggregated metrics from both raw and hourly tables without double-counting.
 
@@ -911,6 +912,7 @@ def _compute_metrics_summary(
         entity_id: ID of the entity (tool/resource/prompt/server/agent) for SQL query
         raw_metric_class: ORM class for raw metrics (e.g., ToolMetric) for SQL query
         hourly_metric_class: ORM class for hourly metrics (e.g., ToolMetricsHourly) for SQL query
+        server_id: If provided, only include metrics for this server. If None, aggregate all (current behavior).
 
     Returns:
         Dict with keys: total_executions, successful_executions, failed_executions,
@@ -927,6 +929,11 @@ def _compute_metrics_summary(
         # ============================================================
         # IN-MEMORY PATH: Iterate over loaded objects
         # ============================================================
+
+        # Filter by server_id if provided
+        if server_id is not None:
+            raw_metrics = [m for m in raw_metrics if m.server_id == server_id]
+            hourly_metrics = [m for m in hourly_metrics if m.server_id == server_id]
 
         # Build set of hours already covered by hourly aggregates
         covered_hours: set[datetime] = set()
@@ -1009,18 +1016,20 @@ def _compute_metrics_summary(
     fk_column_hourly = getattr(hourly_metric_class, fk_column_name)
 
     # Query 1: All hourly aggregates for this entity (includes max hour_start)
-    hourly_result = (
-        session.query(
-            func.sum(hourly_metric_class.total_count),  # pylint: disable=not-callable
-            func.sum(hourly_metric_class.success_count),  # pylint: disable=not-callable
-            func.min(hourly_metric_class.min_response_time),  # pylint: disable=not-callable
-            func.max(hourly_metric_class.max_response_time),  # pylint: disable=not-callable
-            func.sum(hourly_metric_class.avg_response_time * hourly_metric_class.total_count),  # weighted sum
-            func.max(hourly_metric_class.hour_start),  # pylint: disable=not-callable
-        )
-        .filter(fk_column_hourly == entity_id)
-        .one()
-    )
+    hourly_query = session.query(
+        func.sum(hourly_metric_class.total_count),  # pylint: disable=not-callable
+        func.sum(hourly_metric_class.success_count),  # pylint: disable=not-callable
+        func.min(hourly_metric_class.min_response_time),  # pylint: disable=not-callable
+        func.max(hourly_metric_class.max_response_time),  # pylint: disable=not-callable
+        func.sum(hourly_metric_class.avg_response_time * hourly_metric_class.total_count),  # weighted sum
+        func.max(hourly_metric_class.hour_start),  # pylint: disable=not-callable
+    ).filter(fk_column_hourly == entity_id)
+
+    # Add server_id filter if provided
+    if server_id is not None:
+        hourly_query = hourly_query.filter(hourly_metric_class.server_id == server_id)
+
+    hourly_result = hourly_query.one()
 
     hourly_total = hourly_result[0] or 0
     hourly_successful = hourly_result[1] or 0
@@ -1041,6 +1050,11 @@ def _compute_metrics_summary(
         func.sum(raw_metric_class.response_time),  # pylint: disable=not-callable
         func.max(raw_metric_class.timestamp),  # pylint: disable=not-callable
     ).filter(fk_column_raw == entity_id)
+
+    # Add server_id filter if provided
+    if server_id is not None:
+        raw_query = raw_query.filter(raw_metric_class.server_id == server_id)
+
     if hourly_last_bucket is not None:
         # Only include raw metrics from after the last rolled-up hour
         hourly_coverage_end = hourly_last_bucket + timedelta(hours=1)
@@ -3510,12 +3524,15 @@ class Tool(Base):
             return None
         return max(m.timestamp for m in self.metrics)
 
-    @property
-    def metrics_summary(self) -> Dict[str, Any]:
+    def metrics_summary(self, server_id: Optional[str] = None) -> Dict[str, Any]:
         """Aggregated metrics for the tool combining raw and hourly data without double-counting.
 
         When metrics are loaded: computes from memory (raw + hourly)
         When not loaded: uses SQL queries with time partitioning
+
+        Args:
+            server_id: If provided, only include metrics for this server.
+                       If None, aggregate all (current behavior).
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
@@ -3528,7 +3545,7 @@ class Tool(Base):
                 hourly_metrics = self.metrics_hourly
             except AttributeError:
                 hourly_metrics = []  # Relationship not loaded
-            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics)
+            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics, server_id=server_id)
 
         # SQL query path
         # Third-Party
@@ -3554,6 +3571,7 @@ class Tool(Base):
             entity_id=self.id,
             raw_metric_class=ToolMetric,
             hourly_metric_class=ToolMetricsHourly,
+            server_id=server_id,
         )
 
 
@@ -3843,12 +3861,15 @@ class Resource(Base):
             return None
         return max(m.timestamp for m in self.metrics)
 
-    @property
-    def metrics_summary(self) -> Dict[str, Any]:
+    def metrics_summary(self, server_id: Optional[str] = None) -> Dict[str, Any]:
         """Aggregated metrics for the resource combining raw and hourly data without double-counting.
 
         When metrics are loaded: computes from memory (raw + hourly)
         When not loaded: uses SQL queries with time partitioning
+
+        Args:
+            server_id: If provided, only include metrics for this server.
+                       If None, aggregate all (current behavior).
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
@@ -3861,7 +3882,7 @@ class Resource(Base):
                 hourly_metrics = self.metrics_hourly
             except AttributeError:
                 hourly_metrics = []
-            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics)
+            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics, server_id=server_id)
 
         # SQL query path
         # Third-Party
@@ -3887,6 +3908,7 @@ class Resource(Base):
             entity_id=self.id,
             raw_metric_class=ResourceMetric,
             hourly_metric_class=ResourceMetricsHourly,
+            server_id=server_id,
         )
 
     # Team scoping fields for resource organization
@@ -4216,12 +4238,15 @@ class Prompt(Base):
             return None
         return max(m.timestamp for m in self.metrics)
 
-    @property
-    def metrics_summary(self) -> Dict[str, Any]:
+    def metrics_summary(self, server_id: Optional[str] = None) -> Dict[str, Any]:
         """Aggregated metrics for the prompt combining raw and hourly data without double-counting.
 
         When metrics are loaded: computes from memory (raw + hourly)
         When not loaded: uses SQL queries with time partitioning
+
+        Args:
+            server_id: If provided, only include metrics for this server.
+                       If None, aggregate all (current behavior).
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
@@ -4234,7 +4259,7 @@ class Prompt(Base):
                 hourly_metrics = self.metrics_hourly
             except AttributeError:
                 hourly_metrics = []
-            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics)
+            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics, server_id=server_id)
 
         # SQL query path
         # Third-Party
@@ -4260,6 +4285,7 @@ class Prompt(Base):
             entity_id=self.id,
             raw_metric_class=PromptMetric,
             hourly_metric_class=PromptMetricsHourly,
+            server_id=server_id,
         )
 
 

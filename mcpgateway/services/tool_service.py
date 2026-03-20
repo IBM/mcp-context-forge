@@ -839,6 +839,7 @@ class ToolService(BaseService):
         requesting_user_email: Optional[str] = None,
         requesting_user_is_admin: bool = False,
         requesting_user_team_roles: Optional[Dict[str, str]] = None,
+        server_id: Optional[str] = None,
     ) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
@@ -851,6 +852,7 @@ class ToolService(BaseService):
             requesting_user_email (Optional[str]): Email of the requesting user for header masking.
             requesting_user_is_admin (bool): Whether the requester is an admin.
             requesting_user_team_roles (Optional[Dict[str, str]]): {team_id: role} for the requester.
+            server_id (Optional[str]): If provided, only include metrics for this server. If None, aggregate all.
 
         Returns:
             ToolRead: The Pydantic model representing the tool, including aggregated metrics and new fields.
@@ -866,7 +868,7 @@ class ToolService(BaseService):
 
         # Compute metrics in a single pass (matches server/resource/prompt service pattern)
         if include_metrics:
-            metrics = tool.metrics_summary  # Single-pass computation
+            metrics = tool.metrics_summary(server_id=server_id)  # Single-pass computation
             tool_dict["metrics"] = metrics
             tool_dict["execution_count"] = metrics["total_executions"]
         else:
@@ -2200,7 +2202,8 @@ class ToolService(BaseService):
                             requesting_user_email=requesting_user_email,
                             requesting_user_is_admin=requesting_user_is_admin,
                             requesting_user_team_roles=requesting_user_team_roles,
-                        )
+                            server_id=server_id,
+                    )
                     )
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                     logger.exception(f"Failed to convert tool {getattr(tool, 'id', 'unknown')} ({getattr(tool, 'name', 'unknown')}): {e}")

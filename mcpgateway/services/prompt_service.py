@@ -520,7 +520,7 @@ class PromptService(BaseService):
 
         return top_performers
 
-    def convert_prompt_to_read(self, db_prompt: DbPrompt, include_metrics: bool = False) -> PromptRead:
+    def convert_prompt_to_read(self, db_prompt: DbPrompt, include_metrics: bool = False, server_id: Optional[str] = None) -> PromptRead:
         """
         Convert a DbPrompt instance to a PromptRead Pydantic model,
         optionally including aggregated metrics computed from the associated PromptMetric records.
@@ -529,6 +529,7 @@ class PromptService(BaseService):
             db_prompt: Db prompt to convert
             include_metrics: Whether to include metrics in the result. Defaults to False.
                 Set to False for list operations to avoid N+1 query issues.
+            server_id: If provided, only include metrics for this server. If None, aggregate all.
 
         Returns:
             PromptRead: Pydantic model instance
@@ -549,7 +550,7 @@ class PromptService(BaseService):
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
         if include_metrics:
             # Use metrics_summary which combines raw + hourly rollup data (matches tool_service pattern)
-            metrics = db_prompt.metrics_summary
+            metrics = db_prompt.metrics_summary(server_id=server_id)
             metrics_dict = {
                 "totalExecutions": metrics["total_executions"],
                 "successfulExecutions": metrics["successful_executions"],
@@ -1618,7 +1619,7 @@ class PromptService(BaseService):
             for t in prompts:
                 try:
                     t.team = team_map.get(str(t.team_id)) if t.team_id else None
-                    result.append(self.convert_prompt_to_read(t, include_metrics=include_metrics))
+                    result.append(self.convert_prompt_to_read(t, include_metrics=include_metrics, server_id=server_id))
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                     logger.exception(f"Failed to convert prompt {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
                     # Continue with remaining prompts instead of failing completely

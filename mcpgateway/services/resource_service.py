@@ -273,7 +273,7 @@ class ResourceService(BaseService):
 
         return top_performers
 
-    def convert_resource_to_read(self, resource: DbResource, include_metrics: bool = False) -> ResourceRead:
+    def convert_resource_to_read(self, resource: DbResource, include_metrics: bool = False, server_id: Optional[str] = None) -> ResourceRead:
         """
         Converts a DbResource instance into a ResourceRead model, optionally including aggregated metrics.
 
@@ -281,6 +281,7 @@ class ResourceService(BaseService):
             resource (DbResource): The ORM instance of the resource.
             include_metrics (bool): Whether to include metrics in the result. Defaults to False.
                 Set to False for list operations to avoid N+1 query issues.
+            server_id (Optional[str]): If provided, only include metrics for this server. If None, aggregate all.
 
         Returns:
             ResourceRead: The Pydantic model representing the resource, optionally including aggregated metrics.
@@ -326,7 +327,7 @@ class ResourceService(BaseService):
         # Compute aggregated metrics from the resource's metrics list (only if requested)
         if include_metrics:
             # Use metrics_summary which combines raw + hourly rollup data (matches tool_service pattern)
-            metrics = resource.metrics_summary
+            metrics = resource.metrics_summary(server_id=server_id)
             resource_dict["metrics"] = {
                 "total_executions": metrics["total_executions"],
                 "successful_executions": metrics["successful_executions"],
@@ -1449,7 +1450,7 @@ class ResourceService(BaseService):
             for t in resources:
                 try:
                     t.team = team_map.get(str(t.team_id)) if t.team_id else None
-                    result.append(self.convert_resource_to_read(t, include_metrics=include_metrics))
+                    result.append(self.convert_resource_to_read(t, include_metrics=include_metrics, server_id=server_id))
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                     logger.exception(f"Failed to convert resource {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
                     # Continue with remaining resources instead of failing completely
