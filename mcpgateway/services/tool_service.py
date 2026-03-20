@@ -3230,6 +3230,7 @@ class ToolService(BaseService):
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
         skip_pre_invoke: bool = False,
+        retry_attempt: int = 0,
     ) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
@@ -4523,6 +4524,30 @@ class ToolService(BaseService):
                                 tool_result = ToolResult(content=[TextContent(type="text", text=modified_result if isinstance(modified_result, str) else orjson.dumps(modified_result).decode())])
                             except Exception:
                                 tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
+
+                    # Retry: if the plugin requested a delayed retry and we haven't hit the gateway ceiling
+                    if post_result.retry_delay_ms > 0 and retry_attempt < settings.max_tool_retries:
+                        logger.debug(
+                            "tool_service: retry requested for tool=%s attempt=%d/%d delay_ms=%d",
+                            name, retry_attempt + 1, settings.max_tool_retries, post_result.retry_delay_ms,
+                        )
+                        await asyncio.sleep(post_result.retry_delay_ms / 1000)
+                        with fresh_db_session() as retry_db:
+                            return await self.invoke_tool(
+                                db=retry_db,
+                                name=name,
+                                arguments=arguments,
+                                request_headers=request_headers,
+                                app_user_email=app_user_email,
+                                user_email=user_email,
+                                token_teams=token_teams,
+                                server_id=server_id,
+                                plugin_context_table=context_table,
+                                plugin_global_context=global_context,
+                                meta_data=meta_data,
+                                skip_pre_invoke=skip_pre_invoke,
+                                retry_attempt=retry_attempt + 1,
+                            )
 
                 return tool_result
             except (PluginError, PluginViolationError):
