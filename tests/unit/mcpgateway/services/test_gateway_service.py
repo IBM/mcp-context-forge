@@ -16,15 +16,15 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 import sys
 from types import SimpleNamespace
 from typing import TypeVar
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
-import pytest
 from pydantic import ValidationError
+import pytest
 from url_normalize import url_normalize
 
 # First-Party
@@ -33,18 +33,18 @@ from url_normalize import url_normalize
 # ---------------------------------------------------------------------------
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import GatewayCreate, GatewayUpdate
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
+    GatewayDuplicateConflictError,
     GatewayError,
     GatewayNameConflictError,
     GatewayNotFoundError,
     GatewayService,
-    GatewayDuplicateConflictError,
     OAuthToolValidationError,
 )
 
@@ -113,6 +113,7 @@ def _make_gateway(**overrides):
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
     # Clear SSL context cache before each test for isolation
+    # First-Party
     from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache
 
     clear_ssl_context_cache()
@@ -1028,6 +1029,7 @@ class TestGatewayService:
                 await gateway_service.update_gateway(test_db, 1, gateway_update)
             except Exception as e:
                 print(f"Exception during update_gateway: {e}")
+                # Standard
                 import traceback
 
                 traceback.print_exc()
@@ -2776,6 +2778,7 @@ class TestGatewayHealth:
 
     @pytest.mark.asyncio
     async def test_initialize_redis_ping_failure(self, monkeypatch):
+        # First-Party
         import mcpgateway.services.gateway_service as gs
 
         monkeypatch.setattr(gs, "REDIS_AVAILABLE", True)
@@ -2976,6 +2979,7 @@ async def test_register_gateway_query_param_timeout(gateway_service, monkeypatch
 
 @pytest.mark.asyncio
 async def test_register_gateway_reassigns_orphaned_resource(gateway_service, monkeypatch):
+    # First-Party
     from mcpgateway.schemas import PromptCreate, ResourceCreate
 
     gateway = _make_gateway()
@@ -3043,6 +3047,7 @@ async def test_register_gateway_reassigns_orphaned_resource(gateway_service, mon
 
 def test_validate_tools_mixed_errors(monkeypatch):
     service = GatewayService()
+    # First-Party
     from mcpgateway.schemas import ToolCreate
 
     validation_error = None
@@ -3066,6 +3071,7 @@ def test_validate_tools_mixed_errors(monkeypatch):
 
 def test_validate_tools_all_invalid_default(monkeypatch):
     service = GatewayService()
+    # First-Party
     from mcpgateway.schemas import ToolCreate
 
     validation_error = None
@@ -3092,6 +3098,7 @@ def test_validate_tools_all_invalid_oauth(monkeypatch):
 
 
 def test_gateway_service_singleton_and_cache_helpers(monkeypatch):
+    # First-Party
     import mcpgateway.services.gateway_service as gs
 
     gs._gateway_service_instance = None
@@ -3121,6 +3128,7 @@ def test_gateway_service_singleton_and_cache_helpers(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
+    # First-Party
     from mcpgateway.schemas import PromptCreate, ResourceCreate
 
     service = GatewayService()
@@ -3228,6 +3236,7 @@ async def test_connect_to_sse_server_without_validation_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatch):
+    # First-Party
     from mcpgateway.schemas import ResourceCreate
 
     service = GatewayService()
@@ -3346,6 +3355,7 @@ async def test_connect_to_streamablehttp_server_error_path(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
+    # First-Party
     from mcpgateway.schemas import PromptCreate, ResourceCreate
 
     service = GatewayService()
@@ -3461,6 +3471,7 @@ async def test_connect_to_sse_server_error_path(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_register_gateway_creates_new_resources_and_prompts(gateway_service, monkeypatch):
+    # First-Party
     from mcpgateway.schemas import PromptCreate, ResourceCreate
 
     gateway = _make_gateway(auth_value={"Authorization": "Bearer token"})
@@ -6858,3 +6869,36 @@ async def test_update_gateway_direct_proxy_rejected_when_disabled(gateway_servic
     with patch("mcpgateway.services.gateway_service.settings", mock_settings):
         with pytest.raises(GatewayError, match="disabled"):
             await gateway_service.update_gateway(db, "gw-flag-test", update_data)
+
+
+# ---------------------------------------------------------------------------
+# _initialize_gateway — empty exception str() fallback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_initialize_gateway_empty_exception_uses_type_name(gateway_service):
+    """GatewayConnectionError includes the exception type name when str(e) is empty.
+
+    Regression test for the `raw_error = str(root_cause) or type(root_cause).__name__`
+    guard added alongside the VALIDATION_STRICT fix (#3711).
+    """
+    gateway_service.connect_to_sse_server = AsyncMock(side_effect=RuntimeError())
+
+    with pytest.raises(GatewayConnectionError) as exc_info:
+        await gateway_service._initialize_gateway(url="http://localhost:9999", transport="SSE")
+
+    assert "RuntimeError" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_initialize_gateway_exception_group_empty_str(gateway_service):
+    """GatewayConnectionError falls back to type name for ExceptionGroup with empty inner."""
+    inner = OSError()
+    group = ExceptionGroup("group", [inner])
+    gateway_service.connect_to_sse_server = AsyncMock(side_effect=group)
+
+    with pytest.raises(GatewayConnectionError) as exc_info:
+        await gateway_service._initialize_gateway(url="http://localhost:9999", transport="SSE")
+
+    assert "OSError" in str(exc_info.value)
