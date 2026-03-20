@@ -208,10 +208,16 @@
       // Sync checkbox state from URL on page load (for shareable links)
       function syncCheckboxFromUrl(tableName, checkboxId) {
         const params = getPaginationParams(tableName);
+        const urlParams = new URLSearchParams(window.location.search);
         if (params.includeInactive !== null) {
           const checkbox = document.getElementById(checkboxId);
           if (checkbox) {
             checkbox.checked = params.includeInactive === 'true';
+          }
+        } else if (urlParams.has('include_inactive')) {
+          const checkbox = document.getElementById(checkboxId);
+          if (checkbox) {
+            checkbox.checked = urlParams.get('include_inactive') === 'true';
           }
         }
       }
