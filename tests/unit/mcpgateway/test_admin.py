@@ -12617,6 +12617,7 @@ async def test_admin_team_non_members_partial_html_success(monkeypatch, mock_req
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     assert template_call[0][1] == "team_users_selector.html"
+    auth_service.list_users_not_in_team.assert_awaited_once_with(normalized_id, page=1, per_page=5, search="test")
 
 
 @pytest.mark.asyncio
