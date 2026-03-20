@@ -4058,10 +4058,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             created_user_agent=created_user_agent,
             federation_source=gateway.name,
             version=1,
-            # Inherit team assignment and visibility from gateway
+            # Inherit team assignment from gateway; respect per-tool visibility if set
             team_id=gateway.team_id,
             owner_email=gateway.owner_email,
-            visibility=gateway.visibility,
+            visibility=getattr(tool, "visibility", None) or gateway.visibility,
         )
 
     def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbTool]:
@@ -4136,7 +4136,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         auth_value_changed = existing_tool.auth_value != gateway_tool_auth_value
 
                     upstream_tool_visibility = getattr(tool, "visibility", None)
-                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or auth_value_changed or (update_visibility and upstream_tool_visibility is not None and existing_tool.visibility != upstream_tool_visibility)
+                    auth_fields_changed = (
+                        existing_tool.auth_type != gateway.auth_type
+                        or auth_value_changed
+                        or (update_visibility and upstream_tool_visibility is not None and existing_tool.visibility != upstream_tool_visibility)
+                    )
 
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed:
                         fields_to_update = True
@@ -4352,7 +4356,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway_id=gateway.id,
                         created_by="system",
                         created_via=created_via,
-                        visibility=gateway.visibility,
+                        visibility=getattr(prompt, "visibility", None) or gateway.visibility,
                     )
                     db_prompt.gateway = gateway
                     prompts_to_add.append(db_prompt)

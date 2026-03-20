@@ -1154,11 +1154,12 @@ class TestGatewayServiceExtended:
         mock_gateway.visibility = "private"
         mock_gateway.prompts = []  # Empty prompts list
 
-        # Mock prompt from MCP server
+        # Mock prompt from MCP server (no per-prompt visibility override)
         mock_prompt = MagicMock()
         mock_prompt.name = "test_prompt"
         mock_prompt.description = "A test prompt"
         mock_prompt.template = "Hello {name}!"
+        mock_prompt.visibility = None  # no override; gateway visibility should win
 
         prompts = [mock_prompt]
         context = "test"
@@ -1381,6 +1382,7 @@ class TestGatewayServiceExtended:
         mock_tool.input_schema = {}
         mock_tool.annotations = {}
         mock_tool.jsonpath_filter = None
+        mock_tool.visibility = None  # no override; gateway visibility ("team") should win
 
         mock_resource = MagicMock()
         mock_resource.uri = "file:///metadata_test.json"
@@ -1394,6 +1396,7 @@ class TestGatewayServiceExtended:
         mock_prompt.name = "metadata_prompt"
         mock_prompt.description = "Prompt for testing metadata"
         mock_prompt.template = "Test prompt template"
+        mock_prompt.visibility = None  # no override; gateway visibility ("team") should win
 
         # Call helper methods
         tools_result = service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, "metadata_test")
@@ -1927,7 +1930,7 @@ class TestGatewayServiceExtended:
         assert existing_prompt.visibility == "private"
 
     def test_create_db_tool_inherits_gateway_visibility(self):
-        """New tools created via _create_db_tool inherit visibility from the gateway, not hardcoded 'public'."""
+        """New tools without explicit visibility inherit from the gateway."""
         service = GatewayService()
         tool = MagicMock()
         tool.name = "new_tool"
@@ -1937,6 +1940,7 @@ class TestGatewayServiceExtended:
         tool.input_schema = {}
         tool.annotations = {}
         tool.jsonpath_filter = None
+        tool.visibility = None  # MCP-discovered tool has no visibility
 
         for vis in ("private", "team", "public"):
             gateway = MagicMock()
@@ -1950,3 +1954,28 @@ class TestGatewayServiceExtended:
 
             db_tool = service._create_db_tool(tool=tool, gateway=gateway)
             assert db_tool.visibility == vis, f"Expected {vis}, got {db_tool.visibility}"
+
+    def test_create_db_tool_respects_explicit_tool_visibility(self):
+        """New tools with explicit visibility use that instead of gateway visibility."""
+        service = GatewayService()
+        tool = MagicMock()
+        tool.name = "restricted_tool"
+        tool.description = "A restricted tool"
+        tool.request_type = "POST"
+        tool.headers = {}
+        tool.input_schema = {}
+        tool.annotations = {}
+        tool.jsonpath_filter = None
+        tool.visibility = "private"
+
+        gateway = MagicMock()
+        gateway.url = "http://gw.com"
+        gateway.name = "gw"
+        gateway.auth_type = "none"
+        gateway.auth_value = None
+        gateway.team_id = "t1"
+        gateway.owner_email = "owner@example.com"
+        gateway.visibility = "public"
+
+        db_tool = service._create_db_tool(tool=tool, gateway=gateway)
+        assert db_tool.visibility == "private", "Explicit tool visibility must override gateway visibility"
