@@ -347,6 +347,12 @@ class TeamManagementService:
                 if self._get_user_team_count(created_by) >= max_teams:
                     raise ValueError(f"User has reached the maximum team limit of {max_teams}")
 
+            # Enforce max_members cap for non-admins (only when explicitly provided)
+            if not skip_limits and max_members is not None:
+                max_limit = getattr(settings, "max_members_per_team", 100)
+                if max_members > max_limit:
+                    raise ValueError(f"max_members cannot exceed the configured limit of {max_limit}")
+
             # Apply default max members from settings
             if max_members is None:
                 max_members = getattr(settings, "max_members_per_team", 100)
@@ -469,7 +475,14 @@ class TeamManagementService:
             return None
 
     async def update_team(
-        self, team_id: str, name: Optional[str] = None, description: Optional[str] = None, visibility: Optional[str] = None, max_members: Optional[int] = None, updated_by: Optional[str] = None
+        self,
+        team_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        visibility: Optional[str] = None,
+        max_members: Optional[int] = None,
+        updated_by: Optional[str] = None,
+        skip_limits: bool = False,
     ) -> bool:
         """Update team information.
 
@@ -480,6 +493,7 @@ class TeamManagementService:
             visibility: New visibility setting
             max_members: New maximum member limit
             updated_by: Email of user making the update
+            skip_limits: Skip the max_members_per_team cap check (platform admins only)
 
         Returns:
             bool: True if update succeeded, False otherwise
@@ -520,6 +534,10 @@ class TeamManagementService:
                 team.visibility = visibility
 
             if max_members is not None:
+                if not skip_limits:
+                    max_limit = getattr(settings, "max_members_per_team", 100)
+                    if max_members > max_limit:
+                        raise ValueError(f"max_members cannot exceed the configured limit of {max_limit}")
                 team.max_members = max_members
 
             team.updated_at = utc_now()
@@ -1506,6 +1524,11 @@ class TeamManagementService:
             if existing_member:
                 raise ValueError("User is already a member of this team")
 
+            # Check max teams per user
+            max_teams = getattr(settings, "max_teams_per_user", 50)
+            if self._get_user_team_count(user_email) >= max_teams:
+                raise ValueError(f"User has reached the maximum team limit of {max_teams}")
+
             # Check for existing requests (any status)
             existing_request = self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.team_id == team_id, EmailTeamJoinRequest.user_email == user_email).first()
 
@@ -1533,6 +1556,9 @@ class TeamManagementService:
             logger.info(f"Created join request for user {SecurityValidator.sanitize_log_message(user_email)} to team {SecurityValidator.sanitize_log_message(team_id)}")
             return join_request
 
+        except ValueError:
+            self.db.rollback()
+            raise
         except Exception as e:
             self.db.rollback()
             logger.error(f"Failed to create join request: {e}")
@@ -1587,6 +1613,13 @@ class TeamManagementService:
             if self._get_user_team_count(join_request.user_email) >= max_teams:
                 raise ValueError(f"User has reached the maximum team limit of {max_teams}")
 
+            # Check team member capacity
+            team = await self.get_team_by_id(join_request.team_id)
+            if team and team.max_members:
+                current_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == join_request.team_id, EmailTeamMember.is_active.is_(True)).count()
+                if current_count >= team.max_members:
+                    raise ValueError(f"Team has reached its maximum member limit of {team.max_members}")
+
             # Add user to team
             member = EmailTeamMember(team_id=join_request.team_id, user_email=join_request.user_email, role="member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
 
@@ -1633,6 +1666,9 @@ class TeamManagementService:
             logger.info(f"Approved join request {request_id}: user {join_request.user_email} joined team {join_request.team_id}")
             return member
 
+        except ValueError:
+            self.db.rollback()
+            raise
         except Exception as e:
             self.db.rollback()
             logger.error(f"Failed to approve join request {request_id}: {e}")

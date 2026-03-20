@@ -14955,6 +14955,9 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-request', {
             target: button.parentElement,
             swap: 'innerHTML'
+          }).catch(error => {
+            // Handle network errors with toast notification
+            showToast('Failed to create join request. Please try again.', 'error');
           });
         }
       }
