@@ -164,7 +164,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     try:
                         db.invalidate()
                     except Exception:
-                        pass  # Best effort cleanup
+                        pass  # nosec B110
                 try:
                     db.close()
                 except Exception as close_error:
@@ -255,7 +255,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 try:
                     db.invalidate()
                 except Exception:
-                    pass  # Best effort cleanup on connection failure
+                    pass  # nosec B110
 
             # Re-raise the original exception
             raise
