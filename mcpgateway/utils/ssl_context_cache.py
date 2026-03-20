@@ -7,18 +7,55 @@ make many SSL connections.
 """
 
 # Standard
+from datetime import datetime, timedelta
 import hashlib
+import os
 import ssl
 
-# Cache for SSL contexts keyed by CA certificate hash
+# Cache for SSL contexts keyed by SSL parameter hash
 _ssl_context_cache: dict[str, ssl.SSLContext] = {}
+_ssl_context_cache_timestamps: dict[str, datetime] = {}
+
+_SSL_CONTEXT_CACHE_MAX_SIZE = int(os.getenv("SSL_CONTEXT_CACHE_MAX_SIZE", "100"))
+_SSL_CONTEXT_CACHE_TTL = os.getenv("SSL_CONTEXT_CACHE_TTL")
+if _SSL_CONTEXT_CACHE_TTL is not None and _SSL_CONTEXT_CACHE_TTL.strip() != "":
+    try:
+        _SSL_CONTEXT_CACHE_TTL = int(_SSL_CONTEXT_CACHE_TTL)
+    except ValueError:
+        raise ValueError("SSL_CONTEXT_CACHE_TTL must be an integer number of seconds")
+else:
+    _SSL_CONTEXT_CACHE_TTL = None
 
 
-def get_cached_ssl_context(ca_certificate: str) -> ssl.SSLContext:
+def _is_expired(cache_key: str) -> bool:
+    """Check if a cached SSL context entry has expired based on TTL.
+
+    Args:
+        cache_key: The cache key to check for expiration.
+
+    Returns:
+        True if the entry has expired and should be refreshed, False otherwise.
+    """
+    if _SSL_CONTEXT_CACHE_TTL is None:
+        return False
+    created_at = _ssl_context_cache_timestamps.get(cache_key)
+    if created_at is None:
+        return False
+
+    return datetime.now() - created_at > timedelta(seconds=_SSL_CONTEXT_CACHE_TTL)
+
+
+def get_cached_ssl_context(
+    ca_certificate: str,
+    client_cert: str | None = None,
+    client_key: str | None = None,
+) -> ssl.SSLContext:
     """Get or create cached SSL context for a CA certificate.
 
     Args:
         ca_certificate: CA certificate in PEM format (str or bytes)
+        client_cert: Optional client cert path or PEM for mTLS
+        client_key: Optional client key path or PEM for mTLS
 
     Returns:
         ssl.SSLContext: Configured SSL context
@@ -43,28 +80,62 @@ def get_cached_ssl_context(ca_certificate: str) -> ssl.SSLContext:
         SSL contexts are cached by the SHA256 hash of the certificate to
         avoid repeated expensive SSL setup operations.
     """
-    # Handle bytes, string, or other types (e.g., MagicMock in tests)
+    # Ensure CA certificate is normalized to bytes for hash calculation
     if isinstance(ca_certificate, bytes):
-        cert_bytes = ca_certificate
+        ca_cert_bytes = ca_certificate
     elif isinstance(ca_certificate, str):
-        cert_bytes = ca_certificate.encode()
+        ca_cert_bytes = ca_certificate.encode()
     else:
-        # For non-string/non-bytes (e.g., MagicMock in tests), convert to string first
-        cert_bytes = str(ca_certificate).encode()
+        ca_cert_bytes = str(ca_certificate).encode()
 
-    cert_hash = hashlib.sha256(cert_bytes).hexdigest()
+    # Client cert/key may be either path-like content or inlined PEM string.
+    client_cert_value = client_cert or ""
+    client_key_value = client_key or ""
 
-    if cert_hash in _ssl_context_cache:
-        return _ssl_context_cache[cert_hash]
+    # Build stable cache key incrementally (avoids delimiter collisions).
+    key_hash = hashlib.sha256()
+    key_hash.update(b"ca_cert:")
+    key_hash.update(ca_cert_bytes)
+    key_hash.update(b"|client_cert:")
+    key_hash.update(client_cert_value.encode())
+    key_hash.update(b"|client_key:")
+    key_hash.update(client_key_value.encode())
 
-    # Create new SSL context
+    cache_key = key_hash.hexdigest()
+
+    if cache_key in _ssl_context_cache and not _is_expired(cache_key):
+        return _ssl_context_cache[cache_key]
+
+    # If expired, clear this entry so it is refreshed below
+    if cache_key in _ssl_context_cache:
+        _ssl_context_cache.pop(cache_key, None)
+        _ssl_context_cache_timestamps.pop(cache_key, None)
+
+    # Create new SSL context and configure CA cert
     ctx = ssl.create_default_context()
     ctx.load_verify_locations(cadata=ca_certificate)
 
-    # Cache it (limit cache size)
-    if len(_ssl_context_cache) > 100:
+    # Load client certificates for mTLS when provided
+    if client_cert and client_key:
+        ctx.load_cert_chain(certfile=client_cert, keyfile=client_key)
+
+    # Cache entry creation timestamp if TTL is enabled
+    _ssl_context_cache[cache_key] = ctx
+    if _SSL_CONTEXT_CACHE_TTL is not None:
+        _ssl_context_cache_timestamps[cache_key] = datetime.now()
+
+    # Evict all cache if size limit exceeded; keep this newly inserted item.
+    # This avoids growing indefinitely without requiring LRU tracking.
+    if len(_ssl_context_cache) > _SSL_CONTEXT_CACHE_MAX_SIZE:
+        current_ctx = _ssl_context_cache.pop(cache_key)
+        current_ts = _ssl_context_cache_timestamps.pop(cache_key, None)
+
         _ssl_context_cache.clear()
-    _ssl_context_cache[cert_hash] = ctx
+        _ssl_context_cache_timestamps.clear()
+
+        _ssl_context_cache[cache_key] = current_ctx
+        if current_ts is not None:
+            _ssl_context_cache_timestamps[cache_key] = current_ts
 
     return ctx
 
@@ -89,3 +160,4 @@ def clear_ssl_context_cache() -> None:
         2
     """
     _ssl_context_cache.clear()
+    _ssl_context_cache_timestamps.clear()

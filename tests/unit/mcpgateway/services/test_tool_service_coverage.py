@@ -7026,7 +7026,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _rh, h, *_a, **_k: h),
             patch("mcpgateway.services.tool_service.get_mcp_session_pool", return_value=pool),
-            patch("mcpgateway.services.tool_service.get_cached_ssl_context", return_value=MagicMock()),
+            patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_cached_ssl_context,
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
             patch.object(settings, "enable_ed25519_signing", False),
             patch.object(settings, "mcp_session_pool_enabled", True),
@@ -7039,6 +7039,7 @@ class TestInvokeToolMcpSse:
 
             result = await tool_service.invoke_tool(db, "test_tool", {}, request_headers=None)
         assert result is not None
+        assert mock_cached_ssl_context.call_count == 0
         assert captured_pool_kwargs.get("transport_type") is not None
 
 

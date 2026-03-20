@@ -2305,6 +2305,10 @@ Disallow: /
     # Cache pagination counts for performance (seconds)
     pagination_count_cache_ttl: int = Field(default=300, ge=0, description="Cache TTL for pagination counts")
 
+    # SSL context cache settings
+    ssl_context_cache_max_size: int = Field(default=100, ge=1, description="Maximum number of entries in SSL context cache")
+    ssl_context_cache_ttl: Optional[int] = Field(default=None, ge=0, description="Optional TTL for SSL context entries (seconds); None disables TTL")
+
     # Enable pagination links in API responses
     pagination_include_links: bool = Field(default=True, description="Include pagination links")
 

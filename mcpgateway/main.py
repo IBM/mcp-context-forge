@@ -38,6 +38,7 @@ import html
 import json
 import logging
 import re
+import signal
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
@@ -1701,6 +1702,46 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
+        async def _sighup_reload() -> None:
+            """Asynchronously reload SSL context cache on SIGHUP signal.
+
+            Clears the SSL context cache to force recreation of SSL contexts
+            with potentially updated certificates. This enables certificate
+            rotation without restarting the application.
+
+            Note: Currently only clears SSL cache; config reload may be
+            added in future for other settings.
+            """
+            try:
+                # First-Party
+                from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache  # pylint: disable=import-outside-toplevel
+
+                clear_ssl_context_cache()
+                logger.info("SIGHUP: SSL context cache cleared")
+                # Note: Config reload may be required for other settings; currently this only clears cache.
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error(f"SIGHUP handler failed to clear SSL context cache: {exc}")
+
+        def _sighup_handler(signum: int, frame: Any) -> None:  # pylint: disable=unused-argument
+            """Handle SIGHUP signal by scheduling async SSL cache reload.
+
+            Signal handler that safely schedules an asynchronous task to clear
+            the SSL context cache. Uses the running event loop to create a task
+            for the async reload operation.
+
+            Args:
+                signum: Signal number (should be signal.SIGHUP)
+                frame: Current stack frame (unused but required by signal handler signature)
+            """
+            logger.info("Received SIGHUP signal, scheduling SSL context cache refresh")
+            try:
+                event_loop = asyncio.get_running_loop()
+                event_loop.create_task(_sighup_reload())
+            except RuntimeError:
+                logger.warning("SIGHUP received but event loop not running; skipping async reload")
+
+        signal.signal(signal.SIGHUP, _sighup_handler)
+
         # Start cache invalidation subscriber for cross-worker cache synchronization
         # First-Party
         from mcpgateway.cache.registry_cache import get_cache_invalidation_subscriber  # pylint: disable=import-outside-toplevel
@@ -1769,6 +1810,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             raise SystemExit(1)
         raise
     finally:
+        # Restore default SIGHUP handling in case we reset signal handlers.
+        try:
+            signal.signal(signal.SIGHUP, signal.SIG_DFL)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(f"Failed to restore default SIGHUP handler: {exc}")
+
         if aggregation_stop_event is not None:
             aggregation_stop_event.set()
         for task in (aggregation_backfill_task, aggregation_loop_task):
