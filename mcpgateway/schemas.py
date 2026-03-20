@@ -1601,6 +1601,24 @@ class ResourceCreate(BaseModel):
     visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
 
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
+        """Validate visibility level.
+
+        Args:
+            v: Visibility value to validate
+
+        Returns:
+            Validated visibility value or None
+
+        Raises:
+            ValueError: If visibility is not a recognized level
+        """
+        if v is not None and v not in ("private", "team", "public"):
+            raise ValueError("Visibility must be one of: private, team, public")
+        return v
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:

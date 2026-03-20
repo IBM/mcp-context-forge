@@ -1903,16 +1903,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if gateway_update.tags is not None:
                     gateway.tags = gateway_update.tags
                 if gateway_update.visibility is not None:
+                    old_visibility = gateway.visibility
                     gateway.visibility = gateway_update.visibility
                     # Propagate visibility to all linked items immediately so it
                     # takes effect even when the upstream server is unreachable
                     # and _initialize_gateway fails.
+                    # Only update items that inherited the old gateway visibility;
+                    # preserve per-item overrides (e.g. a resource set to "team"
+                    # while the gateway was "public").
                     for tool in gateway.tools:
-                        tool.visibility = gateway.visibility
+                        if tool.visibility == old_visibility:
+                            tool.visibility = gateway.visibility
                     for resource in gateway.resources:
-                        resource.visibility = gateway.visibility
+                        if resource.visibility == old_visibility:
+                            resource.visibility = gateway.visibility
                     for prompt in gateway.prompts:
-                        prompt.visibility = gateway.visibility
+                        if prompt.visibility == old_visibility:
+                            prompt.visibility = gateway.visibility
                 if gateway_update.passthrough_headers is not None:
                     if isinstance(gateway_update.passthrough_headers, list):
                         gateway.passthrough_headers = gateway_update.passthrough_headers
@@ -4213,7 +4220,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or existing_resource.description != resource.description
                         or existing_resource.mime_type != resource.mime_type
                         or existing_resource.uri_template != resource.uri_template
-                        or (update_visibility and existing_resource.visibility != gateway.visibility)
+                        or (update_visibility and existing_resource.visibility != (getattr(resource, "visibility", None) or gateway.visibility))
                     ):
                         fields_to_update = True
 

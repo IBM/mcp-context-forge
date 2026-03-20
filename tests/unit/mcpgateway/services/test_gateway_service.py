@@ -1114,6 +1114,59 @@ class TestGatewayService:
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_gateway_visibility_preserves_per_resource_overrides(self, gateway_service, mock_gateway, test_db):
+        """Visibility pre-propagation must not overwrite per-resource visibility overrides."""
+        # Resource with inherited gateway visibility — should be updated
+        inherited_resource = MagicMock(spec=DbResource)
+        inherited_resource.visibility = "public"
+        # Resource with a manual per-resource override — must be preserved
+        overridden_resource = MagicMock(spec=DbResource)
+        overridden_resource.visibility = "team"
+
+        mock_tool = MagicMock(spec=DbTool)
+        mock_tool.visibility = "public"
+        mock_prompt = MagicMock(spec=DbPrompt)
+        mock_prompt.visibility = "public"
+
+        mock_gateway.visibility = "public"
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.oauth_config = None
+        mock_gateway.auth_query_params = None
+        mock_gateway.slug = "test_gateway"
+        mock_gateway.tools = [mock_tool]
+        mock_gateway.resources = [inherited_resource, overridden_resource]
+        mock_gateway.prompts = [mock_prompt]
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_query.all.return_value = []
+        test_db.query = Mock(return_value=mock_query)
+
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("Connection failed"))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        gateway_update = GatewayUpdate(visibility="private")
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        assert mock_gateway.visibility == "private"
+        # Inherited resource should be updated to new gateway visibility
+        assert inherited_resource.visibility == "private", "Inherited resource should follow new gateway visibility"
+        # Per-resource override must be preserved
+        assert overridden_resource.visibility == "team", "Per-resource visibility override must not be overwritten"
+        # Tool and prompt with inherited visibility should be updated
+        assert mock_tool.visibility == "private"
+        assert mock_prompt.visibility == "private"
+
+    @pytest.mark.asyncio
     async def test_update_gateway_partial_update(self, gateway_service, mock_gateway, test_db):
         """Test updating only some fields."""
         # Use return_value for all execute calls
