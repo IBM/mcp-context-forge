@@ -524,14 +524,15 @@ class TestAdminMenuVisibility:
             try:
                 element = page.locator(selector)
                 if element.count() > 0 and element.is_visible():
-                    # Click the tab
-                    element.click()
+                    # Click the tab and capture response
+                    with page.expect_response("**") as response_info:
+                        element.click()
                     page.wait_for_load_state("domcontentloaded")
 
-                    # Check for 403 error in page content
-                    content = page.content()
-                    assert "403" not in content and "Forbidden" not in content, f"Section '{section}' returned 403 error"
-                    logger.info("✓ Section '%s' accessible (no 403)", section)
+                    # Check HTTP response status (not string matching in HTML)
+                    response = response_info.value
+                    assert response.status != 403, f"Section '{section}' returned HTTP 403 Forbidden"
+                    logger.info("✓ Section '%s' accessible (HTTP %d)", section, response.status)
             except Exception as e:
                 logger.warning(f"Error testing section {section}: {e}")
 

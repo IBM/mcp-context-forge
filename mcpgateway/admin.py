@@ -328,7 +328,7 @@ def validate_section_permissions(router) -> None:
         route_path = _SECTION_TO_ROUTE_PATH.get(section)
 
         if route_path is None:
-            # Section has no associated route (e.g., overview)
+            # Section's route located on a different sub-router, skipping validation
             continue
 
         # Find matching route
@@ -361,7 +361,8 @@ def validate_section_permissions(router) -> None:
         LOGGER.warning(error_msg)
         LOGGER.warning("This may indicate the mapping needs updating.")
     else:
-        LOGGER.info(f"SECTION_PERMISSIONS validation passed: all {len(SECTION_PERMISSIONS)} sections match route decorators")
+        validated_count = len(_SECTION_TO_ROUTE_PATH)
+        LOGGER.info(f"SECTION_PERMISSIONS validation passed: all {validated_count} mapped sections verified (skipped {len(SECTION_PERMISSIONS) - validated_count} sections on other routers)")
 
 
 UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS: frozenset[str] = frozenset({"logout", "team_selector"})
@@ -493,7 +494,24 @@ async def get_hidden_sections_for_user(
     # Initialize permission service
     permission_service = PermissionService(db, audit_enabled=False)
 
-    # Check each section's required permission
+    # Batch-fetch all permissions for the user (single DB query) when the real
+    # permission service is available. Some tests patch only check_permission(),
+    # so fall back to per-section checks if get_user_permissions() is absent or
+    # not awaitable on the patched object.
+    user_permissions: Optional[set[str]] = None
+    try:
+        maybe_permissions = permission_service.get_user_permissions(
+            user_email=user_email,
+            team_id=None,  # Check across all teams
+            include_all_teams=True,  # Include all team-scoped roles
+        )
+        if inspect.isawaitable(maybe_permissions):
+            user_permissions = await maybe_permissions
+        else:
+            LOGGER.debug(f"Falling back to per-section permission checks for user {user_email}: get_user_permissions() is not awaitable")
+    except Exception as e:
+        LOGGER.debug(f"Falling back to per-section permission checks for user {user_email}: {e}")
+
     for section, required_permission in SECTION_PERMISSIONS.items():
         # Skip if already hidden by static config
         if section in hidden:
@@ -503,25 +521,26 @@ async def get_hidden_sections_for_user(
         if required_permission is None:
             continue
 
-        # Check if user has the required permission
-        try:
-            has_permission = await permission_service.check_permission(
-                user_email=user_email,
-                permission=required_permission,
-                token_teams=token_teams,
-                allow_admin_bypass=False,  # UI visibility matches team-scoped permissions (no admin bypass)
-                check_any_team=True,  # Check across all user's teams
-            )
+        if user_permissions is not None:
+            # In-memory check after a single batched permission fetch.
+            has_permission = required_permission in user_permissions or "*" in user_permissions
+        else:
+            try:
+                has_permission = await permission_service.check_permission(
+                    user_email=user_email,
+                    permission=required_permission,
+                    token_teams=token_teams,
+                    allow_admin_bypass=False,
+                    check_any_team=True,
+                )
+            except Exception as e:
+                LOGGER.warning(f"Error checking permission {required_permission} for user {user_email}: {e}")
+                has_permission = False
 
-            # Hide section if user doesn't have permission
-            if not has_permission:
-                hidden.add(section)
-                LOGGER.debug(f"Hiding section '{section}' for user {user_email}: missing permission '{required_permission}'")
-
-        except Exception as e:
-            # On error, hide the section for safety (fail-closed)
-            LOGGER.warning(f"Error checking permission '{required_permission}' for user {user_email}: {e}")
+        # Hide section if user doesn't have permission
+        if not has_permission:
             hidden.add(section)
+            LOGGER.debug(f"Hiding section '{section}' for user {user_email}: missing permission '{required_permission}'")
 
     return hidden
 
