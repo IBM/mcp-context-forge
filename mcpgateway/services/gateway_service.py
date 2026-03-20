@@ -1903,16 +1903,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if gateway_update.tags is not None:
                     gateway.tags = gateway_update.tags
                 if gateway_update.visibility is not None:
+                    old_visibility = gateway.visibility
                     gateway.visibility = gateway_update.visibility
                     # Propagate visibility to all linked items immediately so it
                     # takes effect even when the upstream server is unreachable
                     # and _initialize_gateway fails.
+                    # Only update items that inherited the old gateway visibility;
+                    # preserve per-item overrides (e.g. a resource set to "team"
+                    # while the gateway was "public").
                     for tool in gateway.tools:
-                        tool.visibility = gateway.visibility
+                        if tool.visibility == old_visibility:
+                            tool.visibility = gateway.visibility
                     for resource in gateway.resources:
-                        resource.visibility = gateway.visibility
+                        if resource.visibility == old_visibility:
+                            resource.visibility = gateway.visibility
                     for prompt in gateway.prompts:
-                        prompt.visibility = gateway.visibility
+                        if prompt.visibility == old_visibility:
+                            prompt.visibility = gateway.visibility
                 if gateway_update.passthrough_headers is not None:
                     if isinstance(gateway_update.passthrough_headers, list):
                         gateway.passthrough_headers = gateway_update.passthrough_headers
@@ -4051,10 +4058,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             created_user_agent=created_user_agent,
             federation_source=gateway.name,
             version=1,
-            # Inherit team assignment and visibility from gateway
+            # Inherit team assignment from gateway; respect per-tool visibility if set
             team_id=gateway.team_id,
             owner_email=gateway.owner_email,
-            visibility=gateway.visibility,
+            visibility=getattr(tool, "visibility", None) or gateway.visibility,
         )
 
     def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbTool]:
@@ -4128,7 +4135,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway_tool_auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
                         auth_value_changed = existing_tool.auth_value != gateway_tool_auth_value
 
-                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or auth_value_changed or (update_visibility and existing_tool.visibility != gateway.visibility)
+                    upstream_tool_visibility = getattr(tool, "visibility", None)
+                    auth_fields_changed = (
+                        existing_tool.auth_type != gateway.auth_type
+                        or auth_value_changed
+                        or (update_visibility and upstream_tool_visibility is not None and existing_tool.visibility != upstream_tool_visibility)
+                    )
 
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed:
                         fields_to_update = True
@@ -4147,8 +4159,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
                         existing_tool.auth_type = gateway.auth_type
                         existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
-                        if update_visibility:
-                            existing_tool.visibility = gateway.visibility
+                        if update_visibility and upstream_tool_visibility is not None:
+                            existing_tool.visibility = upstream_tool_visibility
                         logger.debug(f"Updated existing tool: {tool.name}")
                 else:
                     # Create new tool if it doesn't exist
@@ -4208,12 +4220,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Update existing resource if there are changes
                     fields_to_update = False
 
+                    upstream_visibility = getattr(resource, "visibility", None)
                     if (
                         existing_resource.name != resource.name
                         or existing_resource.description != resource.description
                         or existing_resource.mime_type != resource.mime_type
                         or existing_resource.uri_template != resource.uri_template
-                        or (update_visibility and existing_resource.visibility != gateway.visibility)
+                        or (update_visibility and upstream_visibility is not None and existing_resource.visibility != upstream_visibility)
                     ):
                         fields_to_update = True
 
@@ -4222,8 +4235,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_resource.description = resource.description
                         existing_resource.mime_type = resource.mime_type
                         existing_resource.uri_template = resource.uri_template
-                        if update_visibility:
-                            existing_resource.visibility = gateway.visibility
+                        if update_visibility and upstream_visibility is not None:
+                            existing_resource.visibility = upstream_visibility
                         logger.debug(f"Updated existing resource: {resource.uri}")
                 else:
                     # Create new resource if it doesn't exist
@@ -4236,7 +4249,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway_id=gateway.id,
                         created_by="system",
                         created_via=created_via,
-                        visibility=gateway.visibility,
+                        visibility=getattr(resource, "visibility", None) or gateway.visibility,
                     )
                     resources_to_add.append(db_resource)
                     logger.debug(f"Created new resource: {resource.uri}")
@@ -4314,10 +4327,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     fields_to_update = False
 
                     new_argument_schema = self._build_prompt_argument_schema(prompt)
+                    upstream_prompt_visibility = getattr(prompt, "visibility", None)
                     if (
                         existing_prompt.description != prompt.description
                         or existing_prompt.template != (prompt.template if hasattr(prompt, "template") else "")
-                        or (update_visibility and existing_prompt.visibility != gateway.visibility)
+                        or (update_visibility and upstream_prompt_visibility is not None and existing_prompt.visibility != upstream_prompt_visibility)
                         or (existing_prompt.argument_schema or {}) != new_argument_schema
                     ):
                         fields_to_update = True
@@ -4326,8 +4340,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_prompt.description = prompt.description
                         existing_prompt.template = prompt.template if hasattr(prompt, "template") else ""
                         existing_prompt.argument_schema = new_argument_schema
-                        if update_visibility:
-                            existing_prompt.visibility = gateway.visibility
+                        if update_visibility and upstream_prompt_visibility is not None:
+                            existing_prompt.visibility = upstream_prompt_visibility
                         logger.debug(f"Updated existing prompt: {prompt.name}")
                 else:
                     # Create new prompt if it doesn't exist
@@ -4342,7 +4356,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway_id=gateway.id,
                         created_by="system",
                         created_via=created_via,
-                        visibility=gateway.visibility,
+                        visibility=getattr(prompt, "visibility", None) or gateway.visibility,
                     )
                     db_prompt.gateway = gateway
                     prompts_to_add.append(db_prompt)

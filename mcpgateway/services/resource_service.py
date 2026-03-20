@@ -471,7 +471,7 @@ class ResourceService(BaseService):
                 team_id=getattr(resource, "team_id", None) or team_id,
                 owner_email=getattr(resource, "owner_email", None) or owner_email or created_by,
                 # Endpoint visibility parameter takes precedence over schema default
-                visibility=visibility if visibility is not None else getattr(resource, "visibility", "public"),
+                visibility=visibility if visibility is not None else (getattr(resource, "visibility", None) or "public"),
                 gateway_id=gateway_id,
             )
 

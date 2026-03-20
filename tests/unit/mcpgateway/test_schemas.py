@@ -53,6 +53,7 @@ from mcpgateway.schemas import (
     AdminToolCreate,
     EventMessage,
     ListFilters,
+    PromptCreate,
     ResourceCreate,
     ServerCreate,
     ServerMetrics,
@@ -1254,6 +1255,16 @@ class TestSchemaValidators:
             ResourceSubscription(uri="resource://one", subscriber_id=long_subscriber)
 
         assert "Subscriber ID exceeds maximum length" in str(exc_info.value)
+
+    @pytest.mark.parametrize("schema_cls,kwargs", [
+        (ToolCreate, {"name": "t", "integration_type": "REST", "request_type": "GET", "url": "http://x.com"}),
+        (ResourceCreate, {"uri": "test://x", "name": "x", "content": ""}),
+        (PromptCreate, {"name": "p", "template": "hi"}),
+    ])
+    def test_visibility_validator_rejects_invalid_values(self, schema_cls, kwargs):
+        """ToolCreate, ResourceCreate, and PromptCreate must reject invalid visibility strings."""
+        with pytest.raises(ValidationError, match="Visibility must be one of"):
+            schema_cls(**kwargs, visibility="bogus")
 
 
 class TestGatewayCreateCamelCase:

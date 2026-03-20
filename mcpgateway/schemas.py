@@ -387,7 +387,7 @@ class ToolCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the tool owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
@@ -399,6 +399,24 @@ class ToolCreate(BaseModel):
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
+        """Validate visibility level.
+
+        Args:
+            v: Visibility value to validate
+
+        Returns:
+            Validated visibility value or None
+
+        Raises:
+            ValueError: If visibility is not a recognized level
+        """
+        if v is not None and v not in ("private", "team", "public"):
+            raise ValueError("Visibility must be one of: private, team, public")
+        return v
 
     @field_validator("tags")
     @classmethod
@@ -1598,8 +1616,26 @@ class ResourceCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the resource owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
+        """Validate visibility level.
+
+        Args:
+            v: Visibility value to validate
+
+        Returns:
+            Validated visibility value or None
+
+        Raises:
+            ValueError: If visibility is not a recognized level
+        """
+        if v is not None and v not in ("private", "team", "public"):
+            raise ValueError("Visibility must be one of: private, team, public")
+        return v
 
     @field_validator("tags")
     @classmethod
@@ -2151,8 +2187,26 @@ class PromptCreate(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
+        """Validate visibility level.
+
+        Args:
+            v: Visibility value to validate
+
+        Returns:
+            Validated visibility value or None
+
+        Raises:
+            ValueError: If visibility is not a recognized level
+        """
+        if v is not None and v not in ("private", "team", "public"):
+            raise ValueError("Visibility must be one of: private, team, public")
+        return v
 
     @field_validator("tags")
     @classmethod
