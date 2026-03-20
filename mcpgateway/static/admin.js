@@ -33172,6 +33172,24 @@ const nonMemberSelectionsCache = {};
 // memberOverridesCache: teamId -> {email: {checked: bool, role: string}}
 const memberOverridesCache = {};
 
+// Match Python's urllib.parse.quote(safe="") — encodes chars that
+// encodeURIComponent leaves unencoded so hidden-input field names
+// match the backend's role_<encoded-email> lookup key.
+function urlQuoteSafe(str) {
+    return encodeURIComponent(str).replace(
+        /[!'()*]/g,
+        (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase(),
+    );
+}
+
+// Clear selection caches for a team (called when modal opens to
+// prevent stale selections from a previous session bleeding in).
+function clearTeamSearchCaches(teamId) {
+    delete nonMemberSelectionsCache[teamId];
+    delete memberOverridesCache[teamId];
+}
+window.clearTeamSearchCaches = clearTeamSearchCaches;
+
 function captureNonMemberSelections(teamId) {
     const container = document.getElementById(
         `team-non-members-container-${teamId}`,
@@ -33228,7 +33246,7 @@ function restoreNonMemberSelections(teamId) {
             cbHidden.className = "hidden";
             const roleHidden = document.createElement("input");
             roleHidden.type = "hidden";
-            roleHidden.name = "role_" + encodeURIComponent(email);
+            roleHidden.name = "role_" + urlQuoteSafe(email);
             roleHidden.value = role;
             wrapper.appendChild(cbHidden);
             wrapper.appendChild(roleHidden);

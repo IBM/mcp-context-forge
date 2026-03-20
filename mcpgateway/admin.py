@@ -5392,6 +5392,7 @@ async def admin_view_team_members(
                       hx-target="#team-edit-modal-content"
                       hx-swap="innerHTML"
                       class="px-6 py-4">
+                    <script>if (typeof clearTeamSearchCaches === 'function') clearTeamSearchCaches('{team.id}');</script>
 
                     <!-- Current Members Section -->
                     <div class="mb-6">

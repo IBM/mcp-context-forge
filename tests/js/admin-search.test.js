@@ -471,4 +471,85 @@ describe("team member modal split search regressions", () => {
         expect(rerenderedRoleSelect.value).toBe("owner");
         win.fetchWithAuth = originalFetchWithAuth;
     });
+
+    test("clearTeamSearchCaches removes stale selections on modal reopen", async () => {
+        const teamId = "team-stale-cache";
+        const container = doc.createElement("div");
+        container.id = `team-non-members-container-${teamId}`;
+        container.innerHTML = userItemHtml("stale@example.com", {
+            checked: true,
+            role: "owner",
+        });
+        doc.body.appendChild(container);
+
+        const originalFetchWithAuth = win.fetchWithAuth;
+        win.fetchWithAuth = vi.fn().mockResolvedValue({
+            ok: true,
+            text: async () =>
+                userItemHtml("fresh@example.com", {
+                    checked: false,
+                    role: "member",
+                }),
+        });
+
+        await win.serverSideNonMemberSearch(teamId, "fr");
+
+        // stale@example.com should be in cache as a hidden input
+        const hasStale = Array.from(
+            container.querySelectorAll('input[name="associatedUsers"]'),
+        ).some((i) => i.value === "stale@example.com" && i.checked);
+        expect(hasStale).toBe(true);
+
+        // Simulate modal reopen — clear caches
+        win.clearTeamSearchCaches(teamId);
+
+        // Search again — stale selection should NOT reappear
+        win.fetchWithAuth = vi.fn().mockResolvedValue({
+            ok: true,
+            text: async () =>
+                userItemHtml("fresh@example.com", {
+                    checked: false,
+                    role: "member",
+                }),
+        });
+        await win.serverSideNonMemberSearch(teamId, "fr");
+
+        const hasStaleAfterClear = Array.from(
+            container.querySelectorAll('input[name="associatedUsers"]'),
+        ).some((i) => i.value === "stale@example.com" && i.checked);
+        expect(hasStaleAfterClear).toBe(false);
+        win.fetchWithAuth = originalFetchWithAuth;
+    });
+
+    test("urlQuoteSafe encodes chars that encodeURIComponent leaves unencoded", async () => {
+        const teamId = "team-encode-test";
+        const container = doc.createElement("div");
+        container.id = `team-non-members-container-${teamId}`;
+        doc.body.appendChild(container);
+
+        const originalFetchWithAuth = win.fetchWithAuth;
+
+        // Seed cache by selecting a user with special chars
+        container.innerHTML = userItemHtml("o'brien@example.com", {
+            checked: true,
+            role: "owner",
+        });
+        win.fetchWithAuth = vi.fn().mockResolvedValue({
+            ok: true,
+            text: async () => "<div></div>",
+        });
+
+        // Run a search so capture+restore cycle runs
+        await win.serverSideNonMemberSearch(teamId, "xx");
+
+        const hiddenRoleInput = Array.from(
+            container.querySelectorAll('input[type="hidden"]'),
+        ).find((input) => input.name.startsWith("role_"));
+        expect(hiddenRoleInput).toBeDefined();
+        // Python's quote encodes apostrophe as %27
+        expect(hiddenRoleInput.name).toContain("%27");
+        // Should NOT contain a raw apostrophe
+        expect(hiddenRoleInput.name).not.toContain("'");
+        win.fetchWithAuth = originalFetchWithAuth;
+    });
 });
