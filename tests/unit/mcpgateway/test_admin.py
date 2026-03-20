@@ -7314,6 +7314,85 @@ async def test_admin_update_team_exception_htmx_and_redirect(monkeypatch, mock_d
 
 
 @pytest.mark.asyncio
+async def test_admin_update_team_passes_skip_limits_for_admin(monkeypatch, mock_db, allow_permission):
+    """Admin UI update passes skip_limits=True when user is admin."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team", "visibility": "private", "max_members": "500"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    _, kwargs = team_service.update_team.call_args
+    assert kwargs.get("skip_limits") is True
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_passes_skip_limits_false_for_nonadmin(monkeypatch, mock_db, allow_permission):
+    """Admin UI update passes skip_limits=False when user is not admin."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team", "visibility": "private", "max_members": "50"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    _, kwargs = team_service.update_team.call_args
+    assert kwargs.get("skip_limits") is False
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_value_error_htmx_rolls_back(monkeypatch, mock_db, allow_permission):
+    """ValueError from update_team returns 400 with rollback (no partial commit)."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team", "visibility": "private", "max_members": "999"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    assert response.status_code == 400
+    assert "cannot exceed" in response.body.decode()
+    # Verify rollback was called to prevent partial commit
+    mock_db.rollback.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_value_error_redirect(monkeypatch, mock_db, allow_permission):
+    """ValueError from update_team redirects with error for non-HTMX request."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": "/root"}
+    request.headers = {}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team", "visibility": "private", "max_members": "999"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert "cannot%20exceed" in response.headers["location"]
+    mock_db.rollback.assert_called()
+
+
+@pytest.mark.asyncio
 async def test_admin_add_team_members_private_not_owner(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     request = MagicMock(spec=Request)

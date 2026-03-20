@@ -757,6 +757,18 @@ class TestApproveJoinRequestErrors:
             assert "Cannot approve" in exc.value.detail
 
     @pytest.mark.asyncio
+    async def test_value_error_max_members_limit(self, user_ctx, db, mock_team):
+        with _svc(
+            get_team_by_id=AsyncMock(return_value=mock_team),
+            get_user_role_in_team=AsyncMock(return_value="owner"),
+            approve_join_request=AsyncMock(side_effect=ValueError("Team has reached its maximum member limit of 5")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "maximum member limit" in exc.value.detail
+
+    @pytest.mark.asyncio
     async def test_value_error_generic(self, user_ctx, db, mock_team):
         with _svc(
             get_team_by_id=AsyncMock(return_value=mock_team),

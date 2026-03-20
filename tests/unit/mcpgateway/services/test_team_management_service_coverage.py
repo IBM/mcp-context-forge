@@ -775,10 +775,13 @@ class TestApproveJoinRequestEdge:
         mock_query = MagicMock()
         mock_filter = MagicMock()
         mock_filter.first = MagicMock(return_value=join_req)
+        mock_filter.count = MagicMock(return_value=1)
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
+        team = _mock_team(max_members=100)
         with (
+            patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)),
             patch.object(svc, "_log_team_member_action"),
             patch.object(svc, "invalidate_team_member_count_cache", AsyncMock()),
             patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio,
@@ -1416,6 +1419,32 @@ class TestApproveJoinRequestMaxTeamsLimit:
             mock_settings.max_teams_per_user = 50
             with pytest.raises(ValueError, match="maximum team limit"):
                 await svc.approve_join_request("jr1", approved_by="owner@t.com")
+
+    @pytest.mark.asyncio
+    async def test_raises_when_team_at_max_members(self, svc, db):
+        """approve_join_request raises ValueError when team has reached max_members."""
+        join_req = MagicMock(spec=EmailTeamJoinRequest)
+        join_req.id = "jr1"
+        join_req.team_id = "t1"
+        join_req.user_email = "joiner@t.com"
+        join_req.status = "pending"
+        join_req.is_expired.return_value = False
+
+        mock_query = MagicMock()
+        mock_filter = MagicMock()
+        mock_filter.first.return_value = join_req
+        mock_query.filter.return_value = mock_filter
+        # count() returns the team's current member count (at limit)
+        mock_filter.count.return_value = 5
+        mock_query.filter.return_value = mock_filter
+        db.query.return_value = mock_query
+
+        team = _mock_team(max_members=5)
+        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)):
+            with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+                mock_settings.max_teams_per_user = 50
+                with pytest.raises(ValueError, match="maximum member limit"):
+                    await svc.approve_join_request("jr1", approved_by="owner@t.com")
 
 
 # ===========================================================================

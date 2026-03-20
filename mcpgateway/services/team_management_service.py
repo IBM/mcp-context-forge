@@ -1556,6 +1556,9 @@ class TeamManagementService:
             logger.info(f"Created join request for user {SecurityValidator.sanitize_log_message(user_email)} to team {SecurityValidator.sanitize_log_message(team_id)}")
             return join_request
 
+        except ValueError:
+            self.db.rollback()
+            raise
         except Exception as e:
             self.db.rollback()
             logger.error(f"Failed to create join request: {e}")
@@ -1610,6 +1613,13 @@ class TeamManagementService:
             if self._get_user_team_count(join_request.user_email) >= max_teams:
                 raise ValueError(f"User has reached the maximum team limit of {max_teams}")
 
+            # Check team member capacity
+            team = await self.get_team_by_id(join_request.team_id)
+            if team and team.max_members:
+                current_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == join_request.team_id, EmailTeamMember.is_active.is_(True)).count()
+                if current_count >= team.max_members:
+                    raise ValueError(f"Team has reached its maximum member limit of {team.max_members}")
+
             # Add user to team
             member = EmailTeamMember(team_id=join_request.team_id, user_email=join_request.user_email, role="member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
 
@@ -1656,6 +1666,9 @@ class TeamManagementService:
             logger.info(f"Approved join request {request_id}: user {join_request.user_email} joined team {join_request.team_id}")
             return member
 
+        except ValueError:
+            self.db.rollback()
+            raise
         except Exception as e:
             self.db.rollback()
             logger.error(f"Failed to approve join request {request_id}: {e}")
