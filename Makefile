@@ -1378,6 +1378,27 @@ testing-down:                              ## Stop testing stack
 	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile dast down --remove-orphans
 	@echo "✅ Testing stack stopped."
 
+OC_CF_NS ?= contextforge-run
+
+.PHONY: ocp-db-reset
+ocp-db-reset:                              ## Reset the ContextForge database on OpenShift and restart the gateway
+	@echo "🗑️  Resetting ContextForge database in $(OC_CF_NS)..."
+	@PG_POD=$$(oc get pods -n $(OC_CF_NS) -l postgres-operator.crunchydata.com/role=master --no-headers -o name 2>/dev/null | head -1); \
+	if [ -z "$$PG_POD" ]; then echo "❌ No Postgres master pod found in $(OC_CF_NS)"; exit 1; fi; \
+	echo "   Terminating connections..."; \
+	oc exec $$PG_POD -n $(OC_CF_NS) -c database -- psql -U postgres -c \
+		"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='contextforge' AND pid<>pg_backend_pid();" > /dev/null 2>&1; \
+	echo "   Dropping database..."; \
+	oc exec $$PG_POD -n $(OC_CF_NS) -c database -- psql -U postgres -c "DROP DATABASE IF EXISTS contextforge;" && \
+	echo "   Creating database..."; \
+	oc exec $$PG_POD -n $(OC_CF_NS) -c database -- psql -U postgres -c "CREATE DATABASE contextforge OWNER contextforge;" && \
+	oc exec $$PG_POD -n $(OC_CF_NS) -c database -- psql -U postgres -d contextforge -c "ALTER USER contextforge WITH SUPERUSER;" && \
+	echo "   Restarting migration and gateway..."; \
+	oc delete job -n $(OC_CF_NS) -l app.kubernetes.io/component=migration 2>/dev/null; \
+	oc delete pods -n $(OC_CF_NS) -l app.kubernetes.io/component=gateway --force 2>/dev/null; \
+	oc delete pods -n $(OC_CF_NS) -l app.kubernetes.io/component=nginx --force 2>/dev/null; \
+	echo "✅ Database reset. Operator will recreate migration and gateway pods."
+
 .PHONY: testing-status
 testing-status:                            ## Show status of testing services
 	@echo "🧪 Testing stack status:"
@@ -6953,7 +6974,7 @@ playwright-preflight:
 	@echo "🌐 Playwright base URL: $(TEST_BASE_URL)"
 	@echo "💡 Default target is docker-compose.yml nginx on http://localhost:8080"
 	@echo "   Start it with: make testing-up"
-	@if ! curl -s "$(TEST_BASE_URL)/health" >/dev/null 2>&1; then \
+	@if ! curl -sk "$(TEST_BASE_URL)/health" >/dev/null 2>&1; then \
 		echo "❌ Gateway not responding at $(TEST_BASE_URL)"; \
 		echo "💡 Start it with: make testing-up"; \
 		echo "💡 Or override with: TEST_BASE_URL=http://localhost:8000 make test-ui"; \
