@@ -997,7 +997,7 @@ class PromptService(BaseService):
                         # Use provided parameters or schema values
                         prompt_team_id = team_id if team_id is not None else getattr(prompt, "team_id", None)
                         prompt_owner_email = owner_email or getattr(prompt, "owner_email", None) or created_by
-                        prompt_visibility = visibility if visibility is not None else getattr(prompt, "visibility", "public")
+                        prompt_visibility = visibility if visibility is not None else (getattr(prompt, "visibility", None) or "public")
                         prompt_gateway_id = getattr(prompt, "gateway_id", None)
 
                         custom_name = getattr(prompt, "custom_name", None) or prompt.name

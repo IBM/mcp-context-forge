@@ -1689,7 +1689,7 @@ class ToolService(BaseService):
             # Use provided parameters or schema values
             tool_team_id = team_id if team_id is not None else getattr(tool, "team_id", None)
             tool_owner_email = owner_email or getattr(tool, "owner_email", None) or created_by
-            tool_visibility = visibility if visibility is not None else getattr(tool, "visibility", "public")
+            tool_visibility = visibility if visibility is not None else (getattr(tool, "visibility", None) or "public")
 
             existing_tool = existing_tools_map.get(tool.name)
 
