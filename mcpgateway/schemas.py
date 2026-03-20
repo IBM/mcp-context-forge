@@ -495,7 +495,13 @@ class ToolCreate(BaseModel):
             str: Value if validated as safe and truncated if too long
 
         Raises:
-            ValueError: When value is unsafe
+            ValueError: When value is unsafe and VALIDATION_STRICT=true (default)
+
+        Note:
+            When ``VALIDATION_STRICT=false`` the forbidden-pattern check is skipped
+            and a warning is logged instead.  This allows MCP server tools whose
+            descriptions contain Markdown syntax (e.g. ``> blockquote``,
+            ``< input``, ``cmd | grep``) to register successfully.
 
         Examples:
             >>> from mcpgateway.schemas import ToolCreate
@@ -513,11 +519,17 @@ class ToolCreate(BaseModel):
             return v
 
         # Note: backticks (`) are allowed as they are commonly used in Markdown
-        # for inline code examples in tool descriptions
+        # for inline code examples in tool descriptions.
+        # When VALIDATION_STRICT=false these patterns produce a warning only so
+        # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
+        # "< input", "cmd | grep") can register without error.
         forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
         for pat in forbidden_patterns:
             if pat in v:
-                raise ValueError(f"Description contains unsafe characters: '{pat}'")
+                if settings.validation_strict:
+                    raise ValueError(f"Description contains unsafe characters: '{pat}'")
+                logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
+                break
 
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
