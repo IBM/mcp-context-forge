@@ -687,7 +687,7 @@ class TestGatewayServiceExtended:
         mock_gateway.visibility = "public"
         mock_gateway.tools = [existing_tool]
 
-        # Mock updated tool from MCP server
+        # Mock updated tool from MCP server (no per-tool visibility override)
         mock_tool = MagicMock()
         mock_tool.name = "test_tool"  # Same name as existing
         mock_tool.description = "Updated description"
@@ -696,6 +696,7 @@ class TestGatewayServiceExtended:
         mock_tool.input_schema = {"type": "object"}
         mock_tool.annotations = {"updated": True}
         mock_tool.jsonpath_filter = "$.result"
+        mock_tool.visibility = None  # no override; pre-propagation handles inherited changes
 
         tools = [mock_tool]
         context = "update"
@@ -706,7 +707,7 @@ class TestGatewayServiceExtended:
         # Should return empty list (no new tools, existing one updated)
         assert len(result) == 0
 
-        # Existing tool should be updated (description not customized, so it gets updated)
+        # Existing tool should be updated; visibility preserved (upstream has no override)
         assert existing_tool.description == "Updated description"
         assert existing_tool.original_description == "Updated description"
         assert existing_tool.request_type == "POST"
@@ -716,7 +717,7 @@ class TestGatewayServiceExtended:
         assert existing_tool.url == "http://new-url.com"
         assert existing_tool.auth_type == "bearer"
         assert existing_tool.auth_value == "new-token"
-        assert existing_tool.visibility == "public"
+        assert existing_tool.visibility == "private"
 
     @pytest.mark.asyncio
     async def test_update_or_create_tools_preserves_custom_description(self):
@@ -1202,11 +1203,12 @@ class TestGatewayServiceExtended:
         mock_gateway.visibility = "public"
         mock_gateway.prompts = [existing_prompt]
 
-        # Mock updated prompt from MCP server
+        # Mock updated prompt from MCP server (no per-prompt visibility override)
         mock_prompt = MagicMock()
         mock_prompt.name = "test_prompt"  # Same name as existing
         mock_prompt.description = "Updated description"
         mock_prompt.template = "Updated template {var}"
+        mock_prompt.visibility = None  # no override; pre-propagation handles inherited changes
 
         prompts = [mock_prompt]
         context = "update"
@@ -1217,10 +1219,10 @@ class TestGatewayServiceExtended:
         # Should return empty list (no new prompts, existing one updated)
         assert len(result) == 0
 
-        # Existing prompt should be updated
+        # Existing prompt should be updated; visibility preserved (upstream has no override)
         assert existing_prompt.description == "Updated description"
         assert existing_prompt.template == "Updated template {var}"
-        assert existing_prompt.visibility == "public"
+        assert existing_prompt.visibility == "private"
         assert existing_prompt.argument_schema == {"type": "object", "properties": {}, "required": []}
 
     @pytest.mark.asyncio
@@ -1828,6 +1830,7 @@ class TestGatewayServiceExtended:
         tool_from_server = MagicMock()
         tool_from_server.name = "test_tool"
         tool_from_server.description = "Test Tool"
+        tool_from_server.visibility = None  # no per-tool override; pre-propagation handles inherited changes
 
         # Mock resources
         existing_res = MagicMock()
@@ -1840,7 +1843,7 @@ class TestGatewayServiceExtended:
         res_from_server.uri = "file:///test"
         res_from_server.name = "test"
         res_from_server.description = "Test Res"
-        res_from_server.visibility = None  # no per-resource override; gateway visibility should win
+        res_from_server.visibility = None  # no per-resource override; pre-propagation handles inherited changes
 
         # Mock prompts
         existing_prompt = MagicMock()
@@ -1852,6 +1855,7 @@ class TestGatewayServiceExtended:
         prompt_from_server = MagicMock()
         prompt_from_server.name = "test_prompt"
         prompt_from_server.description = "Test Prompt"
+        prompt_from_server.visibility = None  # no per-prompt override; pre-propagation handles inherited changes
 
         # --- Test 1: AUTO REFRESH Context ---
         def create_mock_result(item):
@@ -1883,16 +1887,15 @@ class TestGatewayServiceExtended:
         assert existing_prompt.visibility == "private"
 
         # --- Test 2: MANUAL UPDATE with explicit visibility change ---
-        # Tools and prompts inherit gateway visibility (no per-item override support)
+        # All helpers: upstream has no explicit visibility (None for MCP-discovered
+        # items), so the helpers preserve existing visibility. Pre-propagation
+        # (in update_gateway) handles updating inherited items before helpers run.
         mock_db.execute.side_effect = [
             create_mock_result(existing_tool),
         ]
         service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=True)
-        assert existing_tool.visibility == "public"
+        assert existing_tool.visibility == "private"
 
-        # Resources: upstream has visibility=None, so the helper preserves the
-        # existing visibility. Pre-propagation (in update_gateway) handles
-        # updating inherited resources before the helper runs.
         mock_db.execute.side_effect = [
             create_mock_result(existing_res),
         ]
@@ -1903,7 +1906,7 @@ class TestGatewayServiceExtended:
             create_mock_result(existing_prompt),
         ]
         service._update_or_create_prompts(mock_db, [prompt_from_server], mock_gateway, "update", update_visibility=True)
-        assert existing_prompt.visibility == "public"
+        assert existing_prompt.visibility == "private"
 
         # --- Test 3: UPDATE without visibility change (e.g. description-only edit) ---
         # Visibility must NOT be overwritten even though created_via is "update"

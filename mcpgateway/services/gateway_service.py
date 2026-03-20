@@ -4135,7 +4135,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway_tool_auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
                         auth_value_changed = existing_tool.auth_value != gateway_tool_auth_value
 
-                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or auth_value_changed or (update_visibility and existing_tool.visibility != gateway.visibility)
+                    upstream_tool_visibility = getattr(tool, "visibility", None)
+                    auth_fields_changed = existing_tool.auth_type != gateway.auth_type or auth_value_changed or (update_visibility and upstream_tool_visibility is not None and existing_tool.visibility != upstream_tool_visibility)
 
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed:
                         fields_to_update = True
@@ -4154,8 +4155,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
                         existing_tool.auth_type = gateway.auth_type
                         existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
-                        if update_visibility:
-                            existing_tool.visibility = gateway.visibility
+                        if update_visibility and upstream_tool_visibility is not None:
+                            existing_tool.visibility = upstream_tool_visibility
                         logger.debug(f"Updated existing tool: {tool.name}")
                 else:
                     # Create new tool if it doesn't exist
@@ -4322,10 +4323,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     fields_to_update = False
 
                     new_argument_schema = self._build_prompt_argument_schema(prompt)
+                    upstream_prompt_visibility = getattr(prompt, "visibility", None)
                     if (
                         existing_prompt.description != prompt.description
                         or existing_prompt.template != (prompt.template if hasattr(prompt, "template") else "")
-                        or (update_visibility and existing_prompt.visibility != gateway.visibility)
+                        or (update_visibility and upstream_prompt_visibility is not None and existing_prompt.visibility != upstream_prompt_visibility)
                         or (existing_prompt.argument_schema or {}) != new_argument_schema
                     ):
                         fields_to_update = True
@@ -4334,8 +4336,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_prompt.description = prompt.description
                         existing_prompt.template = prompt.template if hasattr(prompt, "template") else ""
                         existing_prompt.argument_schema = new_argument_schema
-                        if update_visibility:
-                            existing_prompt.visibility = gateway.visibility
+                        if update_visibility and upstream_prompt_visibility is not None:
+                            existing_prompt.visibility = upstream_prompt_visibility
                         logger.debug(f"Updated existing prompt: {prompt.name}")
                 else:
                     # Create new prompt if it doesn't exist
