@@ -472,6 +472,98 @@ describe("team member modal split search regressions", () => {
         win.fetchWithAuth = originalFetchWithAuth;
     });
 
+    test("unchecked member filtered out by search still gets loadedMembers hidden input for removal", async () => {
+        const teamId = "team-member-removal";
+        const container = doc.createElement("div");
+        container.id = `team-members-container-${teamId}`;
+        container.dataset.perPage = "50";
+        // Two members: alice (will be unchecked) and bob
+        container.innerHTML =
+            userItemHtml("alice@example.com", {
+                checked: true,
+                role: "member",
+                autoCheck: true,
+            }) +
+            userItemHtml("bob@example.com", {
+                checked: true,
+                role: "member",
+                autoCheck: true,
+            });
+        doc.body.appendChild(container);
+
+        // Uncheck alice (simulating user wanting to remove her)
+        const aliceCb = container.querySelector(
+            '.user-item[data-user-email="alice@example.com"] input[name="associatedUsers"]',
+        );
+        aliceCb.checked = false;
+
+        const originalFetchWithAuth = win.fetchWithAuth;
+        // Search returns only bob (alice is filtered out)
+        win.fetchWithAuth = vi.fn().mockResolvedValue({
+            ok: true,
+            text: async () =>
+                userItemHtml("bob@example.com", {
+                    checked: true,
+                    role: "member",
+                    autoCheck: true,
+                }),
+        });
+
+        await win.serverSideMemberSearch(teamId, "bob");
+
+        // alice should have a loadedMembers hidden input but NO associatedUsers checkbox
+        const aliceLoaded = Array.from(
+            container.querySelectorAll('input[name="loadedMembers"]'),
+        ).some((i) => i.value === "alice@example.com");
+        expect(aliceLoaded).toBe(true);
+        const aliceCheckboxes = Array.from(
+            container.querySelectorAll('input[name="associatedUsers"]'),
+        ).filter((i) => i.value === "alice@example.com" && i.checked);
+        expect(aliceCheckboxes.length).toBe(0);
+        win.fetchWithAuth = originalFetchWithAuth;
+    });
+
+    test("role-changed member filtered out by search preserves role in hidden input", async () => {
+        const teamId = "team-member-role-change";
+        const container = doc.createElement("div");
+        container.id = `team-members-container-${teamId}`;
+        container.dataset.perPage = "50";
+        container.innerHTML = userItemHtml("carol@example.com", {
+            checked: true,
+            role: "member",
+            autoCheck: true,
+        });
+        doc.body.appendChild(container);
+
+        // Change carol's role to owner
+        container.querySelector(".role-select").value = "owner";
+
+        const originalFetchWithAuth = win.fetchWithAuth;
+        // Search returns empty (carol filtered out)
+        win.fetchWithAuth = vi.fn().mockResolvedValue({
+            ok: true,
+            text: async () => "<div></div>",
+        });
+
+        await win.serverSideMemberSearch(teamId, "zzz");
+
+        // carol should have loadedMembers + checked associatedUsers + role hidden input
+        const carolLoaded = Array.from(
+            container.querySelectorAll('input[name="loadedMembers"]'),
+        ).some((i) => i.value === "carol@example.com");
+        expect(carolLoaded).toBe(true);
+        const carolChecked = Array.from(
+            container.querySelectorAll('input[name="associatedUsers"]'),
+        ).filter((i) => i.value === "carol@example.com" && i.checked);
+        expect(carolChecked.length).toBe(1);
+        const carolRole = container.querySelector(
+            'input[type="hidden"][name^="role_"]',
+        );
+        expect(carolRole).toBeDefined();
+        expect(carolRole.value).toBe("owner");
+        win.fetchWithAuth = originalFetchWithAuth;
+    });
+
     test("clearTeamSearchCaches removes stale selections on modal reopen", async () => {
         const teamId = "team-stale-cache";
         const container = doc.createElement("div");

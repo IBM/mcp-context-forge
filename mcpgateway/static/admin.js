@@ -33285,14 +33285,52 @@ function restoreMemberOverrides(teamId) {
     );
     if (!container || !memberOverridesCache[teamId]) return;
     const cache = memberOverridesCache[teamId];
+    const visibleEmails = new Set();
     container.querySelectorAll(".user-item").forEach((item) => {
         const email = item.getAttribute("data-user-email");
-        if (!email || !cache[email]) return;
+        if (!email) return;
+        visibleEmails.add(email);
+        if (!cache[email]) return;
         const cb = item.querySelector('input[name="associatedUsers"]');
         const roleSelect = item.querySelector(".role-select");
         if (cb) cb.checked = cache[email].checked;
         if (roleSelect) roleSelect.value = cache[email].role;
     });
+    // Remove any previously created hidden overrides
+    container
+        .querySelectorAll(".cached-member-override")
+        .forEach((el) => el.remove());
+    // Create hidden inputs for off-screen members so their overrides
+    // survive form submission (loadedMembers tells the backend this
+    // member was "seen"; absence of associatedUsers triggers removal).
+    for (const [email, override] of Object.entries(cache)) {
+        if (visibleEmails.has(email)) continue;
+        const wrapper = document.createElement("div");
+        wrapper.className = "cached-member-override hidden";
+        // Always include loadedMembers so the backend knows this member was loaded
+        const loadedInput = document.createElement("input");
+        loadedInput.type = "hidden";
+        loadedInput.name = "loadedMembers";
+        loadedInput.value = email;
+        wrapper.appendChild(loadedInput);
+        if (override.checked) {
+            // Member should stay — add checkbox + role
+            const cbHidden = document.createElement("input");
+            cbHidden.type = "checkbox";
+            cbHidden.name = "associatedUsers";
+            cbHidden.value = email;
+            cbHidden.checked = true;
+            cbHidden.className = "hidden";
+            wrapper.appendChild(cbHidden);
+            const roleHidden = document.createElement("input");
+            roleHidden.type = "hidden";
+            roleHidden.name = "role_" + urlQuoteSafe(email);
+            roleHidden.value = override.role;
+            wrapper.appendChild(roleHidden);
+        }
+        // If !override.checked: only loadedMembers → backend removes the member
+        container.appendChild(wrapper);
+    }
 }
 
 function debouncedMemberSearch(teamId, searchTerm, delay = 300) {
