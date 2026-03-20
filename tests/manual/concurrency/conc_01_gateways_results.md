@@ -25,7 +25,11 @@ Validate CONC-01 acceptance for gateway create under concurrency:
 
 ## Steps to run (copy/paste)
 
-### 1) Start Postgres + Redis in Docker (Colima runtime)
+Note for reviewers:
+- The commands below were executed on macOS with Colima.
+- On Linux, run equivalent Docker runtime/container startup commands for Postgres and Redis.
+
+### 1) Start Postgres + Redis in Docker
 
 ```bash
 colima start
@@ -47,7 +51,7 @@ docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | rg 'conc-postgr
 ### 2) Terminal A: start gateway (Postgres + Redis + local SSRF overrides)
 
 ```bash
-cd /Users/pratik/Desktop/work/new_mcf/mcp-context-forge
+cd <repo-root>
 pkill -f "mcpgateway.main|uvicorn" || true
 
 DATABASE_URL='postgresql+psycopg://postgres:postgres@127.0.0.1:5432/concurrent_test' \
@@ -62,14 +66,14 @@ make dev
 ### 3) Terminal B: start translator
 
 ```bash
-cd /Users/pratik/Desktop/work/new_mcf/mcp-context-forge
+cd <repo-root>
 python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 ```
 
 ### 4) Terminal C: generate token and run matrix
 
 ```bash
-cd /Users/pratik/Desktop/work/new_mcf/mcp-context-forge
+cd <repo-root>
 export CONC_TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 120 --secret my-test-key)"
 make conc-01-gateways
 ```

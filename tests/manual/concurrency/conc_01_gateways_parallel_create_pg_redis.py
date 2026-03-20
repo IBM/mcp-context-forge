@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """CONC-01 manual concurrency check: parallel same-name gateway creation.
 
 This script targets the parent-scope CONC-01 scenario on /gateways.
@@ -27,21 +26,24 @@ Expected behavior per case:
 - DB uniqueness count == 1 (when DB checks enabled)
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import asyncio
+from collections import Counter
+from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
 import os
 import sqlite3
-import sys
 import time
-from collections import Counter
-from dataclasses import dataclass, replace as dataclass_replace
 from urllib.parse import urlparse
 
+# Third-Party
 import httpx
 
 try:
-    import psycopg  # type: ignore[import-not-found]
+    import psycopg  # type: ignore[import-not-found]  # isort: skip
 except Exception:  # pragma: no cover - optional dependency in manual script
     psycopg = None
 
@@ -321,4 +323,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
