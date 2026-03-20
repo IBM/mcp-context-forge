@@ -5,6 +5,7 @@
 import base64
 from datetime import datetime, timezone
 import json
+import logging
 from types import SimpleNamespace
 
 # Third-Party
@@ -872,16 +873,37 @@ class TestToolCreateDescriptionValidationStrict:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolCreate.validate_description(f"Valid prefix {pat} suffix")
 
-    def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog):
-        """Descriptions with shell/pipe metacharacters are accepted when VALIDATION_STRICT=false."""
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "run cmd1 && cmd2",
+            "end statement;",
+            "try this || that",
+            "expand $(cmd)",
+            "pipe | grep",
+            "Search docs > results",
+            "read < file",
+        ],
+        ids=["ampersand", "semicolon", "or", "subshell", "pipe", "redirect_out", "redirect_in"],
+    )
+    def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
+        """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
         monkeypatch.setattr(settings, "validation_strict", False)
-        import logging
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
-            result = ToolCreate.validate_description("Search docs > results")
-        # No exception raised; value is returned (sanitised)
+            result = ToolCreate.validate_description(description)
         assert result is not None
         assert any("potentially unsafe" in rec.message for rec in caplog.records)
+
+    def test_non_strict_logs_single_warning_for_multiple_patterns(self, monkeypatch, caplog):
+        """Only one warning is logged even when a description matches multiple forbidden patterns."""
+        monkeypatch.setattr(settings, "validation_strict", False)
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
+            result = ToolCreate.validate_description("foo && bar | baz > qux")
+        assert result is not None
+        unsafe_warnings = [r for r in caplog.records if "potentially unsafe" in r.message]
+        assert len(unsafe_warnings) == 1
 
     def test_safe_description_always_accepted(self, monkeypatch):
         """Safe descriptions pass in both strict and non-strict modes."""
