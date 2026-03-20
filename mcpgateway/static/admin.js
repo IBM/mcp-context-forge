@@ -6302,6 +6302,7 @@ async function editGateway(gatewayId) {
         const oauthRedirectUriField = safeGetElement(
             "oauth-redirect-uri-gw-edit",
         );
+        const oauthIssuerField = safeGetElement("oauth-issuer-gw-edit");
         const oauthScopesField = safeGetElement("oauth-scopes-gw-edit");
         const oauthAuthCodeFields = safeGetElement(
             "oauth-auth-code-fields-gw-edit",
@@ -6399,6 +6400,9 @@ async function editGateway(gatewayId) {
                 // Populate OAuth fields if available
                 if (gateway.oauthConfig) {
                     const config = gateway.oauthConfig;
+                    if (oauthIssuerField && config.issuer) {
+                        oauthIssuerField.value = config.issuer;
+                    }
                     if (oauthGrantTypeField && config.grant_type) {
                         oauthGrantTypeField.value = config.grant_type;
                         // Show/hide authorization code fields based on grant type
