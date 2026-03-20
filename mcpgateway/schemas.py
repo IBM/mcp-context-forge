@@ -1598,7 +1598,7 @@ class ResourceCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the resource owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
 
     @field_validator("tags")

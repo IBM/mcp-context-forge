@@ -932,6 +932,36 @@ class TestGatewayServiceExtended:
         assert len(result) == 1
         assert result[0].visibility == "team"
 
+    def test_update_or_create_resources_mcp_discovered_inherits_gateway_visibility(self):
+        """Resources from MCP server discovery (ResourceCreate with no explicit visibility) must inherit gateway visibility."""
+        from mcpgateway.schemas import ResourceCreate
+
+        service = GatewayService()
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "test-gateway-id"
+        mock_gateway.visibility = "team"
+        mock_gateway.resources = []
+
+        # Simulate MCP server discovery: ResourceCreate without explicit visibility
+        resource = ResourceCreate(
+            uri="file:///discovered.txt",
+            name="discovered.txt",
+            description="Discovered from MCP server",
+            mime_type="text/plain",
+            content="",
+        )
+
+        result = service._update_or_create_resources(mock_db, [resource], mock_gateway, "update")
+
+        assert len(result) == 1
+        assert result[0].visibility == "team", "MCP-discovered resource must inherit gateway visibility, not default to public"
+
     def test_build_prompt_argument_schema_empty(self):
         """Test _build_prompt_argument_schema returns base schema when no arguments."""
         from types import SimpleNamespace
