@@ -9,15 +9,13 @@ The PII filter Rust module import path has changed:
 from plugins_rust import PIIDetectorRust
 
 # ✅ NEW (RC1+)
-from pii_filter_rust import PIIDetectorRust
+from pii_filter_rust.pii_filter_rust import PIIDetectorRust
 ```
 
-**Note**: Public documentation and verification commands should use the top-level
-package import `pii_filter_rust`. The plugin wrapper path is separate:
-
-```python
-from plugins.pii_filter_rust.pii_filter_rust import RustPIIFilterPlugin
-```
+**Note**: The double-nested import path (`pii_filter_rust.pii_filter_rust`) is correct:
+- First `pii_filter_rust` = package name (from `Cargo.toml` `[lib] name`)
+- Second `pii_filter_rust` = module name (from `#[pymodule]` in `lib.rs`)
+- `PIIDetectorRust` = class exported via `m.add_class::<PIIDetectorRust>()`
 
 ## Why?
 
@@ -48,7 +46,7 @@ grep -r "from plugins_rust import" . --include="*.py"
 from plugins_rust import PIIDetectorRust
 
 # After
-from pii_filter_rust import PIIDetectorRust
+from pii_filter_rust.pii_filter_rust import PIIDetectorRust
 ```
 
 ### 3. Reinstall Plugin
@@ -61,7 +59,7 @@ make install
 ### 4. Verify
 
 ```bash
-python -c "from pii_filter_rust import PIIDetectorRust; print('✓ OK')"
+python -c "from pii_filter_rust.pii_filter_rust import PIIDetectorRust; print('✓ OK')"
 ```
 
 ## Common Scenarios
@@ -71,7 +69,7 @@ python -c "from pii_filter_rust import PIIDetectorRust; print('✓ OK')"
 ```python
 # Update import only
 try:
-    from pii_filter_rust import PIIDetectorRust  # Changed
+    from pii_filter_rust.pii_filter_rust import PIIDetectorRust  # Changed
     detector = PIIDetectorRust(config)
 except ImportError:
     from plugins.pii_filter.pii_filter import PIIDetector
@@ -80,21 +78,21 @@ except ImportError:
 
 ### Python Wrapper (Recommended)
 
-The dedicated Rust plugin wrapper now lives at:
+**No changes needed** - wrapper already updated:
 
 ```python
-from plugins.pii_filter_rust.pii_filter_rust import RustPIIFilterPlugin
+from plugins.pii_filter.pii_filter import RustPIIDetector
+detector = RustPIIDetector(config)
 ```
 
 ### Plugin Config
 
-If you are enabling the dedicated Rust plugin, the shipped config now points at
-the dedicated wrapper:
+**No changes needed** - config unchanged:
 
 ```yaml
 plugins:
-  - name: "RustPIIFilterPlugin"
-    kind: "plugins.pii_filter_rust.pii_filter_rust.RustPIIFilterPlugin"
+  - name: "PII Filter"
+    kind: "plugins.pii_filter.pii_filter.PIIFilter"
 ```
 
 ## Troubleshooting
@@ -105,7 +103,7 @@ plugins:
 cd plugins_rust/pii_filter
 make clean
 make install
-python -c "from pii_filter_rust import PIIDetectorRust; print('OK')"
+python -c "from pii_filter_rust.pii_filter_rust import PIIDetectorRust; print('OK')"
 ```
 
 ### `ImportError: No module named 'plugins_rust'`
@@ -122,10 +120,14 @@ pip list | grep mcpgateway-pii-filter
 
 ## Future Plugins
 
-Rust plugins now use consistent `_rust` naming. Current examples:
-- `from pii_filter_rust import PIIDetectorRust`
+All Rust plugins follow this pattern:
+
+All Rust plugins now use consistent naming with `_rust` suffix and double-nested imports:
+- `from pii_filter_rust.pii_filter_rust import PIIDetectorRust`
 - `from secrets_detection_rust.secrets_detection_rust import py_scan_container`
 - `from encoded_exfil_detection_rust.encoded_exfil_detection_rust import py_scan_container`
+
+The double-nested path is required because PyO3 creates a package structure where the module name (from `#[pymodule]`) is nested inside the package name (from `Cargo.toml` `[lib] name`).
 
 ## Resources
 

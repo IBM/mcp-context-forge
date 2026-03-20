@@ -1,4 +1,4 @@
-// Copyright 2025
+// Copyright 2026
 // SPDX-License-Identifier: Apache-2.0
 //
 // Stub file generator for pii_filter module
@@ -6,22 +6,14 @@
 // This binary generates Python type stub files (.pyi) for the pii_filter module.
 // Run with: cargo run --bin stub_gen
 
-use log::{debug, info};
 use pii_filter_rust::stub_info;
-use std::error::Error;
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let init_result = pyo3_log::try_init();
-    if init_result.is_ok() {
-        debug!("pii_filter stub generation logging initialized");
-    }
-
+fn main() {
     // Get stub info (returns Result)
-    let stub_info = stub_info()?;
+    let stub_info = stub_info().expect("Failed to get stub info");
 
     // Generate stub files - paths are determined from pyproject.toml
-    stub_info.generate()?;
+    stub_info.generate().expect("Failed to generate stub file");
 
-    info!("pii_filter stub generated");
-    Ok(())
+    println!("✓ Generated stub files successfully");
 }

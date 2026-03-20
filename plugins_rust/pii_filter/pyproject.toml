@@ -16,13 +16,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "maturin>=1.4,<2.0",
-    "mypy",
-    "pytest",
-]
-
 [tool.maturin]
 module-name = "pii_filter_rust"
 python-source = "python"

@@ -21,12 +21,25 @@ help:
 PACKAGE_NAME    := pii_filter
 VERSION         ?= $(shell cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[0].version' || echo "1.0.0-RC-1")
 DIST_DIR        := target
+PYTHON          ?= python3
 
-# Colors for output (canonical set; used by all targets)
-BLUE   := \033[0;34m
-GREEN  := \033[0;32m
+# Colors for output
+BLUE := \033[0;34m
+GREEN := \033[0;32m
 YELLOW := \033[0;33m
-NC     := \033[0m
+RED := \033[0;31m
+NC := \033[0m # No Color
+
+# Legacy color names for compatibility
+ifeq ($(shell test -t 1 && echo tty),tty)
+C_BLUE  := \033[38;5;75m
+C_GREEN := \033[38;5;82m
+C_RESET := \033[0m
+else
+C_BLUE  :=
+C_GREEN :=
+C_RESET :=
+endif
 
 # =============================================================================
 # 🔍 LINTING & FORMAT
@@ -115,19 +128,23 @@ install: stub-gen
 # help: bench                 - Run Criterion benchmarks
 # help: bench-baseline        - Save benchmark baseline
 # help: bench-compare         - Compare against baseline
-.PHONY: bench bench-baseline bench-compare
+.PHONY: bench bench-baseline bench-compare compare
 
 bench:
 	@echo "$(GREEN)Running benchmarks...$(NC)"
 	@cargo bench
 
 bench-baseline:
-	@echo "$(GREEN)Saving Criterion baseline 'main'...$(NC)"
-	@cargo bench -- --save-baseline main
+	@echo "$(GREEN)Running benchmarks...$(NC)"
+	@cargo bench
 
 bench-compare:
-	@echo "$(GREEN)Comparing Criterion results against baseline 'main'...$(NC)"
-	@cargo bench -- --baseline main
+	@echo "$(GREEN)Running benchmarks...$(NC)"
+	@cargo bench
+
+compare: install ## Run performance comparison (skip benchmarks)
+	@echo "$(GREEN)Running performance comparison...$(NC)"
+	@echo "$(YELLOW)Note: This plugin doesn't have a compare_performance.py script yet$(NC)"
 
 # =============================================================================
 # 🧹 CLEANUP
@@ -174,22 +191,18 @@ doc-open: doc
 	cargo doc --no-deps --document-private-items --open
 
 # =============================================================================
-# DEVELOPMENT HELPERS
+# � DEVELOPMENT HELPERS
 # =============================================================================
 # help: 🔧 DEVELOPMENT HELPERS
 # help: verify                - Verify plugin installation
 # help: check-all             - Run all checks (fmt, clippy, test)
-# help: test-integration      - Run integration tests (cargo test from plugin dir)
+# help: test-integration      - Run integration tests
 # help: pre-commit            - Run pre-commit checks
 .PHONY: verify check-all test-integration pre-commit
 
-test-integration:
-	@echo "$(GREEN)Running integration tests...$(NC)"
-	cargo test
-
 verify:
 	@echo "$(GREEN)Verifying pii_filter installation...$(NC)"
-	@uv run python -c "import pii_filter_rust; print('✅ pii_filter_rust available')" || echo "⚠️  pii_filter_rust not installed"
+	@uv run python -c "import pii_filter; print('✅ pii_filter available')" || echo "⚠️  pii_filter not installed"
 
 check-all: fmt-check clippy test
 	@echo "$(GREEN)✔ All checks passed$(NC)"
