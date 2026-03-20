@@ -606,7 +606,7 @@ async def oauth_callback(
                 statusDiv.innerHTML = '<p style="color: #2563eb;">Fetching tools from MCP server...</p>';
 
                 try {{
-                    const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id))}', {{
+                    const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id), quote=True)}', {{
                         method: 'POST',
                         credentials: 'include',
                         headers: {{ 'Accept': 'text/html' }}

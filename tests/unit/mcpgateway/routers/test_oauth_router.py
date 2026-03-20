@@ -1833,3 +1833,45 @@ class TestOAuthRouterAdditionalCoverage:
         with pytest.raises(HTTPException) as exc_info:
             await delete_registered_client("client123", {"email": "user@example.com", "is_admin": False}, mock_db)
         assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_gateway_id_with_quotes_escaped(self, mock_db, mock_request):
+        """Verify gateway_id containing quotes is escaped with quote=True in the fetch-tools URL (XSS fix)."""
+        import base64
+        import json
+
+        malicious_id = "gw'\"<script>"
+        state_data = {"gateway_id": malicious_id, "app_user_email": "test@example.com"}
+        payload = json.dumps(state_data).encode()
+        signature = b"x" * 32
+        state = base64.urlsafe_b64encode(payload + signature).decode()
+
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = malicious_id
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "cid",
+            "token_url": "https://auth.example.com/token",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        token_result = {"user_id": "u1", "expires_at": None}
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+            mock_mgr = Mock()
+            mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value=malicious_id)
+            mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=token_result)
+            mock_oauth_mgr.return_value = mock_mgr
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                from mcpgateway.routers.oauth_router import oauth_callback
+
+                result = await oauth_callback(code="code", state=state, request=mock_request, db=mock_db)
+
+        body = result.body.decode()
+        # Raw quotes and script tags must not appear unescaped in the HTML
+        assert "gw'\"<script>" not in body
+        # The escaped form should be present
+        assert "gw&#x27;&quot;&lt;script&gt;" in body
