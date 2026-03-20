@@ -1869,17 +1869,20 @@ LOADTEST_UI_PORT ?= 8090
 LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
 LOADTEST_HTML_REPORT := reports/locust_report.html
 LOADTEST_CSV_PREFIX := reports/locust
+
+# Secrets Detection Benchmark Configuration
+# These values are tuned for focused plugin performance comparison
 SECRET_DETECTION_LOCUSTFILE := tests/loadtest/locustfile_secret_detection.py
 SECRET_DETECTION_LOADTEST_HOST ?= http://localhost:8080
-SECRET_DETECTION_LOADTEST_USERS ?= 100
-SECRET_DETECTION_LOADTEST_SPAWN_RATE ?= 10
-SECRET_DETECTION_LOADTEST_RUN_TIME ?= 60s
-SECRET_DETECTION_BENCH_GATEWAY_REPLICAS ?= 1
-SECRET_DETECTION_BENCH_GUNICORN_WORKERS ?= 2
-SECRET_DETECTION_BENCH_CPU_LIMIT ?= 1
-SECRET_DETECTION_BENCH_CPU_RESERVATION ?= 0.5
-SECRET_DETECTION_BENCH_MEM_LIMIT ?= 3G
-SECRET_DETECTION_BENCH_MEM_RESERVATION ?= 1G
+SECRET_DETECTION_LOADTEST_USERS ?= 100          # Moderate load to isolate plugin overhead
+SECRET_DETECTION_LOADTEST_SPAWN_RATE ?= 10      # Gradual ramp-up for stable measurements
+SECRET_DETECTION_LOADTEST_RUN_TIME ?= 60s       # 1 minute per phase (Rust + Python)
+SECRET_DETECTION_BENCH_GATEWAY_REPLICAS ?= 1    # Single replica for consistent comparison
+SECRET_DETECTION_BENCH_GUNICORN_WORKERS ?= 2    # Minimal workers to highlight plugin impact
+SECRET_DETECTION_BENCH_CPU_LIMIT ?= 1           # 1 core limit to amplify performance differences
+SECRET_DETECTION_BENCH_CPU_RESERVATION ?= 0.5   # Reserve half core for baseline
+SECRET_DETECTION_BENCH_MEM_LIMIT ?= 3G          # Generous memory to avoid OOM
+SECRET_DETECTION_BENCH_MEM_RESERVATION ?= 1G    # Reserve 1GB baseline
 # Auto-detect c-ares resolver availability (empty string if unavailable)
 LOADTEST_GEVENT_RESOLVER := $(shell python3 -c "from gevent.resolver.cares import Resolver; print('ares')" 2>/dev/null || echo "")
 

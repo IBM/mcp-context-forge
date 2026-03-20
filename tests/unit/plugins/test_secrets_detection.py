@@ -428,7 +428,9 @@ def test_rust_scan_emits_python_log_records(caplog):
     assert findings
     assert any("Rust secrets scan finished" in record.message for record in caplog.records)
     assert any("Pattern 'aws_access_key_id' matched" in record.message for record in caplog.records)
-    assert secret not in caplog.text
+    # Verify secret is not exposed in logs (use generic assertion to avoid exposing in failure message)
+    for record in caplog.records:
+        assert "AKIAFAKE12345EXAMPLE" not in record.message, "Secret value found in log record"
 
 
 def test_rust_scan_fallback_logs_full_exception(monkeypatch, caplog):

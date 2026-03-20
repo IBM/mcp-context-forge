@@ -1,24 +1,6 @@
-# -----------------------------------------------------------------------------
-# 🛠️ Pre-commit Configuration
-# -----------------------------------------------------------------------------
-# This configuration file sets up various pre-commit hooks to enforce code quality,
-# security, and formatting standards before commits are made.
-#
-# Installation:
-#   pip install --user --upgrade pre-commit
-#   pre-commit install
-#   pre-commit run --all-files
-# Update:
-#   pre-commit autoupdate
-#
-# To skip pre-commit checks:
-#   git commit -m "Your message" --no-verify
-#
-# NOTE: Some hooks modify files automatically (formatters), while others only
-# report issues (linters). Modified files will need to be staged again.
-# -----------------------------------------------------------------------------
-
-exclude: '(^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)mcp-servers/templates/|(^|/)plugin_templates/|(^|/)tests/load/|.*\.(jinja|j2)$'  # ignore these files, all templates, load tests, and jinja files
+# Pre-commit hooks for the reduced local linting profile.
+exclude: >-
+  (^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)mcp-servers/templates/|(^|/)plugin_templates/|(^|/)tests/load/|.*\.(jinja|j2)$
 
 default_language_version:
   python: python3.12

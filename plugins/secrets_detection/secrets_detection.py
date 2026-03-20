@@ -82,6 +82,7 @@ BROAD_PATTERNS = {
 
 
 def _default_enabled_patterns() -> Dict[str, bool]:
+    """Return the default enabled-state map for all supported patterns."""
     enabled = {k: True for k in PATTERNS.keys()}
     enabled["generic_api_key_assignment"] = False
     return enabled
@@ -201,6 +202,7 @@ class SecretsDetectionPlugin(Plugin):
             logger.info("🐍 SecretsDetectionPlugin initialized with Python implementation")
 
     def _warn_on_broad_patterns(self) -> None:
+        """Warn when broad heuristic patterns are enabled in the plugin config."""
         enabled_broad_patterns = sorted(
             pattern_name
             for pattern_name in BROAD_PATTERNS
