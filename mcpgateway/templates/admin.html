@@ -2987,12 +2987,20 @@
                 <div
                   class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700"
                 >
-                  <label
-                    class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
-                    for="associatedTools"
-                  >
-                    Associated Tools
-                  </label>
+                  <div class="flex items-center justify-between mb-2">
+                    <label
+                      class="block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                      for="associatedTools"
+                    >
+                      Associated Tools
+                    </label>
+                    <button
+                      type="button"
+                      onclick="refreshToolsForSelectedGateways(this)"
+                      class="px-2 py-1 text-xs font-medium text-green-700 dark:text-green-400 border border-green-600 dark:border-green-500 rounded-md hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                      x-tooltip="'Re-fetch tools from selected MCP gateways and reload this list'"
+                    >Refresh from MCPs</button>
+                  </div>
                   <input
                     type="text"
                     id="searchTools"
@@ -5039,7 +5047,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
 
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
-          <div class="overflow-x-auto">
+          <div class="overflow-visible">
             <!-- Table will be loaded via HTMX -->
             <div id="gateways-table"
                  x-init="$el.setAttribute('hx-get', buildTableUrl('gateways', '{{ root_path }}/admin/gateways/partial', {include_inactive: (document.getElementById('show-inactive-gateways')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
@@ -11134,12 +11142,20 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     <div
                       class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-600"
                     >
-                      <label
-                        for="edit-server-tools"
-                        class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
-                      >
-                        Associated Tools
-                      </label>
+                      <div class="flex items-center justify-between mb-2">
+                        <label
+                          for="edit-server-tools"
+                          class="block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                        >
+                          Associated Tools
+                        </label>
+                        <button
+                          type="button"
+                          onclick="refreshToolsForSelectedGateways(this)"
+                          class="px-2 py-1 text-xs font-medium text-green-700 dark:text-green-400 border border-green-600 dark:border-green-500 rounded-md hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                          x-tooltip="'Re-fetch tools from selected MCP gateways and reload this list'"
+                        >Refresh from MCPs</button>
+                      </div>
                        <input
                         type="text"
                         id="searchEditTools"

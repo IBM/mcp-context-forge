@@ -3406,6 +3406,9 @@ class GatewayRead(BaseModelWithConfigDict):
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
+    # Tool count (populated from the tools relationship; 0 when not loaded)
+    tool_count: int = Field(default=0, description="Number of tools registered for this gateway")
+
     @model_validator(mode="before")
     @classmethod
     def _mask_query_param_auth(cls, data: Any) -> Any:
