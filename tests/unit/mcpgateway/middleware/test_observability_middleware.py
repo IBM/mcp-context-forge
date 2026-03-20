@@ -8,7 +8,6 @@ Unit tests for observability middleware.
 """
 
 import pytest
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from starlette.requests import Request
 from starlette.responses import Response
@@ -251,22 +250,6 @@ def mock_observability_service():
     service.start_trace.return_value = "test-trace-id"
     service.start_span.return_value = "test-span-id"
     return service
-
-
-@pytest.fixture
-def mock_request():
-    """Create a mock request object."""
-    request = MagicMock(spec=Request)
-    request.method = "GET"
-    request.url.path = "/test"
-    request.url.query = ""
-    request.url = MagicMock()
-    request.url.__str__ = MagicMock(return_value="http://test.com/test")
-    request.client = MagicMock()
-    request.client.host = "127.0.0.1"
-    request.headers = {"user-agent": "test-agent"}
-    request.state = MagicMock()
-    return request
 
 
 @pytest.mark.asyncio
