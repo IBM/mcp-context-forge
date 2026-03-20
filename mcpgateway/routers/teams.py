@@ -366,7 +366,9 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
         if role != "owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
-        success = await service.update_team(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members)
+        success = await service.update_team(
+            team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members, skip_limits=bool(current_user.get("is_admin"))
+        )
 
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found or update failed")
@@ -935,6 +937,9 @@ async def request_to_join_team(
             requested_at=join_req.requested_at,
             expires_at=join_req.expires_at,
         )
+    except ValueError as e:
+        # Handle validation errors with 400 Bad Request
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
@@ -1109,6 +1114,12 @@ async def approve_join_request(
             invited_by=member.invited_by,
             is_active=member.is_active,
         )
+    except ValueError as e:
+        # Handle validation errors with 400 Bad Request
+        error_msg = str(e)
+        if "maximum team limit" in error_msg:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Cannot approve: {error_msg.lower()}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
     except HTTPException:
         raise
     except Exception as e:

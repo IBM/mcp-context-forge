@@ -4698,10 +4698,20 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
                 </div>
                 """
             else:
-                # Show "Request to Join" button
-                actions_html = f"""
+                # Show "Request to Join" button (disabled if feature is disabled)
+                allow_join_requests = getattr(settings, "allow_team_join_requests", True)
+                if allow_join_requests:
+                    actions_html = f"""
                 <div class="flex flex-wrap gap-2 mt-3">
                     <button data-team-id="{team.id}" data-team-name="{safe_team_name}" onclick="requestToJoinTeamSafe(this)" class="px-3 py-1 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 hover:border-indigo-500 dark:hover:border-indigo-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        Request to Join
+                    </button>
+                </div>
+                """
+                else:
+                    actions_html = """
+                <div class="flex flex-wrap gap-2 mt-3">
+                    <button disabled class="px-3 py-1 text-sm font-medium text-gray-400 dark:text-gray-600 border border-gray-300 dark:border-gray-600 rounded-md cursor-not-allowed opacity-50" title="Team join requests are currently disabled">
                         Request to Join
                     </button>
                 </div>
@@ -5776,7 +5786,8 @@ async def admin_update_team(
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
-        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members, updated_by=user_email)
+        is_admin = isinstance(user, dict) and user.get("is_admin")
+        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members, updated_by=user_email, skip_limits=bool(is_admin))
 
         if not updated:
             is_htmx = request.headers.get("HX-Request") == "true"
@@ -5805,7 +5816,20 @@ async def admin_update_team(
         # For regular form submission, redirect to admin page with teams section
         return RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
 
+    except ValueError as e:
+        # Rollback to discard any partial mutations (e.g. name/description set before max_members check failed)
+        db.rollback()
+        LOGGER.warning(f"Validation error updating team {team_id}: {e}")
+        is_htmx = request.headers.get("HX-Request") == "true"
+        if is_htmx:
+            response = HTMLResponse(content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">{html.escape(str(e))}</div>', status_code=400)
+            response.headers["HX-Retarget"] = "#edit-team-error"
+            response.headers["HX-Reswap"] = "innerHTML"
+            return response
+        error_msg = urllib.parse.quote(str(e))
+        return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
     except Exception as e:
+        db.rollback()
         LOGGER.error(f"Error updating team {team_id}: {e}")
 
         # Check if this is an HTMX request for error handling too
@@ -6399,6 +6423,10 @@ async def admin_create_join_request(
             status_code=201,
         )
 
+    except ValueError as e:
+        # Handle validation errors with user-friendly HTML error
+        error_msg = html.escape(str(e))
+        return HTMLResponse(content=f'<div class="text-red-500">{error_msg}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error creating join request for team {team_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error creating join request: {html.escape(str(e))}</div>', status_code=400)
@@ -6436,15 +6464,26 @@ async def admin_cancel_join_request(
             return HTMLResponse(content='<div class="text-red-500">Failed to cancel join request</div>', status_code=400)
 
         # Return the "Request to Join" button with HX-Trigger for list refresh
-        response = HTMLResponse(
-            content=f"""
+        # Check if join requests are currently enabled
+        allow_join_requests = getattr(settings, "allow_team_join_requests", True)
+
+        if allow_join_requests:
+            button_html = f"""
         <button data-team-id="{team_id}" data-team-name="Team" onclick="requestToJoinTeamSafe(this)"
                 class="px-3 py-1 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 hover:border-indigo-500 dark:hover:border-indigo-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
             Request to Join
         </button>
-        """,
-            status_code=200,
-        )
+        """
+        else:
+            button_html = """
+        <button disabled
+                class="px-3 py-1 text-sm font-medium text-gray-400 dark:text-gray-600 border border-gray-300 dark:border-gray-600 rounded-md cursor-not-allowed opacity-50"
+                title="Team join requests are currently disabled">
+            Request to Join (Disabled)
+        </button>
+        """
+
+        response = HTMLResponse(content=button_html, status_code=200)
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
         return response
 

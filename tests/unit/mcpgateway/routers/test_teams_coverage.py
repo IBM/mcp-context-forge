@@ -133,6 +133,135 @@ class TestDiscoverPublicTeamsErrors:
 # ===========================================================================
 
 
+class TestUpdateTeamMaxMembersCap:
+    """Router-level enforcement: non-admin cannot set max_members > settings cap."""
+
+    @pytest.mark.asyncio
+    async def test_non_admin_create_exceeds_cap_rejected(self, user_ctx, db):
+        """Non-admin create with max_members > cap returns 400."""
+        with _svc(
+            create_team=AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100")),
+        ):
+            from mcpgateway.schemas import TeamCreateRequest
+
+            req = TeamCreateRequest(name="BigTeam", max_members=200)
+            with pytest.raises(HTTPException) as exc:
+                await teams.create_team(req, current_user_ctx=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "cannot exceed" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_admin_create_exceeds_cap_allowed(self, admin_ctx, db, mock_team):
+        """Admin create with max_members > cap succeeds."""
+        mock_team.max_members = 500
+        with _svc(
+            create_team=AsyncMock(return_value=mock_team),
+            get_member_counts_batch_cached=AsyncMock(return_value={}),
+        ):
+            from mcpgateway.schemas import TeamCreateRequest
+
+            req = TeamCreateRequest(name="BigTeam", max_members=500)
+            result = await teams.create_team(req, current_user_ctx=admin_ctx, db=db)
+            assert result.max_members == 500
+
+    @pytest.mark.asyncio
+    async def test_non_admin_create_at_cap_allowed(self, user_ctx, db, mock_team):
+        """Non-admin create with max_members == cap succeeds."""
+        mock_team.max_members = 100
+        with _svc(
+            create_team=AsyncMock(return_value=mock_team),
+        ):
+            from mcpgateway.schemas import TeamCreateRequest
+
+            req = TeamCreateRequest(name="Team", max_members=100)
+            result = await teams.create_team(req, current_user_ctx=user_ctx, db=db)
+            assert result.max_members == 100
+
+    @pytest.mark.asyncio
+    async def test_non_admin_update_exceeds_cap_rejected(self, user_ctx, db, mock_team):
+        """Non-admin update with max_members > cap returns 400."""
+        with _svc(
+            get_user_role_in_team=AsyncMock(return_value="owner"),
+            update_team=AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100")),
+        ):
+            from mcpgateway.schemas import TeamUpdateRequest
+
+            req = TeamUpdateRequest(max_members=200)
+            with pytest.raises(HTTPException) as exc:
+                await teams.update_team(mock_team.id, req, current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "cannot exceed" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_admin_update_exceeds_cap_allowed(self, admin_ctx, db, mock_team):
+        """Admin update with max_members > cap succeeds."""
+        updated = MagicMock()
+        updated.max_members = 500
+        updated.id = mock_team.id
+        updated.name = mock_team.name
+        updated.slug = mock_team.slug
+        updated.description = mock_team.description
+        updated.created_by = mock_team.created_by
+        updated.is_personal = False
+        updated.visibility = "private"
+        updated.created_at = mock_team.created_at
+        updated.updated_at = mock_team.updated_at
+        updated.is_active = True
+        updated.get_member_count = MagicMock(return_value=1)
+        with _svc(
+            get_user_role_in_team=AsyncMock(return_value="owner"),
+            update_team=AsyncMock(return_value=True),
+            get_team_by_id=AsyncMock(return_value=updated),
+        ):
+            from mcpgateway.schemas import TeamUpdateRequest
+
+            req = TeamUpdateRequest(max_members=500)
+            result = await teams.update_team(mock_team.id, req, current_user=admin_ctx, db=db)
+            assert result.max_members == 500
+
+    @pytest.mark.asyncio
+    async def test_non_admin_update_at_cap_allowed(self, user_ctx, db, mock_team):
+        """Non-admin update with max_members == cap succeeds."""
+        updated = MagicMock()
+        updated.max_members = 100
+        updated.id = mock_team.id
+        updated.name = mock_team.name
+        updated.slug = mock_team.slug
+        updated.description = mock_team.description
+        updated.created_by = mock_team.created_by
+        updated.is_personal = False
+        updated.visibility = "private"
+        updated.created_at = mock_team.created_at
+        updated.updated_at = mock_team.updated_at
+        updated.is_active = True
+        updated.get_member_count = MagicMock(return_value=1)
+        with _svc(
+            get_user_role_in_team=AsyncMock(return_value="owner"),
+            update_team=AsyncMock(return_value=True),
+            get_team_by_id=AsyncMock(return_value=updated),
+        ):
+            from mcpgateway.schemas import TeamUpdateRequest
+
+            req = TeamUpdateRequest(max_members=100)
+            result = await teams.update_team(mock_team.id, req, current_user=user_ctx, db=db)
+            assert result.max_members == 100
+
+    @pytest.mark.asyncio
+    async def test_update_with_none_max_members_preserves(self, user_ctx, db, mock_team):
+        """Update with no max_members field preserves the existing value."""
+        mock_team.max_members = 75
+        with _svc(
+            get_user_role_in_team=AsyncMock(return_value="owner"),
+            update_team=AsyncMock(return_value=True),
+            get_team_by_id=AsyncMock(return_value=mock_team),
+        ):
+            from mcpgateway.schemas import TeamUpdateRequest
+
+            req = TeamUpdateRequest(name="Renamed")
+            result = await teams.update_team(mock_team.id, req, current_user=user_ctx, db=db)
+            assert result.max_members == 75
+
+
 class TestUpdateTeamErrors:
     @pytest.mark.asyncio
     async def test_team_not_found_after_update(self, user_ctx, db, mock_team):
@@ -480,6 +609,22 @@ class TestRequestToJoinTeamErrors:
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
+    async def test_value_error(self, user_ctx, db, mock_team):
+        mock_team.visibility = "public"
+        with _svc(
+            get_team_by_id=AsyncMock(return_value=mock_team),
+            get_user_role_in_team=AsyncMock(return_value=None),
+            create_join_request=AsyncMock(side_effect=ValueError("User has reached the maximum team limit of 50")),
+        ):
+            from mcpgateway.schemas import TeamJoinRequest
+
+            req = TeamJoinRequest(message="hi")
+            with pytest.raises(HTTPException) as exc:
+                await teams.request_to_join_team(mock_team.id, req, current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "maximum team limit" in exc.value.detail
+
+    @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
         with _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
             from mcpgateway.schemas import TeamJoinRequest
@@ -598,6 +743,42 @@ class TestApproveJoinRequestErrors:
             with pytest.raises(HTTPException) as exc:
                 await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
+
+    @pytest.mark.asyncio
+    async def test_value_error_max_team_limit(self, user_ctx, db, mock_team):
+        with _svc(
+            get_team_by_id=AsyncMock(return_value=mock_team),
+            get_user_role_in_team=AsyncMock(return_value="owner"),
+            approve_join_request=AsyncMock(side_effect=ValueError("User has reached the maximum team limit of 50")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "Cannot approve" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_value_error_max_members_limit(self, user_ctx, db, mock_team):
+        with _svc(
+            get_team_by_id=AsyncMock(return_value=mock_team),
+            get_user_role_in_team=AsyncMock(return_value="owner"),
+            approve_join_request=AsyncMock(side_effect=ValueError("Team has reached its maximum member limit of 5")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "maximum member limit" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_value_error_generic(self, user_ctx, db, mock_team):
+        with _svc(
+            get_team_by_id=AsyncMock(return_value=mock_team),
+            get_user_role_in_team=AsyncMock(return_value="owner"),
+            approve_join_request=AsyncMock(side_effect=ValueError("some other validation error")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "some other validation error" in exc.value.detail
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
