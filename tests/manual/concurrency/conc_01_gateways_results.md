@@ -1,7 +1,7 @@
 # CONC-01 Gateway Parallel Create: Runbook + Results
 
-Date: 2026-03-02  
-Ticket scope: CONC-01 for gateway endpoint (`POST /gateways`)  
+Date: 2026-03-02
+Ticket scope: CONC-01 for gateway endpoint (`POST /gateways`)
 Out of scope: server endpoint results
 
 ## Objective
