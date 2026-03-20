@@ -1979,3 +1979,78 @@ class TestGatewayServiceExtended:
 
         db_tool = service._create_db_tool(tool=tool, gateway=gateway)
         assert db_tool.visibility == "private", "Explicit tool visibility must override gateway visibility"
+
+    def test_update_or_create_tools_applies_explicit_upstream_visibility_on_update(self):
+        """Explicit upstream tool visibility must be written to existing tools when update_visibility=True."""
+        service = GatewayService()
+        mock_db = MagicMock()
+
+        existing_tool = MagicMock()
+        existing_tool.original_name = "vis_tool"
+        existing_tool.description = "Same"
+        existing_tool.original_description = "Same"
+        existing_tool.request_type = "GET"
+        existing_tool.input_schema = {}
+        existing_tool.url = "http://gw.com"
+        existing_tool.headers = {}
+        existing_tool.auth_type = "none"
+        existing_tool.auth_value = ""
+        existing_tool.visibility = "public"
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [existing_tool]
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw"
+        mock_gateway.url = "http://gw.com"
+        mock_gateway.auth_type = "none"
+        mock_gateway.auth_value = ""
+        mock_gateway.visibility = "public"
+        mock_gateway.tools = [existing_tool]
+
+        tool_from_server = MagicMock()
+        tool_from_server.name = "vis_tool"
+        tool_from_server.description = "Same"
+        tool_from_server.request_type = "GET"
+        tool_from_server.headers = {}
+        tool_from_server.input_schema = {}
+        tool_from_server.annotations = {}
+        tool_from_server.jsonpath_filter = None
+        tool_from_server.visibility = "team"  # explicit upstream override
+
+        result = service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=True)
+        assert len(result) == 0
+        assert existing_tool.visibility == "team", "Explicit upstream tool visibility must be applied"
+
+    def test_update_or_create_prompts_applies_explicit_upstream_visibility_on_update(self):
+        """Explicit upstream prompt visibility must be written to existing prompts when update_visibility=True."""
+        service = GatewayService()
+        mock_db = MagicMock()
+
+        existing_prompt = MagicMock()
+        existing_prompt.original_name = "vis_prompt"
+        existing_prompt.name = "vis_prompt"
+        existing_prompt.description = "Same"
+        existing_prompt.template = "Same"
+        existing_prompt.visibility = "public"
+        existing_prompt.argument_schema = {"type": "object", "properties": {}, "required": []}
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [existing_prompt]
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw"
+        mock_gateway.visibility = "public"
+        mock_gateway.prompts = [existing_prompt]
+
+        prompt_from_server = MagicMock()
+        prompt_from_server.name = "vis_prompt"
+        prompt_from_server.description = "Same"
+        prompt_from_server.template = "Same"
+        prompt_from_server.visibility = "private"  # explicit upstream override
+
+        result = service._update_or_create_prompts(mock_db, [prompt_from_server], mock_gateway, "update", update_visibility=True)
+        assert len(result) == 0
+        assert existing_prompt.visibility == "private", "Explicit upstream prompt visibility must be applied"
