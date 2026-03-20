@@ -2477,6 +2477,7 @@ class ToolMetric(Base):
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    server_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
 
     # Relationship back to the Tool model.
     tool: Mapped["Tool"] = relationship("Tool", back_populates="metrics")
@@ -2503,6 +2504,7 @@ class ResourceMetric(Base):
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    server_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
 
     # Relationship back to the Resource model.
     resource: Mapped["Resource"] = relationship("Resource", back_populates="metrics")
@@ -2555,6 +2557,7 @@ class PromptMetric(Base):
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    server_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
 
     # Relationship back to the Prompt model.
     prompt: Mapped["Prompt"] = relationship("Prompt", back_populates="metrics")
@@ -2621,13 +2624,14 @@ class ToolMetricsHourly(Base):
 
     __tablename__ = "tool_metrics_hourly"
     __table_args__ = (
-        UniqueConstraint("tool_id", "hour_start", name="uq_tool_metrics_hourly_tool_hour"),
+        UniqueConstraint("tool_id", "server_id", "hour_start", name="uq_tool_metrics_hourly_tool_server_hour"),
         Index("ix_tool_metrics_hourly_hour_start", "hour_start"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tool_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("tools.id", ondelete="SET NULL"), nullable=True, index=True)
     tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    server_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -2646,13 +2650,14 @@ class ResourceMetricsHourly(Base):
 
     __tablename__ = "resource_metrics_hourly"
     __table_args__ = (
-        UniqueConstraint("resource_id", "hour_start", name="uq_resource_metrics_hourly_resource_hour"),
+        UniqueConstraint("resource_id", "server_id", "hour_start", name="uq_resource_metrics_hourly_resource_server_hour"),
         Index("ix_resource_metrics_hourly_hour_start", "hour_start"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     resource_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("resources.id", ondelete="SET NULL"), nullable=True, index=True)
     resource_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    server_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -2671,13 +2676,14 @@ class PromptMetricsHourly(Base):
 
     __tablename__ = "prompt_metrics_hourly"
     __table_args__ = (
-        UniqueConstraint("prompt_id", "hour_start", name="uq_prompt_metrics_hourly_prompt_hour"),
+        UniqueConstraint("prompt_id", "server_id", "hour_start", name="uq_prompt_metrics_hourly_prompt_server_hour"),
         Index("ix_prompt_metrics_hourly_hour_start", "hour_start"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     prompt_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("prompts.id", ondelete="SET NULL"), nullable=True, index=True)
     prompt_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    server_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

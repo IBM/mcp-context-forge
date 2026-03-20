@@ -2041,6 +2041,7 @@ class PromptService(BaseService):
                             start_time=start_time,
                             success=success,
                             error_message=error_message,
+                            server_id=server_id,
                         )
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record prompt metric: {metrics_error}")

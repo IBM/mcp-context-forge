@@ -2540,6 +2540,7 @@ class ResourceService(BaseService):
                             start_time=start_time,
                             success=success,
                             error_message=error_message,
+                            server_id=server_id,
                         )
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record resource metric: {metrics_error}")

@@ -34,6 +34,7 @@ class BufferedToolMetric:
     response_time: float
     is_success: bool
     error_message: Optional[str] = None
+    server_id: Optional[str] = None
 
 
 @dataclass
@@ -45,6 +46,7 @@ class BufferedResourceMetric:
     response_time: float
     is_success: bool
     error_message: Optional[str] = None
+    server_id: Optional[str] = None
 
 
 @dataclass
@@ -56,6 +58,7 @@ class BufferedPromptMetric:
     response_time: float
     is_success: bool
     error_message: Optional[str] = None
+    server_id: Optional[str] = None
 
 
 @dataclass
@@ -221,6 +224,7 @@ class MetricsBufferService:
         start_time: float,
         success: bool,
         error_message: Optional[str] = None,
+        server_id: Optional[str] = None,
     ) -> None:
         """Buffer a tool metric for later flush.
 
@@ -229,12 +233,13 @@ class MetricsBufferService:
             start_time: The monotonic start time of the invocation.
             success: True if the invocation succeeded.
             error_message: Error message if failed.
+            server_id: The server ID that executed this tool (None for direct/admin invocations).
         """
         if not self.recording_enabled:
             return  # Execution metrics recording disabled
         if not self.enabled:
             # Fall back to immediate write
-            self._write_tool_metric_immediately(tool_id, start_time, success, error_message)
+            self._write_tool_metric_immediately(tool_id, start_time, success, error_message, server_id)
             return
 
         metric = BufferedToolMetric(
@@ -243,6 +248,7 @@ class MetricsBufferService:
             response_time=time.monotonic() - start_time,
             is_success=success,
             error_message=error_message,
+            server_id=server_id,
         )
 
         self._ensure_flush_task_started()
@@ -256,6 +262,7 @@ class MetricsBufferService:
         response_time: float,
         success: bool,
         error_message: Optional[str] = None,
+        server_id: Optional[str] = None,
     ) -> None:
         """Buffer a tool metric with pre-calculated response time.
 
@@ -264,11 +271,12 @@ class MetricsBufferService:
             response_time: Pre-calculated response time in seconds.
             success: Whether the operation succeeded.
             error_message: Optional error message if failed.
+            server_id: The server ID that executed this tool (None for direct/admin invocations).
         """
         if not self.recording_enabled:
             return  # Execution metrics recording disabled
         if not self.enabled:
-            self._write_tool_metric_with_duration_immediately(tool_id, response_time, success, error_message)
+            self._write_tool_metric_with_duration_immediately(tool_id, response_time, success, error_message, server_id)
             return
 
         metric = BufferedToolMetric(
@@ -277,6 +285,7 @@ class MetricsBufferService:
             response_time=response_time,
             is_success=success,
             error_message=error_message,
+            server_id=server_id,
         )
 
         self._ensure_flush_task_started()
@@ -290,6 +299,7 @@ class MetricsBufferService:
         start_time: float,
         success: bool,
         error_message: Optional[str] = None,
+        server_id: Optional[str] = None,
     ) -> None:
         """Buffer a resource metric for later flush.
 
@@ -298,11 +308,12 @@ class MetricsBufferService:
             start_time: Monotonic start time for response_time calculation.
             success: Whether the operation succeeded.
             error_message: Optional error message if failed.
+            server_id: The server ID that executed this resource (None for direct/admin invocations).
         """
         if not self.recording_enabled:
             return  # Execution metrics recording disabled
         if not self.enabled:
-            self._write_resource_metric_immediately(resource_id, start_time, success, error_message)
+            self._write_resource_metric_immediately(resource_id, start_time, success, error_message, server_id)
             return
 
         metric = BufferedResourceMetric(
@@ -311,6 +322,7 @@ class MetricsBufferService:
             response_time=time.monotonic() - start_time,
             is_success=success,
             error_message=error_message,
+            server_id=server_id,
         )
 
         self._ensure_flush_task_started()
@@ -324,6 +336,7 @@ class MetricsBufferService:
         start_time: float,
         success: bool,
         error_message: Optional[str] = None,
+        server_id: Optional[str] = None,
     ) -> None:
         """Buffer a prompt metric for later flush.
 
@@ -332,11 +345,12 @@ class MetricsBufferService:
             start_time: Monotonic start time for response_time calculation.
             success: Whether the operation succeeded.
             error_message: Optional error message if failed.
+            server_id: The server ID that executed this prompt (None for direct/admin invocations).
         """
         if not self.recording_enabled:
             return  # Execution metrics recording disabled
         if not self.enabled:
-            self._write_prompt_metric_immediately(prompt_id, start_time, success, error_message)
+            self._write_prompt_metric_immediately(prompt_id, start_time, success, error_message, server_id)
             return
 
         metric = BufferedPromptMetric(
@@ -345,6 +359,7 @@ class MetricsBufferService:
             response_time=time.monotonic() - start_time,
             is_success=success,
             error_message=error_message,
+            server_id=server_id,
         )
 
         self._ensure_flush_task_started()
@@ -600,6 +615,7 @@ class MetricsBufferService:
                                 "response_time": m.response_time,
                                 "is_success": m.is_success,
                                 "error_message": m.error_message,
+                                "server_id": m.server_id,
                             }
                             for m in tool_metrics
                         ],
@@ -616,6 +632,7 @@ class MetricsBufferService:
                                 "response_time": m.response_time,
                                 "is_success": m.is_success,
                                 "error_message": m.error_message,
+                                "server_id": m.server_id,
                             }
                             for m in resource_metrics
                         ],
@@ -632,6 +649,7 @@ class MetricsBufferService:
                                 "response_time": m.response_time,
                                 "is_success": m.is_success,
                                 "error_message": m.error_message,
+                                "server_id": m.server_id,
                             }
                             for m in prompt_metrics
                         ],
@@ -691,6 +709,7 @@ class MetricsBufferService:
         start_time: float,
         success: bool,
         error_message: Optional[str],
+        server_id: Optional[str] = None,
     ) -> None:
         """Write a single tool metric immediately (fallback when buffering disabled).
 
@@ -699,6 +718,7 @@ class MetricsBufferService:
             start_time: Monotonic start time for response_time calculation.
             success: Whether the operation succeeded.
             error_message: Optional error message if failed.
+            server_id: The server ID that executed this tool (None for direct/admin invocations).
         """
         try:
             with fresh_db_session() as db:
@@ -708,6 +728,7 @@ class MetricsBufferService:
                     response_time=time.monotonic() - start_time,
                     is_success=success,
                     error_message=error_message,
+                    server_id=server_id,
                 )
                 db.add(metric)
                 db.commit()
@@ -720,6 +741,7 @@ class MetricsBufferService:
         response_time: float,
         success: bool,
         error_message: Optional[str],
+        server_id: Optional[str] = None,
     ) -> None:
         """Write a single tool metric with pre-calculated duration immediately.
 
@@ -728,6 +750,7 @@ class MetricsBufferService:
             response_time: Pre-calculated response time in seconds.
             success: Whether the operation succeeded.
             error_message: Optional error message if failed.
+            server_id: The server ID that executed this tool (None for direct/admin invocations).
         """
         try:
             with fresh_db_session() as db:
@@ -737,6 +760,7 @@ class MetricsBufferService:
                     response_time=response_time,
                     is_success=success,
                     error_message=error_message,
+                    server_id=server_id,
                 )
                 db.add(metric)
                 db.commit()
@@ -749,6 +773,7 @@ class MetricsBufferService:
         start_time: float,
         success: bool,
         error_message: Optional[str],
+        server_id: Optional[str] = None,
     ) -> None:
         """Write a single resource metric immediately.
 
@@ -757,6 +782,7 @@ class MetricsBufferService:
             start_time: Monotonic start time for response_time calculation.
             success: Whether the operation succeeded.
             error_message: Optional error message if failed.
+            server_id: The server ID that executed this resource (None for direct/admin invocations).
         """
         try:
             with fresh_db_session() as db:
@@ -766,6 +792,7 @@ class MetricsBufferService:
                     response_time=time.monotonic() - start_time,
                     is_success=success,
                     error_message=error_message,
+                    server_id=server_id,
                 )
                 db.add(metric)
                 db.commit()
@@ -778,6 +805,7 @@ class MetricsBufferService:
         start_time: float,
         success: bool,
         error_message: Optional[str],
+        server_id: Optional[str] = None,
     ) -> None:
         """Write a single prompt metric immediately.
 
@@ -786,6 +814,7 @@ class MetricsBufferService:
             start_time: Monotonic start time for response_time calculation.
             success: Whether the operation succeeded.
             error_message: Optional error message if failed.
+            server_id: The server ID that executed this prompt (None for direct/admin invocations).
         """
         try:
             with fresh_db_session() as db:
@@ -795,6 +824,7 @@ class MetricsBufferService:
                     response_time=time.monotonic() - start_time,
                     is_success=success,
                     error_message=error_message,
+                    server_id=server_id,
                 )
                 db.add(metric)
                 db.commit()
