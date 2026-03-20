@@ -1433,6 +1433,12 @@ class Settings(BaseSettings):
     metrics_rollup_late_data_hours: int = Field(
         default=1, ge=1, le=48, description="Hours to re-process on each run to catch late-arriving data (smaller = less CPU, larger = more tolerance for delayed metrics)"
     )
+
+    # Prometheus Metrics Configuration
+    prometheus_server_scoped_metrics: bool = Field(
+        default=False,
+        description="Include server_id as Prometheus counter label dimension. Increases cardinality - use cautiously with many virtual servers.",
+    )
     metrics_delete_raw_after_rollup: bool = Field(default=True, description="Delete raw metrics after hourly rollup exists (recommended for production)")
     metrics_delete_raw_after_rollup_hours: int = Field(default=1, ge=1, le=8760, description="Hours to retain raw metrics when hourly rollup exists")
 

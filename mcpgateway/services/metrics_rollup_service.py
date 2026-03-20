@@ -101,6 +101,7 @@ class HourlyAggregation:
     p95_response_time: Optional[float]
     p99_response_time: Optional[float]
     interaction_type: Optional[str] = None  # For A2A agents
+    server_id: Optional[str] = None  # For server-scoped metrics
 
 
 class MetricsRollupService:
