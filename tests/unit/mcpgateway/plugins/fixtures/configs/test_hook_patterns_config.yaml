@@ -11,7 +11,7 @@ plugins:
     tags:
       - demo
       - test
-    mode: enforce
+    mode: sequential
     priority: 50
 
 # Plugin directories to scan (not needed for this demo)

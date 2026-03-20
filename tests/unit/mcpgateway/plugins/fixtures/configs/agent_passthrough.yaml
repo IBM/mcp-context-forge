@@ -10,7 +10,7 @@ plugins:
     tags:
       - test
       - agent
-    mode: enforce
+    mode: sequential
     priority: 50
 
 # Plugin directories to scan

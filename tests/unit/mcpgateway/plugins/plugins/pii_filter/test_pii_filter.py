@@ -17,7 +17,7 @@ import pytest
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
@@ -783,7 +783,7 @@ class TestPIIFilterPlugin:
             version="1.0",
             hooks=[PromptHookType.PROMPT_PRE_FETCH, PromptHookType.PROMPT_POST_FETCH],
             tags=["test", "pii"],
-            mode=PluginMode.ENFORCE,
+            mode=PluginMode.SEQUENTIAL,
             priority=10,
             config={
                 "detect_ssn": True,
@@ -903,7 +903,7 @@ class TestPIIFilterPlugin:
     @pytest.mark.asyncio
     async def test_permissive_mode(self, plugin_config):
         """Test permissive mode (log but don't block)."""
-        plugin_config.mode = PluginMode.PERMISSIVE
+        plugin_config.mode = PluginMode.TRANSFORM
         plugin_config.config["block_on_detection"] = True  # Should be ignored in permissive mode
 
         plugin = PIIFilterPlugin(plugin_config)
@@ -914,7 +914,7 @@ class TestPIIFilterPlugin:
         result = await plugin.prompt_pre_fetch(payload, context)
 
         # In permissive mode, should continue even with block_on_detection
-        assert result.continue_processing or plugin_config.mode == PluginMode.PERMISSIVE
+        assert result.continue_processing or plugin_config.mode == PluginMode.TRANSFORM
         # PII should still be masked
         if result.modified_payload:
             assert "123-45-6789" not in result.modified_payload.args["input"]
@@ -923,7 +923,7 @@ class TestPIIFilterPlugin:
     async def test_integration_with_manager(self):
         """Test the PII Filter plugin with the plugin manager."""
         # First-Party
-        from mcpgateway.plugins.framework.manager import PluginManager
+        from cpex.framework.manager import PluginManager
 
         # Create a test configuration
         config_dict = {

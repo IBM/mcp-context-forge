@@ -34,7 +34,7 @@ except ImportError:
         from altk.post_tool.core.toolkit import CodeGenerationRunInput, CodeGenerationRunOutput
 
 # First-Party
-from mcpgateway.plugins.framework import (  # noqa: E402  # pylint: disable=wrong-import-position
+from cpex.framework import (  # noqa: E402  # pylint: disable=wrong-import-position
     Plugin,
     PluginConfig,
     PluginContext,

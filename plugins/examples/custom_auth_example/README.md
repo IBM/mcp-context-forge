@@ -248,7 +248,7 @@ Create test cases in `tests/unit/mcpgateway/plugins/plugins/custom_auth_example/
 
 ```python
 import pytest
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     HttpAuthResolveUserPayload,
     HttpHeaderPayload,
     HttpPreRequestPayload,

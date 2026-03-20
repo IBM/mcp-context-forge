@@ -7,7 +7,7 @@ plugins:
     author: "ContextForge"
     hooks: ["prompt_pre_fetch"]
     tags: ["plugin", "guardrails", "llmguard", "pre", "filters"]
-    mode: "enforce"  # enforce | permissive | disabled
+    mode: "sequential"  # sequential | transform | disabled
     priority: 10
     conditions:
       # Apply to specific tools/servers
@@ -31,7 +31,7 @@ plugins:
     author: "ContextForge"
     hooks: ["prompt_post_fetch"]
     tags: ["plugin", "guardrails", "llmguard", "post", "filters"]
-    mode: "enforce"  # enforce | permissive | disabled
+    mode: "sequential"  # sequential | transform | disabled
     priority: 20
     conditions:
       # Apply to specific tools/servers

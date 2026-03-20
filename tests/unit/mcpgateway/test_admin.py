@@ -380,7 +380,7 @@ def allow_permission(monkeypatch):
     mock_perm_service.check_permission = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
     monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
-    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", lambda: None)
     return mock_perm_service
 
 
@@ -20504,7 +20504,7 @@ class TestPublicVisibilityGuard:
         mock_perm_service.check_permission = AsyncMock(return_value=True)
         monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
         monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
-        monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
+        monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", lambda: None)
         return mock_perm_service
 
     @pytest.mark.asyncio

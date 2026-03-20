@@ -9,7 +9,7 @@ Test agent plugins for unit testing.
 
 # First-Party
 from mcpgateway.common.models import Message, Role, TextContent
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginContext,
     AgentPreInvokePayload,
@@ -80,7 +80,7 @@ class MessageFilterAgentPlugin(Plugin):
 
         # If all messages were blocked, return violation
         if not filtered_messages and payload.messages:
-            from mcpgateway.plugins.framework import PluginViolation
+            from cpex.framework import PluginViolation
             return AgentPreInvokeResult(
                 continue_processing=False,
                 violation=PluginViolation(
@@ -131,7 +131,7 @@ class MessageFilterAgentPlugin(Plugin):
 
         # If all messages were blocked, return violation
         if not filtered_messages and payload.messages:
-            from mcpgateway.plugins.framework import PluginViolation
+            from cpex.framework import PluginViolation
             return AgentPostInvokeResult(
                 continue_processing=False,
                 violation=PluginViolation(

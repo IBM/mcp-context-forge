@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.db import get_db
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     get_attr,
     HttpHeaderPayload,
     Plugin,

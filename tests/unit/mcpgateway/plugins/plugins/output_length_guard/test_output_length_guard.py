@@ -8,7 +8,7 @@ Unit tests for Output Length Guard Plugin.
 """
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,

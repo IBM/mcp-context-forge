@@ -11,9 +11,9 @@ Pytest fixtures for plugin framework tests.
 import pytest
 
 # First-Party
-import mcpgateway.plugins.framework as fw
-from mcpgateway.plugins.framework import PluginManager
-from mcpgateway.plugins.framework.settings import settings
+import cpex.framework as fw
+from cpex.framework import PluginManager
+from cpex.framework.settings import settings
 
 
 @pytest.fixture(autouse=True)

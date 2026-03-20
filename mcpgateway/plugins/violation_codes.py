@@ -1,59 +1,25 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/plugins/framework/constants.py
+"""Location: ./mcpgateway/plugins/violation_codes.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
-Plugins constants file.
-This module stores a collection of plugin constants used throughout the framework.
-"""
+Gateway-specific plugin violation code mappings.
 
-# Standard
+These constants map plugin violation codes to HTTP status codes for proper
+error responses in the gateway's exception handlers.  They are gateway-specific
+and therefore not part of the cpex framework package.
+"""
 
 # Standard
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping
 
-# Model constants.
-# Specialized plugin types.
-EXTERNAL_PLUGIN_TYPE = "external"
-
-# MCP related constants.
-PYTHON_SUFFIX = ".py"
-URL = "url"
-SCRIPT = "script"
-CMD = "cmd"
-ENV = "env"
-CWD = "cwd"
-UDS = "uds"
-
-NAME = "name"
-PLUGIN_NAME = "plugin_name"
-PAYLOAD = "payload"
-CONTEXT = "context"
-RESULT = "result"
-ERROR = "error"
-IGNORE_CONFIG_EXTERNAL = "ignore_config_external"
-
-# Global Context Metadata fields
-
-TOOL_METADATA = "tool"
-GATEWAY_METADATA = "gateway"
-
-# MCP Plugin Server Runtime constants
-MCP_SERVER_NAME = "MCP Plugin Server"
-MCP_SERVER_INSTRUCTIONS = "External plugin server for ContextForge"
-GET_PLUGIN_CONFIGS = "get_plugin_configs"
-GET_PLUGIN_CONFIG = "get_plugin_config"
-HOOK_TYPE = "hook_type"
-INVOKE_HOOK = "invoke_hook"
-
 
 @dataclass(frozen=True)
 class PluginViolationCode:
-    """
-    Plugin violation codes as an immutable dataclass object.
+    """Plugin violation codes as an immutable dataclass object.
 
     Provide Mapping for violation codes to their corresponding HTTP status codes for proper error responses.
     """

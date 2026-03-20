@@ -37,18 +37,18 @@ See ``PDPConfig`` in ``pdp_models.py`` for the full schema.  Minimal example::
 # Standard
 import logging
 
-# First-Party
-from mcpgateway.plugins.framework import (
+# Third-Party
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
 )
-from mcpgateway.plugins.framework.hooks.tools import (
+from cpex.framework.hooks.tools import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
-from mcpgateway.plugins.framework.hooks.resources import (
+from cpex.framework.hooks.resources import (
     ResourcePreFetchPayload,
     ResourcePreFetchResult,
 )

@@ -33,7 +33,6 @@ exclude =
     logs,
     paper,
     plugins_rust,
-    plugin_templates,
     reports,
     scripts,
     tmp,

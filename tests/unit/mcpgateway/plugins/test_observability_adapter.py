@@ -12,8 +12,8 @@ from contextvars import copy_context
 from unittest.mock import MagicMock, patch
 
 # First-Party
-from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.observability import current_trace_id as plugins_trace_id
+from cpex.framework.manager import PluginManager
+from cpex.framework.observability import current_trace_id as plugins_trace_id
 
 # ---------------------------------------------------------------------------
 # ObservabilityServiceAdapter unit tests

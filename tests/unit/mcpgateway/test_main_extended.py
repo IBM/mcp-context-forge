@@ -111,7 +111,7 @@ from mcpgateway.main import (
     update_tool,
     validate_security_configuration,
 )
-from mcpgateway.plugins.framework import PluginError
+from cpex.framework import PluginError
 from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import user_context_var
@@ -201,7 +201,7 @@ def _import_fresh_main_module(
         async def shutdown(self):  # noqa: D401 - trivial
             return None
 
-    monkeypatch.setattr("mcpgateway.plugins.framework.PluginManager", _DummyPluginManager)
+    monkeypatch.setattr("cpex.framework.PluginManager", _DummyPluginManager)
 
     # Force selected module imports to fail to cover defensive ImportError paths.
     if force_import_error:
@@ -623,7 +623,7 @@ class TestInternalTrustedMcpTransportBridge:
         """HTTP_PRE_REQUEST plugin hooks should transform headers before auth runs."""
         # First-Party
         import mcpgateway.main as main_mod
-        from mcpgateway.plugins.framework import HttpHookType
+        from cpex.framework import HttpHookType
 
         async def _fake_streamable_http_auth(_scope, _receive, _send):
             user_context_var.set({"email": "hook-user@example.com", "teams": [], "is_authenticated": True})
@@ -3921,7 +3921,7 @@ class TestGetPromptEndpointCoverage:
 
         # PluginViolationError -> 422 with plugin message.
         # First-Party
-        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from cpex.framework.errors import PluginViolationError
 
         monkeypatch.setattr(main_mod.prompt_service, "get_prompt", AsyncMock(side_effect=PluginViolationError("blocked", violation=SimpleNamespace(code="c"))))
         response = await main_mod.get_prompt(request, "prompt-1", args={}, db=MagicMock(), user={"email": "user@example.com"})
@@ -8754,7 +8754,7 @@ class TestRpcHandling:
             assert result["result"]["ok"] is True
 
         # First-Party
-        from mcpgateway.plugins.framework.models import PluginErrorModel
+        from cpex.framework.models import PluginErrorModel
 
         with (
             patch(
@@ -11555,7 +11555,7 @@ class TestRemainingCoverageGaps:
 
     async def test_module_level_uses_settings_backed_plugin_enablement(self, monkeypatch):
         # First-Party
-        import mcpgateway.plugins.framework.settings as plugin_settings_mod
+        import cpex.framework.settings as plugin_settings_mod
 
         monkeypatch.delenv("PLUGINS_ENABLED", raising=False)
         monkeypatch.setattr(

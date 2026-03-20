@@ -673,7 +673,7 @@ class TestPromptService:
         from contextlib import contextmanager
 
         # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
+        from cpex.framework import GlobalContext, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
 
@@ -731,7 +731,7 @@ class TestPromptService:
         from contextlib import contextmanager
 
         # First-Party
-        from mcpgateway.plugins.framework import PromptHookType, PromptPrehookPayload
+        from cpex.framework import PromptHookType, PromptPrehookPayload
 
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))

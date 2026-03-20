@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework import (
+from cpex.framework.manager import PluginManager
+from cpex.framework import (
     GlobalContext,
     PromptHookType,
     ToolHookType,
@@ -166,7 +166,7 @@ plugin_dirs: []
                 context = GlobalContext(request_id="violation-test", user="testuser")
 
                 # Create payload with forbidden word that will trigger deny filter
-                from mcpgateway.plugins.framework import PromptPrehookPayload
+                from cpex.framework import PromptPrehookPayload
                 payload = PromptPrehookPayload(
                     prompt_id="test_prompt",
                     args={"query": "this contains forbidden word"}

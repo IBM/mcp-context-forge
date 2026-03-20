@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from mcpgateway.common.models import ResourceContent
 from mcpgateway.services.resource_service import ResourceService
-from mcpgateway.plugins.framework import PluginConfig, ResourceHookType
+from cpex.framework import PluginConfig, ResourceHookType
 from plugins.secrets_detection.secrets_detection import SecretsDetectionPlugin
 
 # Try to import Rust implementation

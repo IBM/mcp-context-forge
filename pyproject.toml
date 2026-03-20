@@ -77,6 +77,7 @@ dependencies = [
     "sse-starlette>=3.3.3",
     "starlette>=0.52.1",
     "starlette-compress>=1.7.0",
+    "cpex>=0.1.0.dev10,<0.2.0",
     "typer>=0.24.1",
     "urllib3>=2.6.3", # Transitive pin (requests); dependabot/76
     "uvicorn[standard]>=0.42.0",
@@ -310,7 +311,7 @@ Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 # --------------------------------------------------------------------
 [project.scripts]
 mcpgateway = "mcpgateway.cli:main"
-mcpplugins = "mcpgateway.plugins.tools.cli:main"
+mcpplugins = "cpex.tools.cli:main"
 cforge = "mcpgateway.tools.cli:main"
 
 # --------------------------------------------------------------------
@@ -493,7 +494,7 @@ from-first                 = true         # place all "from ... import ..." befo
 ###############################################################################
 known-first-party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
 known-local-folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
-known-third-party          = ["alembic"] # treat "alembic" as THIRDPARTY
+known-third-party          = ["alembic", "cpex"] # treat "alembic" and "cpex" as THIRDPARTY
 # src-paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/
 
 ###############################################################################
@@ -549,7 +550,7 @@ import_heading_localfolder = "Local"        # header for ad-hoc scripts / tests
 ###############################################################################
 known_first_party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
 known_local_folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
-known_third_party          = ["alembic"] # treat "alembic" as THIRDPARTY
+known_third_party          = ["alembic", "cpex"] # treat "alembic" and "cpex" as THIRDPARTY
 # src_paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/
 
 ###############################################################################
@@ -764,8 +765,6 @@ omit = [
     "mcpgateway/tools/builder/*",
     "*/tests/*",
     "*/test_*.py",
-    # Generated protobuf files - auto-generated, not hand-written code
-    "mcpgateway/plugins/framework/external/grpc/proto/*_pb2*.py",
 ]
 
 [tool.coverage.report]
@@ -910,7 +909,7 @@ ignore-nested-functions = false
 ignore-nested-classes = true
 ignore-setters = false
 fail-under = 100
-exclude = ["setup.py", "docs", "build", "tests", "mcpgateway/plugins/framework/external/grpc/proto/*_pb2*.py"]
+exclude = ["setup.py", "docs", "build", "tests"]
 ignore-regex = ["^get_", "^post_"]
 verbose = 0
 quiet = false

@@ -18,8 +18,8 @@ Examples:
     True
 """
 
-# First-Party
-from mcpgateway.plugins.framework.hooks.policies import HookPayloadPolicy
+# Third-Party
+from cpex.framework.hooks.policies import HookPayloadPolicy
 
 HOOK_PAYLOAD_POLICIES: dict[str, HookPayloadPolicy] = {
     # Tools

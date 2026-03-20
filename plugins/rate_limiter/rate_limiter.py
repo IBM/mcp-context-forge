@@ -20,8 +20,8 @@ from typing import Any, Dict, Optional
 # Third-Party
 from pydantic import BaseModel, Field
 
-# First-Party
-from mcpgateway.plugins.framework import (
+# Third-Party
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
@@ -256,16 +256,14 @@ class RateLimiterPlugin(Plugin):
                     reason="Rate limit exceeded",
                     description=f"Rate limit exceeded for user {user} or tenant {tenant}",
                     code="RATE_LIMIT",
-                    details=meta,
-                    http_status_code=429,
-                    http_headers=headers,
+                    details={**meta, "http_status_code": 429, "http_headers": headers},
                 ),
             )
 
         # Success - include informational headers (without Retry-After)
         if limit > 0:
             headers = _make_headers(limit, remaining, reset_ts, retry_after, include_retry_after=False)
-            return PromptPrehookResult(metadata=meta, http_headers=headers)
+            return PromptPrehookResult(metadata={**meta, "http_headers": headers})
 
         return PromptPrehookResult(metadata=meta)
 
@@ -308,15 +306,13 @@ class RateLimiterPlugin(Plugin):
                     reason="Rate limit exceeded",
                     description=f"Rate limit exceeded for tool {tool}, user {user}, or tenant {tenant}",
                     code="RATE_LIMIT",
-                    details=meta,
-                    http_status_code=429,
-                    http_headers=headers,
+                    details={**meta, "http_status_code": 429, "http_headers": headers},
                 ),
             )
 
         # Success - include informational headers (without Retry-After)
         if limit > 0:
             headers = _make_headers(limit, remaining, reset_ts, retry_after, include_retry_after=False)
-            return ToolPreInvokeResult(metadata=meta, http_headers=headers)
+            return ToolPreInvokeResult(metadata={**meta, "http_headers": headers})
 
         return ToolPreInvokeResult(metadata=meta)

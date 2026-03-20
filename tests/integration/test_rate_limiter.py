@@ -29,7 +29,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mcpgateway.main import app
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,

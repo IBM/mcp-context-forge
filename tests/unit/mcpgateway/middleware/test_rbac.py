@@ -372,7 +372,7 @@ async def test_require_permission_skips_hooks_when_has_hooks_for_false(monkeypat
     mock_pm.invoke_hook = AsyncMock()  # Should NOT be called
 
     # Use importlib to ensure the module is loaded, then patch get_plugin_manager
-    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    plugin_framework = importlib.import_module("mcpgateway.plugins")
     original_get_pm = plugin_framework.get_plugin_manager
     try:
         plugin_framework.get_plugin_manager = lambda: mock_pm
@@ -402,7 +402,7 @@ async def test_require_permission_calls_hooks_when_has_hooks_for_true(monkeypatc
     import importlib
 
     # First-Party
-    from mcpgateway.plugins.framework import PluginResult
+    from cpex.framework import PluginResult
 
     async def dummy_func(user=None):
         return "ok"
@@ -421,7 +421,7 @@ async def test_require_permission_calls_hooks_when_has_hooks_for_true(monkeypatc
     mock_pm.invoke_hook = AsyncMock(return_value=(mock_plugin_result, None))
 
     # Use importlib to ensure the module is loaded, then patch get_plugin_manager
-    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    plugin_framework = importlib.import_module("mcpgateway.plugins")
     original_get_pm = plugin_framework.get_plugin_manager
     try:
         plugin_framework.get_plugin_manager = lambda: mock_pm
@@ -464,7 +464,7 @@ async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkey
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    plugin_framework = importlib.import_module("mcpgateway.plugins")
     original_get_pm = plugin_framework.get_plugin_manager
     try:
         plugin_framework.get_plugin_manager = lambda: None
@@ -493,7 +493,7 @@ async def test_require_permission_prefers_kwarg_team_id(monkeypatch):
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    plugin_framework = importlib.import_module("mcpgateway.plugins")
     original_get_pm = plugin_framework.get_plugin_manager
     try:
         plugin_framework.get_plugin_manager = lambda: None
@@ -522,7 +522,7 @@ async def test_require_any_permission_uses_user_context_team_id_when_no_kwarg(mo
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    plugin_framework = importlib.import_module("mcpgateway.plugins")
     original_get_pm = plugin_framework.get_plugin_manager
     try:
         plugin_framework.get_plugin_manager = lambda: None
@@ -551,7 +551,7 @@ async def test_require_any_permission_prefers_kwarg_team_id(monkeypatch):
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    plugin_framework = importlib.import_module("mcpgateway.plugins")
     original_get_pm = plugin_framework.get_plugin_manager
     try:
         plugin_framework.get_plugin_manager = lambda: None
@@ -579,7 +579,7 @@ async def test_decorators_handle_none_user_context_team_id(monkeypatch):
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    plugin_framework = importlib.import_module("mcpgateway.plugins")
     original_get_pm = plugin_framework.get_plugin_manager
     try:
         plugin_framework.get_plugin_manager = lambda: None
@@ -606,7 +606,7 @@ async def test_plugin_permission_hook_receives_token_team_id(monkeypatch):
     import importlib
 
     # First-Party
-    from mcpgateway.plugins.framework import HttpAuthCheckPermissionPayload, PluginResult
+    from cpex.framework import HttpAuthCheckPermissionPayload, PluginResult
 
     async def dummy_func(user=None):
         return "ok"
@@ -631,7 +631,7 @@ async def test_plugin_permission_hook_receives_token_team_id(monkeypatch):
     mock_pm.has_hooks_for = MagicMock(return_value=True)
     mock_pm.invoke_hook = AsyncMock(side_effect=capture_invoke_hook)
 
-    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    plugin_framework = importlib.import_module("mcpgateway.plugins")
     original_get_pm = plugin_framework.get_plugin_manager
     try:
         plugin_framework.get_plugin_manager = lambda: mock_pm
@@ -669,7 +669,7 @@ async def test_require_permission_fallback_when_plugin_manager_none(monkeypatch)
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
     # Use importlib to ensure the module is loaded, then patch get_plugin_manager
-    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    plugin_framework = importlib.import_module("mcpgateway.plugins")
     original_get_pm = plugin_framework.get_plugin_manager
     try:
         plugin_framework.get_plugin_manager = lambda: None
@@ -861,7 +861,7 @@ async def test_require_permission_plugin_hook_grants(monkeypatch):
     mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
     monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", True)
 
-    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
         decorated = rbac.require_permission("tools.read")(dummy_func)
         result = await decorated(user=mock_user)
 
@@ -898,7 +898,7 @@ async def test_require_permission_plugin_hook_grant_ignored_when_override_disabl
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
     monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", False)
 
-    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
         decorated = rbac.require_permission("tools.read")(dummy_func)
         result = await decorated(user=mock_user)
 
@@ -932,7 +932,7 @@ async def test_require_permission_plugin_hook_denies(monkeypatch):
     mock_pm.has_hooks_for.return_value = True
     mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
 
-    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
         decorated = rbac.require_permission("tools.read")(dummy_func)
         with pytest.raises(HTTPException) as exc:
             await decorated(user=mock_user)
@@ -965,7 +965,7 @@ async def test_require_permission_plugin_hook_denies_even_with_override_enabled(
     mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
     monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", True)
 
-    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
         decorated = rbac.require_permission("tools.read")(dummy_func)
         with pytest.raises(HTTPException) as exc:
             await decorated(user=mock_user)
@@ -999,7 +999,7 @@ async def test_require_permission_plugin_hook_logs_decision_plugin_from_provenan
     mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
     monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", True)
 
-    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
         with patch.object(rbac, "logger") as mock_logger:
             decorated = rbac.require_permission("tools.read")(dummy_func)
             result = await decorated(user=mock_user)
@@ -1610,7 +1610,7 @@ async def test_require_permission_plugin_no_decision(monkeypatch):
     mock_pm.has_hooks_for.return_value = True
     mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
 
-    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
         decorated = rbac.require_permission("tools.read")(dummy_func)
         result = await decorated(user=mock_user)
 
@@ -1871,7 +1871,7 @@ class TestMultiTeamSessionTokenDerivation:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-derived"), patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-derived"), patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
             decorated = rbac.require_permission("tools.read")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
 
@@ -1892,7 +1892,7 @@ class TestMultiTeamSessionTokenDerivation:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
             decorated = rbac.require_permission("tools.create")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db, tool=payload)
 
@@ -1915,7 +1915,7 @@ class TestMultiTeamSessionTokenDerivation:
         with (
             patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
-            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
         ):
             decorated = rbac.require_permission("tools.read")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
@@ -1944,7 +1944,7 @@ class TestMultiTeamSessionTokenDerivation:
         with (
             patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
-            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
         ):
             decorated = rbac.require_permission("tools.create")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
@@ -1972,7 +1972,7 @@ class TestMultiTeamSessionTokenDerivation:
         with (
             patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
-            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
         ):
             decorated = rbac.require_permission("gateways.delete")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
@@ -1993,7 +1993,7 @@ class TestMultiTeamSessionTokenDerivation:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-abc"), patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-abc"), patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
             decorated = rbac.require_permission("gateways.create")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
 
@@ -2019,7 +2019,7 @@ class TestMultiTeamSessionTokenDerivation:
 
         monkeypatch.setattr(rbac, "fresh_db_session", fake_fresh_db_session)
 
-        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
             decorated = rbac.require_permission("tools.read")(dummy_func)
             result = await decorated(user=mock_user)
 
@@ -2044,7 +2044,7 @@ class TestMultiTeamSessionTokenDerivationAnyPermission:
         with (
             patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
-            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
         ):
             decorated = rbac.require_any_permission(["tools.read", "tools.execute"])(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
@@ -2070,7 +2070,7 @@ class TestMultiTeamSessionTokenDerivationAnyPermission:
 
         monkeypatch.setattr(rbac, "fresh_db_session", fake_fresh_db_session)
 
-        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
             decorated = rbac.require_any_permission(["tools.read", "tools.execute"])(dummy_func)
             result = await decorated(user=mock_user)
 
@@ -2093,7 +2093,7 @@ class TestMultiTeamSessionTokenDerivationAnyPermission:
         with (
             patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-derived"),
             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
-            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
         ):
             decorated = rbac.require_any_permission(["tools.execute"])(dummy_func)
             result = await decorated(user=mock_user, db=mock_db, tool_id="tool-1")
@@ -2122,7 +2122,7 @@ class TestMultiTeamSessionTokenDerivationAnyPermission:
         with (
             patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
-            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
         ):
             decorated = rbac.require_any_permission(["tools.execute", "tools.create"])(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
@@ -2154,7 +2154,7 @@ class TestNonSessionTokenTeamDerivation:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
             decorated = rbac.require_permission("gateways.create")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
 
@@ -2179,7 +2179,7 @@ class TestNonSessionTokenTeamDerivation:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
             decorated = rbac.require_permission("gateways.create")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
 
@@ -2200,7 +2200,7 @@ class TestNonSessionTokenTeamDerivation:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
             decorated = rbac.require_permission("gateways.delete")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
 
@@ -2221,7 +2221,7 @@ class TestNonSessionTokenTeamDerivation:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
             decorated = rbac.require_any_permission(["tools.create", "tools.execute"])(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
 
@@ -2249,7 +2249,7 @@ class TestMutatePermissionDenial:
         with (
             patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
-            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
         ):
             decorated = rbac.require_permission("gateways.create")(dummy_func)
             with pytest.raises(HTTPException) as exc:
@@ -2275,7 +2275,7 @@ class TestMutatePermissionDenial:
         with (
             patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
-            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
         ):
             decorated = rbac.require_permission("gateways.delete")(dummy_func)
             with pytest.raises(HTTPException) as exc:
@@ -2299,7 +2299,7 @@ class TestMutatePermissionDenial:
         with (
             patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
-            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
         ):
             decorated = rbac.require_any_permission(["tools.create", "tools.execute"])(dummy_func)
             with pytest.raises(HTTPException) as exc:
@@ -2340,7 +2340,7 @@ class TestMutateCheckAnyTeamPermissionVariants:
         with (
             patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
-            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
         ):
             decorated = rbac.require_permission(permission)(dummy_func)
             await decorated(user=mock_user, db=mock_db)
@@ -2363,7 +2363,7 @@ class TestMutateCheckAnyTeamPermissionVariants:
         with (
             patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
-            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
         ):
             decorated = rbac.require_any_permission(["tools.read", "tools.create"])(dummy_func)
             await decorated(user=mock_user, db=mock_db)
@@ -2384,7 +2384,7 @@ class TestMutateCheckAnyTeamPermissionVariants:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
             decorated = rbac.require_any_permission(["tools.create", "tools.execute"])(dummy_func)
             await decorated(user=mock_user, db=mock_db, tool=payload)
 

@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
@@ -146,7 +146,7 @@ async def test_local_allow_and_deny_overrides():
     plugin = VirusTotalURLCheckerPlugin(cfg)
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
     os.environ["VT_API_KEY"] = "dummy"
-    from mcpgateway.plugins.framework import ToolPostInvokePayload
+    from cpex.framework import ToolPostInvokePayload
     payload = ToolPostInvokePayload(name="writer", result=f"See {url}")
     ctx = PluginContext(global_context=GlobalContext(request_id="r7"))
     res = await plugin.tool_post_invoke(payload, ctx)
@@ -192,7 +192,7 @@ async def test_override_precedence_allow_over_deny_vs_deny_over_allow():
     plugin_allow = VirusTotalURLCheckerPlugin(cfg_allow)
     plugin_allow._client_factory = lambda c, h: _StubClient({})  # type: ignore
     os.environ["VT_API_KEY"] = "dummy"
-    from mcpgateway.plugins.framework import ToolPostInvokePayload
+    from cpex.framework import ToolPostInvokePayload
     payload = ToolPostInvokePayload(name="writer", result=f"visit {url}")
     ctx = PluginContext(global_context=GlobalContext(request_id="r8"))
     res_allow = await plugin_allow.tool_post_invoke(payload, ctx)
@@ -251,7 +251,7 @@ async def test_prompt_scan_blocks_on_url():
     os.environ["VT_API_KEY"] = "dummy"
 
     pr = PromptResult(messages=[Message(role="assistant", content=TextContent(type="text", text=f"see {url}"))])
-    from mcpgateway.plugins.framework import PromptPosthookPayload
+    from cpex.framework import PromptPosthookPayload
     payload = PromptPosthookPayload(prompt_id="p", result=pr)
     ctx = PluginContext(global_context=GlobalContext(request_id="r5"))
     res = await plugin.prompt_post_fetch(payload, ctx)
@@ -293,7 +293,7 @@ async def test_resource_scan_blocks_on_url():
 
     from mcpgateway.common.models import ResourceContent
     rc = ResourceContent(type="resource", id="345",uri="test://x", mime_type="text/plain", text=f"{url} is fishy")
-    from mcpgateway.plugins.framework import ResourcePostFetchPayload
+    from cpex.framework import ResourcePostFetchPayload
     payload = ResourcePostFetchPayload(uri="test://x", content=rc)
     ctx = PluginContext(global_context=GlobalContext(request_id="r6"))
     res = await plugin.resource_post_fetch(payload, ctx)
@@ -435,7 +435,7 @@ async def test_tool_output_url_block_and_ratio():
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
     os.environ["VT_API_KEY"] = "dummy"
 
-    from mcpgateway.plugins.framework import ToolPostInvokePayload
+    from cpex.framework import ToolPostInvokePayload
 
     payload = ToolPostInvokePayload(name="writer", result=f"See {url} for details")
     ctx = PluginContext(global_context=GlobalContext(request_id="r4"))

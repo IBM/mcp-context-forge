@@ -10,7 +10,7 @@ Tests for JSONRepairPlugin.
 import json
 import pytest
 
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,

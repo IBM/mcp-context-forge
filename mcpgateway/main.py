@@ -45,6 +45,7 @@ import uuid
 import warnings
 
 # Third-Party
+from cpex.framework import HttpHookType, PluginError, PluginManager, PluginViolationError
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
@@ -93,8 +94,7 @@ from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
-from mcpgateway.plugins.framework import HttpHookType, PluginError, PluginManager, PluginViolationError
-from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
+from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
@@ -2213,8 +2213,8 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
                      otherwise defaults to 200 for JSON-RPC compliance.
 
     Examples:
-        >>> from mcpgateway.plugins.framework import PluginViolationError
-        >>> from mcpgateway.plugins.framework.models import PluginViolation
+        >>> from cpex.framework import PluginViolationError
+        >>> from cpex.framework.models import PluginViolation
         >>> from fastapi import Request
         >>> import asyncio
         >>> import json
@@ -2253,8 +2253,8 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
         if exc.violation.plugin_name:
             violation_details["plugin_name"] = exc.violation.plugin_name
 
-        # Use HTTP status code from violation if present (e.g., 429 for rate limiting)
-        http_status = exc.violation.http_status_code if exc.violation.http_status_code else None
+        # Use HTTP status code from violation details if present (e.g., 429 for rate limiting)
+        http_status = exc.violation.details.get("http_status_code") if exc.violation.details else None
         if http_status and not VALID_HTTP_STATUS_CODES.get(http_status):
             logger.warning(f"Invalid HTTP status code {http_status} from violation, defaulting to 200")
             http_status = None
@@ -2268,8 +2268,8 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
 
     json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Violation: " + message, data=violation_details)
 
-    # Collect HTTP headers from violation if present
-    headers = exc.violation.http_headers if exc.violation and exc.violation.http_headers else None
+    # Collect HTTP headers from violation details if present
+    headers = exc.violation.details.get("http_headers") if exc.violation and exc.violation.details else None
 
     response = ORJSONResponse(status_code=http_status, content={"error": json_rpc_error.model_dump()})
     if headers:
@@ -2296,8 +2296,8 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
         JSONResponse: A 200 response with error details in JSON-RPC format.
 
     Examples:
-        >>> from mcpgateway.plugins.framework import PluginError
-        >>> from mcpgateway.plugins.framework.models import PluginErrorModel
+        >>> from cpex.framework import PluginError
+        >>> from cpex.framework.models import PluginErrorModel
         >>> from fastapi import Request
         >>> import asyncio
         >>> import json

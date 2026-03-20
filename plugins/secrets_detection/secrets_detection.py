@@ -22,8 +22,8 @@ from typing import Any, Dict, Tuple
 # Third-Party
 from pydantic import BaseModel
 
-# First-Party
-from mcpgateway.plugins.framework import (
+# Third-Party
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,

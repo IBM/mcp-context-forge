@@ -32,7 +32,7 @@ def allow_permission(monkeypatch):
             return True
 
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DummyPermissionService)
-    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", lambda: None)
 
 
 

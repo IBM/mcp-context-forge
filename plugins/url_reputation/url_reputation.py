@@ -18,8 +18,8 @@ from urllib.parse import urlparse
 # Third-Party
 from pydantic import BaseModel, Field
 
-# First-Party
-from mcpgateway.plugins.framework import (
+# Third-Party
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,

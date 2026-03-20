@@ -16,7 +16,7 @@ import pytest
 
 # First-Party
 from mcpgateway.common.models import Message, ResourceContent, Role, TextContent, PromptResult
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,

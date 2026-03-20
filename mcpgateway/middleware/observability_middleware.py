@@ -21,6 +21,7 @@ import traceback
 from typing import Callable, Optional
 
 # Third-Party
+from cpex.framework.observability import current_trace_id as plugins_trace_id
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -30,7 +31,6 @@ from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
 from mcpgateway.middleware.path_filter import should_skip_observability
-from mcpgateway.plugins.framework.observability import current_trace_id as plugins_trace_id
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService, parse_traceparent
 
 logger = logging.getLogger(__name__)

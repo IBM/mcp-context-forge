@@ -10,7 +10,7 @@ Tests for MarkdownCleanerPlugin.
 import pytest
 
 from mcpgateway.common.models import Message, PromptResult, TextContent
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,

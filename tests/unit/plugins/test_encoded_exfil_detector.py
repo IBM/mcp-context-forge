@@ -9,7 +9,7 @@ import os
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework import GlobalContext, PluginConfig, PluginContext, PromptPrehookPayload, PromptHookType, ToolHookType, ToolPostInvokePayload
+from cpex.framework import GlobalContext, PluginConfig, PluginContext, PromptPrehookPayload, PromptHookType, ToolHookType, ToolPostInvokePayload
 from plugins.encoded_exfil_detection.encoded_exfil_detector import (
     EncodedExfilDetectorConfig,
     EncodedExfilDetectorPlugin,

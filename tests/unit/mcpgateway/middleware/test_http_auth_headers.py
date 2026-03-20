@@ -23,7 +23,7 @@ import pytest
 
 # First-Party
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     HttpHeaderPayload,
     HttpHookType,
     PluginResult,
@@ -995,7 +995,7 @@ class TestRunPreRequestHooks:
     async def test_creates_global_context_when_not_provided(self):
         """When no global_context is passed, the function should create one."""
         from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
-        from mcpgateway.plugins.framework import GlobalContext
+        from cpex.framework import GlobalContext
 
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
@@ -1013,7 +1013,7 @@ class TestRunPreRequestHooks:
     async def test_reuses_provided_global_context(self):
         """When a global_context is passed, the function should reuse it."""
         from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
-        from mcpgateway.plugins.framework import GlobalContext
+        from cpex.framework import GlobalContext
 
         pm = MagicMock()
         pm.has_hooks_for.return_value = True

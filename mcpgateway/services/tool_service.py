@@ -31,6 +31,18 @@ import uuid
 
 # Third-Party
 import anyio
+from cpex.framework import (
+    GlobalContext,
+    HttpHeaderPayload,
+    PluginContextTable,
+    PluginError,
+    PluginManager,
+    PluginViolationError,
+    ToolHookType,
+    ToolPostInvokePayload,
+    ToolPreInvokePayload,
+)
+from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 import httpx
 import jq
 import jsonschema
@@ -59,19 +71,7 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework import (
-    get_plugin_manager,
-    GlobalContext,
-    HttpHeaderPayload,
-    PluginContextTable,
-    PluginError,
-    PluginManager,
-    PluginViolationError,
-    ToolHookType,
-    ToolPostInvokePayload,
-    ToolPreInvokePayload,
-)
-from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
+from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService

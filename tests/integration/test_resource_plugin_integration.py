@@ -48,7 +48,7 @@ class TestResourcePluginIntegration:
                 from unittest.mock import AsyncMock
 
                 # First-Party
-                from mcpgateway.plugins.framework.models import PluginResult
+                from cpex.framework.models import PluginResult
 
                 mock_manager = MagicMock()
                 mock_manager._initialized = True
@@ -135,7 +135,7 @@ class TestResourcePluginIntegration:
             # Use real plugin manager but mock its initialization
             with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
                 # First-Party
-                from mcpgateway.plugins.framework import (
+                from cpex.framework import (
                     ResourcePostFetchPayload,
                     ResourcePostFetchResult,
                     ResourcePreFetchResult,
@@ -156,13 +156,13 @@ class TestResourcePluginIntegration:
                     def has_hooks_for(self, hook_type) -> bool:
                         """Return True for resource hooks this mock handles."""
                         # First-Party
-                        from mcpgateway.plugins.framework import ResourceHookType
+                        from cpex.framework import ResourceHookType
 
                         return hook_type in (ResourceHookType.RESOURCE_PRE_FETCH, ResourceHookType.RESOURCE_POST_FETCH)
 
                     async def invoke_hook(self, hook_type, payload, global_context, local_contexts=None, **kwargs):
                         # First-Party
-                        from mcpgateway.plugins.framework import ResourceHookType
+                        from cpex.framework import ResourceHookType
 
                         if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
                             # Allow test:// protocol
@@ -176,7 +176,7 @@ class TestResourcePluginIntegration:
                                 )
                             else:
                                 # First-Party
-                                from mcpgateway.plugins.framework.models import PluginViolation
+                                from cpex.framework.models import PluginViolation
 
                                 raise PluginViolationError(
                                     message="Protocol not allowed",
@@ -218,7 +218,7 @@ class TestResourcePluginIntegration:
                         else:
                             # Other hook types - just return success
                             # First-Party
-                            from mcpgateway.plugins.framework.models import PluginResult
+                            from cpex.framework.models import PluginResult
 
                             return (PluginResult(continue_processing=True), None)
 
@@ -244,7 +244,7 @@ class TestResourcePluginIntegration:
 
                 # Try to read a blocked protocol
                 # First-Party
-                from mcpgateway.plugins.framework import PluginViolationError
+                from cpex.framework import PluginViolationError
 
                 blocked_resource = ResourceCreate(
                     uri="file:///etc/passwd",
@@ -274,8 +274,8 @@ class TestResourcePluginIntegration:
 
         # Track context flow
         # First-Party
-        from mcpgateway.plugins.framework.models import PluginResult
-        from mcpgateway.plugins.framework import ResourceHookType
+        from cpex.framework.models import PluginResult
+        from cpex.framework import ResourceHookType
 
         contexts_from_pre = {"plugin_data": "test_value", "validated": True}
 

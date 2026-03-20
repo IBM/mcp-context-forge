@@ -19,7 +19,7 @@ from typing import Any
 
 # First-Party
 from mcpgateway.common.models import ResourceContent
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,

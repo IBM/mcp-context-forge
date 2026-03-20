@@ -103,7 +103,7 @@ plugins:
     hooks:
       - "prompt_pre_fetch"
       - "tool_pre_invoke"
-    mode: "enforce"
+    mode: "sequential"
     priority: 50
     config:
       # Plugin-specific configuration

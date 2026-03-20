@@ -9,7 +9,7 @@ Tests for RateLimiterPlugin.
 
 import pytest
 
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
@@ -71,7 +71,7 @@ async def test_prompt_pre_fetch_violation_returns_http_429():
     # Second request should be rate limited
     r2 = await plugin.prompt_pre_fetch(payload, ctx)
     assert r2.violation is not None
-    assert r2.violation.http_status_code == 429
+    assert r2.violation.details["http_status_code"] == 429
     assert r2.violation.code == "RATE_LIMIT"
 
 
@@ -88,7 +88,7 @@ async def test_prompt_pre_fetch_violation_includes_all_headers():
     result = await plugin.prompt_pre_fetch(payload, ctx)  # 3rd - exceeds limit
 
     assert result.violation is not None
-    headers = result.violation.http_headers
+    headers = result.violation.details["http_headers"]
     assert headers is not None
 
     # Verify all required headers
@@ -115,9 +115,10 @@ async def test_prompt_pre_fetch_success_includes_headers_without_retry_after():
     result = await plugin.prompt_pre_fetch(payload, ctx)
 
     assert result.violation is None
-    assert result.http_headers is not None
+    assert result.metadata is not None
+    assert "http_headers" in result.metadata
 
-    headers = result.http_headers
+    headers = result.metadata["http_headers"]
     assert "X-RateLimit-Limit" in headers
     assert headers["X-RateLimit-Limit"] == "10"
 
@@ -138,11 +139,11 @@ async def test_prompt_pre_fetch_success_includes_headers_without_retry_after():
 @pytest.mark.asyncio
 async def test_tool_pre_invoke_violation_returns_http_429():
     """Test that tool_pre_invoke violations return HTTP 429 status code."""
-    from mcpgateway.plugins.framework import ToolPreInvokePayload
+    from cpex.framework import ToolPreInvokePayload
 
     plugin = _mk("1/s")
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="u1"))
-    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+    payload = ToolPreInvokePayload(name="test_tool", args={})
 
     # First request succeeds
     r1 = await plugin.tool_pre_invoke(payload, ctx)
@@ -151,18 +152,18 @@ async def test_tool_pre_invoke_violation_returns_http_429():
     # Second request should be rate limited
     r2 = await plugin.tool_pre_invoke(payload, ctx)
     assert r2.violation is not None
-    assert r2.violation.http_status_code == 429
+    assert r2.violation.details["http_status_code"] == 429
     assert r2.violation.code == "RATE_LIMIT"
 
 
 @pytest.mark.asyncio
 async def test_tool_pre_invoke_violation_includes_headers():
     """Test that tool_pre_invoke violations include rate limit headers."""
-    from mcpgateway.plugins.framework import ToolPreInvokePayload
+    from cpex.framework import ToolPreInvokePayload
 
     plugin = _mk("2/s")
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="u1"))
-    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+    payload = ToolPreInvokePayload(name="test_tool", args={})
 
     # Trigger rate limit
     await plugin.tool_pre_invoke(payload, ctx)  # 1st
@@ -170,7 +171,7 @@ async def test_tool_pre_invoke_violation_includes_headers():
     result = await plugin.tool_pre_invoke(payload, ctx)  # 3rd - exceeds limit
 
     assert result.violation is not None
-    headers = result.violation.http_headers
+    headers = result.violation.details["http_headers"]
     assert headers is not None
 
     # Verify headers are present
@@ -184,18 +185,19 @@ async def test_tool_pre_invoke_violation_includes_headers():
 @pytest.mark.asyncio
 async def test_tool_pre_invoke_success_includes_headers_without_retry_after():
     """Test that successful tool invocations include headers but not Retry-After."""
-    from mcpgateway.plugins.framework import ToolPreInvokePayload
+    from cpex.framework import ToolPreInvokePayload
 
     plugin = _mk("10/s")
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="u1"))
-    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+    payload = ToolPreInvokePayload(name="test_tool", args={})
 
     result = await plugin.tool_pre_invoke(payload, ctx)
 
     assert result.violation is None
-    assert result.http_headers is not None
+    assert result.metadata is not None
+    assert "http_headers" in result.metadata
 
-    headers = result.http_headers
+    headers = result.metadata["http_headers"]
     assert "X-RateLimit-Limit" in headers
     assert "X-RateLimit-Remaining" in headers
     assert "X-RateLimit-Reset" in headers
@@ -205,7 +207,7 @@ async def test_tool_pre_invoke_success_includes_headers_without_retry_after():
 @pytest.mark.asyncio
 async def test_tool_pre_invoke_per_tool_rate_limiting():
     """Test per-tool rate limiting configuration."""
-    from mcpgateway.plugins.framework import ToolPreInvokePayload
+    from cpex.framework import ToolPreInvokePayload
 
     plugin = RateLimiterPlugin(
         PluginConfig(
@@ -222,8 +224,8 @@ async def test_tool_pre_invoke_per_tool_rate_limiting():
     )
 
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="u1"))
-    restricted_payload = ToolPreInvokePayload(name="restricted_tool", arguments={})
-    unrestricted_payload = ToolPreInvokePayload(name="other_tool", arguments={})
+    restricted_payload = ToolPreInvokePayload(name="restricted_tool", args={})
+    unrestricted_payload = ToolPreInvokePayload(name="other_tool", args={})
 
     # First call to restricted tool succeeds
     r1 = await plugin.tool_pre_invoke(restricted_payload, ctx)
@@ -232,7 +234,7 @@ async def test_tool_pre_invoke_per_tool_rate_limiting():
     # Second call to same tool should be rate limited
     r2 = await plugin.tool_pre_invoke(restricted_payload, ctx)
     assert r2.violation is not None
-    assert r2.violation.http_status_code == 429
+    assert r2.violation.details["http_status_code"] == 429
 
     # But other tool should still work (only user limit applies)
     r3 = await plugin.tool_pre_invoke(unrestricted_payload, ctx)
@@ -580,22 +582,22 @@ async def test_prompt_pre_fetch_unlimited_returns_no_headers():
 
     result = await plugin.prompt_pre_fetch(payload, ctx)
     assert result.violation is None
-    assert result.http_headers is None
     assert result.metadata is not None
+    assert "http_headers" not in result.metadata
     assert result.metadata.get("limited") is False
 
 
 @pytest.mark.asyncio
 async def test_tool_pre_invoke_unlimited_returns_no_headers():
     """When no limits are configured, tool_pre_invoke returns metadata without http_headers."""
-    from mcpgateway.plugins.framework import ToolPreInvokePayload
+    from cpex.framework import ToolPreInvokePayload
 
     plugin = _mk_unlimited()
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="u1"))
-    payload = ToolPreInvokePayload(name="test_tool", arguments={})
+    payload = ToolPreInvokePayload(name="test_tool", args={})
 
     result = await plugin.tool_pre_invoke(payload, ctx)
     assert result.violation is None
-    assert result.http_headers is None
     assert result.metadata is not None
+    assert "http_headers" not in result.metadata
     assert result.metadata.get("limited") is False

@@ -808,6 +808,27 @@ toml = [
 ]
 
 [[package]]
+name = "cpex"
+version = "0.1.0.dev10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx", extra = ["http2"] },
+    { name = "jinja2" },
+    { name = "mcp" },
+    { name = "orjson" },
+    { name = "prometheus-client" },
+    { name = "prometheus-fastapi-instrumentator" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4b/46/de3b6eef0b0e02b5592319929e71f092baeb671a9ca2c6376ab97065e2ed/cpex-0.1.0.dev10.tar.gz", hash = "sha256:56074a8091be0a0a487dc1fabdb112b0f1ec420ccca5c2274cfb87405ab6d83b", size = 748792, upload-time = "2026-03-10T08:34:16.807Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/15/5e/cff6fe6b3b28e2971fe8dbe1f3d73ebf48ec128d383b306212deb52e5b1b/cpex-0.1.0.dev10-py3-none-any.whl", hash = "sha256:fb7f2af5ce9aad39d57410d758f81089712fd29e94eb9dec3ef8576405b308c1", size = 163576, upload-time = "2026-03-10T08:34:15.39Z" },
+]
+
+[[package]]
 name = "cryptography"
 version = "46.0.5"
 source = { registry = "https://pypi.org/simple" }
@@ -2734,6 +2755,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "argon2-cffi" },
+    { name = "cpex" },
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "filelock" },
@@ -2930,6 +2952,7 @@ requires-dist = [
     { name = "asyncpg", marker = "extra == 'asyncpg'", specifier = ">=0.31.0" },
     { name = "atheris", marker = "extra == 'fuzz-atheris'", specifier = ">=3.0.0" },
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
+    { name = "cpex", specifier = ">=0.1.0.dev10,<0.2.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "fastapi", specifier = ">=0.135.1" },
     { name = "filelock", specifier = ">=3.25.2" },

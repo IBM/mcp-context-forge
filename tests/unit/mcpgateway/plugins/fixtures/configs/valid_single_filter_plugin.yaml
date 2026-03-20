@@ -7,7 +7,7 @@ plugins:
     author: "ContextForge Team"
     hooks: ["prompt_pre_fetch"]
     tags: ["plugin", "filter", "denylist", "pre-post"]
-    mode: "enforce"  # enforce | permissive | disabled
+    mode: "sequential"  # sequential | transform | disabled
     priority: 100
     conditions:
       # Apply to specific tools/servers

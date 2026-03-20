@@ -11,7 +11,7 @@ plugins:
       - test
       - agent
       - filter
-    mode: enforce
+    mode: sequential
     priority: 50
     config:
       blocked_words:

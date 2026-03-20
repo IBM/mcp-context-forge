@@ -4271,7 +4271,6 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 		uv pip install -q tomlcheck 2>/dev/null || true"
 	@find . -type f -name '*.toml' \
 	  -not -path './.cache/*' \
-	  -not -path './plugin_templates/*' \
 	  -not -path './mcp-servers/templates/*' \
 	  -print0 \
 	  | xargs -0 -I{} $(VENV_DIR)/bin/tomlcheck "{}"

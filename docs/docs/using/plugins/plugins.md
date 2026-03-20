@@ -135,7 +135,7 @@ plugins:
   - name: "PIIFilterPlugin"
     kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 50
 ```
 
