@@ -1388,6 +1388,37 @@ class TestCreateJoinRequestMaxTeamsLimit:
 
 
 # ===========================================================================
+# approve_join_request — max_teams_per_user limit
+# ===========================================================================
+
+
+class TestApproveJoinRequestMaxTeamsLimit:
+    @pytest.mark.asyncio
+    async def test_raises_when_user_at_max_team_limit(self, svc, db):
+        """approve_join_request raises ValueError when target user has reached max teams."""
+        join_req = MagicMock(spec=EmailTeamJoinRequest)
+        join_req.id = "jr1"
+        join_req.team_id = "t1"
+        join_req.user_email = "joiner@t.com"
+        join_req.status = "pending"
+        join_req.is_expired.return_value = False
+
+        mock_query = MagicMock()
+        mock_filter = MagicMock()
+        mock_filter.first.return_value = join_req
+        mock_query.filter.return_value = mock_filter
+        db.query.return_value = mock_query
+
+        # User is at the limit
+        svc._get_user_team_count.return_value = 50
+
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.max_teams_per_user = 50
+            with pytest.raises(ValueError, match="maximum team limit"):
+                await svc.approve_join_request("jr1", approved_by="owner@t.com")
+
+
+# ===========================================================================
 # max_members cap enforcement — create_team and update_team
 # ===========================================================================
 
