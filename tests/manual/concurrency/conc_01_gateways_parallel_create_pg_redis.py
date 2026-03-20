@@ -76,7 +76,7 @@ def _build_config() -> dict[str, object]:
         raise ValueError("CONC_TOKEN is required")
 
     return {
-        "base_url": os.getenv("CONC_BASE_URL", "http://localhost:8000").rstrip("/"),
+        "base_url": os.getenv("CONC_BASE_URL", "http://127.0.0.1:8000").rstrip("/"),
         "token": token,
         "name_prefix": os.getenv("CONC_NAME_PREFIX", "conc-gw").strip() or "conc-gw",
         "gateway_url": os.getenv("CONC_GATEWAY_URL", "http://127.0.0.1:9000/sse").strip(),

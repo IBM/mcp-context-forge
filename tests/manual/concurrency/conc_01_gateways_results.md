@@ -81,8 +81,8 @@ make conc-01-gateways
 ### 5) Optional sanity checks
 
 ```bash
-curl -i -H "Authorization: Bearer $CONC_TOKEN" "http://127.0.0.1:8000/servers?limit=1"
-curl -i "http://127.0.0.1:8000/health"
+curl -sS --max-time 5 -o /dev/null -w "servers=%{http_code}\n" -H "Authorization: Bearer $CONC_TOKEN" "http://127.0.0.1:8000/servers?limit=1"
+curl -sS --max-time 5 -o /dev/null -w "health=%{http_code}\n" "http://127.0.0.1:8000/health"
 ```
 
 Expected: both return `200`.

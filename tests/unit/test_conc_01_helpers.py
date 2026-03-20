@@ -79,7 +79,7 @@ class TestBuildConfig:
         with patch.dict(os.environ, env, clear=True):
             cfg = _build_config()
             assert cfg["token"] == "tok123"
-            assert cfg["base_url"] == "http://localhost:8000"
+            assert cfg["base_url"] == "http://127.0.0.1:8000"
             assert cfg["name_prefix"] == "conc-gw"
             assert cfg["gateway_url"] == "http://127.0.0.1:9000/sse"
             assert cfg["db_check_default"] is True
