@@ -157,7 +157,7 @@ clean = "Result: Error"
 
 **Affected patterns**: `> `, `< `, `|`, `&&`, `||`, `;`, `$(`
 
-These shell/pipe metacharacters are blocked by default in `ToolCreate` to reduce injection risk from externally-sourced tool metadata. However, they are common in Markdown content (e.g. `> blockquote`, `<placeholder>`, `command | grep pattern`).
+These shell/pipe metacharacters are blocked by default in `ToolCreate` to reduce injection risk from externally-sourced tool metadata. However, they are common in Markdown content (e.g. `> blockquote`, `< input`, `command | grep pattern`).
 
 **Control variable**: `VALIDATION_STRICT` (default: `true`)
 

@@ -501,7 +501,7 @@ class ToolCreate(BaseModel):
             When ``VALIDATION_STRICT=false`` the forbidden-pattern check is skipped
             and a warning is logged instead.  This allows MCP server tools whose
             descriptions contain Markdown syntax (e.g. ``> blockquote``,
-            ``<placeholder>``, pipe characters) to register successfully.
+            ``< input``, ``cmd | grep``) to register successfully.
 
         Examples:
             >>> from mcpgateway.schemas import ToolCreate
@@ -522,7 +522,7 @@ class ToolCreate(BaseModel):
         # for inline code examples in tool descriptions.
         # When VALIDATION_STRICT=false these patterns produce a warning only so
         # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
-        # "<placeholder>") can register without error.
+        # "< input", "cmd | grep") can register without error.
         forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
         for pat in forbidden_patterns:
             if pat in v:
