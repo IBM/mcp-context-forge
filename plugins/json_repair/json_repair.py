@@ -13,6 +13,7 @@ It is conservative: only applies transformations when confidently fixable.
 from __future__ import annotations
 
 # Standard
+import logging
 import re
 
 # Third-Party
@@ -26,6 +27,21 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
+
+logger = logging.getLogger(__name__)
+
+# Try to import Rust-accelerated implemtation
+try:
+    from json_repair import JSONRepairPluginRust
+    _RUST_AVAILABLE = True
+except ImportError as e:
+    _RUST_AVAILABLE = False
+    JSONRepairPluginRust = None
+    logger.debug("Rust json_repair implementation is not available (using Python): %s", e)
+except Exception as e:
+    _RUST_AVAILABLE = False
+    JSONRepairPluginRust = None
+    logger.warning("Unexpected error importing Rust json_repair implementation (using Python): %s", e, exc_info=True)
 
 # Precompiled regex patterns for performance
 _JSON_BRACKETS_RE = re.compile(r"^[\[{].*[\]}]$", flags=re.S)
@@ -86,6 +102,12 @@ class JSONRepairPlugin(Plugin):
             config: Plugin configuration.
         """
         super().__init__(config)
+        self._rust_helper = None
+        if _RUST_AVAILABLE and JSONRepairPluginRust is not None:
+            try:
+                self._rust_helper = JSONRepairPluginRust()
+            except Exception as e:
+                logger.warning("Failed to initialize Rust JSON repair implementation (falling back to Python): %s", e, exc_info=True)
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Repair JSON-like string results after tool invocation.
@@ -101,7 +123,15 @@ class JSONRepairPlugin(Plugin):
             text = payload.result
             if _try_parse(text):
                 return ToolPostInvokeResult(continue_processing=True)
-            repaired = _repair(text)
+            repaired = None
+            if self._rust_helper is not None:
+                try:
+                    repaired = self._rust_helper.repair(text)
+                except Exception as e:
+                    logger.warning("Rust json_repair failed; falling back to Python repair: %s", e)
+                    repaired = _repair(text)
+            else:
+                repaired = _repair(text)
             if repaired is not None:
                 return ToolPostInvokeResult(modified_payload=ToolPostInvokePayload(name=payload.name, result=repaired), metadata={"repaired": True})
         return ToolPostInvokeResult(continue_processing=True)
