@@ -19559,11 +19559,12 @@ function initializeTabState() {
     Object.entries(checkboxTableMap).forEach(([id, tableName]) => {
         const checkbox = safeGetElement(id);
         if (checkbox) {
-            // Prefer namespaced param, fall back to legacy for backwards compatibility
+            // Prefer namespaced param, fall back to legacy if present,
+            // otherwise preserve the HTML default (checked attribute)
             const namespacedValue = urlParams.get(tableName + "_inactive");
             if (namespacedValue !== null) {
                 checkbox.checked = namespacedValue === "true";
-            } else {
+            } else if (urlParams.has("include_inactive")) {
                 checkbox.checked = legacyIncludeInactive;
             }
         }
