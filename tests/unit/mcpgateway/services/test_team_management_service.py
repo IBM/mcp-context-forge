@@ -1245,13 +1245,18 @@ class TestTeamManagementService:
         join_request.user_email = "user@example.com"
         join_request.is_expired.return_value = False
         mock_db.query.return_value.filter.return_value.first.return_value = join_request
+        mock_db.query.return_value.filter.return_value.count.return_value = 1
 
         member = MagicMock(spec=EmailTeamMember)
         member.id = "member-1"
         member.role = "member"
 
+        mock_team = MagicMock()
+        mock_team.max_members = 100
+
         with (
             patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
+            patch.object(service, "get_team_by_id", new=AsyncMock(return_value=mock_team)),
             patch.object(service, "_log_team_member_action") as mock_log_action,
             patch.object(service, "invalidate_team_member_count_cache", new=AsyncMock()) as mock_invalidate,
             patch.object(
@@ -1281,10 +1286,14 @@ class TestTeamManagementService:
         join_request.user_email = "user@example.com"
         join_request.is_expired.return_value = False
         mock_db.query.return_value.filter.return_value.first.return_value = join_request
+        mock_db.query.return_value.filter.return_value.count.return_value = 1
 
         member = MagicMock(spec=EmailTeamMember)
         member.id = "member-1"
         member.role = "member"
+
+        mock_team = MagicMock()
+        mock_team.max_members = 100
 
         # Mock role service
         mock_role = MagicMock()
@@ -1303,6 +1312,7 @@ class TestTeamManagementService:
 
             with (
                 patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
+                patch.object(service, "get_team_by_id", new=AsyncMock(return_value=mock_team)),
                 patch.object(service, "_log_team_member_action"),
                 patch.object(service, "invalidate_team_member_count_cache", new=AsyncMock()),
                 patch.object(
@@ -1334,10 +1344,14 @@ class TestTeamManagementService:
         join_request.user_email = "user@example.com"
         join_request.is_expired.return_value = False
         mock_db.query.return_value.filter.return_value.first.return_value = join_request
+        mock_db.query.return_value.filter.return_value.count.return_value = 1
 
         member = MagicMock(spec=EmailTeamMember)
         member.id = "member-1"
         member.role = "member"
+
+        mock_team = MagicMock()
+        mock_team.max_members = 100
 
         # Mock role service - role not found
         mock_role_service = MagicMock()
@@ -1350,6 +1364,7 @@ class TestTeamManagementService:
 
             with (
                 patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
+                patch.object(service, "get_team_by_id", new=AsyncMock(return_value=mock_team)),
                 patch.object(service, "_log_team_member_action"),
                 patch.object(service, "invalidate_team_member_count_cache", new=AsyncMock()),
                 patch.object(
