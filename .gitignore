@@ -102,6 +102,7 @@ tests/migration/reports/
 tests/migration/logs/
 test-results-*.xml
 playwright-report-*.html
+.playwright-cli/
 
 # Vitest
 coverage/

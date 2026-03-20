@@ -1406,9 +1406,7 @@ class TokenScopingMiddleware:
         Returns:
             Shared secret-derived digest expected on trusted internal Rust MCP calls.
         """
-        return TokenScopingMiddleware._expected_internal_mcp_runtime_auth_header_for_secret(
-            TokenScopingMiddleware._auth_encryption_secret_value()
-        )
+        return TokenScopingMiddleware._expected_internal_mcp_runtime_auth_header_for_secret(TokenScopingMiddleware._auth_encryption_secret_value())
 
 
 # Create middleware instance
