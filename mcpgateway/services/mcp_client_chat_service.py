@@ -1582,14 +1582,19 @@ class GatewayProvider:
                 if not _BEDROCK_AVAILABLE:
                     raise ImportError("AWS Bedrock provider requires langchain-aws. Install with: pip install langchain-aws boto3")
 
-                region_name = config.get("region_name", "us-east-1")
+                # Map DB schema keys to boto3 kwargs.
+                # DB stores: region, access_key_id, secret_access_key, session_token, profile_name
+                # (see llm_provider_configs.AWSBedrockConfig)
+                region_name = config.get("region", "us-east-1")
                 credentials_kwargs = {}
-                if config.get("aws_access_key_id"):
-                    credentials_kwargs["aws_access_key_id"] = config["aws_access_key_id"]
-                if config.get("aws_secret_access_key"):
-                    credentials_kwargs["aws_secret_access_key"] = config["aws_secret_access_key"]
-                if config.get("aws_session_token"):
-                    credentials_kwargs["aws_session_token"] = config["aws_session_token"]
+                if config.get("access_key_id"):
+                    credentials_kwargs["aws_access_key_id"] = config["access_key_id"]
+                if config.get("secret_access_key"):
+                    credentials_kwargs["aws_secret_access_key"] = config["secret_access_key"]
+                if config.get("session_token"):
+                    credentials_kwargs["aws_session_token"] = config["session_token"]
+                if config.get("profile_name"):
+                    credentials_kwargs["credentials_profile_name"] = config["profile_name"]
 
                 model_kwargs = {
                     "temperature": temperature,
