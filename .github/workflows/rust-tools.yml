@@ -85,9 +85,14 @@ jobs:
       - name: Install cargo-deny
         run: cargo install cargo-deny
 
-      - name: Run cargo-deny policy checks
+      - name: Run cargo-deny policy checks (wrapper)
         working-directory: tools_rust/wrapper
         run: make deny
+
+      # Exclude advisories: pre-existing advisory issues tracked separately.
+      - name: Run cargo-deny policy checks (mcp_runtime)
+        working-directory: tools_rust/mcp_runtime
+        run: cargo deny check licenses bans sources
 
   coverage:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
