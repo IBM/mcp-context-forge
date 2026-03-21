@@ -20149,7 +20149,11 @@ function updateAvailableTags(entityType) {
  * @param {string} tag - The tag to add
  */
 function addTagToFilter(entityType, tag) {
-    const filterInput = document.getElementById(`${entityType}-tag-filter`);
+    const panelConfig = getPanelSearchConfig(entityType);
+    const tagInputId = panelConfig
+        ? panelConfig.tagInputId
+        : `${entityType}-tag-filter`;
+    const filterInput = document.getElementById(tagInputId);
     if (!filterInput) {
         return;
     }
@@ -20161,7 +20165,6 @@ function addTagToFilter(entityType, tag) {
     if (!currentTags.includes(tag)) {
         currentTags.push(tag);
         filterInput.value = currentTags.join(", ");
-        const panelConfig = getPanelSearchConfig(entityType);
         if (panelConfig) {
             const searchInput = document.getElementById(
                 panelConfig.searchInputId,
@@ -20305,12 +20308,16 @@ function updateFilterEmptyState(entityType, visibleCount, isFiltering) {
  * @param {string} entityType - The entity type
  */
 function clearTagFilter(entityType) {
-    const filterInput = document.getElementById(`${entityType}-tag-filter`);
+    const panelConfig = getPanelSearchConfig(entityType);
+    const tagInputId = panelConfig
+        ? panelConfig.tagInputId
+        : `${entityType}-tag-filter`;
+    const filterInput = document.getElementById(tagInputId);
     if (filterInput) {
         filterInput.value = "";
         // Apply immediate local reset for responsive UX and test compatibility.
         filterEntitiesByTags(entityType, "");
-        if (getPanelSearchConfig(entityType)) {
+        if (panelConfig) {
             loadSearchablePanel(entityType);
         }
     }
