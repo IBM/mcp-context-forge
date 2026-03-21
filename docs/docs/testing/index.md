@@ -10,7 +10,7 @@ This section covers the testing strategy and tools for ContextForge.
 |-------|------|----------|--------|
 | **Unit tests** | pytest | `tests/unit/` | Implemented |
 | **Integration tests** | pytest | `tests/integration/` | Implemented |
-| **End-to-end tests** | pytest | `tests/e2e/` | Implemented |
+| **End-to-end tests** | pytest | `tests/e2e/`, `tests/e2e_rust/` | Implemented |
 | **UI automation** | Playwright | `tests/playwright/` | Implemented |
 | **Security / DAST** | Playwright + OWASP ZAP | `tests/playwright/security/` | Implemented |
 | **Load testing** | Locust | `tests/loadtest/` | Implemented |
@@ -90,6 +90,66 @@ locust -f tests/loadtest/locustfile.py --host=http://localhost:8080 \
 ```
 
 Access the Locust dashboard at `http://localhost:8089` when running with the web UI.
+
+---
+
+## 🦀 Rust MCP Runtime Validation
+
+For the Rust MCP runtime path, the most important stack-backed checks are:
+
+```bash
+make testing-rebuild-rust-full
+make test-mcp-cli
+make test-mcp-rbac
+make test-mcp-access-matrix
+make test-mcp-session-isolation
+make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s
+cargo test --release --manifest-path tools_rust/mcp_runtime/Cargo.toml
+```
+
+For live plugin parity, use the test-specific plugin config and run the same
+E2E against both Python mode and Rust full mode:
+
+```bash
+PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-up
+MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=python make test-mcp-plugin-parity
+
+PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-rebuild-rust-full
+MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=rust make test-mcp-plugin-parity
+```
+
+This parity gate currently proves live plugin behavior on:
+- `resources/read`
+- `tools/call`
+- `prompts/get`
+
+For revocation and membership/role-drift validation, shorten the reuse TTL so
+the bounded-TTL contract completes quickly:
+
+```bash
+MCP_RUST_SESSION_AUTH_REUSE_TTL_SECONDS=2 MCP_RUST_SESSION_AUTH_REUSE_GRACE_SECONDS=1 make testing-rebuild-rust-full
+make test-mcp-access-matrix
+make test-mcp-session-isolation
+make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s
+```
+
+Use these mode-specific rebuild targets when validating rollout behavior:
+
+```bash
+make testing-rebuild-rust-shadow
+make testing-rebuild-rust
+make testing-rebuild-rust-full
+```
+
+These validate, respectively:
+
+- `shadow`: Rust sidecar present while public `/mcp` stays on Python
+- `edge`: direct Rust public ingress without the full Rust session/runtime cores
+- `full`: direct Rust public ingress plus Rust session/event/resume/live-stream
+  and affinity cores
+
+For throughput benchmarks and Locust wrappers, see
+[Performance Testing](performance.md).
 
 ---
 

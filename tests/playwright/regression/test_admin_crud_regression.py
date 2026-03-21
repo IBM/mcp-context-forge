@@ -118,7 +118,7 @@ class TestVirtualServerCRUD:
 
         Steps:
         1. Navigate to Servers tab
-        2. Click "Add Server" button
+        2. Scroll to add-server form
         3. Fill in server details
         4. Submit form
         5. Verify server appears in list
@@ -130,20 +130,19 @@ class TestVirtualServerCRUD:
         expect(servers_tab).to_be_visible(timeout=10_000)
         servers_tab.click()
 
-        # Step 2: Click Add Server button (use visible filter — hidden form also has "Add Server")
-        add_button = admin_page.locator('button:has-text("Add Server"):visible, button:has-text("Create Server"):visible').first
-        expect(add_button).to_be_visible(timeout=5_000)
-        add_button.click()
+        # Step 2: Scroll to the add-server form section
+        add_form = admin_page.locator("#add-server-form")
+        add_form.scroll_into_view_if_needed(timeout=5_000)
 
         # Step 3: Fill in server details
         server_name = f"regression-test-server-{admin_page.evaluate('Date.now()')}"
 
-        name_input = admin_page.locator('#server-name')
+        name_input = admin_page.locator("#server-name")
         expect(name_input).to_be_visible(timeout=5_000)
         name_input.fill(server_name)
 
-        # Step 4: Submit form (the "Add Server" button is the submit button within the catalog panel)
-        submit_button = admin_page.locator('#catalog-panel button[type="submit"]:has-text("Add Server"):visible').first
+        # Step 4: Submit form
+        submit_button = admin_page.locator('#add-server-form button[type="submit"]')
         expect(submit_button).to_be_visible(timeout=5_000)
         submit_button.click()
 
@@ -190,7 +189,7 @@ class TestVirtualServerCRUD:
         admin_page.wait_for_timeout(2_000)
 
         # Step 2: Find first server row with edit button
-        edit_button = admin_page.locator('#catalog-panel button:has-text("Edit"):visible').first
+        edit_button = admin_page.locator('[data-testid="server-item"] button:has-text("Edit")').first
 
         try:
             edit_button.wait_for(state="visible", timeout=3_000)
@@ -260,16 +259,23 @@ class TestVirtualServerCRUD:
         admin_page.wait_for_selector("#servers-table-body", state="attached", timeout=10_000)
         admin_page.wait_for_timeout(1_000)
 
-        # Step 2: Find delete button within catalog panel
-        server_rows = admin_page.locator('#servers-table-body [data-testid="server-item"]')
-        delete_button = admin_page.locator('#catalog-panel button[type="submit"]:has-text("Delete"):visible').first
+        # Step 2: Find delete button scoped to server rows via data-testid
+        delete_button = admin_page.locator('[data-testid="server-item"] button:has-text("Delete")').first
 
         try:
             delete_button.wait_for(state="visible", timeout=3_000)
         except PlaywrightTimeoutError:
             pytest.skip("No servers available to delete")
 
-        initial_count = server_rows.count()
+        # Capture the server ID from the first delete form so we can
+        # verify it disappears after deletion (row counts are unreliable
+        # with pagination when total items exceed per_page).
+        first_delete_form = admin_page.locator(
+            '#servers-table-body form[action*="/delete"]'
+        ).first
+        delete_action = first_delete_form.get_attribute("action") or ""
+        # Extract server ID from action URL like /admin/servers/<id>/delete
+        deleted_server_id = delete_action.rsplit("/delete", 1)[0].rsplit("/", 1)[-1]
 
         # Step 3 & 4: Accept native confirm() dialogs and click delete.
         # handleDeleteSubmit shows two native confirm() dialogs, then
@@ -291,7 +297,15 @@ class TestVirtualServerCRUD:
         servers_tab.click()
         admin_page.wait_for_selector("#servers-table-body", state="attached", timeout=10_000)
         admin_page.wait_for_timeout(1_000)
-        expect(server_rows).to_have_count(initial_count - 1, timeout=15_000)
+
+        # Verify the deleted server's ID no longer appears in any
+        # delete-form action URL.  This is pagination-safe unlike
+        # counting rows (the default per_page=10 may re-fill the
+        # page from subsequent pages after a deletion).
+        remaining_delete_forms = admin_page.locator(
+            f'#servers-table-body form[action*="{deleted_server_id}"]'
+        )
+        expect(remaining_delete_forms).to_have_count(0, timeout=15_000)
 
         # Step 6 & 7: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
@@ -367,7 +381,7 @@ class TestStatePersistence:
         6. Verify no console errors
         """
         # Step 1: Try to open team selector
-        team_selector = admin_page.locator('#team-selector-button')
+        team_selector = admin_page.locator("#team-selector-button")
 
         try:
             team_selector.wait_for(state="visible", timeout=3_000)
@@ -377,8 +391,8 @@ class TestStatePersistence:
         team_selector.click()
         admin_page.wait_for_timeout(1_000)
 
-        # Click first team item
-        team_item = admin_page.locator('.team-selector-item').first
+        # Click first team item (scoped to dropdown container)
+        team_item = admin_page.locator("#team-selector-items .team-selector-item").first
         if not team_item.is_visible(timeout=3_000):
             pytest.skip("No teams available in selector")
 

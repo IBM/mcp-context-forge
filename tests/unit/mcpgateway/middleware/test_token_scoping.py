@@ -12,6 +12,7 @@ This module tests the token scoping middleware, particularly the security fixes 
 """
 
 # Standard
+import hashlib
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,8 +22,19 @@ from starlette.responses import Response
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import Permissions
 from mcpgateway.middleware.token_scoping import _get_llm_permission_patterns, TokenScopingMiddleware
+
+
+def _trusted_internal_runtime_headers() -> dict[str, str]:
+    secret = settings.auth_encryption_secret.get_secret_value()
+    expected = hashlib.sha256(f"{secret}:contextforge-internal-mcp-runtime-v1".encode("utf-8")).hexdigest()
+    return {
+        "x-contextforge-mcp-runtime": "rust",
+        "x-contextforge-mcp-runtime-auth": expected,
+        "x-contextforge-auth-context": "trusted-payload",
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -141,6 +153,89 @@ class TestTokenScopingMiddleware:
         for path in ["/rpc", "/mcp", "/sse"]:
             result = middleware._check_server_restriction(path, "server-123")
             assert result is True, f"{path} should be whitelisted for server-scoped tokens"
+
+    @pytest.mark.asyncio
+    async def test_trusted_internal_mcp_runtime_request_bypasses_token_scoping(self, middleware, mock_request):
+        """Trusted loopback Rust sidecar hops should bypass token-scoping path checks."""
+        mock_request.url.path = "/_internal/mcp/rpc"
+        mock_request.scope["path"] = "/_internal/mcp/rpc"
+        mock_request.method = "POST"
+        mock_request.headers = {"Authorization": "Bearer scoped-token", **_trusted_internal_runtime_headers()}
+
+        call_next = AsyncMock(return_value="ok")
+        with patch.object(middleware, "_extract_token_scopes", new=AsyncMock(side_effect=AssertionError("token scoping should be bypassed"))):
+            result = await middleware(mock_request, call_next)
+
+        assert result == "ok"
+        call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_untrusted_internal_mcp_runtime_request_still_enforces_token_scoping(self, middleware, mock_request):
+        """Only loopback Rust sidecar hops should bypass token scoping."""
+        mock_request.url.path = "/_internal/mcp/rpc"
+        mock_request.scope["path"] = "/_internal/mcp/rpc"
+        mock_request.method = "POST"
+        mock_request.client.host = "10.0.0.8"
+        mock_request.headers = {"Authorization": "Bearer scoped-token", **_trusted_internal_runtime_headers()}
+
+        payload = {"sub": "user@example.com", "scopes": {"permissions": ["tools.read"]}}
+        with (
+            patch.object(middleware, "_extract_token_scopes", new=AsyncMock(return_value=payload)),
+            patch.object(middleware, "_check_team_membership", return_value=True),
+            patch.object(middleware, "_check_resource_team_ownership", return_value=True),
+            patch.object(middleware, "_check_server_restriction", return_value=True),
+            patch.object(middleware, "_check_permission_restrictions", return_value=False),
+        ):
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_internal_mcp_request_without_runtime_header_does_not_bypass(self, middleware, mock_request):
+        """Missing the Rust runtime marker must not bypass token scoping."""
+        mock_request.url.path = "/_internal/mcp/rpc"
+        mock_request.scope["path"] = "/_internal/mcp/rpc"
+        mock_request.method = "POST"
+        mock_request.headers = {
+            "Authorization": "Bearer scoped-token",
+            "x-contextforge-auth-context": "trusted-payload",
+        }
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", new=AsyncMock(return_value={"sub": "user@example.com", "scopes": {"permissions": ["tools.read"]}})),
+            patch.object(middleware, "_check_server_restriction", return_value=True),
+            patch.object(middleware, "_check_permission_restrictions", return_value=False),
+        ):
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_internal_mcp_request_without_auth_context_does_not_bypass(self, middleware, mock_request):
+        """Missing the trusted auth-context header must not bypass token scoping."""
+        mock_request.url.path = "/_internal/mcp/rpc"
+        mock_request.scope["path"] = "/_internal/mcp/rpc"
+        mock_request.method = "POST"
+        mock_request.headers = {
+            "Authorization": "Bearer scoped-token",
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-mcp-runtime-auth": _trusted_internal_runtime_headers()["x-contextforge-mcp-runtime-auth"],
+        }
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", new=AsyncMock(return_value={"sub": "user@example.com", "scopes": {"permissions": ["tools.read"]}})),
+            patch.object(middleware, "_check_server_restriction", return_value=True),
+            patch.object(middleware, "_check_permission_restrictions", return_value=False),
+        ):
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        call_next.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_canonical_permissions_used_in_map(self, middleware):

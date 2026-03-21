@@ -197,7 +197,7 @@ class TestWebSocketTransport:
 
         mock_ws.receive_bytes.side_effect = fake_receive_bytes
 
-        with caplog.at_level("WARNING"):
+        with caplog.at_level("WARNING", logger="mcpgateway.transports.websocket_transport"):
             await transport._ping_loop()
             assert "Invalid ping response" in caplog.text
 
@@ -221,7 +221,7 @@ class TestWebSocketTransport:
 
         monkeypatch.setattr("asyncio.wait_for", fake_wait_for)
 
-        with caplog.at_level("WARNING"), pytest.warns(RuntimeWarning):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.transports.websocket_transport"), pytest.warns(RuntimeWarning):
             await transport._ping_loop()
             assert "Ping timeout" in caplog.text
 

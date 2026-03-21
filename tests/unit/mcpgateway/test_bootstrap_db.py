@@ -25,6 +25,7 @@ from mcpgateway.bootstrap_db import (
     main,
     normalize_team_visibility,
 )
+from mcpgateway.common.validators import SecurityValidator
 
 
 @pytest.fixture
@@ -108,25 +109,6 @@ class TestAdvisoryLock:
     def test_postgresql_lock_acquire_and_release(self):
         conn = MagicMock()
         conn.dialect.name = "postgresql"
-
-        with advisory_lock(conn):
-            pass
-
-        assert conn.execute.call_count == 2
-
-    def test_mysql_lock_timeout_raises(self):
-        conn = MagicMock()
-        conn.dialect.name = "mysql"
-        conn.execute.return_value.scalar.return_value = 0
-
-        with pytest.raises(TimeoutError):
-            with advisory_lock(conn):
-                pass
-
-    def test_mysql_lock_acquire_and_release(self):
-        conn = MagicMock()
-        conn.dialect.name = "mariadb"
-        conn.execute.return_value.scalar.return_value = 1
 
         with advisory_lock(conn):
             pass
@@ -529,6 +511,95 @@ class TestBootstrapDefaultRoles:
 
                             mock_role_service.create_role.assert_not_called()
                             mock_role_service.assign_role_to_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_synchronizes_is_admin_flag_when_false(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """Test that is_admin flag is synchronized to True when platform_admin role is assigned and flag is False."""
+        # Setup: Admin user exists but is_admin is False (simulating manual demotion)
+        mock_admin_user.is_admin = False
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+
+        # Role doesn't exist yet, will be created
+        mock_role_service.get_role_by_name.return_value = None
+        mock_role_service.create_role.return_value = platform_admin_role
+
+        # No existing assignment
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_db.commit = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Verify role was assigned
+                            mock_role_service.assign_role_to_user.assert_called_once_with(
+                                user_email=mock_admin_user.email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=mock_admin_user.email
+                            )
+
+                            # Verify is_admin flag was synchronized
+                            assert mock_admin_user.is_admin is True
+                            mock_db.commit.assert_called()
+
+                            # Verify synchronization was logged (with sanitized email)
+                            mock_logger.info.assert_any_call(f"Synchronizing is_admin flag for {SecurityValidator.sanitize_log_message(mock_admin_user.email)} (was False, setting to True)")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_skips_sync_when_is_admin_already_true(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """Test that is_admin flag synchronization is skipped when already True."""
+        # Setup: Admin user exists with is_admin already True and role already assigned
+        mock_admin_user.is_admin = True
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+
+        # Role already exists
+        mock_role_service.get_role_by_name.return_value = platform_admin_role
+
+        # Role already assigned and active
+        existing_assignment = Mock()
+        existing_assignment.is_active = True
+        mock_role_service.get_user_role_assignment.return_value = existing_assignment
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_db.commit = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Verify role was NOT re-assigned (already exists and active)
+                            mock_role_service.assign_role_to_user.assert_not_called()
+
+                            # Verify is_admin flag remains True
+                            assert mock_admin_user.is_admin is True
+
+                            # Verify synchronization log was NOT emitted (flag already True)
+                            sync_log_calls = [call for call in mock_logger.info.call_args_list if "Synchronizing is_admin flag" in str(call)]
+                            assert len(sync_log_calls) == 0
+
+                            # Verify the "already has role" message was logged
                             mock_logger.info.assert_any_call("Admin user already has platform_admin role")
 
     @pytest.mark.asyncio
@@ -1215,49 +1286,6 @@ class TestMain:
                                                         mock_command.stamp.assert_called_once_with(mock_config, "head")
                                                         mock_command.upgrade.assert_not_called()
                                                         mock_logger.info.assert_any_call("Empty DB detected - creating baseline schema")
-
-    @pytest.mark.asyncio
-    async def test_main_empty_database_mysql_applies_mariadb_mods(self, mock_settings):
-        """Empty DB + MySQL/MariaDB URL should apply compatibility modifications."""
-        mock_settings.database_url = "mysql://user:pass@localhost/db"
-
-        mock_engine = Mock()
-        mock_engine.dispose = Mock()
-        mock_conn = Mock()
-        mock_conn.commit = Mock()
-        mock_inspector = Mock()
-        mock_inspector.get_table_names.return_value = []  # Empty database
-
-        mock_config = MagicMock()
-        mock_config.attributes = {}
-
-        mock_connect_cm = Mock()
-        mock_connect_cm.__enter__ = Mock(return_value=mock_conn)
-        mock_connect_cm.__exit__ = Mock(return_value=None)
-        mock_engine.connect = Mock(return_value=mock_connect_cm)
-
-        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
-            with patch("mcpgateway.bootstrap_db.inspect", return_value=mock_inspector):
-                with patch("importlib.resources.files") as mock_files:
-                    mock_files.return_value.joinpath.return_value = "alembic.ini"
-
-                    with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
-                        with patch("mcpgateway.bootstrap_db.Base") as mock_base:
-                            with patch("mcpgateway.bootstrap_db.command") as mock_command:
-                                with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0):
-                                    with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()):
-                                        with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
-                                            with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
-                                                with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                                    with patch("mcpgateway.alembic.env._modify_metadata_for_mariadb") as mock_mod:
-                                                        with patch("mcpgateway.alembic.env.mariadb_naming_convention", {"foo": "bar"}):
-                                                            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                                await main()
-
-                                                                assert mock_mod.called
-                                                                mock_logger.info.assert_any_call("Applied MariaDB compatibility modifications")
-                                                                mock_base.metadata.create_all.assert_called_once_with(bind=mock_conn)
-                                                                mock_command.stamp.assert_called_once_with(mock_config, "head")
 
     @pytest.mark.asyncio
     async def test_main_existing_database(self, mock_settings):

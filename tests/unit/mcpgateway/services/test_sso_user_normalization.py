@@ -227,6 +227,56 @@ class TestEntraIDNormalization:
         assert normalized["username"] == "user@company.com"
         assert normalized["provider"] == "entra"
 
+    def test_entra_missing_email_verified_claim_is_omitted(self, sso_service, entra_provider):
+        """Entra ID work/school userinfo omits email_verified; key must not appear in normalized output.
+
+        Regression test for https://github.com/IBM/mcp-context-forge/issues/3253:
+        first-time Entra logins were rejected because a missing email_verified claim
+        was treated as unverified.  The fix mirrors the GitHub provider pattern —
+        only propagate the claim when the IdP explicitly includes it.
+        """
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "preferred_username": "user@company.com",
+            "sub": "abc123",
+            # No email_verified claim — typical Entra ID response
+        }
+
+        normalized = sso_service._normalize_user_info(entra_provider, user_data)
+
+        assert "email_verified" not in normalized, "email_verified must not be injected when Entra ID omits it; " "_is_email_verified_claim treats absence as pass-through"
+        assert normalized["email"] == "user@company.com"
+        assert normalized["provider"] == "entra"
+
+    def test_entra_explicit_false_email_verified_is_preserved(self, sso_service, entra_provider):
+        """When Entra explicitly marks email_verified=False the claim must be kept so the user is blocked."""
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "preferred_username": "user@company.com",
+            "sub": "abc123",
+            "email_verified": False,  # Explicit rejection by IdP
+        }
+
+        normalized = sso_service._normalize_user_info(entra_provider, user_data)
+
+        assert normalized["email_verified"] is False
+
+    def test_entra_explicit_true_email_verified_is_preserved(self, sso_service, entra_provider):
+        """When Entra explicitly marks email_verified=True the claim is propagated normally."""
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "preferred_username": "user@company.com",
+            "sub": "abc123",
+            "email_verified": True,
+        }
+
+        normalized = sso_service._normalize_user_info(entra_provider, user_data)
+
+        assert normalized["email_verified"] is True
+
 
 class TestGitHubNormalization:
     """Test GitHub user info normalization."""
@@ -340,6 +390,32 @@ class TestGoogleNormalization:
 
         assert normalized["username"] == "testuser123"  # Extracted from email
 
+    def test_google_missing_email_verified_claim_is_omitted(self, sso_service, google_provider):
+        """Google userinfo without email_verified must not inject None into the normalized dict."""
+        user_data = {
+            "email": "user@gmail.com",
+            "name": "Test User",
+            "sub": "google-id",
+            # No email_verified key
+        }
+
+        normalized = sso_service._normalize_user_info(google_provider, user_data)
+
+        assert "email_verified" not in normalized
+
+    def test_google_explicit_false_email_verified_is_preserved(self, sso_service, google_provider):
+        """When Google explicitly marks email_verified=False the user must be blocked."""
+        user_data = {
+            "email": "user@gmail.com",
+            "name": "Test User",
+            "sub": "google-id",
+            "email_verified": False,
+        }
+
+        normalized = sso_service._normalize_user_info(google_provider, user_data)
+
+        assert normalized["email_verified"] is False
+
 
 class TestOktaNormalization:
     """Test Okta user info normalization."""
@@ -380,6 +456,34 @@ class TestOktaNormalization:
 
         assert normalized["username"] == "testuser"  # Extracted from email
 
+    def test_okta_missing_email_verified_claim_is_omitted(self, sso_service):
+        """Okta deployments that omit email_verified must not be blocked."""
+        okta_provider = SSOProvider(id="okta", name="okta", display_name="Okta", provider_type="oidc")
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "okta-user-id",
+            # No email_verified key
+        }
+
+        normalized = sso_service._normalize_user_info(okta_provider, user_data)
+
+        assert "email_verified" not in normalized
+
+    def test_okta_explicit_false_email_verified_is_preserved(self, sso_service):
+        """When Okta explicitly marks email_verified=False the user must be blocked."""
+        okta_provider = SSOProvider(id="okta", name="okta", display_name="Okta", provider_type="oidc")
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "okta-user-id",
+            "email_verified": False,
+        }
+
+        normalized = sso_service._normalize_user_info(okta_provider, user_data)
+
+        assert normalized["email_verified"] is False
+
 
 class TestIBMVerifyNormalization:
     """Test IBM Security Verify user info normalization."""
@@ -404,6 +508,34 @@ class TestIBMVerifyNormalization:
         assert normalized["provider_id"] == "ibm-user-id"
         assert normalized["username"] == "user@company.com"
         assert normalized["provider"] == "ibm_verify"
+
+    def test_ibm_verify_missing_email_verified_claim_is_omitted(self, sso_service):
+        """IBM Verify responses that omit email_verified must not inject None."""
+        ibm_provider = SSOProvider(id="ibm_verify", name="ibm_verify", display_name="IBM Security Verify", provider_type="oidc")
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "ibm-user-id",
+            # No email_verified key
+        }
+
+        normalized = sso_service._normalize_user_info(ibm_provider, user_data)
+
+        assert "email_verified" not in normalized
+
+    def test_ibm_verify_explicit_false_email_verified_is_preserved(self, sso_service):
+        """When IBM Verify explicitly marks email_verified=False the user must be blocked."""
+        ibm_provider = SSOProvider(id="ibm_verify", name="ibm_verify", display_name="IBM Security Verify", provider_type="oidc")
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "ibm-user-id",
+            "email_verified": False,
+        }
+
+        normalized = sso_service._normalize_user_info(ibm_provider, user_data)
+
+        assert normalized["email_verified"] is False
 
 
 class TestKeycloakNormalization:
@@ -632,6 +764,44 @@ class TestKeycloakNormalization:
         assert "mcp-gateway:admin" in groups  # Client role is namespaced, so not a duplicate
         assert "developer" in groups
 
+    def test_keycloak_missing_email_verified_claim_is_omitted(self, sso_service):
+        """Keycloak realms that omit email_verified must not inject None into the normalized dict."""
+        keycloak_provider = SSOProvider(
+            id="keycloak",
+            name="keycloak",
+            display_name="Keycloak",
+            provider_type="oidc",
+            provider_metadata={"realm": "master", "map_realm_roles": False, "map_client_roles": False, "username_claim": "preferred_username", "email_claim": "email", "groups_claim": "groups"},
+        )
+        user_data = {
+            "email": "user@company.com",
+            "sub": "keycloak-user-id",
+            # No email_verified key
+        }
+
+        normalized = sso_service._normalize_user_info(keycloak_provider, user_data)
+
+        assert "email_verified" not in normalized
+
+    def test_keycloak_explicit_false_email_verified_is_preserved(self, sso_service):
+        """When Keycloak explicitly marks email_verified=False the user must be blocked."""
+        keycloak_provider = SSOProvider(
+            id="keycloak",
+            name="keycloak",
+            display_name="Keycloak",
+            provider_type="oidc",
+            provider_metadata={"realm": "master", "map_realm_roles": False, "map_client_roles": False, "username_claim": "preferred_username", "email_claim": "email", "groups_claim": "groups"},
+        )
+        user_data = {
+            "email": "user@company.com",
+            "sub": "keycloak-user-id",
+            "email_verified": False,
+        }
+
+        normalized = sso_service._normalize_user_info(keycloak_provider, user_data)
+
+        assert normalized["email_verified"] is False
+
 
 class TestGenericOIDCNormalization:
     """Test generic OIDC provider normalization."""
@@ -657,6 +827,40 @@ class TestGenericOIDCNormalization:
         assert normalized["provider_id"] == "custom-user-id"
         assert normalized["username"] == "testuser"
         assert normalized["provider"] == "custom_oidc"
+
+    def test_generic_oidc_missing_email_verified_claim_is_omitted(self, sso_service):
+        """Generic OIDC providers that omit email_verified must not be blocked.
+
+        Regression guard: the old code used user_data.get("email_verified") which
+        injects None into the normalized dict.  _is_email_verified_claim then sees
+        the key present with a None value and returns False, rejecting the user.
+        The key must be absent when the IdP does not send it.
+        """
+        generic_provider = SSOProvider(id="custom_oidc", name="custom_oidc", display_name="Custom OIDC", provider_type="oidc")
+        user_data = {
+            "email": "user@provider.com",
+            "name": "Test User",
+            "sub": "custom-user-id",
+            # No email_verified key
+        }
+
+        normalized = sso_service._normalize_user_info(generic_provider, user_data)
+
+        assert "email_verified" not in normalized, "email_verified must not be injected when the OIDC provider omits it; " "_is_email_verified_claim treats absence as pass-through"
+
+    def test_generic_oidc_explicit_false_email_verified_is_preserved(self, sso_service):
+        """When a generic OIDC provider explicitly marks email_verified=False the user must be blocked."""
+        generic_provider = SSOProvider(id="custom_oidc", name="custom_oidc", display_name="Custom OIDC", provider_type="oidc")
+        user_data = {
+            "email": "user@provider.com",
+            "name": "Test User",
+            "sub": "custom-user-id",
+            "email_verified": False,
+        }
+
+        normalized = sso_service._normalize_user_info(generic_provider, user_data)
+
+        assert normalized["email_verified"] is False
 
 
 if __name__ == "__main__":

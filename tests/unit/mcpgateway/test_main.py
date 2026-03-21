@@ -1370,6 +1370,17 @@ class TestPromptEndpoints:
         assert response.status_code == 200
         mock_get.assert_called_once_with(ANY, "test", {}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
 
+    @patch("mcpgateway.main.prompt_service.get_prompt")
+    def test_get_prompt_no_args_ambiguous_returns_422(self, mock_get, test_client, auth_headers):
+        """GET /prompts/{id} returns 422 when prompt name is ambiguous across scopes."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptError
+
+        mock_get.side_effect = PromptError("Prompt name 'code_review' is ambiguous across multiple scopes")
+        response = test_client.get("/prompts/code_review", headers=auth_headers)
+        assert response.status_code == 422
+        assert "ambiguous" in response.json()["detail"]
+
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
         """Test updating an existing prompt."""
@@ -1822,6 +1833,7 @@ class TestRPCEndpoints:
             plugin_context_table=None,
             plugin_global_context=ANY,
             meta_data=None,
+            skip_pre_invoke=False,
         )
 
     def test_rpc_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
@@ -2001,6 +2013,7 @@ class TestRPCEndpoints:
     @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
     def test_rpc_resources_read_not_found_error(self, mock_read, test_client, auth_headers):
         """Test resources/read returns -32002 when ResourceNotFoundError is raised."""
+        # First-Party
         from mcpgateway.services.resource_service import ResourceNotFoundError
 
         mock_read.side_effect = ResourceNotFoundError("Resource template not found for 'file:///nonexistent/bad-resource'")
@@ -2736,6 +2749,7 @@ class TestRealtimeEndpoints:
 class TestMetricsEndpoints:
     """Tests for metrics collection, aggregation, and reset functionality."""
 
+    @patch("mcpgateway.main.a2a_service", None)
     @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
     @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
     @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
@@ -2755,6 +2769,7 @@ class TestMetricsEndpoints:
         assert "servers" in data and "prompts" in data
         # A2A agents may or may not be present based on configuration
 
+    @patch("mcpgateway.main.a2a_service", None)
     @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
     @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
     @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)

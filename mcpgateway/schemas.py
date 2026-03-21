@@ -295,6 +295,14 @@ class MetricsResponse(BaseModelWithConfigDict):
 
     @model_serializer(mode="wrap")
     def _exclude_none_a2a(self, handler):
+        """Omit the A2A metrics field when that feature is disabled.
+
+        Args:
+            handler: Pydantic serializer callback for the wrapped model.
+
+        Returns:
+            Dict[str, Any]: Serialized metrics payload without empty A2A fields.
+        """
         result = handler(self)
         if self.a2a_agents is None:
             result.pop("a2aAgents", None)
@@ -311,6 +319,7 @@ class JsonPathModifier(BaseModelWithConfigDict):
     Provides the structure for parsing JSONPath queries and optional mapping.
     """
 
+    model_config = ConfigDict(extra="forbid")  # ← rejects unknown fields
     jsonpath: Optional[str] = Field(None, description="JSONPath expression for querying JSON data.")
     mapping: Optional[Dict[str, str]] = Field(None, description="Mapping of fields from original data to output.")
 
@@ -378,7 +387,7 @@ class ToolCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the tool owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
@@ -390,6 +399,24 @@ class ToolCreate(BaseModel):
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
+        """Validate visibility level.
+
+        Args:
+            v: Visibility value to validate
+
+        Returns:
+            Validated visibility value or None
+
+        Raises:
+            ValueError: If visibility is not a recognized level
+        """
+        if v is not None and v not in ("private", "team", "public"):
+            raise ValueError("Visibility must be one of: private, team, public")
+        return v
 
     @field_validator("tags")
     @classmethod
@@ -468,7 +495,13 @@ class ToolCreate(BaseModel):
             str: Value if validated as safe and truncated if too long
 
         Raises:
-            ValueError: When value is unsafe
+            ValueError: When value is unsafe and VALIDATION_STRICT=true (default)
+
+        Note:
+            When ``VALIDATION_STRICT=false`` the forbidden-pattern check is skipped
+            and a warning is logged instead.  This allows MCP server tools whose
+            descriptions contain Markdown syntax (e.g. ``> blockquote``,
+            ``< input``, ``cmd | grep``) to register successfully.
 
         Examples:
             >>> from mcpgateway.schemas import ToolCreate
@@ -486,11 +519,17 @@ class ToolCreate(BaseModel):
             return v
 
         # Note: backticks (`) are allowed as they are commonly used in Markdown
-        # for inline code examples in tool descriptions
+        # for inline code examples in tool descriptions.
+        # When VALIDATION_STRICT=false these patterns produce a warning only so
+        # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
+        # "< input", "cmd | grep") can register without error.
         forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
         for pat in forbidden_patterns:
             if pat in v:
-                raise ValueError(f"Description contains unsafe characters: '{pat}'")
+                if settings.validation_strict:
+                    raise ValueError(f"Description contains unsafe characters: '{pat}'")
+                logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
+                break
 
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
@@ -1589,8 +1628,26 @@ class ResourceCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the resource owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
+        """Validate visibility level.
+
+        Args:
+            v: Visibility value to validate
+
+        Returns:
+            Validated visibility value or None
+
+        Raises:
+            ValueError: If visibility is not a recognized level
+        """
+        if v is not None and v not in ("private", "team", "public"):
+            raise ValueError("Visibility must be one of: private, team, public")
+        return v
 
     @field_validator("tags")
     @classmethod
@@ -2142,8 +2199,26 @@ class PromptCreate(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
+        """Validate visibility level.
+
+        Args:
+            v: Visibility value to validate
+
+        Returns:
+            Validated visibility value or None
+
+        Raises:
+            ValueError: If visibility is not a recognized level
+        """
+        if v is not None and v not in ("private", "team", "public"):
+            raise ValueError("Visibility must be one of: private, team, public")
+        return v
 
     @field_validator("tags")
     @classmethod
@@ -2538,7 +2613,7 @@ class TransportType(str, Enum):
     STREAMABLEHTTP = "STREAMABLEHTTP"
 
 
-class GatewayCreate(BaseModel):
+class GatewayCreate(BaseModelWithConfigDict):
     """
     Schema for creating a new gateway.
 
@@ -5030,6 +5105,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
+    auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
 
     # Query Parameter Authentication (masked for security)
     auth_query_param_key: Optional[str] = Field(
@@ -5208,8 +5284,11 @@ class A2AAgentRead(BaseModelWithConfigDict):
 
         elif auth_type == "authheaders":
             # For backward compatibility, populate first header in key/value fields
-            if len(auth_value) == 0:
+            if not isinstance(auth_value, dict) or len(auth_value) == 0:
                 raise ValueError("authheaders requires at least one key/value pair")
+            # Populate auth_headers list for multi-header support
+            self.auth_headers = [{"key": str(key), "value": "" if value is None else str(value)} for key, value in auth_value.items()]
+            # Maintain backward compatibility with single header fields
             k, v = next(iter(auth_value.items()))
             self.auth_header_key, self.auth_header_value = k, v
         return self
@@ -5245,6 +5324,14 @@ class A2AAgentRead(BaseModelWithConfigDict):
         masked_data["auth_password"] = settings.masked_auth_value if masked_data.get("auth_password") else None
         masked_data["auth_token"] = settings.masked_auth_value if masked_data.get("auth_token") else None
         masked_data["auth_header_value"] = settings.masked_auth_value if masked_data.get("auth_header_value") else None
+        if masked_data.get("auth_headers"):
+            masked_data["auth_headers"] = [
+                {
+                    "key": header.get("key"),
+                    "value": settings.masked_auth_value if header.get("value") else header.get("value"),
+                }
+                for header in masked_data["auth_headers"]
+            ]
 
         # Mask sensitive keys inside oauth_config (e.g. password, client_secret)
         if masked_data.get("oauth_config"):
