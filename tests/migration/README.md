@@ -231,9 +231,9 @@ def test_custom_migration():
 
 ### Adding New Database Support
 
-1. **Create transport module** (e.g., `utils/mysql_manager.py`)
+1. **Create transport module** in `utils/`
 2. **Extend container manager** with new database methods
-3. **Add test file** (e.g., `test_mysql_migrations.py`)
+3. **Add test file** for the new database
 4. **Update fixtures** in `conftest.py`
 
 ### Custom Validation Rules

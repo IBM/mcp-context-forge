@@ -57,8 +57,6 @@ ContextForge supports multiple database backends with full feature parity across
 |-------------|---------------|--------------------------------------------------------------|--------------------------------|
 | SQLite      | ✅ Full       | `sqlite:///./mcp.db`                                        | Default, file-based            |
 | PostgreSQL  | ✅ Full       | `postgresql+psycopg://postgres:changeme@localhost:5432/mcp` | Recommended for production     |
-| MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 10.6+ |
-| MySQL       | ✅ Full       | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
 
 ### PostgreSQL System Dependencies
 
@@ -84,92 +82,6 @@ ContextForge supports multiple database backends with full feature parity across
     ```bash
     pip install .[postgres]
     ```
-
-### MariaDB/MySQL Setup Details
-
-!!! success "MariaDB & MySQL Full Support"
-    MariaDB and MySQL are **fully supported** alongside SQLite and PostgreSQL:
-
-    - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
-    - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
-    - Complete feature parity with SQLite and PostgreSQL
-    - Supports all ContextForge features including federation, caching, and A2A agents
-
-#### Connection String Format
-
-```bash
-DATABASE_URL=mysql+pymysql://[username]:[password]@[host]:[port]/[database]
-```
-
-#### Local MariaDB/MySQL Installation
-
-=== "Ubuntu/Debian (MariaDB)"
-    ```bash
-    # Install MariaDB server
-    sudo apt update && sudo apt install mariadb-server
-
-    # Secure installation (optional)
-    sudo mariadb-secure-installation
-
-    # Create database and user
-    sudo mariadb -e "CREATE DATABASE mcp;"
-    sudo mariadb -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-    sudo mariadb -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-    sudo mariadb -e "FLUSH PRIVILEGES;"
-    ```
-
-=== "Ubuntu/Debian (MySQL)"
-    ```bash
-    # Install MySQL server
-    sudo apt update && sudo apt install mysql-server
-
-    # Secure installation (optional)
-    sudo mysql_secure_installation
-
-    # Create database and user
-    sudo mysql -e "CREATE DATABASE mcp;"
-    sudo mysql -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-    sudo mysql -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-    sudo mysql -e "FLUSH PRIVILEGES;"
-    ```
-
-=== "macOS (Homebrew - MariaDB)"
-    ```bash
-    # Install MariaDB
-    brew install mariadb
-    brew services start mariadb
-
-    # Create database and user
-    mariadb -u root -e "CREATE DATABASE mcp;"
-    mariadb -u root -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-    mariadb -u root -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-    mariadb -u root -e "FLUSH PRIVILEGES;"
-    ```
-
-#### Docker MariaDB/MySQL Setup
-
-```bash
-# Start MariaDB container (recommended)
-docker run -d --name mariadb-mcp \
-  -e MYSQL_ROOT_PASSWORD=mysecretpassword \
-  -e MYSQL_DATABASE=mcp \
-  -e MYSQL_USER=mysql \
-  -e MYSQL_PASSWORD=changeme \
-  -p 3306:3306 \
-  registry.redhat.io/rhel9/mariadb-106:12.0.2-ubi10
-
-# Or start MySQL container
-docker run -d --name mysql-mcp \
-  -e MYSQL_ROOT_PASSWORD=mysecretpassword \
-  -e MYSQL_DATABASE=mcp \
-  -e MYSQL_USER=mysql \
-  -e MYSQL_PASSWORD=changeme \
-  -p 3306:3306 \
-  mysql:8
-
-# Connection string for ContextForge (same for both)
-DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
-```
 
 ---
 
@@ -1167,7 +1079,7 @@ Create a `.env` file for Docker deployments:
 # .env file for Docker
 HOST=0.0.0.0
 PORT=4444
-DATABASE_URL=mysql+pymysql://mysql:changeme@mysql:3306/mcp
+DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
 REDIS_URL=redis://redis:6379/0
 JWT_SECRET_KEY=my-secret-key
 BASIC_AUTH_USER=admin
@@ -1181,7 +1093,7 @@ MCPGATEWAY_UI_HIDE_SECTIONS=
 MCPGATEWAY_UI_HIDE_HEADER_ITEMS=
 ```
 
-### Docker Compose with MySQL
+### Docker Compose with PostgreSQL
 
 ```yaml
 version: "3.9"
@@ -1192,26 +1104,25 @@ services:
     ports:
       - "4444:4444"
     environment:
-      - DATABASE_URL=mysql+pymysql://mysql:changeme@mysql:3306/mcp
+      - DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
       - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET_KEY=my-secret-key
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_started
 
-  mysql:
-    image: mysql:8
+  postgres:
+    image: postgres:17
     environment:
-      - MYSQL_ROOT_PASSWORD=mysecretpassword
-      - MYSQL_DATABASE=mcp
-      - MYSQL_USER=mysql
-      - MYSQL_PASSWORD=changeme
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=changeme
+      - POSTGRES_DB=mcp
     volumes:
-      - mysql_data:/var/lib/mysql
+      - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -1222,7 +1133,7 @@ services:
       - redis_data:/data
 
 volumes:
-  mysql_data:
+  pg_data:
   redis_data:
 ```
 
@@ -1238,7 +1149,7 @@ kind: ConfigMap
 metadata:
   name: mcpgateway-config
 data:
-  DATABASE_URL: "mysql+pymysql://mysql:changeme@mysql-service:3306/mcp"
+  DATABASE_URL: "postgresql+psycopg://postgres:changeme@postgres-service:5432/mcp"
   REDIS_URL: "redis://redis-service:6379/0"
   JWT_SECRET_KEY: "your-secret-key"
   BASIC_AUTH_USER: "admin"
@@ -1246,55 +1157,6 @@ data:
   MCPGATEWAY_UI_ENABLED: "true"
   MCPGATEWAY_ADMIN_API_ENABLED: "true"
   LOG_LEVEL: "INFO"
-```
-
-### MySQL Service Example
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mysql
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mysql
-  template:
-    metadata:
-      labels:
-        app: mysql
-    spec:
-      containers:
-        - name: mysql
-          image: mysql:8
-          env:
-            - name: MYSQL_ROOT_PASSWORD
-              value: "mysecretpassword"
-            - name: MYSQL_DATABASE
-              value: "mcp"
-            - name: MYSQL_USER
-              value: "mysql"
-            - name: MYSQL_PASSWORD
-              value: "changeme"
-          volumeMounts:
-            - name: mysql-storage
-              mountPath: /var/lib/mysql
-      volumes:
-        - name: mysql-storage
-          persistentVolumeClaim:
-            claimName: mysql-pvc
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mysql-service
-spec:
-  selector:
-    app: mysql
-  ports:
-    - port: 3306
-      targetPort: 3306
 ```
 
 ---

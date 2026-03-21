@@ -180,7 +180,7 @@ Add tags at the top of `README.md` between YAML markers to declare your server's
   Requires a centrally managed API key, typically provisioned and stored by the platform.
 
 - **`needs_database`**
-  The server interacts with a persistent database (e.g., PostgreSQL, MongoDB).
+  The server interacts with a persistent database (e.g., PostgreSQL).
 
 - **`needs_network_access_inbound`**
   The server expects to receive inbound network requests (e.g., runs a web server or webhook listener).

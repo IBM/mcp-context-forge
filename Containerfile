@@ -97,7 +97,7 @@ ARG ENABLE_RUST=false
 RUN python3 -m venv /app/.venv && \
     . /etc/profile.d/use-openssl.sh && \
     /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
-    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,mysql,alembic,observability,granian]" && \
+    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,observability,granian]" && \
     if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing Rust plugins..."; \
         /app/.venv/bin/python3 -m pip install /tmp/rust-wheels/*.whl && \

@@ -61,7 +61,7 @@ def test_ensure_list_iterable():
 
 
 def test_json_contains_expr_empty_values(mock_session: Any):
-    mock_session.get_bind().dialect.name = "mysql"
+    mock_session.get_bind().dialect.name = "sqlite"
     with pytest.raises(ValueError):
         json_contains_expr(mock_session, DummyColumn(), [])
 
@@ -70,30 +70,6 @@ def test_json_contains_expr_unsupported_dialect(mock_session: Any):
     mock_session.get_bind().dialect.name = "oracle"
     with pytest.raises(RuntimeError):
         json_contains_expr(mock_session, DummyColumn(), ["a"])
-
-
-def test_json_contains_expr_mysql_match_any(mock_session: Any):
-    mock_session.get_bind().dialect.name = "mysql"
-    col = DummyColumn()
-    with patch("mcpgateway.utils.sqlalchemy_modifier.func.json_overlaps", return_value=1):
-        expr = json_contains_expr(mock_session, col, ["a", "b"], match_any=True)
-        assert expr == 1 == 1 or expr == (func.json_overlaps(col, json.dumps(["a", "b"])) == 1)
-
-
-def test_json_contains_expr_mysql_match_all(mock_session: Any):
-    mock_session.get_bind().dialect.name = "mysql"
-    col = DummyColumn()
-    with patch("mcpgateway.utils.sqlalchemy_modifier.func.json_contains", return_value=1):
-        expr = json_contains_expr(mock_session, col, ["a", "b"], match_any=False)
-        assert expr == 1 == 1 or expr == (func.json_contains(col, json.dumps(["a", "b"])) == 1)
-
-
-def test_json_contains_expr_mysql_fallback(mock_session: Any):
-    mock_session.get_bind().dialect.name = "mysql"
-    col = DummyColumn()
-    with patch("mcpgateway.utils.sqlalchemy_modifier.func.json_overlaps", side_effect=Exception("fail")):
-        expr = json_contains_expr(mock_session, col, ["a", "b"], match_any=True)
-        assert isinstance(expr, BooleanClauseList)
 
 
 def test_json_contains_expr_postgresql_match_any(mock_session: Any):
@@ -239,42 +215,6 @@ def test_json_contains_tag_expr_no_bind_collision(mock_session: Any):
         assert values == {"tag1", "tag2", "cat1", "cat2"}
     finally:
         engine.dispose()
-
-
-def test_json_contains_tag_expr_mysql_match_any(mock_session: Any):
-    """MySQL path uses json_search/json_contains and returns OR of conditions."""
-    mock_session.get_bind().dialect.name = "mysql"
-    col = DummyColumn(name="tags", table_name="tools")
-    expr = json_contains_tag_expr(mock_session, col, ["api", "db"], match_any=True)
-    assert isinstance(expr, BooleanClauseList)
-
-
-def test_json_contains_tag_expr_mysql_match_all(mock_session: Any):
-    """MySQL path returns AND of conditions when match_any=False."""
-    mock_session.get_bind().dialect.name = "mysql"
-    col = DummyColumn(name="tags", table_name="tools")
-    expr = json_contains_tag_expr(mock_session, col, ["api", "db"], match_any=False)
-    assert isinstance(expr, BooleanClauseList)
-
-
-def test_json_contains_expr_mysql_fallback_match_all(mock_session: Any):
-    """When JSON_OVERLAPS/JSON_CONTAINS isn't available, match_all should build AND of JSON_CONTAINS."""
-    import orjson
-
-    mock_session.get_bind().dialect.name = "mysql"
-    col = DummyColumn()
-
-    real_dumps = orjson.dumps
-
-    def dumps_side_effect(value):
-        # Trigger the except block by failing only for the list argument used in the try-path.
-        if isinstance(value, list):
-            raise Exception("boom")  # noqa: TRY002 - intentional to force fallback
-        return real_dumps(value)
-
-    with patch("mcpgateway.utils.sqlalchemy_modifier.orjson.dumps", side_effect=dumps_side_effect):
-        expr = json_contains_expr(mock_session, col, ["a", "b"], match_any=False)
-        assert isinstance(expr, BooleanClauseList)
 
 
 def test_json_contains_tag_expr_sqlite_redundant_empty_guard(mock_session: Any):

@@ -1,6 +1,6 @@
 # Internal Observability System
 
-ContextForge includes a built-in observability system that provides comprehensive performance monitoring, error tracking, and analytics without requiring external observability platforms. All trace data is stored in your database (SQLite/PostgreSQL/MariaDB) and visualized through the Admin UI.
+ContextForge includes a built-in observability system that provides comprehensive performance monitoring, error tracking, and analytics without requiring external observability platforms. All trace data is stored in your database (SQLite/PostgreSQL) and visualized through the Admin UI.
 
 ## Overview
 
@@ -556,7 +556,7 @@ Same parameters as tool metrics.
 
 | Feature | Internal Observability | OpenTelemetry |
 |---------|----------------------|---------------|
-| **Storage** | Database (SQLite/PostgreSQL/MariaDB) | External backends (Phoenix, Jaeger, Tempo) |
+| **Storage** | Database (SQLite/PostgreSQL) | External backends (Phoenix, Jaeger, Tempo) |
 | **Setup** | Built-in, zero configuration | Requires external services |
 | **Cost** | Free, self-hosted | Depends on backend (free OSS or paid SaaS) |
 | **Retention** | Configurable in-database | Backend-dependent |
@@ -647,14 +647,6 @@ Benefits:
 - Superior write concurrency
 - Advanced indexing
 - Better query performance
-
-#### MariaDB/MySQL
-
-Alternative production option:
-
-- Good write performance
-- Wide deployment support
-- Compatible with PostgreSQL features
 
 ### Monitoring the Monitor
 

@@ -584,9 +584,6 @@ def _sanitize_url(url: Optional[str]) -> Optional[str]:
         >>> _sanitize_url("redis://:xxxxx@localhost:6379")
         'redis://localhost:6379'
 
-        >>> # Complex URL with query params
-        >>> _sanitize_url("mysql://root:xxxxx@db.local:3306/mydb?charset=utf8")
-        'mysql://root@db.local:3306/mydb?charset=utf8'
     """
     if not url:
         return None
@@ -657,7 +654,6 @@ def _database_version() -> tuple[str, bool]:
     stmts = {
         "sqlite": "SELECT sqlite_version();",
         "postgresql": "SELECT current_setting('server_version');",
-        "mysql": "SELECT version();",
     }
     stmt = stmts.get(dialect, "XXSELECT version();XX")
     try:

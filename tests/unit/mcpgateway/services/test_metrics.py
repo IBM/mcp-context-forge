@@ -88,7 +88,8 @@ def test_setup_metrics_enabled_postgresql():
     inst.instrument.assert_called_once()
 
 
-def test_setup_metrics_enabled_mysql():
+def test_setup_metrics_enabled_postgresql_psycopg():
+    """Driver-qualified postgresql+psycopg:// URLs must be detected as postgresql."""
     app = MagicMock()
     app.state = MagicMock()
     with (
@@ -96,23 +97,7 @@ def test_setup_metrics_enabled_mysql():
         patch("mcpgateway.services.metrics.settings") as mock_settings,
         patch("mcpgateway.services.metrics.Instrumentator") as mock_inst_cls,
     ):
-        mock_settings.database_url = "mysql+pymysql://user:pass@localhost/db"
-        mock_settings.METRICS_EXCLUDED_HANDLERS = ""
-        inst = MagicMock()
-        mock_inst_cls.return_value = inst
-        setup_metrics(app)
-    inst.instrument.assert_called_once()
-
-
-def test_setup_metrics_enabled_mongodb():
-    app = MagicMock()
-    app.state = MagicMock()
-    with (
-        patch.dict("os.environ", {"ENABLE_METRICS": "true", "METRICS_CUSTOM_LABELS": "", "METRICS_EXCLUDED_HANDLERS": ""}),
-        patch("mcpgateway.services.metrics.settings") as mock_settings,
-        patch("mcpgateway.services.metrics.Instrumentator") as mock_inst_cls,
-    ):
-        mock_settings.database_url = "mongodb://localhost/db"
+        mock_settings.database_url = "postgresql+psycopg://user:pass@localhost/db"
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst
@@ -162,22 +147,6 @@ def test_setup_metrics_with_excluded_handlers():
     ):
         mock_settings.database_url = "sqlite:///./test.db"
         mock_settings.METRICS_EXCLUDED_HANDLERS = "/health,/ready"
-        inst = MagicMock()
-        mock_inst_cls.return_value = inst
-        setup_metrics(app)
-    inst.instrument.assert_called_once()
-
-
-def test_setup_metrics_mariadb():
-    app = MagicMock()
-    app.state = MagicMock()
-    with (
-        patch.dict("os.environ", {"ENABLE_METRICS": "true", "METRICS_CUSTOM_LABELS": "", "METRICS_EXCLUDED_HANDLERS": ""}),
-        patch("mcpgateway.services.metrics.settings") as mock_settings,
-        patch("mcpgateway.services.metrics.Instrumentator") as mock_inst_cls,
-    ):
-        mock_settings.database_url = "mariadb://user:pass@localhost/db"
-        mock_settings.METRICS_EXCLUDED_HANDLERS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst
         setup_metrics(app)

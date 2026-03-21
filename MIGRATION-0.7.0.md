@@ -38,9 +38,6 @@ cp mcp.db mcp.db.backup.$(date +%Y%m%d_%H%M%S)
 
 # For PostgreSQL
 pg_dump -h localhost -U postgres -d mcp > mcp_backup_$(date +%Y%m%d_%H%M%S).sql
-
-# For MySQL
-mysqldump -u mysql -p mcp > mcp_backup_$(date +%Y%m%d_%H%M%S).sql
 ```
 
 #### Environment Configuration Backup
@@ -170,7 +167,7 @@ The migration process is automated and handles:
 
 **⚠️ PREREQUISITE**: Ensure `.env` file is configured with `PLATFORM_ADMIN_EMAIL` etc. (see step 3 above)
 **✅ Configuration**: Uses your `.env` settings automatically
-**✅ Database Compatibility**: Works with **SQLite**, **PostgreSQL**, and **MySQL**
+**✅ Database Compatibility**: Works with **SQLite** and **PostgreSQL**
 
 ```bash
 # IMPORTANT: Setup .env first (if not already done)
@@ -557,10 +554,6 @@ cp mcp.db.backup.YYYYMMDD_HHMMSS mcp.db
 dropdb mcp
 createdb mcp
 psql -d mcp < mcp_backup_YYYYMMDD_HHMMSS.sql
-
-# For MySQL
-mysql -u mysql -p -e "DROP DATABASE mcp; CREATE DATABASE mcp;"
-mysql -u mysql -p mcp < mcp_backup_YYYYMMDD_HHMMSS.sql
 ```
 
 ### 2. Revert Environment Configuration

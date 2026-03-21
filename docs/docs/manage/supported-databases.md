@@ -1,98 +1,59 @@
 # Supported Databases
 
-ContextForge supports multiple database backends with full feature parity across all supported systems.
+ContextForge supports two database backends: **SQLite** for development and **PostgreSQL** for production.
 
 ## Database Support Matrix
 
 | Database    | Support Level | Production Ready | Connection String Example                                    | Notes                          |
 |-------------|---------------|------------------|--------------------------------------------------------------|--------------------------------|
-| SQLite      | ✅ Full       | ✅ Yes           | `sqlite:///./mcp.db`                                        | Default, file-based            |
+| SQLite      | ✅ Full       | ⚠️ Dev only      | `sqlite:///./mcp.db`                                        | Default, file-based            |
 | PostgreSQL  | ✅ Full       | ✅ Yes           | `postgresql+psycopg://postgres:changeme@localhost:5432/mcp` | Recommended for production     |
-| MariaDB     | ✅ Full       | ✅ Yes           | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 10.6+ |
-| MySQL       | ✅ Full       | ✅ Yes           | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
 
-## MariaDB/MySQL Configuration
+## PostgreSQL Configuration
 
 ### Connection String Format
 
 ```bash
-# MariaDB (recommended)
-DATABASE_URL=mysql+pymysql://[username]:[password]@[host]:[port]/[database]
+DATABASE_URL=postgresql+psycopg://[username]:[password]@[host]:[port]/[database]
 
 # Examples:
-DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
-DATABASE_URL=mysql+pymysql://admin:secret123@mariadb.example.com:3306/mcpgateway
-DATABASE_URL=mysql+pymysql://mcpuser:mypassword@192.168.1.100:3306/mcp_production
+DATABASE_URL=postgresql+psycopg://postgres:changeme@localhost:5432/mcp
+DATABASE_URL=postgresql+psycopg://mcpuser:secret123@pg.example.com:5432/mcpgateway
 ```
 
 ### Version Requirements
 
-- **MariaDB**: 10.6+ (recommended)
-- **MySQL**: 8.0+ (supported)
+- **PostgreSQL**: 14+ (recommended)
 
 ### Driver Requirements
 
-The `pymysql` driver is included by default in all ContextForge installations:
+The `psycopg` driver is used for PostgreSQL connections:
 
 ```bash
-# Already included - no additional installation needed
-pip install mcp-contextforge-gateway
+# Install with PostgreSQL support
+pip install mcp-contextforge-gateway[postgres]
 ```
 
-### Database Schema Compatibility
-
-ContextForge's database schema is fully compatible with MariaDB/MySQL:
-
-- **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
-- All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
-- Complete feature parity with SQLite and PostgreSQL
-- Supports all ContextForge features including federation, caching, and A2A agents
-
 ## Known Limitations
-
-### MariaDB/MySQL Specific Limitations
-
-1. **No Partial JSONPath Index Support**
-
-   - MariaDB/MySQL do not support partial indexes on JSON paths
-   - Full table scans may occur for complex JSON queries
-   - **Workaround**: Use additional indexed columns for frequently queried JSON fields
-
-2. **Foreign Key Length Constraints**
-
-   - Foreign key column names are limited to 64 characters
-   - Some composite foreign keys may require shorter naming
-   - **Impact**: Minimal - affects only internal schema design
-
-3. **Case Sensitivity**
-
-   - Table and column names are case-sensitive on Linux, case-insensitive on Windows/macOS
-   - **Recommendation**: Use consistent lowercase naming for portability
-
-4. **JSON Data Type Differences**
-
-   - MariaDB JSON is stored as LONGTEXT with validation
-   - MySQL has native JSON data type with better performance
-   - **Impact**: Functional compatibility maintained, performance may vary
 
 ### General Database Limitations
 
 1. **SQLite Connection Limits**
 
    - SQLite is limited to 50 connections in pool (vs 200 for other databases)
-   - **Recommendation**: Use PostgreSQL or MariaDB for high-concurrency deployments
+   - **Recommendation**: Use PostgreSQL for high-concurrency deployments
 
-2. **MongoDB Schema Flexibility**
+2. **SQLite Write Concurrency**
 
-   - MongoDB's schemaless nature may allow invalid data structures
-   - **Mitigation**: Application-level validation enforced regardless of backend
+   - SQLite uses file-level locking, limiting concurrent writes
+   - **Recommendation**: Use PostgreSQL for multi-worker or multi-instance deployments
 
 ## Performance Considerations
 
-### MariaDB/MySQL Optimization
+### PostgreSQL Optimization
 
 ```bash
-# Recommended connection pool settings for MariaDB/MySQL
+# Recommended connection pool settings for PostgreSQL
 DB_POOL_SIZE=200              # Maximum persistent connections
 DB_MAX_OVERFLOW=20            # Additional connections beyond pool_size
 DB_POOL_TIMEOUT=30            # Seconds to wait for connection
@@ -101,7 +62,7 @@ DB_POOL_RECYCLE=3600          # Seconds before recreating connection
 
 ### Index Optimization
 
-MariaDB/MySQL benefit from these additional indexes for large deployments:
+PostgreSQL benefits from these additional indexes for large deployments:
 
 ```sql
 -- Recommended indexes for high-performance deployments
@@ -112,70 +73,47 @@ CREATE INDEX idx_prompts_team_name ON prompts(team_id, name);
 
 ## Migration Between Databases
 
-### PostgreSQL to MariaDB Migration
-
-MariaDB is fully compatible with PostgreSQL schemas used by ContextForge. Simply update your `DATABASE_URL` to point to MariaDB:
-
-```bash
-# Change from PostgreSQL
-# DATABASE_URL=postgresql+psycopg://postgres:changeme@localhost:5432/mcp
-
-# To MariaDB
-DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
-```
-
-The gateway will automatically handle schema creation and migrations when started with the new database URL.
-
-### SQLite to MariaDB Migration
+### SQLite to PostgreSQL Migration
 
 ```bash
 # 1. Export SQLite data
 sqlite3 mcp.db .dump > mcp_backup.sql
 
-# 2. Convert SQLite syntax to MySQL
-sed -i 's/AUTOINCREMENT/AUTO_INCREMENT/g' mcp_backup.sql
-sed -i 's/INTEGER PRIMARY KEY/INT AUTO_INCREMENT PRIMARY KEY/g' mcp_backup.sql
+# 2. Update your DATABASE_URL
+DATABASE_URL=postgresql+psycopg://postgres:changeme@localhost:5432/mcp
 
-# 3. Import to MariaDB
-mysql -u mysql -p mcp < mcp_backup.sql
+# 3. Start ContextForge with the new database URL
+# The gateway will automatically handle schema creation and migrations
 ```
 
 ## Troubleshooting
 
-### Common MariaDB/MySQL Issues
+### Common PostgreSQL Issues
 
 1. **Connection Refused**
    ```bash
-   # Check MariaDB service status
-   sudo systemctl status mariadb
+   # Check PostgreSQL service status
+   sudo systemctl status postgresql
 
    # Verify port is open
-   netstat -tlnp | grep 3306
+   netstat -tlnp | grep 5432
    ```
 
 2. **Authentication Failures**
    ```bash
-   # Reset user password
-   sudo mariadb -e "ALTER USER 'mysql'@'localhost' IDENTIFIED BY 'newpassword';"
-   sudo mariadb -e "FLUSH PRIVILEGES;"
+   # Check pg_hba.conf for allowed authentication methods
+   sudo -u postgres psql -c "SHOW hba_file;"
    ```
 
 3. **Permission Denied**
    ```bash
-   # Grant all privileges
-   sudo mariadb -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'%' IDENTIFIED BY 'changeme';"
-   sudo mariadb -e "FLUSH PRIVILEGES;"
-   ```
-
-4. **Character Set Issues**
-   ```bash
-   # Set UTF-8 character set
-   sudo mariadb -e "ALTER DATABASE mcp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+   # Grant privileges
+   sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE mcp TO your_user;"
    ```
 
 ## Related Documentation
 
 - [Configuration Reference](configuration.md) - Complete database configuration options
-- [Docker Compose Deployment](../deployment/compose.md) - MariaDB container setup
-- [Kubernetes Deployment](../deployment/kubernetes.md) - MariaDB in Kubernetes
+- [Docker Compose Deployment](../deployment/compose.md) - PostgreSQL container setup
+- [Kubernetes Deployment](../deployment/kubernetes.md) - PostgreSQL in Kubernetes
 - [Performance Tuning](tuning.md) - Database optimization guidelines

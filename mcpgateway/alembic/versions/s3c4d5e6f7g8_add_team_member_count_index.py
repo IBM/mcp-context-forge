@@ -10,7 +10,7 @@ batch member count queries used by get_member_counts_batch(). The index
 covers the WHERE is_active = true condition used in those queries.
 
 For PostgreSQL, this uses a partial index which is most efficient.
-For SQLite/MySQL, a composite index is used as partial indexes are not supported.
+For SQLite, a composite index is used as partial indexes are not supported.
 """
 
 # Standard
@@ -67,7 +67,7 @@ def upgrade() -> None:
             )
             print("Created partial index idx_email_team_members_team_active_partial")
     else:
-        # SQLite/MySQL: Regular composite index (no partial index support)
+        # SQLite: Regular composite index (no partial index support)
         if not _index_exists("email_team_members", "idx_email_team_members_team_active_count"):
             op.create_index(
                 "idx_email_team_members_team_active_count",

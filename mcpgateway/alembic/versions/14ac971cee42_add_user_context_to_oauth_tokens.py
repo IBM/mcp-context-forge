@@ -65,7 +65,7 @@ def upgrade() -> None:
             # Remove the server default after adding the column
             batch_op.alter_column("app_user_email", server_default=None)
     else:
-        # PostgreSQL and MySQL can handle adding NOT NULL columns to empty tables
+        # PostgreSQL can handle adding NOT NULL columns to empty tables
         op.add_column("oauth_tokens", sa.Column("app_user_email", sa.String(255), nullable=False))
 
     # Add foreign key constraint to ensure referential integrity
@@ -84,11 +84,6 @@ def upgrade() -> None:
     index_exists = False
     if dialect_name == "postgresql":
         result = conn.execute(sa.text("SELECT 1 FROM pg_indexes WHERE tablename = 'oauth_tokens' AND indexname = 'idx_oauth_tokens_gateway_user'")).fetchone()
-        index_exists = result is not None
-    elif dialect_name == "mysql":
-        result = conn.execute(
-            sa.text("SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'oauth_tokens' AND index_name = 'idx_oauth_tokens_gateway_user'")
-        ).fetchone()
         index_exists = result is not None
     elif dialect_name == "sqlite":
         result = conn.execute(sa.text("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_oauth_tokens_gateway_user'")).fetchone()
@@ -140,11 +135,6 @@ def downgrade() -> None:
     if dialect_name == "postgresql":
         result = conn.execute(sa.text("SELECT 1 FROM pg_indexes WHERE tablename = 'oauth_tokens' AND indexname = 'idx_oauth_gateway_user'")).fetchone()
         index_exists = result is not None
-    elif dialect_name == "mysql":
-        result = conn.execute(
-            sa.text("SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'oauth_tokens' AND index_name = 'idx_oauth_gateway_user'")
-        ).fetchone()
-        index_exists = result is not None
     elif dialect_name == "sqlite":
         result = conn.execute(sa.text("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_oauth_gateway_user'")).fetchone()
         index_exists = result is not None
@@ -162,7 +152,7 @@ def downgrade() -> None:
             # The foreign key will be removed when we drop the column
             batch_op.drop_column("app_user_email")
     else:
-        # Drop the foreign key constraint for PostgreSQL and MySQL
+        # Drop the foreign key constraint for PostgreSQL
         op.drop_constraint("fk_oauth_app_user", "oauth_tokens", type_="foreignkey")
 
         # Drop the column

@@ -292,7 +292,7 @@ def wait_for_db_ready(
     log.info(f"Probing {backend} at {target} (timeout={timeout}s, interval={interval}s, max_tries={max_tries}, max_backoff={max_backoff}s)")
 
     connect_args: Dict[str, Any] = {}
-    if backend.startswith(("postgresql", "mysql")):
+    if backend.startswith("postgresql"):
         # Most drivers honour this parameter - harmless for others.
         connect_args["connect_timeout"] = timeout
 
