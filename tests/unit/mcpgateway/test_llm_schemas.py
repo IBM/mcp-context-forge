@@ -364,6 +364,16 @@ class TestProviderConfigFunctions:
         assert "openai" in configs
         assert "ollama" in configs
 
+    def test_ollama_provider_config_uses_native_api(self):
+        from mcpgateway.llm_provider_configs import get_provider_config
+
+        ollama = get_provider_config("ollama")
+        assert ollama is not None
+        assert ollama.api_base_default == "http://localhost:11434", "must not include /v1"
+        assert ollama.requires_api_key is False
+        assert ollama.requires_api_base is True
+        assert "native" in ollama.api_base_help.lower()
+
 
 class TestAdditionalSchemas:
     """Tests for schemas not covered by other test classes."""

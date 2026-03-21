@@ -431,11 +431,11 @@ PROVIDER_CONFIGS: Dict[str, ProviderConfigDefinition] = {
     "ollama": ProviderConfigDefinition(
         provider_type="ollama",
         display_name="Ollama",
-        description="Local Ollama server (OpenAI-compatible)",
+        description="Local Ollama server",
         requires_api_key=False,
         requires_api_base=True,
-        api_base_default="http://localhost:11434/v1",
-        api_base_help="Ollama server URL (use /v1 suffix for OpenAI compatibility)",
+        api_base_default="http://localhost:11434",
+        api_base_help="Ollama server URL (native API)",
         config_fields=[],
     ),
     "openai_compatible": ProviderConfigDefinition(
