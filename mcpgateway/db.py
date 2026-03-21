@@ -132,6 +132,9 @@ def build_engine() -> Engine:
 
     Returns:
         SQLAlchemy Engine instance configured for the specified database.
+
+    Raises:
+        ValueError: If the database backend is not postgresql or sqlite.
     """
     if _sqlalchemy_echo:
         logger.info("SQLALCHEMY_ECHO enabled - all SQL queries will be logged")
