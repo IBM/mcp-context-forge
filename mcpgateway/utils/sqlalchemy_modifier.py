@@ -18,7 +18,6 @@ from typing import Any, Iterable, List, Union
 import uuid
 
 # Third-Party
-import orjson
 from sqlalchemy import and_, func, or_, text
 from sqlalchemy.sql.elements import TextClause
 

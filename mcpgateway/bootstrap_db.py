@@ -115,7 +115,6 @@ def advisory_lock(conn: Connection):
         TimeoutError: If the lock cannot be acquired within the timeout period
     """
     dialect = conn.dialect.name
-    lock_id = "mcpgateway_migration"
     # Postgres requires a BIGINT lock ID (arbitrary hash of the string)
     pg_lock_id = 42424242424242
 
