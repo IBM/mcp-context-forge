@@ -22,7 +22,7 @@ We will use:
 - **SQLAlchemy 2.x (async)** for all data persistence.
 - **AsyncSession** and `async with` scoped transactions.
 - **Alembic** for migrations, with autogeneration and CLI support.
-- **SQLite** for development; **PostgreSQL or MySQL** for production via `DATABASE_URL`.
+- **SQLite** for development; **PostgreSQL** for production via `DATABASE_URL`.
 - **Configurable connection pooling** with auto-scaling based on worker count and deployment size.
 
 This provides consistent, well-understood relational behavior and integrates cleanly with FastAPI.

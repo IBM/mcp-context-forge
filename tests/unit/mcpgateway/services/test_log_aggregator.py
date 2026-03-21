@@ -30,12 +30,6 @@ class TestIsPostgresql:
             mock_engine.dialect.name = "sqlite"
             assert _is_postgresql() is False
 
-    def test_is_postgresql_false_mysql(self):
-        """Test PostgreSQL detection returns False for MySQL."""
-        with patch("mcpgateway.services.log_aggregator.engine") as mock_engine:
-            mock_engine.dialect.name = "mysql"
-            assert _is_postgresql() is False
-
 
 class TestLogAggregatorPercentiles:
     """Tests for LogAggregator percentile computation."""

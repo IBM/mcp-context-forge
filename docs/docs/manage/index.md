@@ -40,14 +40,6 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 
 Most operational settings (logging level, database pool size, auth mode) are controlled through `.env` or environment variables.
 
-!!! info "MariaDB & MySQL Fully Supported"
-    ContextForge now has **complete MariaDB/MySQL support** alongside SQLite and PostgreSQL:
-
-    - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
-    - All **VARCHAR length issues** resolved for MariaDB/MySQL compatibility
-    - Connection string: `DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp`
-    - See [Configuration Reference](configuration.md) and [Plugin Configuration](configuration-plugins.md) for complete setup instructions
-
 Update the file and restart the container or process to apply changes.
 
 ---

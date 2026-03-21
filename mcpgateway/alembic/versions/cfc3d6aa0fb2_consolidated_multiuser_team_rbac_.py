@@ -13,7 +13,7 @@ Create Date: 2025-08-29 22:50:14.315471
 
 This migration consolidates all multi-user, team scoping, RBAC, and authentication
 features into a single clean DDL-only migration for reliable deployment across
-SQLite, PostgreSQL, and MySQL.
+SQLite and PostgreSQL.
 
 Data population (admin users, teams, resource assignment) is handled separately
 by bootstrap_db.py to ensure proper transaction management.

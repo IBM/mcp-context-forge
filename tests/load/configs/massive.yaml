@@ -1,7 +1,7 @@
 # Massive load profile - Stress testing and benchmarking
 # Target: 1M users, ~10M teams, ~100M+ resources
 # Generation time: ~10-20 hours
-# REQUIRED: PostgreSQL or MySQL with high-performance configuration
+# REQUIRED: PostgreSQL with high-performance configuration
 # Recommended hardware: 32GB+ RAM, SSD storage, multi-core CPU
 
 profile:

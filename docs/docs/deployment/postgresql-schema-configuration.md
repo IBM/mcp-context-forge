@@ -214,7 +214,6 @@ CREATE SCHEMA mcp_gateway;
 
 - ✅ **PostgreSQL**: Full support via `options` parameter
 - ⚠️ **SQLite**: Ignores `options` parameter (no effect)
-- ⚠️ **MySQL/MariaDB**: Ignores `options` parameter (use database name instead)
 
 ### Alembic Migrations
 

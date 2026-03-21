@@ -37,7 +37,7 @@
     },
     "database_url": {
       "default": "sqlite:///./mcp.db",
-      "description": "Database connection URL. Supports SQLite, PostgreSQL, MySQL/MariaDB. For PostgreSQL with custom schema, use the 'options' query parameter: postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name (See Issue #1535 for details)",
+      "description": "Database connection URL. Supports SQLite and PostgreSQL. For PostgreSQL with custom schema, use the 'options' query parameter: postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name (See Issue #1535 for details)",
       "title": "Database Url",
       "type": "string"
     },
@@ -3122,7 +3122,7 @@
       "type": "array"
     },
     "db_driver": {
-      "default": "mariadb+mariadbconnector",
+      "default": "postgresql+psycopg",
       "title": "Db Driver",
       "type": "string"
     },

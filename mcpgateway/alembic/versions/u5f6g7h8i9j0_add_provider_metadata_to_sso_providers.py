@@ -33,8 +33,8 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Add provider_metadata JSON column to sso_providers table.
 
-    Note: MySQL/MariaDB do not support server_default for JSON columns,
-    so we add as nullable, backfill, then alter to NOT NULL for those dialects.
+    Note: Some database backends do not support server_default for JSON columns,
+    so we handle each dialect appropriately.
     """
     bind = op.get_bind()
     inspector = sa.inspect(bind)
@@ -63,17 +63,6 @@ def upgrade() -> None:
                 server_default=sa.text("'{}'::jsonb"),
             ),
         )
-    elif dialect in ("mysql", "mariadb"):
-        # MySQL/MariaDB: JSON columns cannot have server_default
-        # Add as nullable, backfill, then alter to NOT NULL
-        op.add_column(
-            "sso_providers",
-            sa.Column("provider_metadata", sa.JSON(), nullable=True),
-        )
-        # Backfill existing rows with empty JSON object
-        bind.execute(sa.text("UPDATE sso_providers SET provider_metadata = '{}' WHERE provider_metadata IS NULL"))
-        # Alter to NOT NULL
-        op.alter_column("sso_providers", "provider_metadata", nullable=False)
     else:
         # SQLite and others: JSON stored as TEXT, server_default works
         op.add_column(

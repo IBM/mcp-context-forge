@@ -1047,7 +1047,7 @@ generate-medium:                           ## Generate medium load test dataset 
 	@echo "📊 Generating medium load test data..."
 	@echo "   Target: 10K users, ~70M records"
 	@echo "   Time: ~10 minutes"
-	@echo "   ⚠️  Recommended: Use PostgreSQL or MySQL for better performance"
+	@echo "   ⚠️  Recommended: Use PostgreSQL for better performance"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python -m tests.load.generate --profile medium"
@@ -1059,7 +1059,7 @@ generate-large:                            ## Generate large load test dataset (
 	@echo "📊 Generating large load test data..."
 	@echo "   Target: 100K users, ~700M records"
 	@echo "   Time: ~1-2 hours"
-	@echo "   ⚠️  REQUIRED: PostgreSQL or MySQL"
+	@echo "   ⚠️  REQUIRED: PostgreSQL"
 	@echo "   ⚠️  Recommended: 16GB+ RAM, SSD storage"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
@@ -1072,7 +1072,7 @@ generate-massive:                          ## Generate massive load test dataset
 	@echo "📊 Generating massive load test data..."
 	@echo "   Target: 1M users, billions of records"
 	@echo "   Time: ~10-20 hours"
-	@echo "   ⚠️  REQUIRED: PostgreSQL or MySQL with high-performance config"
+	@echo "   ⚠️  REQUIRED: PostgreSQL with high-performance config"
 	@echo "   ⚠️  REQUIRED: 32GB+ RAM, SSD storage, multi-core CPU"
 	@echo ""
 	@read -p "This will take 10-20 hours. Continue? [y/N] " -n 1 -r; \

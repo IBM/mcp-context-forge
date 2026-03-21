@@ -50,56 +50,14 @@ By default, ContextForge uses SQLite for simplicity. You can configure alternati
     DATABASE_URL=sqlite:///./mcp.db
     ```
 
-=== "MariaDB"
-    ```bash
-    # .env file
-    DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
-    ```
-
-    !!! info "MariaDB Setup"
-        Install and configure MariaDB server:
-        ```bash
-        # Ubuntu/Debian
-        sudo apt update && sudo apt install mariadb-server
-
-        # Create database and user
-        sudo mariadb -e "CREATE DATABASE mcp;"
-        sudo mariadb -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-        sudo mariadb -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-        sudo mariadb -e "FLUSH PRIVILEGES;"
-        ```
-
-=== "MySQL"
-    ```bash
-    # .env file
-    DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
-    ```
-
-    !!! info "MySQL Setup"
-        Install and configure MySQL server:
-        ```bash
-        # Ubuntu/Debian
-        sudo apt update && sudo apt install mysql-server
-
-        # Create database and user
-        sudo mysql -e "CREATE DATABASE mcp;"
-        sudo mysql -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-        sudo mysql -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-        sudo mysql -e "FLUSH PRIVILEGES;"
-        ```
-
 === "PostgreSQL"
     ```bash
     # .env file
     DATABASE_URL=postgresql+psycopg://postgres:changeme@localhost:5432/mcp
     ```
 
-!!! tip "MariaDB & MySQL Full Compatibility"
-    MariaDB and MySQL are **fully supported** with:
-
-    - **36+ database tables** working perfectly with MariaDB 10.6+ and MySQL 8.0+
-    - All **VARCHAR length issues** resolved for MariaDB/MySQL compatibility
-    - Complete feature parity with SQLite and PostgreSQL
+!!! tip "Database Recommendation"
+    Use **SQLite** for development and testing. For production deployments, use **PostgreSQL** for better concurrency, performance, and reliability.
 
 ---
 

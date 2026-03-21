@@ -96,10 +96,6 @@ def _rename_existing_ix_indexes() -> None:
                             op.execute(f"ALTER INDEX {index_name} RENAME TO {new_index_name}")
                             print(f"✓ Renamed index {index_name} → {new_index_name} on {table_name}")
                             renamed_count += 1
-                        elif dialect_name == "mysql":
-                            op.execute(f"ALTER TABLE {table_name} RENAME INDEX {index_name} TO {new_index_name}")
-                            print(f"✓ Renamed index {index_name} → {new_index_name} on {table_name}")
-                            renamed_count += 1
                         elif dialect_name == "sqlite":
                             # SQLite requires recreating the index
                             # Get index details
@@ -798,20 +794,6 @@ def upgrade() -> None:
                 print(f"⚠️  Could not update FK constraint: {e}")
         else:
             print(f"⚠️  Skipping FK update: constraint '{constraint_name}' does not exist (may not exist in older schemas)")
-    elif dialect_name == "mysql":
-        print("\n--- MySQL: Adding CASCADE to team_member_history FK ---")
-        constraint_name = "email_team_member_history_ibfk_1"
-        if _fk_constraint_exists("email_team_member_history", constraint_name):
-            try:
-                op.drop_constraint(constraint_name, "email_team_member_history", type_="foreignkey")
-                print(f"✓ Dropped existing FK constraint: {constraint_name}")
-
-                op.create_foreign_key(constraint_name, "email_team_member_history", "email_team_members", ["team_member_id"], ["id"], ondelete="CASCADE")
-                print(f"✓ Created FK constraint with CASCADE: {constraint_name}")
-            except Exception as e:
-                print(f"⚠️  Could not update FK constraint: {e}")
-        else:
-            print(f"⚠️  Skipping FK update: constraint '{constraint_name}' does not exist (may not exist in older schemas)")
     else:
         print(f"\n--- {dialect_name}: Skipping FK CASCADE update (not required) ---")
 
@@ -856,20 +838,6 @@ def downgrade() -> None:
                 print("✓ Dropped FK constraint with CASCADE")
 
                 # Recreate without CASCADE
-                op.create_foreign_key(constraint_name, "email_team_member_history", "email_team_members", ["team_member_id"], ["id"])
-                print("✓ Recreated FK constraint without CASCADE")
-            except Exception as e:
-                print(f"⚠️  Could not revert FK constraint: {e}")
-        else:
-            print(f"⚠️  Skipping FK revert: constraint '{constraint_name}' does not exist")
-    elif dialect_name == "mysql":
-        print("\n--- MySQL: Removing CASCADE from team_member_history FK ---")
-        constraint_name = "email_team_member_history_ibfk_1"
-        if _fk_constraint_exists("email_team_member_history", constraint_name):
-            try:
-                op.drop_constraint(constraint_name, "email_team_member_history", type_="foreignkey")
-                print("✓ Dropped FK constraint with CASCADE")
-
                 op.create_foreign_key(constraint_name, "email_team_member_history", "email_team_members", ["team_member_id"], ["id"])
                 print("✓ Recreated FK constraint without CASCADE")
             except Exception as e:

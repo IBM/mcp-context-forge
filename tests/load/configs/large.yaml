@@ -1,7 +1,7 @@
 # Large load profile - Pre-production testing
 # Target: 100K users, ~1M teams, ~10M resources
 # Generation time: ~1-2 hours
-# Recommended: Use PostgreSQL or MySQL for this profile
+# Recommended: Use PostgreSQL for this profile
 
 profile:
   name: large

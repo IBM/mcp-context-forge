@@ -356,9 +356,6 @@ make test
 
 # PostgreSQL
 DATABASE_URL=postgresql://user:pass@localhost/test_mcp make test
-
-# MySQL/MariaDB
-DATABASE_URL=mysql+pymysql://user:pass@localhost/test_mcp make test
 ```
 
 ### Testing with Different Configurations
