@@ -2,6 +2,33 @@
 
 > All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
 
+## [1.0.0] - 2026-03-31 - General Availability
+
+### Overview
+
+**ContextForge 1.0.0** marks the first General Availability release.
+
+### ⚠️ Breaking Changes
+
+#### **🗄️ MySQL/MariaDB/MongoDB Support Removed** ([#3684](https://github.com/IBM/mcp-context-forge/pull/3684), [#1688](https://github.com/IBM/mcp-context-forge/issues/1688))
+
+**Action Required**: MySQL, MariaDB, and MongoDB database backends are no longer supported.
+
+| Backend | Status |
+|---------|--------|
+| **PostgreSQL** | **Supported** — production |
+| **SQLite** | **Supported** — development only |
+| MySQL / MariaDB | **Removed** |
+| MongoDB | **Removed** |
+
+* The `pymysql` and `mariadb` optional dependency groups have been removed from `pyproject.toml`
+* The default `db_driver` is now `postgresql+psycopg` (was `mariadb+mariadbconnector`)
+* MySQL/MariaDB-specific code has been removed from `db.py`, `bootstrap_db.py`, `alembic/env.py`, and all Alembic migrations
+* `docker-compose.mariadb.yml` has been deleted; MariaDB/MySQL/MongoDB/PHPMyAdmin/mongo-express services removed from debug and performance compose files
+* Attempting to use an unsupported database backend now raises `ValueError` at startup
+
+> **Migration**: Switch to PostgreSQL for production deployments. Update `DATABASE_URL` to a `postgresql+psycopg://` connection string. SQLite (`sqlite:///./mcp.db`) remains available for local development and testing.
+
 ## [1.0.0-RC2] - 2026-03-09 - Hardening, Admin UI Polish, Plugin Framework & Quality
 
 ### Overview
