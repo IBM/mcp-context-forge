@@ -88,6 +88,23 @@ def test_setup_metrics_enabled_postgresql():
     inst.instrument.assert_called_once()
 
 
+def test_setup_metrics_enabled_postgresql_psycopg():
+    """Driver-qualified postgresql+psycopg:// URLs must be detected as postgresql."""
+    app = MagicMock()
+    app.state = MagicMock()
+    with (
+        patch.dict("os.environ", {"ENABLE_METRICS": "true", "METRICS_CUSTOM_LABELS": "", "METRICS_EXCLUDED_HANDLERS": ""}),
+        patch("mcpgateway.services.metrics.settings") as mock_settings,
+        patch("mcpgateway.services.metrics.Instrumentator") as mock_inst_cls,
+    ):
+        mock_settings.database_url = "postgresql+psycopg://user:pass@localhost/db"
+        mock_settings.METRICS_EXCLUDED_HANDLERS = ""
+        inst = MagicMock()
+        mock_inst_cls.return_value = inst
+        setup_metrics(app)
+    inst.instrument.assert_called_once()
+
+
 def test_setup_metrics_enabled_unknown_db():
     app = MagicMock()
     app.state = MagicMock()
