@@ -12,6 +12,8 @@ import {
     beforeAll,
     beforeEach,
     afterAll,
+    afterEach,
+    vi,
 } from "vitest";
 import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
 
@@ -339,5 +341,180 @@ describe("tableToEntityType mapping", () => {
         const buttons = container.querySelectorAll("button");
         expect(buttons.length).toBeGreaterThanOrEqual(1);
         expect(buttons[0].textContent).toBe("test-tag");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Helper: build a servers-table with real table content (no loading message)
+// ---------------------------------------------------------------------------
+function buildLoadedServersTable() {
+    const wrapper = doc.createElement("div");
+    wrapper.id = "servers-table";
+    const table = doc.createElement("table");
+    const tbody = doc.createElement("tbody");
+    const tr = doc.createElement("tr");
+    const td = doc.createElement("td");
+    td.textContent = "Server A";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+    doc.body.appendChild(wrapper);
+    return wrapper;
+}
+
+// ---------------------------------------------------------------------------
+// showTab("catalog") — regression path: restore filters from URL
+// ---------------------------------------------------------------------------
+describe("showTab catalog — restore filters from URL on return", () => {
+    const showTab = () => win.showTab;
+
+    // showTab wraps content-loading logic in setTimeout; use fake timers
+    // so vi.runAllTimers() flushes the callback synchronously.
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test("restores tag and search inputs from URL when table is already loaded", () => {
+        // Seed URL with persisted filter state
+        win.history.replaceState(
+            {},
+            "",
+            "http://localhost/?servers_tags=prod&servers_q=my-search#catalog",
+        );
+
+        buildLoadedServersTable();
+
+        // Create the renamed inputs (resolved via PANEL_SEARCH_CONFIG)
+        const tagInput = doc.createElement("input");
+        tagInput.id = "servers-tag-filter";
+        tagInput.value = "";
+        doc.body.appendChild(tagInput);
+
+        const searchInput = doc.createElement("input");
+        searchInput.id = "servers-search-input";
+        searchInput.value = "";
+        doc.body.appendChild(searchInput);
+
+        // Panel must have "hidden" class so the idempotency guard
+        // (classList.contains("hidden")) doesn't short-circuit showTab.
+        const panel = doc.createElement("div");
+        panel.id = "catalog-panel";
+        panel.classList.add("tab-panel", "hidden");
+        doc.body.appendChild(panel);
+
+        showTab()("catalog");
+        vi.runAllTimers();
+
+        expect(tagInput.value).toBe("prod");
+        expect(searchInput.value).toBe("my-search");
+    });
+
+    test("does not overwrite inputs when URL has no filter state", () => {
+        win.history.replaceState({}, "", "http://localhost/#catalog");
+
+        buildLoadedServersTable();
+
+        const tagInput = doc.createElement("input");
+        tagInput.id = "servers-tag-filter";
+        tagInput.value = "existing";
+        doc.body.appendChild(tagInput);
+
+        const searchInput = doc.createElement("input");
+        searchInput.id = "servers-search-input";
+        searchInput.value = "existing-q";
+        doc.body.appendChild(searchInput);
+
+        const panel = doc.createElement("div");
+        panel.id = "catalog-panel";
+        panel.classList.add("tab-panel", "hidden");
+        doc.body.appendChild(panel);
+
+        showTab()("catalog");
+        vi.runAllTimers();
+
+        // Inputs should remain unchanged — no URL state to restore
+        expect(tagInput.value).toBe("existing");
+        expect(searchInput.value).toBe("existing-q");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// filterEntitiesByTags — uses data-tag attributes
+// ---------------------------------------------------------------------------
+describe("filterEntitiesByTags — data-tag contract", () => {
+    const f = () => win.filterEntitiesByTags;
+
+    function buildTaggedPanel(entityType, rows) {
+        const panel = doc.createElement("div");
+        panel.id = `${entityType}-panel`;
+        const table = doc.createElement("table");
+        const tbody = doc.createElement("tbody");
+        rows.forEach(({ text, tags }) => {
+            const tr = doc.createElement("tr");
+            const td1 = doc.createElement("td");
+            td1.textContent = text;
+            tr.appendChild(td1);
+            const td2 = doc.createElement("td");
+            tags.forEach((tag) => {
+                const span = doc.createElement("span");
+                span.setAttribute("data-tag", tag);
+                span.textContent = tag;
+                td2.appendChild(span);
+            });
+            tr.appendChild(td2);
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        panel.appendChild(table);
+        doc.body.appendChild(panel);
+        return tbody;
+    }
+
+    test("shows rows matching filter tag", () => {
+        const tbody = buildTaggedPanel("tools", [
+            { text: "Tool A", tags: ["production"] },
+            { text: "Tool B", tags: ["staging"] },
+        ]);
+        f()("tools", "production");
+        const rows = tbody.querySelectorAll("tr");
+        expect(rows[0].style.display).toBe("");
+        expect(rows[1].style.display).toBe("none");
+    });
+
+    test("hides all rows when no tags match", () => {
+        const tbody = buildTaggedPanel("tools", [
+            { text: "Tool A", tags: ["alpha"] },
+            { text: "Tool B", tags: ["beta"] },
+        ]);
+        f()("tools", "nonexistent");
+        const rows = tbody.querySelectorAll("tr");
+        expect(rows[0].style.display).toBe("none");
+        expect(rows[1].style.display).toBe("none");
+    });
+
+    test("empty filter shows all rows", () => {
+        const tbody = buildTaggedPanel("tools", [
+            { text: "Tool A", tags: ["production"] },
+            { text: "Tool B", tags: ["staging"] },
+        ]);
+        f()("tools", "");
+        const rows = tbody.querySelectorAll("tr");
+        expect(rows[0].style.display).toBe("");
+        expect(rows[1].style.display).toBe("");
+    });
+
+    test("partial tag match works (OR substring logic)", () => {
+        const tbody = buildTaggedPanel("tools", [
+            { text: "Tool A", tags: ["production-us"] },
+            { text: "Tool B", tags: ["staging"] },
+        ]);
+        f()("tools", "production");
+        const rows = tbody.querySelectorAll("tr");
+        expect(rows[0].style.display).toBe("");
+        expect(rows[1].style.display).toBe("none");
     });
 });

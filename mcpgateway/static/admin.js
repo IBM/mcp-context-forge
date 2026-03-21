@@ -20077,10 +20077,6 @@ function extractAvailableTags(entityType) {
     const tableSelector = `#${entityType}-panel tbody tr:not(.inactive-row)`;
     const rows = document.querySelectorAll(tableSelector);
 
-    console.log(
-        `[DEBUG] extractAvailableTags for ${entityType}: Found ${rows.length} rows`,
-    );
-
     const tableHeaderSelector = `#${entityType}-panel thead tr th`;
     const headerCells = document.querySelectorAll(tableHeaderSelector);
     let tagsColumnIndex = -1;
@@ -20205,34 +20201,11 @@ function filterEntitiesByTags(entityType, tagsInput) {
             return;
         }
 
-        // Extract tags from this row using specific tag selectors (not status badges)
+        // Extract tags from this row using data-tag attributes
         const rowTags = new Set();
-
-        const tagElements = row.querySelectorAll(`
-            /* Gateways */
-            span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full,
-            /* A2A Agents */
-            span.inline-flex.items-center.px-2.py-1.rounded.text-xs.bg-gray-100.text-gray-700,
-            /* Prompts & Resources */
-            span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
-            /* Gray tags for A2A agent metadata */
-            span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-gray-100.text-gray-700
-        `);
-
-        tagElements.forEach((tagEl) => {
-            const tagText = tagEl.textContent.trim().toLowerCase();
-            // Filter out any remaining non-tag content
-            if (
-                tagText &&
-                tagText !== "no tags" &&
-                tagText !== "none" &&
-                tagText !== "active" &&
-                tagText !== "inactive" &&
-                tagText !== "online" &&
-                tagText !== "offline"
-            ) {
-                rowTags.add(tagText);
-            }
+        row.querySelectorAll("[data-tag]").forEach((el) => {
+            const t = el.getAttribute("data-tag").trim().toLowerCase();
+            if (t) rowTags.add(t);
         });
 
         // Check if any of the filter tags match any of the row tags (OR logic)
