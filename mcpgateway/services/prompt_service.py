@@ -31,7 +31,7 @@ from mcp.client.streamable_http import streamablehttp_client
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError, MultipleResultsFound, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
@@ -1622,9 +1622,9 @@ class PromptService(BaseService):
     ) -> Optional[DbPrompt]:
         """Find a prompt by name or ID using a scoped query.
 
-        This helper method encapsulates the logic for finding prompts by either
-        name (MCP spec priority) or ID (backward compatibility) in a single
-        database query using OR conditions.
+        Uses a single OR query for efficiency, with a fallback to name-only
+        lookup if the OR matches multiple rows (e.g. one prompt's name equals
+        another prompt's ID).
 
         Args:
             db: Database session
@@ -1637,12 +1637,12 @@ class PromptService(BaseService):
         Note:
             The scoped_query must already have team-based access control applied
             via _apply_access_control() to ensure multi-tenancy security.
-
-            The OR condition handles UUID-like names correctly due to the
-            (team_id, owner_email, gateway_id, name) uniqueness constraint -
-            name match takes precedence in practice when both conditions could match.
         """
-        return db.execute(scoped_query.where(or_(DbPrompt.name == prompt_id, DbPrompt.id == prompt_id))).scalar_one_or_none()
+        try:
+            return db.execute(scoped_query.where(or_(DbPrompt.name == prompt_id, DbPrompt.id == prompt_id))).scalar_one_or_none()
+        except MultipleResultsFound:
+            # Name-ID collision across rows: prefer name match per MCP spec
+            return db.execute(scoped_query.where(DbPrompt.name == prompt_id)).scalar_one_or_none()
 
     async def get_prompt(
         self,
@@ -1665,17 +1665,10 @@ class PromptService(BaseService):
 
         Args:
             db: Database session
-            prompt_id: Name or ID of the prompt to retrieve. The lookup uses an OR
-                condition to match either the prompt's name (MCP spec) or ID (backward
-                compatibility) in a single query. Team-based access control is applied
-                before the lookup to ensure multi-tenancy security.
-
-                **Edge Case:** If a prompt name looks like a UUID (e.g.,
-                "a08617df-5bfc-4021-a010-37f5f4ccac8b"), the OR query will match
-                by name first due to database uniqueness constraints. This is the
-                correct behavior per MCP spec, which treats names as the primary
-                identifier regardless of their format.
-
+            prompt_id: Name or ID of the prompt to retrieve. Name-based lookup
+                is prioritized per MCP spec, with ID fallback for backward
+                compatibility. Team-based access control is applied before the
+                lookup to ensure multi-tenancy security.
             arguments: Optional arguments for rendering
             user: Optional user email for authorization checks
             tenant_id: Optional tenant identifier for plugin context

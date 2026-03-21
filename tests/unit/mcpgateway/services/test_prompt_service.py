@@ -519,6 +519,23 @@ class TestPromptService:
         result = await prompt_service.get_prompt(test_db, "123", {})
         assert result.messages[0].content.text == "Hello!"
 
+    @pytest.mark.asyncio
+    async def test_get_prompt_multiple_results_falls_back_to_name(self, prompt_service, test_db):
+        """When OR(name, id) matches multiple rows, fall back to name-only lookup."""
+        # Third-Party
+        from sqlalchemy.exc import MultipleResultsFound
+
+        db_prompt = _build_db_prompt(name="collision_id", template="By name!")
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+
+        first_result = MagicMock()
+        first_result.scalar_one_or_none.side_effect = MultipleResultsFound()
+
+        second_result = _make_execute_result(scalar=db_prompt)
+        test_db.execute = Mock(side_effect=[first_result, second_result])
+
+        result = await prompt_service.get_prompt(test_db, "collision_id", {})
+        assert result.messages[0].content.text == "By name!"
 
     @pytest.mark.asyncio
     async def test_get_prompt_multi_team_same_name(self, prompt_service, test_db):
@@ -530,21 +547,13 @@ class TestPromptService:
         3. Respect the user's token_teams for access control
         """
         # Team A's prompt with name "code_review"
-        team_a_prompt = _build_db_prompt(
-            pid="prompt-team-a",
-            name="code_review",
-            template="Team A template"
-        )
+        team_a_prompt = _build_db_prompt(pid="prompt-team-a", name="code_review", template="Team A template")
         team_a_prompt.team_id = "team-a"
         team_a_prompt.owner_email = "owner-a@test.com"
         team_a_prompt.visibility = "team"
 
         # Team B's prompt with same name "code_review"
-        team_b_prompt = _build_db_prompt(
-            pid="prompt-team-b",
-            name="code_review",
-            template="Team B template"
-        )
+        team_b_prompt = _build_db_prompt(pid="prompt-team-b", name="code_review", template="Team B template")
         team_b_prompt.team_id = "team-b"
         team_b_prompt.owner_email = "owner-b@test.com"
         team_b_prompt.visibility = "team"
@@ -552,24 +561,19 @@ class TestPromptService:
         # Mock _apply_access_control to return scoped query for team B
         async def mock_apply_access_control(query, db, user, token_teams, team_id):
             # Simulate filtering to only team B's prompts
+            # First-Party
             from mcpgateway.db import Prompt as DbPrompt
+
             return query.where(DbPrompt.team_id == "team-b")
 
-        with patch.object(prompt_service, '_apply_access_control', side_effect=mock_apply_access_control):
+        with patch.object(prompt_service, "_apply_access_control", side_effect=mock_apply_access_control):
             # User from Team B requests "code_review"
             test_db.execute = Mock(return_value=_make_execute_result(scalar=team_b_prompt))
 
-            result = await prompt_service.get_prompt(
-                test_db,
-                "code_review",
-                {},
-                user="member-b@test.com",
-                token_teams=["team-b"]
-            )
+            result = await prompt_service.get_prompt(test_db, "code_review", {}, user="member-b@test.com", token_teams=["team-b"])
 
             # Should get Team B's template, not Team A's
             assert result.messages[0].content.text == "Team B template"
-
 
     @pytest.mark.asyncio
     async def test_get_prompt_not_found(self, prompt_service, test_db):
@@ -695,13 +699,16 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_get_prompt_access_denied_raises_generic_not_found(self, prompt_service, test_db):
         """Access control is now applied via scoped query, so denied prompts are not found."""
+
         # Mock _apply_access_control to return a query that filters out all prompts
         async def mock_apply_access_control(query, db, user, token_teams, team_id):
+            # First-Party
             from mcpgateway.db import Prompt as DbPrompt
+
             # Return query that will never match (simulates access denial)
             return query.where(DbPrompt.id == "nonexistent")
 
-        with patch.object(prompt_service, '_apply_access_control', side_effect=mock_apply_access_control):
+        with patch.object(prompt_service, "_apply_access_control", side_effect=mock_apply_access_control):
             test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
 
             with patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf:
@@ -763,15 +770,8 @@ class TestPromptService:
         server_match_result = MagicMock()
         server_match_result.first.return_value = ("ok",)
 
-        # Mock _apply_access_control to return unmodified query
-        async def mock_apply_access_control(query, db, user, token_teams, team_id):
-            return query
-
-        # Now we need: scoped query for name lookup, then server_match
         test_db.execute = Mock(side_effect=[_make_execute_result(scalar=db_prompt), server_match_result])
-        # Mock _apply_access_control to return query unchanged
         prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
-
 
         plugin_mgr = MagicMock()
         plugin_mgr.has_hooks_for.side_effect = lambda hook: hook in {PromptHookType.PROMPT_PRE_FETCH, PromptHookType.PROMPT_POST_FETCH}
@@ -794,7 +794,6 @@ class TestPromptService:
         global_ctx = GlobalContext(request_id="req-1")
 
         with (
-            patch.object(prompt_service, '_apply_access_control', side_effect=mock_apply_access_control),
             patch("mcpgateway.services.prompt_service.create_span", _no_span),
             patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf,
         ):
@@ -2264,9 +2263,7 @@ class TestListServerPrompts:
 
         assert prompts == ["converted_prompt_with_metrics"]
         # Verify convert_prompt_to_read was called with include_metrics=True
-        prompt_service.convert_prompt_to_read.assert_called_once_with(
-            mock_prompt, include_metrics=True
-        )
+        prompt_service.convert_prompt_to_read.assert_called_once_with(mock_prompt, include_metrics=True)
 
     @pytest.mark.asyncio
     async def test_include_inactive_true_skips_enabled_filter(self, prompt_service):
