@@ -583,7 +583,7 @@ class A2AAgentService(BaseService):
         # ══════════════════════════════════════════════════════════════════════
         cache = _get_registry_cache()
         if cursor is None and user_email is None and token_teams is None and page is None:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility)
             cached = await cache.get("agents", filters_hash)
             if cached is not None:
                 # Reconstruct A2AAgentRead objects from cached dicts
@@ -988,6 +988,39 @@ class A2AAgentService(BaseService):
 
                 # Skip query_param fields - handled separately below
                 if field in ("auth_query_param_key", "auth_query_param_value"):
+                    continue
+
+                # auth_headers is on the schema but not the DB model; translate
+                # it into auth_value, preserving masked placeholders from the
+                # existing encrypted value so an unchanged edit does not
+                # overwrite real credentials with the mask string.
+                if field == "auth_headers" and value and isinstance(value, list):
+                    # First-Party
+                    from mcpgateway.config import settings as _settings  # pylint: disable=import-outside-toplevel
+
+                    existing_auth_raw = getattr(agent, "auth_value", None)
+                    existing_auth: Dict[str, str] = {}
+                    if isinstance(existing_auth_raw, str):
+                        try:
+                            existing_auth = decode_auth(existing_auth_raw)
+                        except Exception:
+                            existing_auth = {}
+                    elif isinstance(existing_auth_raw, dict):
+                        existing_auth = existing_auth_raw
+
+                    header_dict: Dict[str, str] = {}
+                    for header in value:
+                        key = header.get("key")
+                        if not key:
+                            continue
+                        hval = header.get("value", "")
+                        if hval == _settings.masked_auth_value and key in existing_auth:
+                            header_dict[key] = existing_auth[key]
+                        else:
+                            header_dict[key] = hval
+
+                    if header_dict:
+                        agent.auth_value = encode_auth(header_dict)
                     continue
 
                 if field == "oauth_config":

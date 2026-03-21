@@ -5,12 +5,14 @@ on:
     branches: [main, develop]
     paths:
       - "tools_rust/**"
+      - "mcp-servers/rust/**"
       - ".github/workflows/rust-tools.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: [main, develop, rust-tools-ci]
     paths:
       - "tools_rust/**"
+      - "mcp-servers/rust/**"
   workflow_dispatch:
 
 env:
@@ -85,9 +87,22 @@ jobs:
       - name: Install cargo-deny
         run: cargo install cargo-deny
 
-      - name: Run license check
+      - name: Run cargo-deny policy checks (wrapper)
         working-directory: tools_rust/wrapper
-        run: make licenses
+        run: make deny
+
+      # Exclude advisories: pre-existing advisory issues tracked separately.
+      - name: Run cargo-deny policy checks (mcp_runtime)
+        working-directory: tools_rust/mcp_runtime
+        run: cargo deny check licenses bans sources
+
+      - name: Run cargo-deny policy checks (fast-test-server)
+        working-directory: mcp-servers/rust/fast-test-server
+        run: cargo deny check licenses bans sources
+
+      - name: Run cargo-deny policy checks (filesystem-server)
+        working-directory: mcp-servers/rust/filesystem-server
+        run: cargo deny check licenses bans sources
 
   coverage:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft

@@ -16,15 +16,15 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 import sys
 from types import SimpleNamespace
 from typing import TypeVar
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
-import pytest
 from pydantic import ValidationError
+import pytest
 from url_normalize import url_normalize
 
 # First-Party
@@ -33,18 +33,18 @@ from url_normalize import url_normalize
 # ---------------------------------------------------------------------------
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import GatewayCreate, GatewayUpdate
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
+    GatewayDuplicateConflictError,
     GatewayError,
     GatewayNameConflictError,
     GatewayNotFoundError,
     GatewayService,
-    GatewayDuplicateConflictError,
     OAuthToolValidationError,
 )
 
@@ -113,6 +113,7 @@ def _make_gateway(**overrides):
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
     # Clear SSL context cache before each test for isolation
+    # First-Party
     from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache
 
     clear_ssl_context_cache()
@@ -130,14 +131,18 @@ class _PassthroughMasked:
         self._obj = obj
 
     def masked(self):
-        return self._obj
+        return self  # Keep wrapper active; don't unwrap
 
     def model_dump(self, **kw):
         if hasattr(self._obj, "model_dump"):
             return self._obj.model_dump(**kw)
-        return vars(self._obj)
+        return vars(self._obj) if not isinstance(self._obj, dict) else self._obj
 
     def __getattr__(self, name):
+        # If the wrapped object is a dict, try to access as a key first
+        if isinstance(self._obj, dict) and name in self._obj:
+            return self._obj[name]
+        # Otherwise try normal attribute access
         return getattr(self._obj, name)
 
 
@@ -1024,6 +1029,7 @@ class TestGatewayService:
                 await gateway_service.update_gateway(test_db, 1, gateway_update)
             except Exception as e:
                 print(f"Exception during update_gateway: {e}")
+                # Standard
                 import traceback
 
                 traceback.print_exc()
@@ -1108,6 +1114,59 @@ class TestGatewayService:
         assert mock_prompt.visibility == "team", "Prompt visibility not propagated when gateway init failed"
         # Visibility changes must be persisted
         test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_visibility_preserves_per_resource_overrides(self, gateway_service, mock_gateway, test_db):
+        """Visibility pre-propagation must not overwrite per-resource visibility overrides."""
+        # Resource with inherited gateway visibility — should be updated
+        inherited_resource = MagicMock(spec=DbResource)
+        inherited_resource.visibility = "public"
+        # Resource with a manual per-resource override — must be preserved
+        overridden_resource = MagicMock(spec=DbResource)
+        overridden_resource.visibility = "team"
+
+        mock_tool = MagicMock(spec=DbTool)
+        mock_tool.visibility = "public"
+        mock_prompt = MagicMock(spec=DbPrompt)
+        mock_prompt.visibility = "public"
+
+        mock_gateway.visibility = "public"
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.oauth_config = None
+        mock_gateway.auth_query_params = None
+        mock_gateway.slug = "test_gateway"
+        mock_gateway.tools = [mock_tool]
+        mock_gateway.resources = [inherited_resource, overridden_resource]
+        mock_gateway.prompts = [mock_prompt]
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_query.all.return_value = []
+        test_db.query = Mock(return_value=mock_query)
+
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("Connection failed"))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        gateway_update = GatewayUpdate(visibility="private")
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        assert mock_gateway.visibility == "private"
+        # Inherited resource should be updated to new gateway visibility
+        assert inherited_resource.visibility == "private", "Inherited resource should follow new gateway visibility"
+        # Per-resource override must be preserved
+        assert overridden_resource.visibility == "team", "Per-resource visibility override must not be overwritten"
+        # Tool and prompt with inherited visibility should be updated
+        assert mock_tool.visibility == "private"
+        assert mock_prompt.visibility == "private"
 
     @pytest.mark.asyncio
     async def test_update_gateway_partial_update(self, gateway_service, mock_gateway, test_db):
@@ -1956,7 +2015,7 @@ class TestGatewayService:
 
         bind = MagicMock()
         bind.dialect = MagicMock()
-        bind.dialect.name = "sqlite"  # or "postgresql" or "mysql"
+        bind.dialect.name = "sqlite"  # or "postgresql"
         session.get_bind.return_value = bind
 
         # Mock EmailTeam query for team names
@@ -2719,6 +2778,7 @@ class TestGatewayHealth:
 
     @pytest.mark.asyncio
     async def test_initialize_redis_ping_failure(self, monkeypatch):
+        # First-Party
         import mcpgateway.services.gateway_service as gs
 
         monkeypatch.setattr(gs, "REDIS_AVAILABLE", True)
@@ -2919,6 +2979,7 @@ async def test_register_gateway_query_param_timeout(gateway_service, monkeypatch
 
 @pytest.mark.asyncio
 async def test_register_gateway_reassigns_orphaned_resource(gateway_service, monkeypatch):
+    # First-Party
     from mcpgateway.schemas import PromptCreate, ResourceCreate
 
     gateway = _make_gateway()
@@ -2986,6 +3047,7 @@ async def test_register_gateway_reassigns_orphaned_resource(gateway_service, mon
 
 def test_validate_tools_mixed_errors(monkeypatch):
     service = GatewayService()
+    # First-Party
     from mcpgateway.schemas import ToolCreate
 
     validation_error = None
@@ -3009,6 +3071,7 @@ def test_validate_tools_mixed_errors(monkeypatch):
 
 def test_validate_tools_all_invalid_default(monkeypatch):
     service = GatewayService()
+    # First-Party
     from mcpgateway.schemas import ToolCreate
 
     validation_error = None
@@ -3035,6 +3098,7 @@ def test_validate_tools_all_invalid_oauth(monkeypatch):
 
 
 def test_gateway_service_singleton_and_cache_helpers(monkeypatch):
+    # First-Party
     import mcpgateway.services.gateway_service as gs
 
     gs._gateway_service_instance = None
@@ -3064,6 +3128,7 @@ def test_gateway_service_singleton_and_cache_helpers(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
+    # First-Party
     from mcpgateway.schemas import PromptCreate, ResourceCreate
 
     service = GatewayService()
@@ -3171,6 +3236,7 @@ async def test_connect_to_sse_server_without_validation_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatch):
+    # First-Party
     from mcpgateway.schemas import ResourceCreate
 
     service = GatewayService()
@@ -3289,6 +3355,7 @@ async def test_connect_to_streamablehttp_server_error_path(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
+    # First-Party
     from mcpgateway.schemas import PromptCreate, ResourceCreate
 
     service = GatewayService()
@@ -3404,6 +3471,7 @@ async def test_connect_to_sse_server_error_path(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_register_gateway_creates_new_resources_and_prompts(gateway_service, monkeypatch):
+    # First-Party
     from mcpgateway.schemas import PromptCreate, ResourceCreate
 
     gateway = _make_gateway(auth_value={"Authorization": "Bearer token"})
@@ -3850,24 +3918,28 @@ class TestHandleGatewayFailure:
 
 
 # ---------------------------------------------------------------------------
-# _prepare_gateway_for_read tests (deprecated but still exercised)
+# convert_gateway_to_read tests
 # ---------------------------------------------------------------------------
 
 
-class TestPrepareGatewayForRead:
-    def test_prepare_gateway_encodes_dict_auth(self, gateway_service, mock_gateway):
+class TestConvertGatewayToRead:
+    def test_encodes_dict_auth_without_mutating_orm(self, gateway_service, mock_gateway):
         mock_gateway.auth_value = {"Authorization": "Bearer token"}
         mock_gateway.tags = []
-        result = gateway_service._prepare_gateway_for_read(mock_gateway)
-        # Auth value should be encoded as string now
+        result = gateway_service.convert_gateway_to_read(mock_gateway)
+        # Auth value should be encoded as string in the result
         assert isinstance(result.auth_value, str)
+        # ORM object must NOT be mutated (core invariant of convert_gateway_to_read)
+        assert isinstance(mock_gateway.auth_value, dict)
 
-    def test_prepare_gateway_converts_string_tags(self, gateway_service, mock_gateway):
+    def test_converts_string_tags_without_mutating_orm(self, gateway_service, mock_gateway):
         mock_gateway.tags = ["tag1", "tag2"]
         mock_gateway.auth_value = None
-        result = gateway_service._prepare_gateway_for_read(mock_gateway)
-        # Tags should be converted from List[str] to List[Dict]
+        result = gateway_service.convert_gateway_to_read(mock_gateway)
+        # Tags should be converted from List[str] to List[Dict] in the result
         assert isinstance(result.tags[0], dict)
+        # ORM object must NOT be mutated
+        assert isinstance(mock_gateway.tags[0], str)
 
 
 # ---------------------------------------------------------------------------
@@ -5675,8 +5747,7 @@ class TestUpdateGatewayAdvanced:
         monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [])))
 
         result = await gateway_service.update_gateway(db, mock_gateway.id, update_data)
-        # auth_value gets encoded by _prepare_gateway_for_read; verify it's a non-empty encoded string
-        assert isinstance(mock_gateway.auth_value, str) and len(mock_gateway.auth_value) > 0
+        assert isinstance(mock_gateway.auth_value, dict) and len(mock_gateway.auth_value) > 0
 
     @pytest.mark.asyncio
     async def test_update_stale_tools_cleaned_up(self, gateway_service, mock_gateway, monkeypatch):
@@ -6798,3 +6869,36 @@ async def test_update_gateway_direct_proxy_rejected_when_disabled(gateway_servic
     with patch("mcpgateway.services.gateway_service.settings", mock_settings):
         with pytest.raises(GatewayError, match="disabled"):
             await gateway_service.update_gateway(db, "gw-flag-test", update_data)
+
+
+# ---------------------------------------------------------------------------
+# _initialize_gateway — empty exception str() fallback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_initialize_gateway_empty_exception_uses_type_name(gateway_service):
+    """GatewayConnectionError includes the exception type name when str(e) is empty.
+
+    Regression test for the `raw_error = str(root_cause) or type(root_cause).__name__`
+    guard added alongside the VALIDATION_STRICT fix (#3711).
+    """
+    gateway_service.connect_to_sse_server = AsyncMock(side_effect=RuntimeError())
+
+    with pytest.raises(GatewayConnectionError) as exc_info:
+        await gateway_service._initialize_gateway(url="http://localhost:9999", transport="SSE")
+
+    assert "RuntimeError" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_initialize_gateway_exception_group_empty_str(gateway_service):
+    """GatewayConnectionError falls back to type name for ExceptionGroup with empty inner."""
+    inner = OSError()
+    group = ExceptionGroup("group", [inner])
+    gateway_service.connect_to_sse_server = AsyncMock(side_effect=group)
+
+    with pytest.raises(GatewayConnectionError) as exc_info:
+        await gateway_service._initialize_gateway(url="http://localhost:9999", transport="SSE")
+
+    assert "OSError" in str(exc_info.value)

@@ -437,9 +437,21 @@ The `/tools` endpoint supports several query parameters for filtering and pagina
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/tools?gateway_id=<gateway-id>" | jq '.'
 
+# Get tools not associated with any gateway (REST tools, A2A agents, etc.)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?gateway_id=null" | jq '.'
+
+# Filter by visibility
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?visibility=public" | jq '.'
+
 # Filter by tags (paginated)
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/tools?tags=api,data" | jq '.'
+
+# Combine filters: all public tools from a specific gateway
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?gateway_id=<gateway-id>&visibility=public&limit=0" | jq '.'
 
 # Get up to 100 tools per page
 curl -s -H "Authorization: Bearer $TOKEN" \
@@ -761,6 +773,36 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/resources?include_pagination=false" | jq '.'
 ```
 
+#### Filtering and Pagination
+
+The `/resources` endpoint supports several query parameters for filtering and pagination:
+
+| Parameter | Description |
+|-----------|-------------|
+| `tags` | Comma-separated list of tags to filter by (matches any). |
+| `visibility` | Filter by visibility: `private`, `team`, or `public`. |
+| `team_id` | Filter by team ID. |
+| `include_inactive` | Include disabled resources (default: `false`). |
+| `limit` | Maximum resources to return. Use `0` for all resources (no limit). Default: 50. |
+| `cursor` | Pagination cursor for fetching the next page. |
+| `include_pagination` | Return paginated format with cursor (default: `true`). Set to `false` for array only. |
+
+**Examples:**
+
+```bash
+# Filter by visibility
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?visibility=public" | jq '.'
+
+# Filter by tags
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?tags=config,database" | jq '.'
+
+# Get ALL resources (no pagination - returns all as array)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?limit=0&include_pagination=false" | jq '.'
+```
+
 ### Register a Resource
 
 ```bash
@@ -888,6 +930,36 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/prompts?include_pagination=false" | jq '.'
+```
+
+#### Filtering and Pagination
+
+The `/prompts` endpoint supports several query parameters for filtering and pagination:
+
+| Parameter | Description |
+|-----------|-------------|
+| `tags` | Comma-separated list of tags to filter by (matches any). |
+| `visibility` | Filter by visibility: `private`, `team`, or `public`. |
+| `team_id` | Filter by team ID. |
+| `include_inactive` | Include disabled prompts (default: `false`). |
+| `limit` | Maximum prompts to return. Use `0` for all prompts (no limit). Default: 50. |
+| `cursor` | Pagination cursor for fetching the next page. |
+| `include_pagination` | Return paginated format with cursor (default: `true`). Set to `false` for array only. |
+
+**Examples:**
+
+```bash
+# Filter by visibility
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?visibility=public" | jq '.'
+
+# Filter by tags
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?tags=template,greeting" | jq '.'
+
+# Get ALL prompts (no pagination - returns all as array)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?limit=0&include_pagination=false" | jq '.'
 ```
 
 ### Register a Prompt

@@ -208,10 +208,16 @@
       // Sync checkbox state from URL on page load (for shareable links)
       function syncCheckboxFromUrl(tableName, checkboxId) {
         const params = getPaginationParams(tableName);
+        const urlParams = new URLSearchParams(window.location.search);
         if (params.includeInactive !== null) {
           const checkbox = document.getElementById(checkboxId);
           if (checkbox) {
             checkbox.checked = params.includeInactive === 'true';
+          }
+        } else if (urlParams.has('include_inactive')) {
+          const checkbox = document.getElementById(checkboxId);
+          if (checkbox) {
+            checkbox.checked = urlParams.get('include_inactive') === 'true';
           }
         }
       }
@@ -1936,7 +1942,7 @@
               class="bg-white dark:bg-gray-800 shadow-xl rounded-xl border border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden h-[calc(100vh-12rem)]">
               <!-- Chat Messages Area -->
               <div id="chat-messages-container"
-                class="flex-1 overflow-y-auto p-5 bg-gray-50 dark:bg-gray-900 space-y-4">
+                class="flex flex-col flex-1 overflow-y-auto p-5 bg-gray-50 dark:bg-gray-900 space-y-4">
                 <div id="chat-welcome-message" class="flex items-center justify-center h-full">
                   <div class="text-center max-w-md">
                     <div
@@ -2405,6 +2411,7 @@
               id="show-inactive-servers"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
+              checked
               x-init="syncCheckboxFromUrl('servers', 'show-inactive-servers')"
               @change="updateInactiveUrlState('servers', $el.checked)"
               hx-get="{{ root_path }}/admin/servers/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
@@ -2447,6 +2454,7 @@
                 class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
+              <span id="servers-filter-status" class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite" role="status"></span>
             </div>
 
             <!-- Hidden tag filter (for internal JavaScript usage) -->
@@ -2471,7 +2479,7 @@
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="servers-table"
-                 x-init="$el.setAttribute('hx-get', buildTableUrl('servers', '{{ root_path }}/admin/servers/partial', {include_inactive: (document.getElementById('show-inactive-servers')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('servers', '{{ root_path }}/admin/servers/partial', {include_inactive: (document.getElementById('show-inactive-servers')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#servers-loading">
@@ -2505,7 +2513,8 @@
             'total_items': total_items,
             'total_pages': total_pages,
             'has_prev': has_prev,
-            'has_next': has_next
+            'has_next': has_next,
+            'page_items': None
           } %}
 
           {# build the refresh URL for controls #}
@@ -2525,6 +2534,7 @@
             {# helpers used by pagination_controls.html #}
             {% set base_url = root_path + '/admin/servers/partial' %}
             {% set hx_target = '#servers-table' %}
+            {% set hx_swap = 'outerHTML' %}
             {% set hx_indicator = '#servers-loading' %}
             {% set table_name = 'servers' %}
             {% set query_params = {'include_inactive': include_inactive} %}
@@ -3453,6 +3463,7 @@
                 class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
+              <span id="tools-filter-status" class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite" role="status"></span>
             </div>
 
             <!-- Hidden tag filter for functionality -->
@@ -3497,7 +3508,8 @@
             'total_items': total_items,
             'total_pages': total_pages,
             'has_prev': has_prev,
-            'has_next': has_next
+            'has_next': has_next,
+            'page_items': None
           } %}
 
           {# build the refresh URL for controls #}
@@ -3517,6 +3529,7 @@
             {# helpers used by pagination_controls.html #}
             {% set base_url = root_path + '/admin/tools/partial' %}
             {% set hx_target = '#tools-table' %}
+            {% set hx_swap = 'outerHTML' %}
             {% set hx_indicator = '#tools-loading' %}
             {% set table_name = 'tools' %}
             {% set query_params = {'include_inactive': include_inactive} %}
@@ -4468,6 +4481,7 @@
                 class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
+              <span id="resources-filter-status" class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite" role="status"></span>
             </div>
 
             <!-- Hidden tag filter for functionality -->
@@ -4711,6 +4725,7 @@
                 class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
+              <span id="prompts-filter-status" class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite" role="status"></span>
             </div>
 
             <!-- Hidden tag filter for functionality -->
@@ -4963,6 +4978,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               id="show-inactive-gateways"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
+              checked
               x-init="syncCheckboxFromUrl('gateways', 'show-inactive-gateways')"
               @change="updateInactiveUrlState('gateways', $el.checked)"
               hx-get="{{ root_path }}/admin/gateways/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
@@ -4999,6 +5015,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
+              <span id="gateways-filter-status" class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite" role="status"></span>
             </div>
 
             <!-- Hidden tag filter for functionality -->
@@ -5010,7 +5027,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="gateways-table"
-                 x-init="$el.setAttribute('hx-get', buildTableUrl('gateways', '{{ root_path }}/admin/gateways/partial', {include_inactive: (document.getElementById('show-inactive-gateways')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('gateways', '{{ root_path }}/admin/gateways/partial', {include_inactive: (document.getElementById('show-inactive-gateways')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#gateways-loading">
@@ -5044,7 +5061,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             'total_items': total_items,
             'total_pages': total_pages,
             'has_prev': has_prev,
-            'has_next': has_next
+            'has_next': has_next,
+            'page_items': None
           } %}
 
           {# build the refresh URL for controls #}
@@ -5064,6 +5082,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             {# helpers used by pagination_controls.html #}
             {% set base_url = root_path + '/admin/gateways/partial' %}
             {% set hx_target = '#gateways-table' %}
+            {% set hx_swap = 'outerHTML' %}
             {% set hx_indicator = '#gateways-loading' %}
             {% set table_name = 'gateways' %}
             {% set query_params = {'include_inactive': include_inactive} %}
@@ -6701,7 +6720,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               'total_items': total_items,
               'total_pages': total_pages,
               'has_prev': has_prev,
-              'has_next': has_next
+              'has_next': has_next,
+              'page_items': None
             } %}
 
             {# build the refresh URL for controls #}
@@ -6723,6 +6743,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               {# helpers used by pagination_controls.html #}
               {% set base_url = root_path + '/admin/tokens/partial' %}
               {% set hx_target = '#tokens-table' %}
+              {% set hx_swap = 'outerHTML' %}
               {% set hx_indicator = '#tokens-loading' %}
               {% set table_name = 'tokens' %}
               {% set query_params = {'include_inactive': include_inactive} %}
@@ -6788,6 +6809,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
+              <span id="agents-filter-status" class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite" role="status"></span>
             </div>
 
             <!-- Hidden tag filter for functionality -->
@@ -6847,7 +6869,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               'total_items': total_items,
               'total_pages': total_pages,
               'has_prev': has_prev,
-              'has_next': has_next
+              'has_next': has_next,
+              'page_items': None
             } %}
 
             {# build the refresh URL for controls #}
@@ -6867,169 +6890,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               {# helpers used by pagination_controls.html #}
               {% set base_url = root_path + '/admin/a2a/partial' %}
               {% set hx_target = '#agents-table' %}
+              {% set hx_swap = 'outerHTML' %}
               {% set hx_indicator = '#agents-loading' %}
               {% set table_name = 'agents' %}
               {% set query_params = {'include_inactive': include_inactive} %}
               {% include 'pagination_controls.html' %}
-            </div>
-          </div>
-        </div>
-
-        <!-- Old table for reference (hidden) -->
-        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800" style="display: none;">
-          <div class="p-0">
-            <h3
-              class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4"
-            >
-              Registered A2A Agents
-            </h3>
-            <div class="overflow-x-auto">
-              <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50 dark:bg-gray-700">
-                  <tr>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">ID</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Endpoint</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Tags</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Type</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Status</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Reachability</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Owner</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Team</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Visibility</th>
-                    </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
-                  {% if a2a_agents %}
-                    {% for agent in a2a_agents %}
-                    <tr>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm font-medium w-32">
-                        <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
-                          <!-- Row 1: Test (full width) -->
-                          <button
-
-                            onclick="testA2AAgent({{ agent.id|tojson_attr }}, {{ agent.name|tojson_attr }}, {{ agent.endpointUrl|tojson_attr }})"
-                            class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 transition-colors"
-                            x-tooltip="'💡Execute this A2A Agent test'"
-                          >
-                            Test
-                          </button>
-
-                          <!-- Row 2: View | Edit -->
-                          <button
-                            onclick="viewAgent({{ agent.id|tojson_attr }})"
-                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 transition-colors"
-                            x-tooltip="'💡View agent details'"
-                          >
-                            View
-                          </button>
-                          <button
-                            onclick="editA2AAgent({{ agent.id|tojson_attr }})"
-                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 transition-colors"
-                            x-tooltip="'💡Edit agent configuration'"
-                          >
-                            Edit
-                          </button>
-
-                          <!-- Row 3: Activate/Deactivate | Delete -->
-                          <div class="col-span-2 flex flex-col space-y-1">
-                            {% if agent.enabled %}
-                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/state" class="contents">
-                              <input type="hidden" name="activate" value="false" />
-                              <button
-                                type="submit"
-                                class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 transition-colors"
-                                x-tooltip="'💡Temporarily disable this A2A agent'"
-                              >
-                                Deactivate
-                              </button>
-                            </form>
-                            {% else %}
-                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/state" class="contents">
-                              <input type="hidden" name="activate" value="true" />
-                              <button
-                                type="submit"
-                                class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 transition-colors"
-                                x-tooltip="'💡Re-enable this A2A agent'"
-                              >
-                                Activate
-                              </button>
-                            </form>
-                            {% endif %}
-
-                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'a2a agent', {{ agent.name|tojson_attr }}, 'a2a-agents')">
-                              <button
-                                type="submit"
-                                class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 transition-colors"
-                                x-tooltip="'💡Permanently delete this A2A agent'"
-                              >
-                                Delete
-                              </button>
-                            </form>
-                          </div>
-                        </div>
-                        <!-- Test result placeholder: updated by admin.js testA2AAgent -->
-                        <div id="test-result-{{ agent.id }}" class="hidden test-result mt-2 text-sm" role="status" aria-live="polite"></div>
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">{{ loop.index }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap">
-                        <div class="text-sm font-medium text-gray-900 dark:text-gray-200">{{ agent.name }}</div>
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.description | decode_html }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.endpointUrl }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
-                        {% if agent.tags %}
-                          {% for tag in agent.tags %}
-                            <span class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 mr-1">{% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}</span>
-                          {% endfor %}
-                        {% endif %}
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.agentType }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
-                        <div class="flex flex-col gap-1">
-                          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.enabled %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">{% if agent.enabled %}Active{% else %}Inactive{% endif %}</span>
-                        </div>
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
-                        <div class="flex flex-col gap-1">
-                          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.reachable %}bg-green-100 text-green-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">{% if agent.reachable %}Reachable{% else %}Unreachable{% endif %}</span>
-                        </div>
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.ownerEmail }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.team }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap">
-                        {% if agent.visibility == 'private' %}
-                        <span
-                          class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800"
-                          >Private</span
-                        >
-                        {% elif agent.visibility == 'team' %}
-                        <span
-                          class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
-                          >Team</span
-                        >
-                        {% elif agent.visibility == 'public' %}
-                        <span
-                          class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800"
-                          >Public</span
-                        >
-                        {% else %}
-                        <span class="text-gray-500 dark:text-gray-300 text-xs"
-                          >N/A</span
-                        >
-                        {% endif %}
-                      </td>
-                    </tr>
-                    {% endfor %}
-                  {% else %}
-                    <tr>
-                      <td colspan="12" class="text-center py-8 text-gray-500 dark:text-gray-400">No A2A agents registered yet.</td>
-                    </tr>
-                  {% endif %}
-                </tbody>
-              </table>
             </div>
           </div>
         </div>
@@ -8574,14 +8439,6 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       </div>
 
-  <script>
-    function openModal(id) {
-      document.getElementById(id)?.classList.remove("hidden");
-    }
-    function closeModal(id) {
-      document.getElementById(id)?.classList.add("hidden");
-    }
-  </script>
       <!-- Tool Test Modal -->
       <div
         id="tool-test-modal"
@@ -15104,6 +14961,9 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-request', {
             target: button.parentElement,
             swap: 'innerHTML'
+          }).catch(error => {
+            // Handle network errors with toast notification
+            showToast('Failed to create join request. Please try again.', 'error');
           });
         }
       }

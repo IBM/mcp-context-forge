@@ -25,7 +25,7 @@ def upgrade() -> None:
     """
     Apply schema changes to add or update unique constraints for prompts, resources and a2a agents.
     This migration recreates tables with updated unique constraints and preserves data.
-    Compatible with SQLite, MySQL, and PostgreSQL.
+    Compatible with SQLite and PostgreSQL.
     """
     bind = op.get_bind()
     inspector = sa.inspect(bind)
@@ -162,7 +162,7 @@ def downgrade() -> None:
     """
     Revert schema changes, restoring previous unique constraints for prompts, resources and a2a_agents.
     This migration recreates tables with the original unique constraints and preserves data.
-    Compatible with SQLite, MySQL, and PostgreSQL.
+    Compatible with SQLite and PostgreSQL.
     """
     bind = op.get_bind()
     inspector = sa.inspect(bind)

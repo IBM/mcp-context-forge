@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway, get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -321,7 +322,7 @@ async def initiate_oauth_flow(
 
         if issuer and not client_id:
             if settings.dcr_enabled and settings.dcr_auto_register_on_missing_credentials:
-                logger.info(f"Gateway {gateway_id} has issuer but no client_id. Attempting DCR...")
+                logger.info(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id. Attempting DCR...")
 
                 try:
                     # Initialize DCR service
@@ -337,7 +338,7 @@ async def initiate_oauth_flow(
                         db=db,
                     )
 
-                    logger.info(f"✅ DCR successful for gateway {gateway_id}: client_id={registered_client.client_id}")
+                    logger.info(f"✅ DCR successful for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: client_id={SecurityValidator.sanitize_log_message(registered_client.client_id)}")
 
                     # Decrypt the client secret for use in OAuth flow (if present - public clients may not have secrets)
                     decrypted_secret = None
@@ -367,20 +368,20 @@ async def initiate_oauth_flow(
                     gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
                     db.commit()
 
-                    logger.info(f"Updated gateway {gateway_id} with DCR credentials and auth_type=oauth")
+                    logger.info(f"Updated gateway {SecurityValidator.sanitize_log_message(gateway_id)} with DCR credentials and auth_type=oauth")
 
                 except DcrError as dcr_err:
-                    logger.error(f"DCR failed for gateway {gateway_id}: {dcr_err}")
+                    logger.error(f"DCR failed for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_err}")
                     raise HTTPException(
                         status_code=500,
                         detail=f"Dynamic Client Registration failed: {str(dcr_err)}. Please configure client_id and client_secret manually or check your OAuth server supports RFC 7591.",
                     )
                 except Exception as dcr_ex:
-                    logger.error(f"Unexpected error during DCR for gateway {gateway_id}: {dcr_ex}")
+                    logger.error(f"Unexpected error during DCR for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_ex}")
                     raise HTTPException(status_code=500, detail=f"Failed to register OAuth client: {str(dcr_ex)}")
             else:
                 # DCR is disabled or auto-register is off
-                logger.warning(f"Gateway {gateway_id} has issuer but no client_id, and DCR auto-registration is disabled")
+                logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id, and DCR auto-registration is disabled")
                 raise HTTPException(
                     status_code=400,
                     detail="Gateway OAuth configuration is incomplete. Please provide client_id and client_secret, or enable DCR (Dynamic Client Registration) by setting MCPGATEWAY_DCR_ENABLED=true and MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true",
@@ -395,7 +396,7 @@ async def initiate_oauth_flow(
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
         auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email)
 
-        logger.info(f"Initiated OAuth flow for gateway {gateway_id} by user {requester_email}")
+        logger.info(f"Initiated OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)} by user {SecurityValidator.sanitize_log_message(requester_email)}")
 
         # Redirect user to OAuth provider
         return RedirectResponse(url=auth_data["authorization_url"])
@@ -549,7 +550,7 @@ async def oauth_callback(
 
         result = await oauth_manager.complete_authorization_code_flow(gateway_id, code, state, oauth_config_with_resource)
 
-        logger.info(f"Completed OAuth flow for gateway {gateway_id}, user {result.get('user_id')}")
+        logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 
         # Return success page with option to return to admin
         return HTMLResponse(
@@ -605,7 +606,7 @@ async def oauth_callback(
                 statusDiv.innerHTML = '<p style="color: #2563eb;">Fetching tools from MCP server...</p>';
 
                 try {{
-                    const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id))}', {{
+                    const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id), quote=True)}', {{
                         method: 'POST',
                         credentials: 'include',
                         headers: {{ 'Accept': 'text/html' }}
@@ -823,7 +824,7 @@ async def fetch_tools_after_oauth(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
+        logger.error(f"Failed to fetch tools after OAuth for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch tools: {str(e)}")
 
 
@@ -933,7 +934,7 @@ async def get_registered_client_for_gateway(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get registered client for gateway {gateway_id}: {e}")
+        logger.error(f"Failed to get registered client for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get registered client: {str(e)}")
 
 
@@ -976,7 +977,9 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
         db.commit()
         db.close()
 
-        logger.info(f"Deleted registered OAuth client {client_id} for gateway {gateway_id} (issuer: {issuer})")
+        logger.info(
+            f"Deleted registered OAuth client {SecurityValidator.sanitize_log_message(client_id)} for gateway {SecurityValidator.sanitize_log_message(gateway_id)} (issuer: {SecurityValidator.sanitize_log_message(issuer)})"
+        )
 
         return {"success": True, "message": f"Registered OAuth client {client_id} deleted successfully", "gateway_id": gateway_id, "issuer": issuer}
 

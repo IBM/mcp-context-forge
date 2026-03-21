@@ -102,6 +102,7 @@ tests/migration/reports/
 tests/migration/logs/
 test-results-*.xml
 playwright-report-*.html
+.playwright-cli/
 
 # Vitest
 coverage/
@@ -191,7 +192,8 @@ packages.json
 .aider*
 aider*
 .ai*
-.claude
+.claude/*
+!.claude/skills/
 CLAUDE.local.md
 .continue
 
@@ -297,6 +299,7 @@ TODO.md
 FIXMEs
 
 # Upgrade validation outputs
+artifacts/
 artifacts/upgrade-validation*/
 
 # Debug & profiling artifacts
@@ -352,6 +355,12 @@ docs/docs/test/license-check-report.json
 # Generated performance test files
 nginx.conf
 docker-compose.perf.yml
+
+# Rust MCP runtime profiling artifacts
+tools_rust/mcp_runtime/profiles/
+tools_rust/mcp_runtime/flamegraph*.svg
+tools_rust/mcp_runtime/flamegraph*.html
+tools_rust/mcp_runtime/perf.data*
 
 # JMeter test results and local installation
 tests/jmeter/results/*.jtl

@@ -41,6 +41,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import (
     EmailAuthEvent,
@@ -68,9 +69,6 @@ from mcpgateway.utils.pagination import unified_paginate
 # Initialize logging
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
-
-# Strong references to background tasks to prevent GC before completion
-_background_tasks: set[asyncio.Task] = set()
 
 _GET_ALL_USERS_LIMIT = 10000
 _DUMMY_ARGON2_HASH = "$argon2id$v=19$m=65536,t=3,p=1$9x/nTs9D0R97+BI7BWP2Tg$V/40qCuaGh4i+94HpGpxJESEVs3IDpLzUqtNqRPuty4"
@@ -421,6 +419,33 @@ class EmailAuthService:
         except Exception as cache_error:  # nosec B110
             logger.debug("Failed to invalidate auth cache for %s: %s", email, cache_error)
 
+    async def _invalidate_deleted_user_auth_caches(self, email: str) -> None:
+        """Invalidate all auth-cache entries affected by permanent user deletion.
+
+        Args:
+            email: User email for cache invalidation.
+        """
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            results = await asyncio.wait_for(
+                asyncio.gather(
+                    auth_cache.invalidate_user(email),
+                    auth_cache.invalidate_user_teams(email),
+                    auth_cache.invalidate_team_membership(email),
+                    return_exceptions=True,
+                ),
+                timeout=5.0,
+            )
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.debug("Failed to invalidate delete-user auth cache for %s: %s", email, result)
+        except asyncio.TimeoutError:
+            logger.warning("Delete-user auth cache invalidation timed out for %s - continuing", email)
+        except Exception as cache_error:  # nosec B110
+            logger.debug("Failed to invalidate delete-user auth cache for %s: %s", email, cache_error)
+
     def _log_auth_event(
         self,
         event_type: str,
@@ -499,7 +524,7 @@ class EmailAuthService:
             user = result.scalar_one_or_none()
             return user
         except Exception as e:
-            logger.error(f"Error getting user by email {email}: {e}")
+            logger.error(f"Error getting user by email {SecurityValidator.sanitize_log_message(email)}: {e}")
             return None
 
     async def create_user(
@@ -513,6 +538,7 @@ class EmailAuthService:
         auth_provider: str = "local",
         skip_password_validation: bool = False,
         granted_by: Optional[str] = None,
+        skip_onboarding: bool = False,
     ) -> EmailUser:
         """Create a new user with email authentication.
 
@@ -526,6 +552,12 @@ class EmailAuthService:
             auth_provider: Authentication provider ('local', 'github', etc.)
             skip_password_validation: Skip password policy validation (for bootstrap)
             granted_by: Email of user creating this user (for role assignment audit trail)
+            skip_onboarding: Skip personal team creation, role assignment, and
+                success-path registration event logging (for service accounts /
+                synthetic users).  Unexpected-failure audit events (the
+                ``except Exception`` path) are always recorded regardless of
+                this flag.  Duplicate-user rejections (``UserExistsError``,
+                ``IntegrityError``) are not audited by design.
 
         Returns:
             EmailUser: The created user object
@@ -555,13 +587,21 @@ class EmailAuthService:
         if not skip_password_validation:
             self.validate_password(password)
 
+        # Hash before the first DB read so PgBouncer transaction pooling does not
+        # hold an idle transaction open across the async hashing call.
+        # Callers that skip password validation with an empty password (e.g.
+        # ensure_user_exists for service accounts) get a non-loginable sentinel;
+        # all other callers go through hash_password_async which raises
+        # ValueError on empty input.
+        if not password and skip_password_validation:
+            password_hash = "!disabled"  # nosec B105 — not a valid Argon2 hash, verify_password always rejects
+        else:
+            password_hash = await self.password_service.hash_password_async(password)
+
         # Check if user already exists
         existing_user = await self.get_user_by_email(email)
         if existing_user:
             raise UserExistsError(f"User with email {email} already exists")
-
-        # Hash the password
-        password_hash = await self.password_service.hash_password_async(password)
 
         # Create new user (record password change timestamp)
         user = EmailUser(
@@ -585,74 +625,75 @@ class EmailAuthService:
             self.db.commit()
             self.db.refresh(user)
 
-            logger.info(f"Created new user: {email}")
+            logger.info(f"Created new user: {SecurityValidator.sanitize_log_message(email)}")
 
-            # Create personal team first if enabled (needed for team-scoped role assignment)
-            personal_team_id = None
-            if getattr(settings, "auto_create_personal_teams", True):
-                try:
-                    # Import here to avoid circular imports
-                    # First-Party
-                    from mcpgateway.services.personal_team_service import PersonalTeamService  # pylint: disable=import-outside-toplevel
-
-                    personal_team_service = PersonalTeamService(self.db)
-                    personal_team = await personal_team_service.create_personal_team(user)
-                    personal_team_id = personal_team.id  # Get team_id directly from created team
-                    logger.info(f"Created personal team '{personal_team.name}' (ID: {personal_team_id}) for user {email}")
-                except Exception as e:
-                    logger.warning(f"Failed to create personal team for {email}: {e}")
-                    # Don't fail user creation if personal team creation fails
-
-            # Auto-assign dual roles using RoleService (after personal team creation)
-            try:
-                granter = granted_by or email  # Use granted_by if provided, otherwise self-granted
-
-                # Determine global role based on admin status
-                global_role_name = settings.default_admin_role if is_admin else settings.default_user_role
-                global_role = await self.role_service.get_role_by_name(global_role_name, "global")
-
-                if global_role:
+            if not skip_onboarding:
+                # Create personal team first if enabled (needed for team-scoped role assignment)
+                personal_team_id = None
+                if getattr(settings, "auto_create_personal_teams", True):
                     try:
-                        await self.role_service.assign_role_to_user(user_email=email, role_id=global_role.id, scope="global", scope_id=None, granted_by=granter)
-                        logger.info(f"Assigned {global_role_name} role (global scope) to user {email}")
-                    except ValueError as e:
-                        logger.warning(f"Could not assign {global_role_name} role to {email}: {e}")
-                else:
-                    logger.warning(f"{global_role_name} role not found. User {email} created without global role.")
+                        # Import here to avoid circular imports
+                        # First-Party
+                        from mcpgateway.services.personal_team_service import PersonalTeamService  # pylint: disable=import-outside-toplevel
 
-                # Assign team owner role with team scope (if personal team exists)
-                if personal_team_id:
-                    team_owner_role_name = settings.default_team_owner_role
-                    team_owner_role = await self.role_service.get_role_by_name(team_owner_role_name, "team")
+                        personal_team_service = PersonalTeamService(self.db)
+                        personal_team = await personal_team_service.create_personal_team(user)
+                        personal_team_id = personal_team.id  # Get team_id directly from created team
+                        logger.info(f"Created personal team '{personal_team.name}' (ID: {personal_team_id}) for user {SecurityValidator.sanitize_log_message(email)}")
+                    except Exception as e:
+                        logger.warning(f"Failed to create personal team for {SecurityValidator.sanitize_log_message(email)}: {e}")
+                        # Don't fail user creation if personal team creation fails
 
-                    if team_owner_role:
+                # Auto-assign dual roles using RoleService (after personal team creation)
+                try:
+                    granter = granted_by or email  # Use granted_by if provided, otherwise self-granted
+
+                    # Determine global role based on admin status
+                    global_role_name = settings.default_admin_role if is_admin else settings.default_user_role
+                    global_role = await self.role_service.get_role_by_name(global_role_name, "global")
+
+                    if global_role:
                         try:
-                            await self.role_service.assign_role_to_user(user_email=email, role_id=team_owner_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
-                            logger.info(f"Assigned {team_owner_role_name} role (team scope: {personal_team_id}) to user {email}")
+                            await self.role_service.assign_role_to_user(user_email=email, role_id=global_role.id, scope="global", scope_id=None, granted_by=granter)
+                            logger.info(f"Assigned {global_role_name} role (global scope) to user {SecurityValidator.sanitize_log_message(email)}")
                         except ValueError as e:
-                            logger.warning(f"Could not assign {team_owner_role_name} role to {email}: {e}")
+                            logger.warning(f"Could not assign {global_role_name} role to {SecurityValidator.sanitize_log_message(email)}: {e}")
                     else:
-                        logger.warning(f"{team_owner_role_name} role not found. User {email} created without team owner role.")
+                        logger.warning(f"{global_role_name} role not found. User {SecurityValidator.sanitize_log_message(email)} created without global role.")
 
-            except Exception as role_error:
-                logger.error(f"Failed to assign roles to user {email}: {role_error}")
-                # Don't fail user creation if role assignment fails
-                # User can be assigned roles manually later
+                    # Assign team owner role with team scope (if personal team exists)
+                    if personal_team_id:
+                        team_owner_role_name = settings.default_team_owner_role
+                        team_owner_role = await self.role_service.get_role_by_name(team_owner_role_name, "team")
 
-            # Log registration event
-            registration_event = EmailAuthEvent.create_registration_event(user_email=email, success=True)
-            self.db.add(registration_event)
-            self.db.commit()
+                        if team_owner_role:
+                            try:
+                                await self.role_service.assign_role_to_user(user_email=email, role_id=team_owner_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
+                                logger.info(f"Assigned {team_owner_role_name} role (team scope: {personal_team_id}) to user {SecurityValidator.sanitize_log_message(email)}")
+                            except ValueError as e:
+                                logger.warning(f"Could not assign {team_owner_role_name} role to {SecurityValidator.sanitize_log_message(email)}: {e}")
+                        else:
+                            logger.warning(f"{team_owner_role_name} role not found. User {SecurityValidator.sanitize_log_message(email)} created without team owner role.")
+
+                except Exception as role_error:
+                    logger.error(f"Failed to assign roles to user {SecurityValidator.sanitize_log_message(email)}: {role_error}")
+                    # Don't fail user creation if role assignment fails
+                    # User can be assigned roles manually later
+
+                # Log registration event
+                registration_event = EmailAuthEvent.create_registration_event(user_email=email, success=True)
+                self.db.add(registration_event)
+                self.db.commit()
 
             return user
 
         except IntegrityError as e:
             self.db.rollback()
-            logger.error(f"Database error creating user {email}: {e}")
+            logger.error(f"Database error creating user {SecurityValidator.sanitize_log_message(email)}: {e}")
             raise UserExistsError(f"User with email {email} already exists") from e
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Unexpected error creating user {email}: {e}")
+            logger.error(f"Unexpected error creating user {SecurityValidator.sanitize_log_message(email)}: {e}")
 
             # Log failed registration
             registration_event = EmailAuthEvent.create_registration_event(user_email=email, success=False, failure_reason=str(e))
@@ -660,6 +701,59 @@ class EmailAuthService:
             self.db.commit()
 
             raise
+
+    async def ensure_user_exists(
+        self,
+        email: str,
+        full_name: Optional[str] = None,
+        is_admin: bool = False,
+        auth_provider: str = "local",
+        granted_by: Optional[str] = None,
+        skip_onboarding: bool = False,
+    ) -> tuple[EmailUser, bool]:
+        """Idempotent user creation — returns existing user or creates a new one.
+
+        Args:
+            email: User's email address
+            full_name: Optional display name
+            is_admin: Whether user has admin privileges
+            auth_provider: Authentication provider
+            granted_by: Email of creating user (for audit trail)
+            skip_onboarding: Skip personal team, role assignment, and success-path
+                audit events (unexpected-failure auditing is always recorded)
+
+        Returns:
+            Tuple of (user, created) where created is True if the user was newly created.
+
+        Raises:
+            EmailValidationError: If the email format is invalid.
+            UserExistsError: If a race-condition insert fails and re-fetch still returns None.
+        """
+        email = email.lower().strip()
+        existing = await self.get_user_by_email(email)
+        if existing:
+            return existing, False
+
+        try:
+            user = await self.create_user(
+                email=email,
+                password="",  # nosec B106 — intentionally empty for service accounts
+                full_name=full_name,
+                is_admin=is_admin,
+                auth_provider=auth_provider,
+                skip_password_validation=True,
+                granted_by=granted_by,
+                skip_onboarding=skip_onboarding,
+                password_change_required=True,
+            )
+            return user, True
+        except UserExistsError:
+            # Race condition: another request created the user between our check and insert
+            logger.info(f"Race-condition user creation for {SecurityValidator.sanitize_log_message(email)}, re-fetching existing record")
+            user = await self.get_user_by_email(email)
+            if user:
+                return user, False
+            raise  # Should not happen, but don't swallow the error
 
     async def authenticate_user(self, email: str, password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> Optional[EmailUser]:
         """Authenticate a user with email and password.
@@ -691,14 +785,14 @@ class EmailAuthService:
         try:
             if not user:
                 failure_reason = "User not found"
-                logger.info(f"Authentication failed for {email}: user not found")
+                logger.info(f"Authentication failed for {SecurityValidator.sanitize_log_message(email)}: user not found")
                 await self._verify_dummy_password_for_timing(password)
                 await self._apply_failed_login_floor(start_time)
                 return None
 
             if not user.is_active:
                 failure_reason = "Account is disabled"
-                logger.info(f"Authentication failed for {email}: account disabled")
+                logger.info(f"Authentication failed for {SecurityValidator.sanitize_log_message(email)}: account disabled")
                 await self._verify_dummy_password_for_timing(password)
                 await self._apply_failed_login_floor(start_time)
                 return None
@@ -710,7 +804,7 @@ class EmailAuthService:
             # but their failed attempts are still tracked for audit purposes.
             if user.is_account_locked() and not is_protected_admin:
                 failure_reason = "Account is locked"
-                logger.info(f"Authentication failed for {email}: account locked")
+                logger.info(f"Authentication failed for {SecurityValidator.sanitize_log_message(email)}: account locked")
                 await self._verify_dummy_password_for_timing(password)
                 await self._apply_failed_login_floor(start_time)
                 return None
@@ -726,7 +820,7 @@ class EmailAuthService:
                 is_locked = user.increment_failed_attempts(max_attempts, lockout_duration)
 
                 if is_locked:
-                    logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
+                    logger.warning(f"Account locked for {SecurityValidator.sanitize_log_message(email)} after {max_attempts} failed attempts")
                     failure_reason = "Account locked due to too many failed attempts"
                     lockout_notifications_enabled = getattr(settings, "account_lockout_notification_enabled", True)
                     if isinstance(lockout_notifications_enabled, bool) and lockout_notifications_enabled:
@@ -750,7 +844,7 @@ class EmailAuthService:
                     )
 
                 self.db.commit()
-                logger.info(f"Authentication failed for {email}: invalid password")
+                logger.info(f"Authentication failed for {SecurityValidator.sanitize_log_message(email)}: invalid password")
                 await self._apply_failed_login_floor(start_time)
                 return None
 
@@ -759,7 +853,7 @@ class EmailAuthService:
             self.db.commit()
 
             auth_success = True
-            logger.info(f"Authentication successful for {email}")
+            logger.info(f"Authentication successful for {SecurityValidator.sanitize_log_message(email)}")
 
             return user
 
@@ -1067,11 +1161,11 @@ class EmailAuthService:
             except Exception as cache_error:  # nosec B110 - best effort cache invalidation
                 logger.debug("Failed to invalidate auth cache on password change: %s", cache_error)
 
-            logger.info(f"Password changed successfully for {email}")
+            logger.info(f"Password changed successfully for {SecurityValidator.sanitize_log_message(email)}")
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Error changing password for {email}: {e}")
+            logger.error(f"Error changing password for {SecurityValidator.sanitize_log_message(email)}: {e}")
             raise
         finally:
             # Log password change event
@@ -1123,14 +1217,44 @@ class EmailAuthService:
             existing_admin.is_admin = True
             existing_admin.is_active = True
 
+            # Synchronize platform_admin RBAC role with is_admin flag
+            # This ensures atomicity: when setting is_admin=True, also assign the platform_admin role
+            try:
+                platform_admin_role = await self.role_service.get_role_by_name("platform_admin", "global")
+                if platform_admin_role:
+                    # Check if role assignment already exists
+                    existing_assignment = await self.role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+
+                    if not existing_assignment or not existing_assignment.is_active:
+                        await self.role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
+                        logger.info(f"Assigned platform_admin role to {SecurityValidator.sanitize_log_message(email)} during create_platform_admin()")
+                    else:
+                        logger.debug(f"User {SecurityValidator.sanitize_log_message(email)} already has active platform_admin role")
+                else:
+                    logger.warning(f"platform_admin role not found. User {SecurityValidator.sanitize_log_message(email)} updated with is_admin=True but without platform_admin role assignment.")
+            except Exception as role_error:
+                logger.error(
+                    f"Failed to assign platform_admin role to {SecurityValidator.sanitize_log_message(email)}: {SecurityValidator.sanitize_log_message(str(role_error))}. User updated with is_admin=True but role assignment failed."
+                )
+                # Rollback to clear any failed transaction state (e.g. PendingRollbackError
+                # from a failed commit inside assign_role_to_user), then re-apply admin flags
+                # so the subsequent commit can persist the admin user update.
+                try:
+                    self.db.rollback()
+                    existing_admin.is_admin = True
+                    existing_admin.is_active = True
+                except Exception as rollback_error:  # nosec B110
+                    logger.debug("Session rollback after role sync failure also failed: %s", rollback_error)
+                # bootstrap_default_roles() will sync the role assignment later
+
             self.db.commit()
-            logger.info(f"Updated platform admin user: {email}")
+            logger.info(f"Updated platform admin user: {SecurityValidator.sanitize_log_message(email)}")
             return existing_admin
 
         # Create new admin user - skip password validation during bootstrap
         admin_user = await self.create_user(email=email, password=password, full_name=full_name, is_admin=True, auth_provider="local", skip_password_validation=True)
 
-        logger.info(f"Created platform admin user: {email}")
+        logger.info(f"Created platform admin user: {SecurityValidator.sanitize_log_message(email)}")
         return admin_user
 
     async def update_last_login(self, email: str) -> None:
@@ -1411,7 +1535,7 @@ class EmailAuthService:
             return UsersListResult(data=users, next_cursor=next_cursor)
 
         except Exception as e:
-            logger.error(f"Error listing non-members for team {team_id}: {e}")
+            logger.error(f"Error listing non-members for team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
 
             # Return appropriate empty response based on mode
             if page is not None:
@@ -1588,31 +1712,31 @@ class EmailAuthService:
                                 existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
                                 if not existing or not existing.is_active:
                                     await self.role_service.assign_role_to_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None, granted_by=email)
-                                    logger.info(f"Assigned {admin_role_name} role to {email}")
+                                    logger.info(f"Assigned {admin_role_name} role to {SecurityValidator.sanitize_log_message(email)}")
                             else:
-                                logger.warning(f"{admin_role_name} role not found, cannot assign to {email}")
+                                logger.warning(f"{admin_role_name} role not found, cannot assign to {SecurityValidator.sanitize_log_message(email)}")
 
                             if user_role:
                                 revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
                                 if revoked:
-                                    logger.info(f"Revoked {user_role_name} role from {email}")
+                                    logger.info(f"Revoked {SecurityValidator.sanitize_log_message(user_role_name)} role from {SecurityValidator.sanitize_log_message(email)}")
                         else:
                             # Demotion: revoke admin role, assign user role
                             if admin_role:
                                 revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
                                 if revoked:
-                                    logger.info(f"Revoked {admin_role_name} role from {email}")
+                                    logger.info(f"Revoked {admin_role_name} role from {SecurityValidator.sanitize_log_message(email)}")
 
                             if user_role:
                                 existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
                                 if not existing or not existing.is_active:
                                     await self.role_service.assign_role_to_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None, granted_by=email)
-                                    logger.info(f"Assigned {user_role_name} role to {email}")
+                                    logger.info(f"Assigned {SecurityValidator.sanitize_log_message(user_role_name)} role to {SecurityValidator.sanitize_log_message(email)}")
                             else:
-                                logger.warning(f"{user_role_name} role not found, cannot assign to {email}")
+                                logger.warning(f"{SecurityValidator.sanitize_log_message(user_role_name)} role not found, cannot assign to {SecurityValidator.sanitize_log_message(email)}")
 
                     except Exception as e:
-                        logger.warning(f"Failed to sync global roles for {email}: {e}")
+                        logger.warning(f"Failed to sync global roles for {SecurityValidator.sanitize_log_message(email)}: {e}")
                         # Don't fail user update if role sync fails
 
             if is_active is not None:
@@ -1638,7 +1762,7 @@ class EmailAuthService:
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Error updating user {email}: {e}")
+            logger.error(f"Error updating user {SecurityValidator.sanitize_log_message(email)}: {e}")
             raise
 
     async def activate_user(self, email: str) -> EmailUser:
@@ -1666,12 +1790,12 @@ class EmailAuthService:
 
             self.db.commit()
 
-            logger.info(f"User {email} activated")
+            logger.info(f"User {SecurityValidator.sanitize_log_message(email)} activated")
             return user
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Error activating user {email}: {e}")
+            logger.error(f"Error activating user {SecurityValidator.sanitize_log_message(email)}: {e}")
             raise
 
     async def deactivate_user(self, email: str) -> EmailUser:
@@ -1699,12 +1823,12 @@ class EmailAuthService:
 
             self.db.commit()
 
-            logger.info(f"User {email} deactivated")
+            logger.info(f"User {SecurityValidator.sanitize_log_message(email)} deactivated")
             return user
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Error deactivating user {email}: {e}")
+            logger.error(f"Error deactivating user {SecurityValidator.sanitize_log_message(email)}: {e}")
             raise
 
     async def delete_user(self, email: str) -> bool:
@@ -1746,7 +1870,7 @@ class EmailAuthService:
                         # Transfer ownership to the first available owner
                         new_owner = potential_owners[0]
                         team.created_by = new_owner.user_email
-                        logger.info(f"Transferred team '{team.name}' ownership from {email} to {new_owner.user_email}")
+                        logger.info(f"Transferred team '{SecurityValidator.sanitize_log_message(team.name)}' ownership from {SecurityValidator.sanitize_log_message(email)} to {new_owner.user_email}")
                     else:
                         # No other owners available - check if it's a single-user team
                         all_members_stmt = select(EmailTeamMember).where(EmailTeamMember.team_id == team.id)
@@ -1754,7 +1878,7 @@ class EmailAuthService:
 
                         if len(all_members) == 1 and all_members[0].user_email == email:
                             # This is a single-user personal team - cascade delete it
-                            logger.info(f"Deleting personal team '{team.name}' (single member: {email})")
+                            logger.info(f"Deleting personal team '{SecurityValidator.sanitize_log_message(team.name)}' (single member: {SecurityValidator.sanitize_log_message(email)})")
                             # Delete team members first (should be just the owner)
                             delete_team_members_stmt = delete(EmailTeamMember).where(EmailTeamMember.team_id == team.id)
                             self.db.execute(delete_team_members_stmt)
@@ -1768,7 +1892,7 @@ class EmailAuthService:
             try:
                 await self.role_service.delete_all_user_roles(email)
             except Exception as e:
-                logger.warning(f"Failed to delete role assignments for {email}: {e}")
+                logger.warning(f"Failed to delete role assignments for {SecurityValidator.sanitize_log_message(email)}: {e}")
 
             # Reassign non-null audit FKs to another user so deleting this user does not
             # break referential integrity for historical records.
@@ -1803,24 +1927,14 @@ class EmailAuthService:
             self.db.delete(user)
             self.db.commit()
 
-            # Invalidate all auth caches for deleted user
-            try:
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+            await self._invalidate_deleted_user_auth_caches(email)
 
-                for coro in [auth_cache.invalidate_user(email), auth_cache.invalidate_user_teams(email), auth_cache.invalidate_team_membership(email)]:
-                    task = asyncio.create_task(coro)
-                    _background_tasks.add(task)
-                    task.add_done_callback(_background_tasks.discard)
-            except Exception as cache_error:
-                logger.debug(f"Failed to invalidate cache on user delete: {cache_error}")
-
-            logger.info(f"User {email} deleted permanently")
+            logger.info(f"User {SecurityValidator.sanitize_log_message(email)} deleted permanently")
             return True
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Error deleting user {email}: {e}")
+            logger.error(f"Error deleting user {SecurityValidator.sanitize_log_message(email)}: {e}")
             raise
 
     async def count_active_admin_users(self) -> int:

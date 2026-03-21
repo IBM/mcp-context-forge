@@ -206,7 +206,7 @@ plugins:
     conditions: []
     config: {}
 
-  # Rate limiter (fixed window, in-memory)
+  # Rate limiter (fixed window, Redis-backed for shared state across instances)
   - name: "RateLimiterPlugin"
     kind: "plugins.rate_limiter.rate_limiter.RateLimiterPlugin"
     description: "Per-user/tenant/tool rate limits"
@@ -214,14 +214,17 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
-    mode: "disabled"
+    mode: "permissive"
     priority: 20
     conditions: []
     config:
-      by_user: "60/m"
-      by_tenant: "600/m"
-      by_tool:
-        search: "10/m"
+      backend: "redis"
+      redis_url: "redis://redis:6379/0"
+      redis_key_prefix: "rl"
+      redis_fallback: true
+      by_user: "30/m"
+      by_tenant: "3000/m"
+      by_tool: {}
 
   # Schema guard for tool args/results (subset JSONSchema)
   - name: "SchemaGuardPlugin"

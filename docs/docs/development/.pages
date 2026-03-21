@@ -12,4 +12,5 @@ nav:
   - doctest-coverage.md
   - module-documentation.md
   - db-performance.md
+  - manual_test_migration.md
   - profiling.md

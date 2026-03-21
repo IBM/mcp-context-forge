@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 
 # First-Party
 from mcpgateway.db import Resource as DbResource
@@ -450,6 +450,36 @@ class TestResourceListing:
         result = await resource_service.list_server_resources(mock_db, "server123")
 
         assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_server_resources_with_include_metrics_true(self, resource_service, mock_db):
+        """Test that list_server_resources eager loads metrics when include_metrics=True.
+
+        This test ensures that when include_metrics=True, the query includes
+        selectinload for both metrics and metrics_hourly relationships to prevent N+1 queries.
+        Regression test for PR #3649 performance optimization.
+        """
+        mock_resource = MagicMock()
+        mock_resource.enabled = True
+        mock_resource.team_id = None
+        mock_resource.team = None
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [mock_resource]
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalars.return_value = mock_scalars
+        mock_db.execute.return_value = mock_execute_result
+
+        resource_service.convert_resource_to_read = MagicMock(return_value="converted_resource_with_metrics")
+
+        # Call with include_metrics=True to trigger eager loading code path
+        resources = await resource_service.list_server_resources(mock_db, server_id="server123", include_metrics=True)
+
+        assert resources == ["converted_resource_with_metrics"]
+        # Verify convert_resource_to_read was called with include_metrics=True
+        resource_service.convert_resource_to_read.assert_called_once_with(
+            mock_resource, include_metrics=True
+        )
 
     @pytest.mark.asyncio
     async def test_list_resources_cache_hit_returns_cached(self, resource_service, mock_db):
@@ -2042,7 +2072,7 @@ class TestResourceServiceMetricsExtended:
 
         bind = MagicMock()
         bind.dialect = MagicMock()
-        bind.dialect.name = "sqlite"  # or "postgresql" or "mysql"
+        bind.dialect.name = "sqlite"  # or "postgresql"
         mock_db.get_bind.return_value = bind
 
         with patch("mcpgateway.services.resource_service.select", return_value=mock_query):
@@ -3895,6 +3925,17 @@ class TestConvertResourceToReadMetrics:
             created_by="user@test.com",
             modified_by="user@test.com",
             _sa_instance_state=MagicMock(),
+            # Mock metrics_summary property (matches new implementation)
+            metrics_summary={
+                "total_executions": 2,
+                "successful_executions": 1,
+                "failed_executions": 1,
+                "failure_rate": 0.5,
+                "min_response_time": 0.1,
+                "max_response_time": 0.3,
+                "avg_response_time": 0.2,
+                "last_execution_time": now,
+            },
         )
         result = resource_service.convert_resource_to_read(resource, include_metrics=True)
         assert result.metrics is not None
@@ -3928,6 +3969,17 @@ class TestConvertResourceToReadMetrics:
             created_by="user@test.com",
             modified_by="user@test.com",
             _sa_instance_state=MagicMock(),
+            # Mock metrics_summary property (matches new implementation)
+            metrics_summary={
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            },
         )
         result = resource_service.convert_resource_to_read(resource, include_metrics=True)
         assert result.metrics is not None
@@ -4808,6 +4860,73 @@ class TestReadResourceCoverageEdges:
             out = await svc.read_resource(db, resource_id="res-1", server_id="srv-1")
         assert out.text == "TEXT"
         span.set_attribute.assert_any_call("success", True)
+
+    @pytest.mark.asyncio
+    async def test_read_resource_server_scoped_uri_lookup_avoids_duplicate_uri_collisions(self):
+        """Server-scoped URI reads must not fail when the same URI exists on another gateway."""
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        resource_db = MagicMock(
+            id="res-1",
+            uri="time://formats",
+            enabled=True,
+            content="SCOPED TEXT",
+            gateway=None,
+            visibility="public",
+            owner_email=None,
+            team_id=None,
+        )
+
+        resource_lookup_result = MagicMock()
+        resource_lookup_result.scalar_one_or_none.return_value = resource_db
+        server_match_result = MagicMock()
+        server_match_result.first.return_value = ("res-1",)
+
+        def execute_side_effect(statement, *args, **kwargs):
+            sql = str(statement)
+            if "resources.uri" in sql and "resources.enabled" in sql:
+                if "JOIN server_resource_association" not in sql:
+                    raise MultipleResultsFound("duplicate URI across gateways")
+                return resource_lookup_result
+            if "server_resource_association.resource_id" in sql:
+                return server_match_result
+            raise AssertionError(sql)
+
+        db.execute.side_effect = execute_side_effect
+
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="time://formats", server_id="srv-1")
+
+        assert out.text == "SCOPED TEXT"
+
+    @pytest.mark.asyncio
+    async def test_read_resource_generic_uri_lookup_reports_ambiguity(self):
+        """Generic URI reads should fail cleanly when the same URI exists on multiple servers."""
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        def execute_side_effect(statement, *args, **kwargs):
+            sql = str(statement)
+            if "resources.uri" in sql and "resources.enabled" in sql:
+                raise MultipleResultsFound("duplicate URI across gateways")
+            raise AssertionError(sql)
+
+        db.execute.side_effect = execute_side_effect
+
+        with pytest.raises(ResourceError, match=r"ambiguous across multiple servers; use /servers/\{id\}/mcp"):
+            await svc.read_resource(db, resource_uri="time://formats")
 
     @pytest.mark.asyncio
     async def test_read_resource_quack_branch_stateful_hasattr_covers_unreachable_elif_false_arc(self):

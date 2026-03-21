@@ -111,15 +111,6 @@ def test_gateway_service_convert_gateway_to_read(monkeypatch):
     assert result._masked_called, "convert_gateway_to_read must call .masked() to prevent credential leakage"
 
 
-def test_gateway_service_prepare_gateway_for_read():
-    service = GatewayService()
-    gateway = SimpleNamespace(auth_value={"token": "secret"}, tags=["Analytics", "ml"])
-
-    updated = service._prepare_gateway_for_read(gateway)
-    assert decode_auth(updated.auth_value) == {"token": "secret"}
-    assert updated.tags == validate_tags_field(["Analytics", "ml"])
-
-
 def test_gateway_service_validate_tools_valueerror(monkeypatch):
     service = GatewayService()
 
@@ -203,8 +194,7 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
     db.refresh = Mock()
 
     # Snapshot at db.add() time — tools flow through the gateway relationship (gateway.tools=tools),
-    # not separate db.add() calls. _prepare_gateway_for_read() later mutates db_gateway.auth_value
-    # to an encoded string for the GatewayRead response; we capture before that mutation.
+    # not separate db.add() calls.
     # First-Party
     from mcpgateway.db import Gateway as DbGateway
 

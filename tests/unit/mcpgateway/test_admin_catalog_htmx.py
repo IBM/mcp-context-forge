@@ -97,8 +97,9 @@ def client():
     shared_get_instance.start()
     shared_shutdown.start()
 
-    with TestClient(app) as test_client:
-        yield test_client
+    # Skip lifespan to avoid parallel test hangs (no `with` context manager)
+    test_client = TestClient(app)
+    yield test_client
 
     # Cleanup
     app.dependency_overrides.pop(get_current_user, None)

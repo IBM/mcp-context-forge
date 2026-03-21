@@ -27,6 +27,7 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailApiToken, EmailUser, Permissions, TokenRevocation, TokenUsageLog, utc_now
 from mcpgateway.services.logging_service import LoggingService
@@ -518,7 +519,7 @@ class TokenCatalogService:
         self.db.refresh(api_token)
 
         token_type = f"team-scoped (team: {team_id})" if team_id else "public-only"
-        logger.info(f"Created {token_type} API token '{name}' for user {user_email}. Token ID: {api_token.id}, Expires: {expires_at or 'Never'}")
+        logger.info(f"Created {token_type} API token '{name}' for user {SecurityValidator.sanitize_log_message(user_email)}. Token ID: {api_token.id}, Expires: {expires_at or 'Never'}")
         return api_token, raw_token
 
     async def count_user_tokens(self, user_email: str, include_inactive: bool = False) -> int:
@@ -806,7 +807,7 @@ class TokenCatalogService:
         self.db.commit()
         self.db.refresh(token)
 
-        logger.info(f"Updated token '{token.name}' for user {user_email}")
+        logger.info(f"Updated token '{token.name}' for user {SecurityValidator.sanitize_log_message(user_email)}")
 
         return token
 

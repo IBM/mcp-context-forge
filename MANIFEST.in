@@ -105,6 +105,7 @@ recursive-include plugins_rust *.py
 recursive-include plugins_rust *.pyi
 recursive-include plugins_rust *.lock
 recursive-include plugins_rust Makefile
+exclude plugins_rust/Cargo.lock
 prune plugins_rust/target
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist

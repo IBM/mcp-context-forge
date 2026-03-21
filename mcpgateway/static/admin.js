@@ -1404,6 +1404,17 @@ function showErrorMessage(message, elementId = null) {
     }
 }
 
+// Handle HTMX after-request for user delete — extracts plain text from the
+// HTML error response and surfaces it via the toast notification system.
+// Exposed on window so inline hx-on::after-request handlers can call it.
+window.handleDeleteUserError = function (event) {
+    if (!event.detail.successful) {
+        const d = document.createElement("div");
+        d.innerHTML = event.detail.xhr.responseText;
+        showErrorMessage(d.textContent.trim() || "Error deleting user");
+    }
+};
+
 // Show success messages
 function showSuccessMessage(message) {
     const successDiv = document.createElement("div");
@@ -4453,6 +4464,14 @@ async function editA2AAgent(agentId) {
                     if (authHeaderValueField) {
                         authHeaderValueField.value = "*****"; // mask header value
                     }
+                    // Load existing auth_headers if present
+                    if (agent.authHeaders && Array.isArray(agent.authHeaders)) {
+                        loadAuthHeaders(
+                            "auth-headers-container-a2a-edit",
+                            agent.authHeaders,
+                            { maskValues: true },
+                        );
+                    }
                 }
                 break;
             case "oauth":
@@ -4749,6 +4768,7 @@ async function runResourceTest() {
 
     // Copy button
     const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
     copyBtn.textContent = "Copy";
     copyBtn.className =
         "text-xs px-2 py-1 rounded bg-gray-300 dark:bg-gray-600 hover:bg-gray-400 dark:hover:bg-gray-500";
@@ -4756,6 +4776,7 @@ async function runResourceTest() {
 
     // Fullscreen button
     const fullscreenBtn = document.createElement("button");
+    fullscreenBtn.type = "button";
     fullscreenBtn.textContent = "Fullscreen";
     fullscreenBtn.className =
         "text-xs px-2 py-1 rounded bg-blue-300 dark:bg-blue-600 hover:bg-blue-400 dark:hover:bg-blue-500";
@@ -4763,6 +4784,7 @@ async function runResourceTest() {
 
     // Download button
     const downloadBtn = document.createElement("button");
+    downloadBtn.type = "button";
     downloadBtn.textContent = "Download";
     downloadBtn.className =
         "text-xs px-2 py-1 rounded bg-green-300 dark:bg-green-600 hover:bg-green-400 dark:hover:bg-green-500";
@@ -4831,6 +4853,7 @@ async function runResourceTest() {
             "bg-white dark:bg-gray-900 rounded-lg w-full h-full p-4 overflow-auto";
 
         const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
         closeBtn.textContent = "Close";
         closeBtn.className =
             "text-xs px-3 py-1 mb-2 rounded bg-red-400 hover:bg-red-500 dark:bg-red-700 dark:hover:bg-red-600";
@@ -5604,11 +5627,12 @@ async function viewPrompt(promptName) {
 
             const argsEl = promptDetailsDiv.querySelector(".prompt-arguments");
             if (argsEl) {
-                argsEl.textContent = JSON.stringify(
-                    prompt.arguments || {},
-                    null,
-                    2,
-                );
+                const args = prompt.arguments;
+                if (!args || args.length === 0) {
+                    argsEl.textContent = "No arguments";
+                } else {
+                    argsEl.textContent = JSON.stringify(args, null, 2);
+                }
             }
 
             if (prompt.metrics) {
@@ -5845,7 +5869,7 @@ async function editPrompt(promptId) {
 
         // Validate arguments JSON
         const argsValidation = validateJson(
-            JSON.stringify(prompt.arguments || {}),
+            JSON.stringify(prompt.arguments || []),
             "Arguments",
         );
         if (argsField && argsValidation.valid) {
@@ -6973,6 +6997,111 @@ async function viewServer(serverId) {
             }
 
             container.appendChild(associatedDiv);
+
+            // OAuth Configuration section
+            if (server.oauthEnabled) {
+                const oauthDiv = document.createElement("div");
+                oauthDiv.className = "mt-6 border-t pt-4";
+
+                const oauthTitle = document.createElement("strong");
+                oauthTitle.textContent = "OAuth 2.0 Configuration:";
+                oauthTitle.className =
+                    "block text-gray-900 dark:text-gray-100 mb-3";
+                oauthDiv.appendChild(oauthTitle);
+
+                // OAuth Config details
+                const oauthConfig = server.oauthConfig || server.oauth_config;
+                if (oauthConfig) {
+                    const oauthConfigDiv = document.createElement("div");
+                    oauthConfigDiv.className =
+                        "mt-3 space-y-2 bg-gray-50 dark:bg-gray-800 p-3 rounded-md";
+
+                    // Authorization Servers
+                    if (
+                        oauthConfig.authorization_servers &&
+                        oauthConfig.authorization_servers.length > 0
+                    ) {
+                        const authServersP = document.createElement("p");
+                        authServersP.className = "text-sm";
+                        const authServersStrong =
+                            document.createElement("strong");
+                        authServersStrong.textContent =
+                            "Authorization Servers: ";
+                        authServersStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        authServersP.appendChild(authServersStrong);
+
+                        const serversList = document.createElement("ul");
+                        serversList.className =
+                            "mt-1 ml-4 list-disc list-inside";
+                        oauthConfig.authorization_servers.forEach(
+                            (serverUrl) => {
+                                const li = document.createElement("li");
+                                li.className =
+                                    "text-gray-600 dark:text-gray-400 text-sm";
+                                li.textContent = serverUrl;
+                                serversList.appendChild(li);
+                            },
+                        );
+                        authServersP.appendChild(serversList);
+                        oauthConfigDiv.appendChild(authServersP);
+                    }
+
+                    // Token Endpoint
+                    if (oauthConfig.token_endpoint) {
+                        const tokenEndpointP = document.createElement("p");
+                        tokenEndpointP.className = "text-sm";
+                        const tokenEndpointStrong =
+                            document.createElement("strong");
+                        tokenEndpointStrong.textContent = "Token Endpoint: ";
+                        tokenEndpointStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        tokenEndpointP.appendChild(tokenEndpointStrong);
+
+                        const tokenEndpointSpan =
+                            document.createElement("span");
+                        tokenEndpointSpan.className =
+                            "text-gray-600 dark:text-gray-400 break-all";
+                        tokenEndpointSpan.textContent =
+                            oauthConfig.token_endpoint;
+                        tokenEndpointP.appendChild(tokenEndpointSpan);
+                        oauthConfigDiv.appendChild(tokenEndpointP);
+                    }
+
+                    // Scopes Supported
+                    if (
+                        oauthConfig.scopes_supported &&
+                        oauthConfig.scopes_supported.length > 0
+                    ) {
+                        const scopesP = document.createElement("p");
+                        scopesP.className = "text-sm";
+                        const scopesStrong = document.createElement("strong");
+                        scopesStrong.textContent = "Supported Scopes: ";
+                        scopesStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        scopesP.appendChild(scopesStrong);
+
+                        const scopesSpan = document.createElement("span");
+                        scopesSpan.className =
+                            "text-gray-600 dark:text-gray-400";
+                        scopesSpan.textContent =
+                            oauthConfig.scopes_supported.join(", ");
+                        scopesP.appendChild(scopesSpan);
+                        oauthConfigDiv.appendChild(scopesP);
+                    }
+
+                    oauthDiv.appendChild(oauthConfigDiv);
+                } else {
+                    const noConfigP = document.createElement("p");
+                    noConfigP.className =
+                        "mt-2 text-sm text-gray-500 dark:text-gray-400";
+                    noConfigP.textContent =
+                        "OAuth is enabled but no configuration details are available.";
+                    oauthDiv.appendChild(noConfigP);
+                }
+
+                container.appendChild(oauthDiv);
+            }
 
             // Add metadata section
             const metadataDiv = document.createElement("div");
@@ -12160,7 +12289,8 @@ async function testTool(toolId) {
                     // Input field with validation (with multiline support)
                     let fieldInput;
                     const isTextType = prop.type === "text";
-                    if (isTextType) {
+                    const isObjectType = prop.type === "object";
+                    if (isTextType || isObjectType) {
                         fieldInput = document.createElement("textarea");
                         fieldInput.rows = 4;
                     } else {
@@ -12190,6 +12320,12 @@ async function testTool(toolId) {
                             fieldInput.checked = prop.default === true;
                         } else if (isTextType) {
                             fieldInput.value = prop.default;
+                        } else if (isObjectType) {
+                            // For object types, stringify the default value
+                            fieldInput.value =
+                                typeof prop.default === "object"
+                                    ? JSON.stringify(prop.default, null, 2)
+                                    : prop.default;
                         } else {
                             fieldInput.value = prop.default;
                         }
@@ -12209,6 +12345,16 @@ async function testTool(toolId) {
 
                 container.appendChild(fieldDiv);
             }
+        }
+
+        // Clear previous result before opening
+        const resultContainer = safeGetElement("tool-test-result");
+        if (resultContainer) {
+            resultContainer.textContent = "";
+        }
+        const loadingEl = safeGetElement("tool-test-loading");
+        if (loadingEl) {
+            loadingEl.style.display = "none";
         }
 
         openModal("tool-test-modal");
@@ -14176,8 +14322,8 @@ async function runToolTest() {
                 } else {
                     value = formData.get(key);
                     if (value === null || value === undefined || value === "") {
-                        if (schema.required && schema.required.includes(key)) {
-                            params[keyValidation.value] = "";
+                        if (schema.required?.includes(key)) {
+                            throw new Error(`Field "${key}" is required`);
                         }
                         continue;
                     }
@@ -14189,6 +14335,23 @@ async function runToolTest() {
                     } else if (prop.enum) {
                         if (prop.enum.includes(value)) {
                             params[keyValidation.value] = value;
+                        }
+                    } else if (prop.type === "object") {
+                        try {
+                            const parsed = JSON.parse(value);
+                            if (
+                                parsed === null ||
+                                typeof parsed !== "object" ||
+                                Array.isArray(parsed)
+                            ) {
+                                throw new Error("Value must be an object");
+                            }
+                            params[keyValidation.value] = parsed;
+                        } catch (error) {
+                            showErrorMessage(
+                                `Invalid JSON object for ${key}: ${error.message}`,
+                            );
+                            throw error;
                         }
                     } else {
                         params[keyValidation.value] = value;
@@ -14495,6 +14658,22 @@ async function testPrompt(promptId) {
                 } else {
                     descElement.textContent = "No description available.";
                 }
+            }
+
+            // Clear previous result before opening
+            const resultContainer = safeGetElement("prompt-test-result");
+            if (resultContainer) {
+                resultContainer.textContent = "";
+                const placeholder = document.createElement("div");
+                placeholder.className =
+                    "text-gray-500 dark:text-gray-400 text-sm italic";
+                placeholder.textContent =
+                    'Click "Render Prompt" to see the rendered output';
+                resultContainer.appendChild(placeholder);
+            }
+            const promptLoading = safeGetElement("prompt-test-loading");
+            if (promptLoading) {
+                promptLoading.classList.add("hidden");
             }
 
             // Build form fields based on prompt arguments
@@ -14828,6 +15007,16 @@ async function testGateway(gatewayURL) {
 
         // Clean up any existing event listeners first
         cleanupGatewayTestModal();
+
+        // Clear previous result before opening
+        const responseDiv = safeGetElement("gateway-test-response-json");
+        const resultDiv = safeGetElement("gateway-test-result");
+        if (responseDiv) {
+            responseDiv.textContent = "";
+        }
+        if (resultDiv) {
+            resultDiv.classList.add("hidden");
+        }
 
         // Open the modal
         openModal("gateway-test-modal");
@@ -16547,6 +16736,24 @@ async function handleEditA2AAgentFormSubmit(e) {
             "passthrough_headers",
             JSON.stringify(passthroughHeaders),
         );
+
+        // Handle auth_headers JSON field
+        const authHeadersJson = formData.get("auth_headers");
+        if (authHeadersJson) {
+            try {
+                const authHeaders = JSON.parse(authHeadersJson);
+                if (Array.isArray(authHeaders) && authHeaders.length > 0) {
+                    // Remove the JSON string and add as parsed data for backend processing
+                    formData.delete("auth_headers");
+                    formData.append(
+                        "auth_headers",
+                        JSON.stringify(authHeaders),
+                    );
+                }
+            } catch (e) {
+                console.error("Invalid auth_headers JSON:", e);
+            }
+        }
 
         // Handle OAuth configuration
         // NOTE: OAuth config assembly is now handled by the backend (mcpgateway/admin.py)
@@ -18695,6 +18902,52 @@ const {
     reset: resetSearchInputsState,
 } = createMemoizedInit(initializeSearchInputs, 300, "SearchInputs");
 
+/**
+ * Update visible filter-status text for each table panel.
+ * Shows "Filters active" when any filter (search, tags, inactive) is active.
+ */
+function updateFilterStatus() {
+    Object.values(PANEL_SEARCH_CONFIG).forEach((config) => {
+        const statusEl = document.getElementById(
+            config.tableName + "-filter-status",
+        );
+        if (!statusEl) return;
+
+        const params = new URLSearchParams(window.location.search);
+        const prefix = config.tableName + "_";
+        const hasQuery = Boolean(params.get(prefix + "q"));
+        const hasTags = Boolean(params.get(prefix + "tags"));
+        const hasInactive = params.get(prefix + "inactive") === "true";
+
+        statusEl.textContent =
+            hasQuery || hasTags || hasInactive ? "Filters active" : "";
+    });
+}
+window.updateFilterStatus = updateFilterStatus;
+
+/**
+ * Rehydrate search inputs and filter status after HTMX content swaps.
+ * This ensures that search/tag values from the URL are restored into the
+ * input elements after pagination or partial refresh replaces table content.
+ */
+document.addEventListener("htmx:afterSettle", function (evt) {
+    const target = evt.detail?.target;
+    if (!target || !target.id) return;
+
+    // Only rehydrate when a table partial or pagination was swapped
+    const isTableSwap =
+        target.id.endsWith("-table") ||
+        target.id.endsWith("-table-body") ||
+        target.id.endsWith("-list-container");
+    const isPaginationSwap = target.id.endsWith("-pagination-controls");
+
+    if (isTableSwap || isPaginationSwap) {
+        resetSearchInputsState();
+        initializeSearchInputsMemoized();
+        updateFilterStatus();
+    }
+});
+
 const GLOBAL_SEARCH_ENTITY_CONFIG = {
     servers: { label: "Servers", tab: "catalog", viewFunction: "viewServer" },
     gateways: {
@@ -19352,11 +19605,12 @@ function initializeTabState() {
     Object.entries(checkboxTableMap).forEach(([id, tableName]) => {
         const checkbox = safeGetElement(id);
         if (checkbox) {
-            // Prefer namespaced param, fall back to legacy for backwards compatibility
+            // Prefer namespaced param, fall back to legacy if present,
+            // otherwise preserve the HTML default (checked attribute)
             const namespacedValue = urlParams.get(tableName + "_inactive");
             if (namespacedValue !== null) {
                 checkbox.checked = namespacedValue === "true";
-            } else {
+            } else if (urlParams.has("include_inactive")) {
                 checkbox.checked = legacyIncludeInactive;
             }
         }
@@ -19374,7 +19628,8 @@ function initializeTabState() {
         }
     });
 
-    // Enable toggles after HTMX swaps complete
+    // Enable toggles after HTMX swaps complete and re-initialize Alpine.js
+    // components on OOB-swapped pagination controls.
     document.body.addEventListener("htmx:afterSettle", (event) => {
         document
             .querySelectorAll(".show-inactive-toggle[disabled]")
@@ -19384,6 +19639,27 @@ function initializeTabState() {
                     checkbox.disabled = false;
                 }
             });
+
+        // Re-initialize Alpine.js components on pagination controls after
+        // HTMX OOB swaps.  When htmx.ajax() swaps a table partial that
+        // includes an out-of-band pagination-controls div, Alpine may not
+        // automatically detect the new x-data element (race with
+        // MutationObserver).  This ensures the page-info text, navigation
+        // buttons and per-page selector all render correctly after every
+        // settle.
+        if (window.Alpine && typeof window.Alpine.initTree === "function") {
+            document
+                .querySelectorAll('[id*="-pagination-controls"]')
+                .forEach(function (el) {
+                    // Only act on elements that contain an uninitialised
+                    // Alpine component (i.e. x-data present but no
+                    // _x_dataStack yet).
+                    const xDataEl = el.querySelector("[x-data]");
+                    if (xDataEl && !xDataEl._x_dataStack) {
+                        window.Alpine.initTree(el);
+                    }
+                });
+        }
     });
 }
 
@@ -21694,11 +21970,15 @@ async function handleA2ATestSubmit(e) {
             window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
         );
 
-        if (!response.ok) {
+        // Parse the JSON body for all responses — the backend returns
+        // structured {success, error, error_type} even for non-2xx status
+        // codes, and the display logic below already handles both cases.
+        let result;
+        try {
+            result = await response.json();
+        } catch {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-
-        const result = await response.json();
 
         // Display result
         const isSuccess = result.success && !result.error;
@@ -32928,273 +33208,214 @@ window.refreshLLMModels = refreshLLMModels;
 window.filterModelsByProvider = filterModelsByProvider;
 window.llmApiInfoApp = llmApiInfoApp;
 
-// Debounce helper for search
-const searchDebounceTimers = {};
-function debouncedServerSideUserSearch(teamId, searchTerm, delay = 300) {
-    if (searchDebounceTimers[teamId]) {
-        clearTimeout(searchDebounceTimers[teamId]);
-    }
-    searchDebounceTimers[teamId] = setTimeout(() => {
-        serverSideUserSearch(teamId, searchTerm);
-    }, delay);
-}
-window.debouncedServerSideUserSearch = debouncedServerSideUserSearch;
+// Debounce timers for member and non-member search
+const memberSearchTimers = {};
+const nonMemberSearchTimers = {};
 
-// Team user search function - searches all users and splits into members/non-members
-async function serverSideUserSearch(teamId, searchTerm) {
-    const membersContainer = document.getElementById(
-        `team-members-container-${teamId}`,
-    );
-    const nonMembersContainer = document.getElementById(
+// Selection caches to preserve state across searches
+// nonMemberSelectionsCache: teamId -> {email: role}
+const nonMemberSelectionsCache = {};
+// memberOverridesCache: teamId -> {email: {checked: bool, role: string}}
+const memberOverridesCache = {};
+
+function captureNonMemberSelections(teamId) {
+    const container = document.getElementById(
         `team-non-members-container-${teamId}`,
     );
+    if (!container) return;
+    if (!nonMemberSelectionsCache[teamId]) {
+        nonMemberSelectionsCache[teamId] = {};
+    }
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email) return;
+        const cb = item.querySelector('input[name="associatedUsers"]');
+        const roleSelect = item.querySelector(".role-select");
+        if (cb && cb.checked && !cb.getAttribute("data-auto-check")) {
+            nonMemberSelectionsCache[teamId][email] = roleSelect
+                ? roleSelect.value
+                : "member";
+        } else if (cb && !cb.checked && !cb.getAttribute("data-auto-check")) {
+            delete nonMemberSelectionsCache[teamId][email];
+        }
+    });
+}
 
-    if (!membersContainer || !nonMembersContainer) {
-        console.error("Team containers not found");
+function restoreNonMemberSelections(teamId) {
+    const container = document.getElementById(
+        `team-non-members-container-${teamId}`,
+    );
+    if (!container || !nonMemberSelectionsCache[teamId]) return;
+    const cache = nonMemberSelectionsCache[teamId];
+    const visibleEmails = new Set();
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email) return;
+        visibleEmails.add(email);
+        if (cache[email] !== undefined) {
+            const cb = item.querySelector('input[name="associatedUsers"]');
+            const roleSelect = item.querySelector(".role-select");
+            if (cb) cb.checked = true;
+            if (roleSelect) roleSelect.value = cache[email];
+        }
+    });
+    container
+        .querySelectorAll(".cached-selection")
+        .forEach((el) => el.remove());
+    for (const [email, role] of Object.entries(cache)) {
+        if (!visibleEmails.has(email)) {
+            const wrapper = document.createElement("div");
+            wrapper.className = "cached-selection hidden";
+            const cbHidden = document.createElement("input");
+            cbHidden.type = "checkbox";
+            cbHidden.name = "associatedUsers";
+            cbHidden.value = email;
+            cbHidden.checked = true;
+            cbHidden.className = "hidden";
+            const roleHidden = document.createElement("input");
+            roleHidden.type = "hidden";
+            roleHidden.name = "role_" + encodeURIComponent(email);
+            roleHidden.value = role;
+            wrapper.appendChild(cbHidden);
+            wrapper.appendChild(roleHidden);
+            container.appendChild(wrapper);
+        }
+    }
+}
+
+function captureMemberOverrides(teamId) {
+    const container = document.getElementById(
+        `team-members-container-${teamId}`,
+    );
+    if (!container) return;
+    if (!memberOverridesCache[teamId]) {
+        memberOverridesCache[teamId] = {};
+    }
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email) return;
+        const cb = item.querySelector('input[name="associatedUsers"]');
+        const roleSelect = item.querySelector(".role-select");
+        if (cb && cb.getAttribute("data-auto-check") === "true") {
+            if (!cb.checked || (roleSelect && roleSelect.value)) {
+                memberOverridesCache[teamId][email] = {
+                    checked: cb.checked,
+                    role: roleSelect ? roleSelect.value : "member",
+                };
+            }
+        }
+    });
+}
+
+function restoreMemberOverrides(teamId) {
+    const container = document.getElementById(
+        `team-members-container-${teamId}`,
+    );
+    if (!container || !memberOverridesCache[teamId]) return;
+    const cache = memberOverridesCache[teamId];
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email || !cache[email]) return;
+        const cb = item.querySelector('input[name="associatedUsers"]');
+        const roleSelect = item.querySelector(".role-select");
+        if (cb) cb.checked = cache[email].checked;
+        if (roleSelect) roleSelect.value = cache[email].role;
+    });
+}
+
+function debouncedMemberSearch(teamId, searchTerm, delay = 300) {
+    if (memberSearchTimers[teamId]) {
+        clearTimeout(memberSearchTimers[teamId]);
+    }
+    memberSearchTimers[teamId] = setTimeout(() => {
+        serverSideMemberSearch(teamId, searchTerm);
+    }, delay);
+}
+window.debouncedMemberSearch = debouncedMemberSearch;
+
+function debouncedNonMemberSearch(teamId, searchTerm, delay = 300) {
+    if (nonMemberSearchTimers[teamId]) {
+        clearTimeout(nonMemberSearchTimers[teamId]);
+    }
+    nonMemberSearchTimers[teamId] = setTimeout(() => {
+        serverSideNonMemberSearch(teamId, searchTerm);
+    }, delay);
+}
+window.debouncedNonMemberSearch = debouncedNonMemberSearch;
+
+// Search current team members via server-side filtering
+async function serverSideMemberSearch(teamId, searchTerm) {
+    const container = document.getElementById(
+        `team-members-container-${teamId}`,
+    );
+    if (!container) {
+        return;
+    }
+    captureMemberOverrides(teamId);
+    const perPage =
+        container.dataset.perPage ||
+        container.getAttribute("data-per-page") ||
+        50;
+    try {
+        const searchParam =
+            searchTerm && searchTerm.trim() !== ""
+                ? `&search=${encodeURIComponent(searchTerm.trim())}`
+                : "";
+        const response = await fetchWithAuth(
+            `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${perPage}${searchParam}`,
+        );
+        if (response.ok) {
+            container.innerHTML = await response.text();
+            if (typeof htmx !== "undefined") {
+                htmx.process(container);
+            }
+            restoreMemberOverrides(teamId);
+        }
+    } catch (error) {
+        console.error("Error searching members:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching members</div>';
+    }
+}
+window.serverSideMemberSearch = serverSideMemberSearch;
+
+// Search non-members (users not in team) via server-side filtering
+async function serverSideNonMemberSearch(teamId, searchTerm) {
+    const container = document.getElementById(
+        `team-non-members-container-${teamId}`,
+    );
+    if (!container) {
         return;
     }
 
-    // Read per_page from data attributes (set server-side), fallback to 20
-    const membersPerPage =
-        membersContainer.dataset.perPage ||
-        membersContainer.getAttribute("data-per-page") ||
-        20;
-    const nonMembersPerPage =
-        nonMembersContainer.dataset.perPage ||
-        nonMembersContainer.getAttribute("data-per-page") ||
-        20;
+    captureNonMemberSelections(teamId);
 
-    // If search is empty, reload both sections with full data
-    if (!searchTerm || searchTerm.trim() === "") {
-        try {
-            // Reload members - use fetchWithAuth for bearer token support
-            const membersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${membersPerPage}`,
-            );
-            if (membersResponse.ok) {
-                membersContainer.innerHTML = await membersResponse.text();
-                // Re-initialize HTMX on new content for infinite scroll triggers
-                if (typeof htmx !== "undefined") {
-                    htmx.process(membersContainer);
-                }
-            }
-
-            // Reload non-members
-            const nonMembersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${nonMembersPerPage}`,
-            );
-            if (nonMembersResponse.ok) {
-                nonMembersContainer.innerHTML = await nonMembersResponse.text();
-                // Re-initialize HTMX on new content for infinite scroll triggers
-                if (typeof htmx !== "undefined") {
-                    htmx.process(nonMembersContainer);
-                }
-            }
-        } catch (error) {
-            console.error("Error reloading user lists:", error);
-        }
+    // Require at least 2 characters for non-member search
+    if (!searchTerm || searchTerm.trim().length < 2) {
+        container.innerHTML =
+            '<div class="text-center py-4 text-gray-500 dark:text-gray-400">Type at least 2 characters to search for users.</div>';
+        restoreNonMemberSelections(teamId);
         return;
     }
 
     try {
-        // First, collect member data AND checkbox states from DOM (before search replaces content)
-        const memberDataFromDom = {};
-        const checkboxStates = {}; // Track checkbox states for all visible users
-        const existingMemberItems = document.querySelectorAll(
-            `#team-members-container-${teamId} .user-item`,
+        const response = await fetchWithAuth(
+            `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=50&search=${encodeURIComponent(searchTerm.trim())}`,
         );
-        existingMemberItems.forEach((item) => {
-            const email = item.dataset.userEmail;
-            if (email) {
-                const roleSelect = item.querySelector(".role-select");
-                const checkbox = item.querySelector(".user-checkbox");
-                memberDataFromDom[email] = {
-                    role: roleSelect ? roleSelect.value : "member",
-                };
-                if (checkbox) {
-                    checkboxStates[email] = checkbox.checked;
-                }
+        if (response.ok) {
+            container.innerHTML = await response.text();
+            if (typeof htmx !== "undefined") {
+                htmx.process(container);
             }
-        });
-
-        // Also collect checkbox states from non-members section
-        const existingNonMemberItems = document.querySelectorAll(
-            `#team-non-members-container-${teamId} .user-item`,
-        );
-        existingNonMemberItems.forEach((item) => {
-            const email = item.dataset.userEmail;
-            if (email) {
-                const checkbox = item.querySelector(".user-checkbox");
-                const roleSelect = item.querySelector(".role-select");
-                if (checkbox) {
-                    checkboxStates[email] = checkbox.checked;
-                    // Also preserve role selection for users being added
-                    if (checkbox.checked && roleSelect) {
-                        memberDataFromDom[email] = {
-                            role: roleSelect.value,
-                            pendingAdd: true, // Flag that this is a pending addition
-                        };
-                    }
-                }
-            }
-        });
-
-        // If no members found in DOM yet, fetch from server to get membership data with roles
-        if (Object.keys(memberDataFromDom).length === 0) {
-            try {
-                const membersResp = await fetchWithAuth(
-                    `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100`,
-                );
-                if (membersResp.ok) {
-                    const tempDiv = document.createElement("div");
-                    tempDiv.innerHTML = await membersResp.text();
-                    tempDiv.querySelectorAll(".user-item").forEach((item) => {
-                        const email = item.dataset.userEmail;
-                        if (email) {
-                            const roleSelect =
-                                item.querySelector(".role-select");
-                            memberDataFromDom[email] = {
-                                role: roleSelect ? roleSelect.value : "member",
-                            };
-                        }
-                    });
-                }
-            } catch (e) {
-                console.error("Error fetching member data:", e);
-            }
-        }
-
-        // Search all users - use fetchWithAuth for bearer token support
-        const searchUrl = `${window.ROOT_PATH}/admin/users/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
-        const response = await fetchWithAuth(searchUrl);
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        if (data.users && data.users.length > 0) {
-            // Split users into members and non-members based on collected data
-            const members = [];
-            const nonMembers = [];
-
-            data.users.forEach((user) => {
-                if (memberDataFromDom[user.email]) {
-                    members.push({
-                        ...user,
-                        role: memberDataFromDom[user.email].role,
-                    });
-                } else {
-                    nonMembers.push(user);
-                }
-            });
-
-            // Helper to escape HTML
-            function escapeHtml(text) {
-                const div = document.createElement("div");
-                div.textContent = text;
-                return div.innerHTML;
-            }
-
-            // Render members with preserved roles, checkbox states, and loadedMembers hidden input
-            let membersHtml = "";
-            members.forEach((user) => {
-                const fullName = escapeHtml(user.full_name || user.email);
-                const email = escapeHtml(user.email);
-                const role = user.role || "member";
-                const isOwner = role === "owner";
-                // Preserve checkbox state if available, otherwise default to checked for existing members
-                const isChecked =
-                    checkboxStates[user.email] !== undefined
-                        ? checkboxStates[user.email]
-                        : true;
-                membersHtml += `
-                    <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20" data-user-email="${email}">
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
-                            </div>
-                        </div>
-                        <input type="hidden" name="loadedMembers" value="${email}" />
-                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} data-auto-check="true" />
-                        <div class="flex-grow min-w-0">
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
-                                ${isOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Owner</span>' : ""}
-                            </div>
-                            <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
-                        </div>
-                        <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
-                            <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
-                            <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
-                        </select>
-                    </div>
-                `;
-            });
-
-            // Render non-members with preserved checkbox states and roles
-            let nonMembersHtml = "";
-            nonMembers.forEach((user) => {
-                const fullName = escapeHtml(user.full_name || user.email);
-                const email = escapeHtml(user.email);
-                // Preserve checkbox state if available, otherwise default to unchecked for non-members
-                const isChecked =
-                    checkboxStates[user.email] !== undefined
-                        ? checkboxStates[user.email]
-                        : false;
-                // Preserve role selection for users being added
-                const pendingData = memberDataFromDom[user.email];
-                const role =
-                    pendingData && pendingData.pendingAdd
-                        ? pendingData.role
-                        : "member";
-                const isOwner = role === "owner";
-                nonMembersHtml += `
-                    <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-transparent" data-user-email="${email}" data-is-member="false">
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
-                            </div>
-                        </div>
-                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} />
-                        <div class="flex-grow min-w-0">
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
-                            </div>
-                            <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
-                        </div>
-                        <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
-                            <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
-                            <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
-                        </select>
-                    </div>
-                `;
-            });
-
-            membersContainer.innerHTML =
-                membersHtml ||
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
-            nonMembersContainer.innerHTML =
-                nonMembersHtml ||
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
-        } else {
-            // No results
-            membersContainer.innerHTML =
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
-            nonMembersContainer.innerHTML =
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
+            restoreNonMemberSelections(teamId);
         }
     } catch (error) {
-        console.error("Error searching users:", error);
-        membersContainer.innerHTML =
-            '<div class="text-center py-4 text-red-600">Error searching users</div>';
-        nonMembersContainer.innerHTML =
+        console.error("Error searching non-members:", error);
+        container.innerHTML =
             '<div class="text-center py-4 text-red-600">Error searching users</div>';
     }
 }
-
-window.serverSideUserSearch = serverSideUserSearch;
+window.serverSideNonMemberSearch = serverSideNonMemberSearch;
 
 // ============================================================================ //
 //                         TEAM SEARCH AND FILTER FUNCTIONS                      //
