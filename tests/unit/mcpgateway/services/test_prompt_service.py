@@ -752,6 +752,34 @@ class TestPromptService:
                 await prompt_service.get_prompt(test_db, "1", {}, server_id="server-1")
 
     @pytest.mark.asyncio
+    async def test_get_prompt_server_id_disambiguates_duplicate_names(self, prompt_service, test_db):
+        """When server_id is provided, it scopes the lookup so duplicate names across servers resolve correctly."""
+        db_prompt = _build_db_prompt(name="shared_prompt", template="Server 1 version")
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+
+        # First call: server-joined lookup returns the prompt; second call: post-lookup server check
+        server_match_result = MagicMock()
+        server_match_result.first.return_value = ("ok",)
+        test_db.execute = Mock(side_effect=[_make_execute_result(scalar=db_prompt), server_match_result])
+
+        result = await prompt_service.get_prompt(test_db, "shared_prompt", {}, server_id="server-1")
+        assert result.messages[0].content.text == "Server 1 version"
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_server_id_inactive_scoped(self, prompt_service, test_db):
+        """Inactive prompt lookup also applies server_id scoping."""
+        inactive = _build_db_prompt(is_active=False, name="disabled_prompt")
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),  # active server-scoped query - not found
+                _make_execute_result(scalar=inactive),  # inactive server-scoped query - found
+            ]
+        )
+        with pytest.raises(PromptNotFoundError, match="inactive"):
+            await prompt_service.get_prompt(test_db, "disabled_prompt", {}, server_id="server-1")
+
+    @pytest.mark.asyncio
     async def test_get_prompt_render_error_sets_span_attributes(self, prompt_service, test_db):
         """Covers span attribute setting on render errors."""
         # Standard

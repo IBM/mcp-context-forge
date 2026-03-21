@@ -1795,16 +1795,22 @@ class PromptService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 search_key = str(prompt_id)
 
-                # Build base query with team scoping applied FIRST
+                # Build base query with server + team scoping applied FIRST
                 base_query = select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.enabled)
+                if server_id:
+                    base_query = base_query.join(server_prompt_association, DbPrompt.id == server_prompt_association.c.prompt_id).where(server_prompt_association.c.server_id == server_id)
                 scoped_query = await self._apply_access_control(base_query, db, user, token_teams, team_id=None)
 
                 # Find prompt by name or ID (active prompts only) using optimized OR query
                 prompt = self._find_prompt_by_name_or_id(db, scoped_query, prompt_id)
 
-                # If not found in active prompts, check inactive prompts (with team scoping)
+                # If not found in active prompts, check inactive prompts (with team + server scoping)
                 if not prompt:
                     inactive_base_query = select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(not_(DbPrompt.enabled))
+                    if server_id:
+                        inactive_base_query = inactive_base_query.join(server_prompt_association, DbPrompt.id == server_prompt_association.c.prompt_id).where(
+                            server_prompt_association.c.server_id == server_id
+                        )
                     inactive_scoped_query = await self._apply_access_control(inactive_base_query, db, user, token_teams, team_id=None)
 
                     # Find in inactive prompts using optimized OR query
