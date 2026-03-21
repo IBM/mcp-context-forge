@@ -251,6 +251,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     "scope": "team",
                     "permissions": [
                         "admin.dashboard",
+                        "admin.overview",
                         "gateways.read",
                         "servers.read",
                         "servers.use",
@@ -298,6 +299,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     "scope": "team",
                     "permissions": [
                         "admin.dashboard",
+                        "admin.overview",
                         "gateways.read",
                         "servers.read",
                         "servers.use",
@@ -342,8 +344,10 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     "scope": "team",
                     "permissions": [
                         "admin.dashboard",
+                        "admin.overview",
                         "gateways.read",
                         "servers.read",
+                        "servers.use",
                         "teams.read",
                         "teams.join",
                         "tools.read",
@@ -364,8 +368,10 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     "scope": "global",
                     "permissions": [
                         "admin.dashboard",
+                        "admin.overview",
                         "gateways.read",
                         "servers.read",
+                        "servers.use",
                         "teams.read",
                         "teams.join",
                         "tools.read",
@@ -468,6 +474,13 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         logger.info(f"Assigned platform_admin role to {SecurityValidator.sanitize_log_message(admin_user.email)}")
                     else:
                         logger.info("Admin user already has platform_admin role")
+
+                    # Synchronize is_admin flag with platform_admin role assignment
+                    # This ensures consistency when admin is manually demoted in DB but role is re-assigned during bootstrap
+                    if not admin_user.is_admin:
+                        logger.info(f"Synchronizing is_admin flag for {SecurityValidator.sanitize_log_message(admin_user.email)} (was False, setting to True)")
+                        admin_user.is_admin = True
+                        db.commit()
 
                 except Exception as e:
                     logger.error(

@@ -179,6 +179,42 @@ curl http://localhost:8080/health    # {"status":"healthy"}
 
 ---
 
+## Rust MCP Compose Modes
+
+For the compose-backed testing stack, the Rust MCP runtime is exposed through
+mode-specific make targets:
+
+```bash
+make testing-rebuild-rust-shadow
+make testing-rebuild-rust
+make testing-rebuild-rust-full
+```
+
+Mode summary:
+
+- `shadow`: Rust sidecar present, but public `/mcp` stays on Python
+- `edge`: public `/mcp` routed directly from nginx to Rust
+- `full`: `edge` plus Rust session/event-store/resume/live-stream/affinity
+  cores
+
+Verify the active mode via `/health`:
+
+```bash
+curl -sD - http://localhost:8080/health -o /dev/null | rg 'x-contextforge-mcp-'
+```
+
+Examples:
+
+- `x-contextforge-mcp-transport-mounted: python` means the public MCP path is
+  still Python-owned
+- `x-contextforge-mcp-transport-mounted: rust` means nginx is routing public
+  `/mcp` traffic directly to the Rust runtime
+
+For the current runtime architecture, see
+[Rust MCP Runtime](../architecture/rust-mcp-runtime.md).
+
+---
+
 ## 🗄 Selecting a database
 
 Uncomment one service block in `docker-compose.yml` and align `DATABASE_URL`:

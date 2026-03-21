@@ -1,0 +1,7 @@
+# Local Rust crate artifacts
+/target
+Cargo.lock
+
+# Local editor/runtime noise
+.idea
+*.log

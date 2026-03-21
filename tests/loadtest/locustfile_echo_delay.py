@@ -20,19 +20,23 @@ Environment Variables:
     MCPGATEWAY_BEARER_TOKEN:   JWT token (auto-loaded from /tokens/gateway.jwt in container)
     ECHO_DELAY_MS:             Delay in milliseconds for each echo call (default: 500)
     ECHO_DELAY_SERVER_ID:      Virtual server ID (default: matches register_fast_test in docker-compose)
-    JWT_SECRET_KEY:            Secret for auto-generating JWT if token not provided (default: my-test-key)
+    JWT_SECRET_KEY:            Secret for auto-generating JWT if token not provided
+    NUM_TENANTS:               Number of discrete tenants to simulate (default: 10)
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 """
 
+import itertools
 import logging
 import os
+from pathlib import Path
 import random
 import time
-from pathlib import Path
+import uuid
 
-from locust import User, between, events, tag, task
+# Third-Party
+from locust import between, events, tag, task, User
 from locust.runners import MasterRunner, WorkerRunner
 
 logging.basicConfig(level=logging.INFO)
@@ -68,7 +72,7 @@ def _load_env_file() -> dict[str, str]:
                                 value = value[1:-1]
                             env_vars[key] = value
             except Exception as e:
-                logger.warning(f"Error reading .env file: {e}")
+                logger.warning("Error reading .env file: %s", e)
             break
     return env_vars
 
@@ -82,10 +86,17 @@ def _cfg(key: str, default: str = "") -> str:
 
 # Auth
 BEARER_TOKEN = _cfg("MCPGATEWAY_BEARER_TOKEN", "")
-JWT_SECRET = _cfg("JWT_SECRET_KEY", "my-test-key")
+JWT_SECRET = _cfg("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
+WXO_AUTH_ENABLED = _cfg("LOCUST_WXO_AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
 
 # Echo delay settings
 ECHO_DELAY_MS = int(_cfg("ECHO_DELAY_MS", "500"))
+
+# Multi-tenant settings
+NUM_TENANTS = int(_cfg("NUM_TENANTS", "10"))
+if NUM_TENANTS < 1:
+    raise ValueError(f"NUM_TENANTS must be >= 1, got {NUM_TENANTS}")
+TENANT_IDS = [f"tenant-{i:03d}" for i in range(NUM_TENANTS)]
 
 # Virtual server ID — matches the fixed ID created by register_fast_test in docker-compose
 # Override via ECHO_DELAY_SERVER_ID to target a different virtual server
@@ -101,6 +112,7 @@ MCP_PROTOCOL_VERSION = "2025-11-25"
 
 logger.info(f"Echo delay: {ECHO_DELAY_MS}ms")
 logger.info(f"Virtual server ID: {FAST_TEST_SERVER_ID}")
+logger.info(f"Tenants: {NUM_TENANTS} ({TENANT_IDS[0]} .. {TENANT_IDS[-1]})")
 
 
 # =============================================================================
@@ -108,18 +120,29 @@ logger.info(f"Virtual server ID: {FAST_TEST_SERVER_ID}")
 # =============================================================================
 
 
-def _generate_jwt_token() -> str | None:
-    """Generate a JWT token for gateway authentication."""
+# Monotonic counter for unique user IDs (thread-safe via GIL)
+_user_counter = itertools.count(1)
+
+
+def _generate_jwt_token(user_email: str, tenant_id: str) -> str | None:
+    """Generate a JWT token with per-user identity and tenant claims.
+
+    The woTenantId claim is read by the WXO auth plugin to map the user
+    to the correct team.
+    """
     now = int(time.time())
     payload = {
-        "username": "admin@example.com",
+        "username": user_email,
         "iat": now,
         "iss": "mcpgateway",
         "aud": "mcpgateway-api",
-        "sub": "admin@example.com",
+        "sub": user_email,
         "exp": now + 86400,
+        "jti": uuid.uuid4().hex,
+        "woTenantId": tenant_id,
     }
     try:
+        # Third-Party
         import jwt  # noqa: E402  # pylint: disable=import-outside-toplevel
 
         return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
@@ -127,6 +150,7 @@ def _generate_jwt_token() -> str | None:
         pass
 
     # Manual fallback
+    # Standard
     import base64  # pylint: disable=import-outside-toplevel
     import hashlib  # pylint: disable=import-outside-toplevel
     import hmac  # pylint: disable=import-outside-toplevel
@@ -141,19 +165,17 @@ def _generate_jwt_token() -> str | None:
     return f"{header}.{body}.{sig}"
 
 
-_CACHED_TOKEN: str | None = None
+def _create_user_identity() -> tuple[str, str, str]:
+    """Create a unique user identity with a randomly assigned tenant.
 
-
-def _get_auth_token() -> str:
-    """Get a bearer token, preferring env var, then auto-generation."""
-    global _CACHED_TOKEN  # pylint: disable=global-statement
-    if BEARER_TOKEN:
-        return BEARER_TOKEN
-    if _CACHED_TOKEN is None:
-        _CACHED_TOKEN = _generate_jwt_token()
-    if not _CACHED_TOKEN:
-        raise RuntimeError("No bearer token available. Set MCPGATEWAY_BEARER_TOKEN or install PyJWT.")
-    return _CACHED_TOKEN
+    Returns:
+        Tuple of (user_id, user_email, tenant_id).
+    """
+    user_num = next(_user_counter)
+    tenant_id = random.choice(TENANT_IDS)
+    user_id = f"user-{user_num:04d}-{uuid.uuid4().hex[:8]}"
+    user_email = f"{user_id}@loadtest.example.com"
+    return user_id, user_email, tenant_id
 
 
 # =============================================================================
@@ -188,6 +210,7 @@ def on_test_start(environment, **_kwargs):
     logger.info("=" * 60)
     logger.info(f"  Gateway:    {host}")
     logger.info(f"  Echo delay: {ECHO_DELAY_MS}ms")
+    logger.info(f"  Tenants:    {NUM_TENANTS}")
     logger.info(f"  MCP path:   /servers/{FAST_TEST_SERVER_ID}/mcp")
     logger.info("=" * 60)
 
@@ -206,11 +229,12 @@ def on_test_stop(environment, **_kwargs):
     print("\n" + "=" * 80)
     print("ECHO DELAY LOAD TEST SUMMARY")
     print("=" * 80)
-    print(f"\n  Echo delay:         {ECHO_DELAY_MS}ms")
+    print(f"\n  Tenants:            {NUM_TENANTS}")
+    print(f"  Echo delay:         {ECHO_DELAY_MS}ms")
     print(f"  Total Requests:     {total:,}")
     print(f"  Total Failures:     {failures:,} ({fail_rate:.2f}%)")
     print(f"  Requests/sec (RPS): {stats.total.total_rps:.2f}")
-    print(f"\n  Response Times (ms):")
+    print("\n  Response Times (ms):")
     print(f"    Average:          {stats.total.avg_response_time:.2f}")
     print(f"    Min:              {stats.total.min_response_time:.2f}")
     print(f"    Max:              {stats.total.max_response_time:.2f}")
@@ -245,15 +269,33 @@ class EchoDelayUser(User):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # Third-Party
         import requests  # pylint: disable=import-outside-toplevel
 
         self._session = requests.Session()
         self._request_id = 0
         self._mcp_session_id = None
         self._initialized = False
-        self._token = _get_auth_token()
         self._mcp_url = None
         self._sample_logged = False
+
+        # Assign unique identity and tenant
+        self._user_id, self._user_email, self._tenant_id = _create_user_identity()
+        if WXO_AUTH_ENABLED:
+            self._token = _generate_jwt_token(self._user_email, self._tenant_id)
+            if not self._token:
+                raise RuntimeError(f"Failed to generate JWT for {self._user_email}")
+            logger.info(f"User {self._user_id} assigned to {self._tenant_id}")
+        else:
+            # Prefer the pre-generated admin token, fall back to auto-generation
+            if BEARER_TOKEN:
+                self._token = BEARER_TOKEN
+                logger.info(f"User {self._user_id} (WXO auth disabled, using admin token)")
+            else:
+                self._token = _generate_jwt_token(self._user_email, self._tenant_id)
+                if not self._token:
+                    raise RuntimeError(f"WXO auth disabled but no MCPGATEWAY_BEARER_TOKEN available for {self._user_email}. " "Set MCPGATEWAY_BEARER_TOKEN or install PyJWT.")
+                logger.info(f"User {self._user_id} (WXO auth disabled, auto-generated token)")
 
         # Echo messages to rotate through
         self._messages = [
@@ -281,9 +323,10 @@ class EchoDelayUser(User):
         h = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
-            "Authorization": f"Bearer {self._token}",
             "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
         }
+        if self._token:
+            h["Authorization"] = f"Bearer {self._token}"
         if self._mcp_session_id:
             h["Mcp-Session-Id"] = self._mcp_session_id
         return h
@@ -411,7 +454,7 @@ class EchoDelayUser(User):
         )
         # Log one sample response for debugging
         if result is not None and not self._sample_logged:
-            logger.info(f"Sample echo response: {result}")
+            logger.info("Sample echo response: %s", result)
             self._sample_logged = True
 
     @task(1)

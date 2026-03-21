@@ -169,77 +169,63 @@ This diagram showcases the performance-optimized architecture of ContextForge, h
 └─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## MCP Streamable HTTP Request Path
+## MCP Streamable HTTP Request Paths
 
-Every MCP request to `/servers/{server_id}/mcp` passes through these layers:
+ContextForge now has two materially different MCP request paths, depending on
+the Rust runtime mode.
 
+### Mode summary
+
+| Mode | Public `/mcp` ingress | Session/runtime ownership |
+|------|------------------------|---------------------------|
+| `off` | Python | Python |
+| `shadow` | Python | Python (Rust sidecar present internally only) |
+| `edge` | Rust | Mixed: Rust ingress, Python still backs more MCP internals |
+| `full` | Rust | Rust ingress plus Rust session/event/resume/live-stream/affinity cores |
+
+### Python-owned public path (`off`, `shadow`)
+
+```text
+Client Request
+  -> NGINX
+  -> Python gateway middleware/auth/token scoping
+  -> Python MCP session manager + handlers
+  -> upstream MCP server
 ```
-Client Request (JSON-RPC over HTTP POST)
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│  NGINX (Edge/Proxy)                         │
-│  • least_conn load balancing                │
-│  • keepalive 512 per worker                 │
-│  • No caching for /mcp (POST requests)      │
-└─────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│  GATEWAY MIDDLEWARE STACK                    │
-│  1. SecurityHeaders, CORS                   │
-│  2. MCPPathRewrite + Auth                   │
-│     • JWT verification (HMAC)               │
-│     • Token revocation check (DB/cache)     │
-│     • User lookup (DB/cache)                │
-│     • Team resolution (DB/cache)            │
-│  3. Token scoping (Layer 1 auth)            │
-│  4. Request logging                         │
-└─────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│  MCP SDK SessionManager                     │
-│  • JSON-RPC envelope parsing                │
-│  • Session tracking (stateless by default)  │
-│  • Context variable propagation             │
-│  • Handler method routing                   │
-└─────────────────────────────────────────────┘
-    │
-    ├── tools/list ─────┐
-    ├── tools/call ─────┤
-    ├── resources/list ─┤
-    ├── prompts/list ───┤
-    └── ping ───────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│  MCP HANDLER                                │
-│  • RBAC permission check (Layer 2 auth)     │
-│  • Server/tool lookup (DB query)            │
-│  • For tools/call: upstream proxy           │
-│    via MCP Session Pool (if enabled)        │
-└─────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│  UPSTREAM MCP SERVER                        │
-│  (fast_test_server, fast_time, plugins)     │
-│  • Executes tool logic                      │
-│  • Returns JSON-RPC result                  │
-└─────────────────────────────────────────────┘
+
+### Rust-owned public path (`edge`, `full`)
+
+```text
+Client Request
+  -> NGINX
+  -> Rust public MCP listener
+  -> trusted Python auth endpoint
+  -> Rust MCP routing/session/runtime logic
+  -> upstream MCP server or narrow Python internal route
 ```
+
+Important current behavior:
+
+- Python remains authoritative for JWT auth, token scoping, and RBAC in all
+  modes.
+- `edge|full` remove the old public Python ingress hop by routing nginx
+  directly to Rust.
+- `full` also moves MCP session, event-store, resume, live-stream, and
+  affinity/owner-worker logic into Rust.
+- `shadow` is the safety-first fallback mode: the Rust sidecar is running, but
+  public `/mcp` stays mounted on Python.
 
 ### Performance Characteristics by Layer
 
 | Layer | Typical Latency | Scaling Bottleneck | Key Tunable |
 |-------|----------------|-------------------|-------------|
 | nginx | <1ms | Not a bottleneck | `keepalive`, `worker_connections` |
-| Middleware + Auth | 5-15ms | Auth DB queries | `AUTH_CACHE_*_TTL`, `AUTH_CACHE_BATCH_QUERIES` |
-| MCP SDK SessionManager | 2-5ms | JSON-RPC parsing, context vars | `JSON_RESPONSE_ENABLED` |
+| Python auth/control path | 5-15ms | Auth DB/cache queries | `AUTH_CACHE_*`, `AUTH_CACHE_BATCH_QUERIES` |
+| Rust public ingress (`edge`, `full`) | low single-digit ms | Syscall/network overhead | keepalive, upstream reuse, request shaping |
+| Python MCP session manager (`off`, `shadow`) | 2-5ms | JSON-RPC parsing, context vars | `JSON_RESPONSE_ENABLED` |
 | RBAC check | 1-5ms | Permission DB queries | Role cache TTL (5 min internal) |
-| tools/list (DB) | 5-10ms | Sequential table scans | `REGISTRY_CACHE_TOOLS_TTL` |
-| tools/call (upstream) | 10-200ms | Upstream server + network | `MCP_SESSION_POOL_ENABLED` |
+| tools/list / resources / prompts | 5-10ms | DB and compatibility paths | cache TTLs, Rust specialized handlers |
+| tools/call (upstream) | 10-200ms | Upstream server + network | upstream session reuse, direct execution, RMCP client reuse |
 
 ### Feature Flags and Middleware Overhead
 
@@ -249,12 +235,21 @@ The most impactful features to disable when not needed are: admin UI, A2A protoc
 
 ### Key Architectural Insight
 
-The `/rpc` endpoint and the `/servers/{id}/mcp` endpoint serve the same logical operations (tools/list, tools/call) but follow different code paths:
+The important transport distinction is no longer only `/rpc` versus `/mcp`.
+It is now also **Python-owned MCP** versus **Rust-owned public MCP ingress**:
 
-- **`/rpc`**: Uses Redis-backed caching (registry cache, tool lookup cache) for most lookups. Under load, Redis handles the read pressure, keeping PgBouncer/PostgreSQL near idle.
-- **`/mcp`**: Routes through the MCP SDK session manager, which executes its own handler functions. These handlers query the database via SQLAlchemy for server resolution, tool lookup, and RBAC checks. The auth cache (Redis-backed, TTL up to 300s) mitigates some of this, but RBAC and server/tool lookups still hit the database.
+- **`/rpc`** still benefits heavily from Redis-backed caches and does not follow
+  the streamable HTTP MCP session path.
+- **Python MCP (`off`, `shadow`)** still pays the full Python middleware,
+  session-manager, and handler cost on the public path.
+- **Rust MCP (`edge`, `full`)** removes the public Python ingress hop and moves
+  progressively more MCP session/runtime work to Rust, but Python auth/RBAC
+  remains part of the control plane.
 
-This means that scaling MCP throughput depends heavily on reducing per-request database queries in the MCP transport handlers.
+This means that scaling MCP throughput now depends on two different concerns:
+
+1. shrinking Python auth/control work that still happens for Rust MCP traffic
+2. minimizing per-request transport and upstream costs on the Rust side
 
 ---
 

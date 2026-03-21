@@ -1822,6 +1822,7 @@ class TestRPCEndpoints:
             plugin_context_table=None,
             plugin_global_context=ANY,
             meta_data=None,
+            skip_pre_invoke=False,
         )
 
     def test_rpc_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
@@ -2736,6 +2737,7 @@ class TestRealtimeEndpoints:
 class TestMetricsEndpoints:
     """Tests for metrics collection, aggregation, and reset functionality."""
 
+    @patch("mcpgateway.main.a2a_service", None)
     @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
     @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
     @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
@@ -2755,6 +2757,7 @@ class TestMetricsEndpoints:
         assert "servers" in data and "prompts" in data
         # A2A agents may or may not be present based on configuration
 
+    @patch("mcpgateway.main.a2a_service", None)
     @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
     @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
     @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)

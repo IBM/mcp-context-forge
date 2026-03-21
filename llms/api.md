@@ -245,10 +245,10 @@ PY
   ```
 - Import configuration:
   ```bash
-  curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-       -H "Content-Type: application/json" \
-       -d @backup.json \
-       "http://localhost:4444/import?conflict_strategy=skip" | jq
+  jq -n --slurpfile data backup.json '{"import_data": $data[0], "conflict_strategy": "skip"}' | \
+    curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+         -H "Content-Type: application/json" \
+         -d @- "http://localhost:4444/import" | jq
   ```
 
 **Well-Known Endpoints**

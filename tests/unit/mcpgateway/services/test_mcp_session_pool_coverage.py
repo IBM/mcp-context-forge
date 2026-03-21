@@ -815,7 +815,7 @@ class TestHealthCheckListResources:
             url="http://test:8080", identity_key="anonymous",
             transport_type=TransportType.STREAMABLE_HTTP, headers={},
         )
-        pooled.session.send_ping = AsyncMock(side_effect=asyncio.TimeoutError())
+        pooled.session.send_ping = AsyncMock(side_effect=TimeoutError())
         result = await pool._run_health_check_chain(pooled)
         assert result is True
 
@@ -828,7 +828,7 @@ class TestHealthCheckListResources:
             url="http://test:8080", identity_key="anonymous",
             transport_type=TransportType.STREAMABLE_HTTP, headers={},
         )
-        pooled.session.send_ping = AsyncMock(side_effect=asyncio.TimeoutError())
+        pooled.session.send_ping = AsyncMock(side_effect=TimeoutError())
         result = await pool._run_health_check_chain(pooled)
         assert result is False
         assert pool._health_check_failures == 1
@@ -850,7 +850,7 @@ class TestCreateSessionHeaderStripping:
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
         session_instance = MagicMock()
-        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aenter__ = AsyncMock(return_value=session_instance)
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 
@@ -878,7 +878,7 @@ class TestCreateSessionHeaderStripping:
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
         session_instance = MagicMock()
-        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aenter__ = AsyncMock(return_value=session_instance)
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 
@@ -906,7 +906,7 @@ class TestCreateSessionHeaderStripping:
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
         session_instance = MagicMock()
-        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aenter__ = AsyncMock(return_value=session_instance)
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 
@@ -933,7 +933,7 @@ class TestCreateSessionCancelledError:
 
     @pytest.mark.asyncio
     async def test_create_session_cancelled_error_cleanup(self):
-        """CancelledError should trigger cleanup in finally block."""
+        """CancelledError during init should trigger cleanup via background task unwinding."""
         pool = MCPSessionPool()
 
         transport_ctx = MagicMock()
@@ -941,15 +941,17 @@ class TestCreateSessionCancelledError:
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
         session_instance = MagicMock()
-        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aenter__ = AsyncMock(return_value=session_instance)
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(side_effect=asyncio.CancelledError())
 
         with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx):
             with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance):
-                with pytest.raises(asyncio.CancelledError):
+                with pytest.raises(RuntimeError, match="Failed to create MCP session"):
                     await pool._create_session("http://test:8080", None, TransportType.SSE, None)
 
+        # Background task unwinds via async with, calling __aexit__ on both
+        await asyncio.sleep(0.1)
         session_instance.__aexit__.assert_awaited()
         transport_ctx.__aexit__.assert_awaited()
 
@@ -970,7 +972,7 @@ class TestCreateSessionCleanupErrors:
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
         session_instance = MagicMock()
-        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aenter__ = AsyncMock(return_value=session_instance)
         session_instance.__aexit__ = AsyncMock(side_effect=RuntimeError("cleanup boom"))
         session_instance.initialize = AsyncMock(side_effect=RuntimeError("init boom"))
 
@@ -989,7 +991,7 @@ class TestCreateSessionCleanupErrors:
         transport_ctx.__aexit__ = AsyncMock(side_effect=RuntimeError("transport cleanup boom"))
 
         session_instance = MagicMock()
-        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aenter__ = AsyncMock(return_value=session_instance)
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(side_effect=RuntimeError("init boom"))
 
@@ -1000,7 +1002,7 @@ class TestCreateSessionCleanupErrors:
 
     @pytest.mark.asyncio
     async def test_create_session_cleanup_skips_session_exit_when_session_not_created(self):
-        """If transport enter fails before session exists, cleanup should still close transport."""
+        """If transport enter fails, the error propagates and background task cleans up."""
         pool = MCPSessionPool()
 
         transport_ctx = MagicMock()
@@ -1011,7 +1013,8 @@ class TestCreateSessionCleanupErrors:
             with pytest.raises(RuntimeError, match="Failed to create MCP session"):
                 await pool._create_session("http://test:8080", None, TransportType.SSE, None)
 
-        transport_ctx.__aexit__.assert_awaited()
+        # When __aenter__ fails, async with does NOT call __aexit__ (standard Python behavior).
+        # The background task catches the exception and the future propagates the error.
 
 
 # ---------------------------------------------------------------------------
@@ -2476,7 +2479,7 @@ class TestCreateSessionMessageHandler:
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
         session_instance = MagicMock()
-        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aenter__ = AsyncMock(return_value=session_instance)
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 
@@ -2502,7 +2505,7 @@ class TestCreateSessionMessageHandler:
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
         session_instance = MagicMock()
-        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aenter__ = AsyncMock(return_value=session_instance)
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 

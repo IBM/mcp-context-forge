@@ -7315,6 +7315,85 @@ async def test_admin_update_team_exception_htmx_and_redirect(monkeypatch, mock_d
 
 
 @pytest.mark.asyncio
+async def test_admin_update_team_passes_skip_limits_for_admin(monkeypatch, mock_db, allow_permission):
+    """Admin UI update passes skip_limits=True when user is admin."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team", "visibility": "private", "max_members": "500"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    _, kwargs = team_service.update_team.call_args
+    assert kwargs.get("skip_limits") is True
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_passes_skip_limits_false_for_nonadmin(monkeypatch, mock_db, allow_permission):
+    """Admin UI update passes skip_limits=False when user is not admin."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team", "visibility": "private", "max_members": "50"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    _, kwargs = team_service.update_team.call_args
+    assert kwargs.get("skip_limits") is False
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_value_error_htmx_rolls_back(monkeypatch, mock_db, allow_permission):
+    """ValueError from update_team returns 400 with rollback (no partial commit)."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team", "visibility": "private", "max_members": "999"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    assert response.status_code == 400
+    assert "cannot exceed" in response.body.decode()
+    # Verify rollback was called to prevent partial commit
+    mock_db.rollback.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_value_error_redirect(monkeypatch, mock_db, allow_permission):
+    """ValueError from update_team redirects with error for non-HTMX request."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": "/root"}
+    request.headers = {}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team", "visibility": "private", "max_members": "999"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert "cannot%20exceed" in response.headers["location"]
+    mock_db.rollback.assert_called()
+
+
+@pytest.mark.asyncio
 async def test_admin_add_team_members_private_not_owner(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     request = MagicMock(spec=Request)
@@ -8959,6 +9038,18 @@ async def test_get_overview_partial_renders(monkeypatch, mock_request, mock_db):
     engine.dialect.name = "sqlite"
     monkeypatch.setattr("mcpgateway.admin.version_module.engine", engine)
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
+    monkeypatch.setattr(
+        "mcpgateway.admin.version_module._mcp_runtime_status_payload",
+        lambda: {
+            "mode": "rust-managed",
+            "mounted": "rust",
+            "session_core_mode": "rust",
+            "resume_core_mode": "rust",
+            "live_stream_core_mode": "rust",
+            "affinity_core_mode": "rust",
+            "session_auth_reuse_mode": "rust",
+        },
+    )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", False)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
 
@@ -8978,6 +9069,9 @@ async def test_get_overview_partial_renders(monkeypatch, mock_request, mock_db):
     response = await get_overview_partial(mock_request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert mock_request.app.state.templates.TemplateResponse.called
+    context = mock_request.app.state.templates.TemplateResponse.call_args.args[2]
+    assert context["mcp_runtime"]["mode"] == "rust-managed"
+    assert context["mcp_runtime"]["mounted"] == "rust"
 
 
 @pytest.mark.asyncio
@@ -9018,6 +9112,18 @@ async def test_get_overview_partial_a2a_plugin_manager_redis(monkeypatch, mock_r
     engine.dialect.name = "sqlite"
     monkeypatch.setattr("mcpgateway.admin.version_module.engine", engine)
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
+    monkeypatch.setattr(
+        "mcpgateway.admin.version_module._mcp_runtime_status_payload",
+        lambda: {
+            "mode": "python",
+            "mounted": "python",
+            "session_core_mode": "python",
+            "resume_core_mode": "python",
+            "live_stream_core_mode": "python",
+            "affinity_core_mode": "python",
+            "session_auth_reuse_mode": "python",
+        },
+    )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", True)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
 
@@ -9074,6 +9180,18 @@ async def test_get_overview_partial_redis_check_exception(monkeypatch, mock_requ
     engine.dialect.name = "sqlite"
     monkeypatch.setattr("mcpgateway.admin.version_module.engine", engine)
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
+    monkeypatch.setattr(
+        "mcpgateway.admin.version_module._mcp_runtime_status_payload",
+        lambda: {
+            "mode": "python",
+            "mounted": "python",
+            "session_core_mode": "python",
+            "resume_core_mode": "python",
+            "live_stream_core_mode": "python",
+            "affinity_core_mode": "python",
+            "session_auth_reuse_mode": "python",
+        },
+    )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", True)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
 
@@ -9125,6 +9243,18 @@ async def test_get_overview_partial_error_returns_html(monkeypatch, mock_request
     engine.dialect.name = "sqlite"
     monkeypatch.setattr("mcpgateway.admin.version_module.engine", engine)
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
+    monkeypatch.setattr(
+        "mcpgateway.admin.version_module._mcp_runtime_status_payload",
+        lambda: {
+            "mode": "python",
+            "mounted": "python",
+            "session_core_mode": "python",
+            "resume_core_mode": "python",
+            "live_stream_core_mode": "python",
+            "affinity_core_mode": "python",
+            "session_auth_reuse_mode": "python",
+        },
+    )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", False)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
 
@@ -9323,6 +9453,36 @@ async def test_admin_servers_partial_html_conversion_error_is_logged_and_skipped
     )
     assert isinstance(response, HTMLResponse)
     assert server_service.convert_server_to_read.called
+
+@pytest.mark.asyncio
+async def test_admin_servers_partial_html_default_includes_inactive(monkeypatch, mock_request, mock_db):
+    """Verify include_inactive defaults to True so inactive servers appear on first load (issue #3234)."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="srv-1", name="Server 1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    server_service = MagicMock()
+    server_service.convert_server_to_read.return_value = {"id": "srv-1", "name": "Server 1"}
+    monkeypatch.setattr("mcpgateway.admin.server_service", server_service)
+
+    mock_request.app.state.templates.TemplateResponse.reset_mock()
+    mock_request.headers = {}
+    # Call without include_inactive — let the default kick in
+    response = await admin_servers_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        render="controls",
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+    context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+    assert context["query_params"]["include_inactive"] == "true"
+
 
 
 @pytest.mark.asyncio
@@ -9915,6 +10075,35 @@ async def test_admin_gateways_partial_html_team_filter_denied(monkeypatch, mock_
         user={"email": "user@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+
+@pytest.mark.asyncio
+async def test_admin_gateways_partial_html_default_includes_inactive(monkeypatch, mock_request, mock_db):
+    """Verify include_inactive defaults to True so inactive gateways appear on first load (issue #3234)."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="gw-1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    gateway_service = MagicMock()
+    gateway_service.convert_gateway_to_read.return_value = {"id": "gw-1", "name": "Gateway 1"}
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
+
+    mock_request.app.state.templates.TemplateResponse.reset_mock()
+    mock_request.headers = {}
+    # Call without include_inactive — let the default kick in
+    response = await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        render="controls",
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+    context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+    assert context["query_params"]["include_inactive"] == "true"
 
 
 @pytest.mark.asyncio
@@ -11151,6 +11340,27 @@ class TestAdminAdditionalCoverage:
         response = await _generate_unified_teams_view(team_service, SimpleNamespace(email="user@example.com"), "")
         assert isinstance(response, HTMLResponse)
         assert "No teams found" in response.body.decode()
+
+    @patch("mcpgateway.admin.settings")
+    async def test_generate_unified_teams_view_join_requests_disabled(self, mock_settings):
+        """Cover the disabled join request button branch when allow_team_join_requests=False."""
+        mock_settings.email_auth_enabled = True
+        mock_settings.allow_team_join_requests = False
+
+        public_team = SimpleNamespace(id="t1", name="Public Team", visibility="public", is_personal=False, created_by="owner@example.com", description=None)
+
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=[])
+        team_service.discover_public_teams = AsyncMock(return_value=[public_team])
+        team_service.get_member_counts_batch_cached = AsyncMock(return_value={"t1": 5})
+        team_service.get_user_roles_batch = MagicMock(return_value={})
+        team_service.get_pending_join_requests_batch = MagicMock(return_value={})
+
+        response = await _generate_unified_teams_view(team_service, SimpleNamespace(email="user@example.com"), "")
+        assert isinstance(response, HTMLResponse)
+        html_content = response.body.decode()
+        assert "disabled" in html_content
+        assert "team-card" in html_content
 
     @patch("mcpgateway.admin.settings")
     async def test_admin_get_log_file_list_with_rotation(self, mock_settings, tmp_path, mock_db):
@@ -14965,6 +15175,194 @@ async def test_admin_edit_a2a_agent_error_handlers(monkeypatch, mock_db):
         assert response.status_code == expected_status
 
 
+@pytest.mark.asyncio
+async def test_admin_add_a2a_agent_with_custom_headers(monkeypatch, mock_db):
+    """Test creating A2A agent with custom headers via admin UI (issue #3637)."""
+    form_data = FakeForm(
+        {
+            "name": "Test Agent",
+            "endpoint_url": "https://api.example.com/agent",
+            "agent_type": "generic",
+            "auth_type": "authheaders",
+            "auth_headers": '[{"key": "X-API-Key", "value": "secret123"}, {"key": "X-Custom-Header", "value": "custom-value"}]',
+            "visibility": "private",
+        }
+    )
+
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.register_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+        MagicMock(
+            return_value={
+                "created_by": "test@example.com",
+                "created_from_ip": "127.0.0.1",
+                "created_via": "ui",
+                "created_user_agent": "test",
+                "import_batch_id": None,
+                "federation_source": None,
+            }
+        ),
+    )
+
+    response = await admin_add_a2a_agent(request, mock_db, user={"email": "test@example.com", "db": mock_db})
+
+    assert response.status_code == 200
+    service.register_agent.assert_called_once()
+
+    # Get the agent_data argument (first positional arg after db)
+    call_args = service.register_agent.call_args
+    agent_data = call_args[0][1]  # Second positional argument
+
+    # Verify auth_headers were processed correctly
+    assert hasattr(agent_data, "auth_headers")
+    auth_headers = agent_data.auth_headers
+    assert isinstance(auth_headers, list)
+    assert len(auth_headers) == 2
+    assert auth_headers[0]["key"] == "X-API-Key"
+    assert auth_headers[0]["value"] == "secret123"
+    assert auth_headers[1]["key"] == "X-Custom-Header"
+    assert auth_headers[1]["value"] == "custom-value"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_a2a_agent_with_custom_headers(monkeypatch, mock_db):
+    """Test editing A2A agent with custom headers via admin UI (issue #3637)."""
+    form_data = FakeForm(
+        {
+            "name": "Updated Agent",
+            "endpoint_url": "https://api.example.com/agent",
+            "agent_type": "generic",
+            "auth_type": "authheaders",
+            "auth_headers": '[{"key": "X-API-Key", "value": "newsecret456"}, {"key": "X-Another-Header", "value": "another-value"}]',
+            "visibility": "private",
+            "tags": "test, api",
+        }
+    )
+
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.update_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+        MagicMock(return_value={"modified_by": "test@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "ui", "modified_user_agent": "test"}),
+    )
+
+    response = await admin_edit_a2a_agent("test-agent-id", request, mock_db, user={"email": "test@example.com", "db": mock_db})
+
+    assert response.status_code == 200
+    service.update_agent.assert_called_once()
+
+    # Get the agent_data keyword argument
+    call_kwargs = service.update_agent.call_args.kwargs
+    agent_update = call_kwargs["agent_data"]
+
+    # Verify auth_headers were processed correctly
+    assert hasattr(agent_update, "auth_headers")
+    auth_headers = agent_update.auth_headers
+    assert isinstance(auth_headers, list)
+    assert len(auth_headers) == 2
+    assert auth_headers[0]["key"] == "X-API-Key"
+    assert auth_headers[1]["key"] == "X-Another-Header"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_a2a_agent_empty_custom_headers(monkeypatch, mock_db):
+    """Test editing A2A agent with empty custom headers (clearing headers)."""
+    form_data = FakeForm(
+        {
+            "name": "Updated Agent",
+            "endpoint_url": "https://api.example.com/agent",
+            "agent_type": "generic",
+            "auth_type": "authheaders",
+            "auth_headers": "",  # Empty headers
+            "auth_header_key": "X-Legacy",  # Provide legacy fields to satisfy validation
+            "auth_header_value": "legacy-value",
+            "visibility": "private",
+        }
+    )
+
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.update_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+        MagicMock(return_value={"modified_by": "test@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "ui", "modified_user_agent": "test"}),
+    )
+
+    response = await admin_edit_a2a_agent("test-agent-id", request, mock_db, user={"email": "test@example.com", "db": mock_db})
+
+    assert response.status_code == 200
+    service.update_agent.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_a2a_agent_invalid_json_headers(monkeypatch, mock_db):
+    """Test editing A2A agent with invalid JSON in auth_headers field."""
+    form_data = FakeForm(
+        {
+            "name": "Updated Agent",
+            "endpoint_url": "https://api.example.com/agent",
+            "agent_type": "generic",
+            "auth_type": "authheaders",
+            "auth_headers": "not-valid-json{",  # Invalid JSON
+            "auth_header_key": "X-Legacy",  # Provide legacy fields to satisfy validation
+            "auth_header_value": "legacy-value",
+            "visibility": "private",
+        }
+    )
+
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.update_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+        MagicMock(return_value={"modified_by": "test@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "ui", "modified_user_agent": "test"}),
+    )
+
+    # Should handle gracefully (invalid JSON is ignored, empty list used)
+    response = await admin_edit_a2a_agent("test-agent-id", request, mock_db, user={"email": "test@example.com", "db": mock_db})
+
+    assert response.status_code == 200
+
+
 # ============================================================================ #
 #                 GROUP 1: Utility Functions                                    #
 # ============================================================================ #
@@ -15917,6 +16315,35 @@ class TestTeamJoinRequests:
         result = await admin_cancel_join_request("team-1", "req-1", mock_db, user={"email": "user@test.com"})
         assert result.status_code == 400
         assert "error canceling join request" in result.body.decode().lower()
+
+    @pytest.mark.asyncio
+    async def test_admin_cancel_join_request_join_requests_disabled(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.allow_team_join_requests", False, raising=False)
+        ts = MagicMock()
+        ts.cancel_join_request = AsyncMock(return_value=True)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        result = await admin_cancel_join_request("team-1", "req-1", mock_db, user={"email": "user@test.com"})
+        assert result.status_code == 200
+        assert "disabled" in result.body.decode().lower()
+
+    @pytest.mark.asyncio
+    async def test_admin_create_join_request_value_error(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        team = SimpleNamespace(visibility="public", name="PublicTeam")
+        ts = MagicMock()
+        ts.get_team_by_id = AsyncMock(return_value=team)
+        ts.get_user_role_in_team = AsyncMock(return_value=None)
+        ts.get_user_join_requests = AsyncMock(return_value=[])
+        ts.create_join_request = AsyncMock(side_effect=ValueError("duplicate request"))
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        request = MagicMock(spec=Request)
+        request.form = AsyncMock(return_value={"message": "join me"})
+        result = await admin_create_join_request("team-1", request, mock_db, user={"email": "user@test.com"})
+        assert result.status_code == 400
+        assert "duplicate request" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_admin_list_join_requests_success(self, monkeypatch, allow_permission, mock_db):
@@ -19223,6 +19650,22 @@ class TestAdminTokensPartialSearch:
                 mock_service_cls.return_value.reset_password_with_token = AsyncMock(side_effect=RuntimeError("boom"))
                 response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
                 assert "server_error" in response.headers["location"]
+
+    def test_render_user_card_html_delete_button_has_error_handler(self):
+        """Delete button includes hx-on::after-request error handler."""
+        user_obj = SimpleNamespace(
+            email="deletable@test.com",
+            full_name="Deletable User",
+            auth_provider="local",
+            created_at=datetime(2025, 1, 1),
+            is_admin=False,
+            is_active=True,
+            password_change_required=False,
+            is_account_locked=lambda: False,
+        )
+        html_output = _render_user_card_html(user_obj, "other@test.com", admin_count=2, root_path="")
+        assert "hx-on::after-request" in html_output
+        assert "handleDeleteUserError" in html_output
 
     def test_render_user_card_html_locked_user_shows_locked_badge_and_unlock_action(self):
         """Locked users render lock badge and unlock action."""

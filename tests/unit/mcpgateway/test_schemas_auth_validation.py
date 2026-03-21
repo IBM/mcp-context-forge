@@ -12,7 +12,7 @@ from mcpgateway.utils.services_auth import decode_auth
 
 
 def test_gateway_create_authheaders_multi_duplicate(caplog):
-    caplog.set_level("WARNING")
+    caplog.set_level("WARNING", logger="mcpgateway.schemas")
     gateway = GatewayCreate(
         name="gw",
         url="https://example.com",

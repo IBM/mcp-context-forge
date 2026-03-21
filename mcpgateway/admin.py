@@ -1769,6 +1769,7 @@ async def get_overview_partial(
             "redis_available": redis_available,
             "redis_reachable": redis_reachable,
             "uptime_seconds": uptime_seconds,
+            "mcp_runtime": version_module.mcp_runtime_status_payload(),
         }
 
         return request.app.state.templates.TemplateResponse(request, "overview_partial.html", context)
@@ -2285,7 +2286,7 @@ async def admin_servers_partial_html(
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", description="Search query"),
     tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
-    include_inactive: bool = False,
+    include_inactive: bool = True,
     render: Optional[str] = Query(None),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
@@ -4695,10 +4696,20 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
                 </div>
                 """
             else:
-                # Show "Request to Join" button
-                actions_html = f"""
+                # Show "Request to Join" button (disabled if feature is disabled)
+                allow_join_requests = getattr(settings, "allow_team_join_requests", True)
+                if allow_join_requests:
+                    actions_html = f"""
                 <div class="flex flex-wrap gap-2 mt-3">
                     <button data-team-id="{team.id}" data-team-name="{safe_team_name}" onclick="requestToJoinTeamSafe(this)" class="px-3 py-1 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 hover:border-indigo-500 dark:hover:border-indigo-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        Request to Join
+                    </button>
+                </div>
+                """
+                else:
+                    actions_html = """
+                <div class="flex flex-wrap gap-2 mt-3">
+                    <button disabled class="px-3 py-1 text-sm font-medium text-gray-400 dark:text-gray-600 border border-gray-300 dark:border-gray-600 rounded-md cursor-not-allowed opacity-50" title="Team join requests are currently disabled">
                         Request to Join
                     </button>
                 </div>
@@ -4808,7 +4819,7 @@ async def admin_get_all_team_ids(
 async def admin_search_teams(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(settings.pagination_default_page_size, ge=1, le=100, description="Max results"),
+    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Max results"),
     visibility: Optional[str] = Query(None, description="Filter by visibility"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -4880,7 +4891,7 @@ async def admin_search_teams(
 async def admin_teams_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=100, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = Query(False, description="Include inactive teams"),
     visibility: Optional[str] = Query(None, description="Filter by visibility"),
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
@@ -5100,7 +5111,7 @@ async def admin_teams_partial_html(
 async def admin_list_teams(
     request: Request,
     page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=100, description="Items per page"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: Optional[str] = Query(None, description="Search query"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -5774,7 +5785,8 @@ async def admin_update_team(
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
-        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members, updated_by=user_email)
+        is_admin = isinstance(user, dict) and user.get("is_admin")
+        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members, updated_by=user_email, skip_limits=bool(is_admin))
 
         if not updated:
             is_htmx = request.headers.get("HX-Request") == "true"
@@ -5803,7 +5815,20 @@ async def admin_update_team(
         # For regular form submission, redirect to admin page with teams section
         return RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
 
+    except ValueError as e:
+        # Rollback to discard any partial mutations (e.g. name/description set before max_members check failed)
+        db.rollback()
+        LOGGER.warning(f"Validation error updating team {team_id}: {e}")
+        is_htmx = request.headers.get("HX-Request") == "true"
+        if is_htmx:
+            response = HTMLResponse(content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">{html.escape(str(e))}</div>', status_code=400)
+            response.headers["HX-Retarget"] = "#edit-team-error"
+            response.headers["HX-Reswap"] = "innerHTML"
+            return response
+        error_msg = urllib.parse.quote(str(e))
+        return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
     except Exception as e:
+        db.rollback()
         LOGGER.error(f"Error updating team {team_id}: {e}")
 
         # Check if this is an HTMX request for error handling too
@@ -6397,6 +6422,10 @@ async def admin_create_join_request(
             status_code=201,
         )
 
+    except ValueError as e:
+        # Handle validation errors with user-friendly HTML error
+        error_msg = html.escape(str(e))
+        return HTMLResponse(content=f'<div class="text-red-500">{error_msg}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error creating join request for team {team_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error creating join request: {html.escape(str(e))}</div>', status_code=400)
@@ -6434,15 +6463,26 @@ async def admin_cancel_join_request(
             return HTMLResponse(content='<div class="text-red-500">Failed to cancel join request</div>', status_code=400)
 
         # Return the "Request to Join" button with HX-Trigger for list refresh
-        response = HTMLResponse(
-            content=f"""
+        # Check if join requests are currently enabled
+        allow_join_requests = getattr(settings, "allow_team_join_requests", True)
+
+        if allow_join_requests:
+            button_html = f"""
         <button data-team-id="{team_id}" data-team-name="Team" onclick="requestToJoinTeamSafe(this)"
                 class="px-3 py-1 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 hover:border-indigo-500 dark:hover:border-indigo-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
             Request to Join
         </button>
-        """,
-            status_code=200,
-        )
+        """
+        else:
+            button_html = """
+        <button disabled
+                class="px-3 py-1 text-sm font-medium text-gray-400 dark:text-gray-600 border border-gray-300 dark:border-gray-600 rounded-md cursor-not-allowed opacity-50"
+                title="Team join requests are currently disabled">
+            Request to Join (Disabled)
+        </button>
+        """
+
+        response = HTMLResponse(content=button_html, status_code=200)
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
         return response
 
@@ -6749,7 +6789,8 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
             f"dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
             f'focus:ring-red-500" hx-delete="{root_path}/admin/users/{encoded_email}" '
             f'hx-confirm="Are you sure you want to delete this user? This action cannot be undone." '
-            f'hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>'
+            f'hx-target="closest .user-card" hx-swap="outerHTML" '
+            f'hx-on::after-request="handleDeleteUserError(event)">Delete</button>'
         )
 
     return f"""
@@ -8701,7 +8742,7 @@ async def admin_gateways_partial_html(
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", description="Search query"),
     tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
-    include_inactive: bool = False,
+    include_inactive: bool = True,
     render: Optional[str] = Query(None),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
@@ -10080,7 +10121,7 @@ async def admin_tokens_partial_html(
 async def admin_search_tokens(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
-    limit: int = Query(settings.pagination_default_page_size, ge=1, le=100, description="Max results"),
+    limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Max results"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -17532,7 +17573,7 @@ def _get_latency_heatmap_python(db: Session, cutoff_time: datetime, hours: int, 
 async def get_top_slow_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
-    limit: int = Query(10, ge=1, le=100, description="Number of results"),
+    limit: int = Query(10, ge=1, le=settings.pagination_max_page_size, description="Number of results"),
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -17541,7 +17582,7 @@ async def get_top_slow_endpoints(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Number of results to return (1-100)
+        limit: Number of results to return (1-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -17601,7 +17642,7 @@ async def get_top_slow_endpoints(
 async def get_top_volume_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
-    limit: int = Query(10, ge=1, le=100, description="Number of results"),
+    limit: int = Query(10, ge=1, le=settings.pagination_max_page_size, description="Number of results"),
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -17610,7 +17651,7 @@ async def get_top_volume_endpoints(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Number of results to return (1-100)
+        limit: Number of results to return (1-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -17668,7 +17709,7 @@ async def get_top_volume_endpoints(
 async def get_top_error_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
-    limit: int = Query(10, ge=1, le=100, description="Number of results"),
+    limit: int = Query(10, ge=1, le=settings.pagination_max_page_size, description="Number of results"),
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -17677,7 +17718,7 @@ async def get_top_error_endpoints(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Number of results to return (1-100)
+        limit: Number of results to return (1-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -17787,7 +17828,7 @@ async def get_latency_heatmap(
 async def get_tool_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
-    limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
+    limit: int = Query(20, ge=5, le=settings.pagination_max_page_size, description="Number of tools to return"),
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -17796,7 +17837,7 @@ async def get_tool_usage(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of tools to return (5-100)
+        limit: Maximum number of tools to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -17860,7 +17901,7 @@ async def get_tool_usage(
 async def get_tool_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
-    limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
+    limit: int = Query(20, ge=5, le=settings.pagination_max_page_size, description="Number of tools to return"),
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -17869,7 +17910,7 @@ async def get_tool_performance(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of tools to return (5-100)
+        limit: Maximum number of tools to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -17912,7 +17953,7 @@ async def get_tool_performance(
 async def get_tool_errors(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
-    limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
+    limit: int = Query(20, ge=5, le=settings.pagination_max_page_size, description="Number of tools to return"),
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -17921,7 +17962,7 @@ async def get_tool_errors(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of tools to return (5-100)
+        limit: Maximum number of tools to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -17984,7 +18025,7 @@ async def get_tool_errors(
 async def get_tool_chains(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
-    limit: int = Query(20, ge=5, le=100, description="Number of chains to return"),
+    limit: int = Query(20, ge=5, le=settings.pagination_max_page_size, description="Number of chains to return"),
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -17993,7 +18034,7 @@ async def get_tool_chains(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of chains to return (5-100)
+        limit: Maximum number of chains to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -18097,7 +18138,7 @@ async def get_tools_partial(
 async def get_prompt_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
-    limit: int = Query(20, ge=5, le=100, description="Number of prompts to return"),
+    limit: int = Query(20, ge=5, le=settings.pagination_max_page_size, description="Number of prompts to return"),
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -18106,7 +18147,7 @@ async def get_prompt_usage(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of prompts to return (5-100)
+        limit: Maximum number of prompts to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -18170,7 +18211,7 @@ async def get_prompt_usage(
 async def get_prompt_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
-    limit: int = Query(20, ge=5, le=100, description="Number of prompts to return"),
+    limit: int = Query(20, ge=5, le=settings.pagination_max_page_size, description="Number of prompts to return"),
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -18179,7 +18220,7 @@ async def get_prompt_performance(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of prompts to return (5-100)
+        limit: Maximum number of prompts to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -18319,7 +18360,7 @@ async def get_prompts_partial(
 async def get_resource_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
-    limit: int = Query(20, ge=5, le=100, description="Number of resources to return"),
+    limit: int = Query(20, ge=5, le=settings.pagination_max_page_size, description="Number of resources to return"),
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -18328,7 +18369,7 @@ async def get_resource_usage(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of resources to return (5-100)
+        limit: Maximum number of resources to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
@@ -18392,7 +18433,7 @@ async def get_resource_usage(
 async def get_resource_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
-    limit: int = Query(20, ge=5, le=100, description="Number of resources to return"),
+    limit: int = Query(20, ge=5, le=settings.pagination_max_page_size, description="Number of resources to return"),
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -18401,7 +18442,7 @@ async def get_resource_performance(
     Args:
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
-        limit: Maximum number of resources to return (5-100)
+        limit: Maximum number of resources to return (5-pagination_max_page_size)
         _user: Authenticated user (required by dependency)
         db: Database session for permission checks.
 

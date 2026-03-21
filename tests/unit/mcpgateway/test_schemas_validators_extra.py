@@ -5,6 +5,7 @@
 import base64
 from datetime import datetime, timezone
 import json
+import logging
 from types import SimpleNamespace
 
 # Third-Party
@@ -348,7 +349,7 @@ def test_tool_create_optional_none_branches():
 def test_tool_update_more_branches(caplog):
     assert ToolUpdate.validate_url(None) is None
 
-    caplog.set_level("INFO")
+    caplog.set_level("INFO", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     truncated = ToolUpdate.validate_description(long_desc)
     assert len(truncated) == SecurityValidator.MAX_DESCRIPTION_LENGTH
@@ -391,7 +392,7 @@ def test_resource_create_and_notifications_serialization():
 
 
 def test_prompt_update_description_truncation(caplog):
-    caplog.set_level("INFO")
+    caplog.set_level("INFO", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     truncated = PromptUpdate.validate_description(long_desc)
     assert len(truncated) == SecurityValidator.MAX_DESCRIPTION_LENGTH
@@ -424,7 +425,7 @@ def test_gateway_create_more_branches(monkeypatch):
 
 
 def test_gateway_update_more_branches(caplog):
-    caplog.set_level("WARNING")
+    caplog.set_level("WARNING", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     assert len(GatewayUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
 
@@ -508,7 +509,7 @@ def test_rpc_and_event_admin_and_server_validators(caplog):
 
     assert AdminToolCreate.validate_json("") is None
 
-    caplog.set_level("INFO")
+    caplog.set_level("INFO", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     assert len(ServerCreate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert len(ServerUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
@@ -538,7 +539,7 @@ def test_rpc_and_event_admin_and_server_validators(caplog):
 
 
 def test_a2a_agent_create_and_update_more_branches(monkeypatch, caplog):
-    caplog.set_level("WARNING")
+    caplog.set_level("WARNING", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     assert len(A2AAgentCreate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert len(A2AAgentUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
@@ -855,3 +856,268 @@ class TestMaskOauthConfig:
         masked = server.masked()
         assert masked.oauth_config["client_secret"] == settings.masked_auth_value
         assert masked.oauth_config["authorization_server"] == "https://idp.example.com"
+
+
+class TestToolCreateDescriptionValidationStrict:
+    """Tests for issue #3711 — VALIDATION_STRICT gates the forbidden-pattern check.
+
+    ToolCreate.validate_description must raise when validation_strict=True (default)
+    and must only log a warning when validation_strict=False, so that MCP server
+    tools with Markdown-formatted descriptions (e.g. "> blockquote") can register.
+    """
+
+    def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
+        """Descriptions with shell/pipe metacharacters raise ValueError when VALIDATION_STRICT=true."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        for pat in ["&&", ";", "||", "$(", "|", "> ", "< "]:
+            with pytest.raises(ValueError, match="unsafe characters"):
+                ToolCreate.validate_description(f"Valid prefix {pat} suffix")
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "run cmd1 && cmd2",
+            "end statement;",
+            "try this || that",
+            "expand $(cmd)",
+            "pipe | grep",
+            "Search docs > results",
+            "read < file",
+        ],
+        ids=["ampersand", "semicolon", "or", "subshell", "pipe", "redirect_out", "redirect_in"],
+    )
+    def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
+        """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
+        monkeypatch.setattr(settings, "validation_strict", False)
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
+            result = ToolCreate.validate_description(description)
+        assert result is not None
+        assert any("potentially unsafe" in rec.message for rec in caplog.records)
+
+    def test_non_strict_logs_single_warning_for_multiple_patterns(self, monkeypatch, caplog):
+        """Only one warning is logged even when a description matches multiple forbidden patterns."""
+        monkeypatch.setattr(settings, "validation_strict", False)
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
+            result = ToolCreate.validate_description("foo && bar | baz > qux")
+        assert result is not None
+        unsafe_warnings = [r for r in caplog.records if "potentially unsafe" in r.message]
+        assert len(unsafe_warnings) == 1
+
+    def test_safe_description_always_accepted(self, monkeypatch):
+        """Safe descriptions pass in both strict and non-strict modes."""
+        for strict in (True, False):
+            monkeypatch.setattr(settings, "validation_strict", strict)
+            result = ToolCreate.validate_description("A perfectly safe description.")
+            assert result == "A perfectly safe description."
+
+    def test_none_description_always_accepted(self, monkeypatch):
+        """None descriptions pass through unchanged in both modes."""
+        for strict in (True, False):
+            monkeypatch.setattr(settings, "validation_strict", strict)
+            assert ToolCreate.validate_description(None) is None
+
+
+def test_a2a_agent_read_populates_auth_headers_single():
+    """Test A2AAgentRead populates auth_headers from single custom header."""
+    auth_value = encode_auth({"X-API-Key": "secret123"})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers is not None
+    assert isinstance(agent.auth_headers, list)
+    assert len(agent.auth_headers) == 1
+    assert agent.auth_headers[0]["key"] == "X-API-Key"
+    assert agent.auth_headers[0]["value"] == "secret123"
+    # Backward compatibility
+    assert agent.auth_header_key == "X-API-Key"
+    assert agent.auth_header_value == "secret123"
+
+
+def test_a2a_agent_read_populates_auth_headers_multiple():
+    """Test A2AAgentRead populates auth_headers from multiple custom headers."""
+    auth_value = encode_auth({"X-API-Key": "secret123", "X-Client-ID": "client456", "X-Region": "us-east-1"})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers is not None
+    assert len(agent.auth_headers) == 3
+    keys = [h["key"] for h in agent.auth_headers]
+    assert "X-API-Key" in keys
+    assert "X-Client-ID" in keys
+    assert "X-Region" in keys
+
+
+def test_a2a_agent_read_masked_hides_auth_header_values():
+    """Test A2AAgentRead.masked() masks auth_headers values."""
+    auth_value = encode_auth({"X-API-Key": "secret123", "X-Client-ID": "client456"})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        last_interaction=None,
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+    masked_agent = agent.masked()
+
+    assert masked_agent.auth_headers is not None
+    assert len(masked_agent.auth_headers) == 2
+    # Keys should be visible
+    assert masked_agent.auth_headers[0]["key"] == "X-API-Key"
+    assert masked_agent.auth_headers[1]["key"] == "X-Client-ID"
+    # Values should be masked
+    assert masked_agent.auth_headers[0]["value"] == settings.masked_auth_value
+    assert masked_agent.auth_headers[1]["value"] == settings.masked_auth_value
+
+
+def test_a2a_agent_read_auth_headers_empty_values():
+    """Test A2AAgentRead handles empty header values correctly."""
+    auth_value = encode_auth({"X-Empty-Header": ""})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers[0]["value"] == ""
+
+
+def test_a2a_agent_read_authheaders_rejects_non_dict():
+    """Test A2AAgentRead._populate_auth raises ValueError when decoded auth_value is not a dict."""
+    # encode_auth expects a dict, so we encode a list-wrapping hack that decode_auth
+    # still returns as a dict.  Instead, manually construct with a raw string to bypass
+    # encode_auth and trigger the isinstance guard.
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=encode_auth({"_list": ["not-a-dict"]}),
+    )
+    # Monkey-patch decode_auth to return a non-dict value
+    # First-Party
+    import mcpgateway.schemas as _schemas_mod
+
+    _original = _schemas_mod.decode_auth
+
+    def _fake_decode(val, **kw):
+        return ["not", "a", "dict"]
+
+    _schemas_mod.decode_auth = _fake_decode
+    try:
+        with pytest.raises(ValueError, match="authheaders requires at least one key/value pair"):
+            A2AAgentRead._populate_auth(agent)
+    finally:
+        _schemas_mod.decode_auth = _original
+
+
+def test_a2a_agent_read_auth_headers_none_values():
+    """Test A2AAgentRead handles None header values by converting to empty string."""
+    auth_value = encode_auth({"X-Null-Header": None})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers[0]["key"] == "X-Null-Header"
+    assert agent.auth_headers[0]["value"] == ""
+
+
+def test_a2a_agent_read_masked_preserves_empty_header_values():
+    """Test A2AAgentRead.masked() does not mask empty header values."""
+    auth_value = encode_auth({"X-Empty": "", "X-Secret": "real-value"})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        last_interaction=None,
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+    masked_agent = agent.masked()
+
+    # Empty value should stay empty (not masked)
+    empty_header = next(h for h in masked_agent.auth_headers if h["key"] == "X-Empty")
+    assert empty_header["value"] == ""
+    # Non-empty value should be masked
+    secret_header = next(h for h in masked_agent.auth_headers if h["key"] == "X-Secret")
+    assert secret_header["value"] == settings.masked_auth_value
