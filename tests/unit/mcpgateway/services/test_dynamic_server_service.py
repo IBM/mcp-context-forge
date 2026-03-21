@@ -97,6 +97,36 @@ class TestCreateDynamicServer:
         assert exc_info.value.status_code == 400
         assert "finance-tools" in exc_info.value.detail
 
+    def test_create_team_scoped_server_sets_team_id(self, service, db):
+        """Creating a team-scoped server passes team_id from the user's token."""
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        db.add = MagicMock()
+        db.flush = MagicMock()
+        db.commit = MagicMock()
+        db.refresh = MagicMock()
+
+        data = DynamicServerCreate(name="team-server", visibility="team", rules=[])
+        user_ctx = {"email": "user@example.com", "teams": ["team-abc"]}
+
+        with patch.object(service, "_convert_to_read", return_value="server_read"):
+            service.create_dynamic_server(db, data, user_ctx)
+
+        # The first db.add() call receives the DbDynamicServer instance
+        added_server = db.add.call_args_list[0][0][0]
+        assert added_server.team_id == "team-abc"
+        assert added_server.visibility == "team"
+
+    def test_create_team_scoped_no_team_raises_400(self, service, db):
+        """Creating a team-scoped server with no team in token raises HTTPException 400."""
+        data = DynamicServerCreate(name="team-server", visibility="team", rules=[])
+        user_ctx = {"email": "user@example.com", "teams": []}
+
+        with pytest.raises(HTTPException) as exc_info:
+            service.create_dynamic_server(db, data, user_ctx)
+
+        assert exc_info.value.status_code == 400
+        assert "team" in exc_info.value.detail.lower()
+
 
 class TestListDynamicServers:
     def test_list_dynamic_servers_public_only(self, service, db):
@@ -182,6 +212,28 @@ class TestUpdateDynamicServer:
             service.update_dynamic_server(db, "missing-id", DynamicServerUpdate())
 
         assert exc_info.value.status_code == 404
+
+    def test_update_rename_conflict_raises_409(self, service, db):
+        """Renaming to an existing server name raises HTTPException 409."""
+        existing_server = _make_server(name="finance-tools")
+        conflict_server = _make_server(name="risk-tools")
+        conflict_server.id = "server-2"
+
+        # First execute() call fetches the server to update;
+        # second call is the uniqueness check which finds a conflict.
+        first_result = MagicMock()
+        first_result.scalar_one_or_none.return_value = existing_server
+        second_result = MagicMock()
+        second_result.scalar_one_or_none.return_value = conflict_server
+        db.execute.side_effect = [first_result, second_result]
+
+        data = DynamicServerUpdate(name="risk-tools")
+
+        with pytest.raises(HTTPException) as exc_info:
+            service.update_dynamic_server(db, "server-1", data)
+
+        assert exc_info.value.status_code == 409
+        assert "risk-tools" in exc_info.value.detail
 
 
 class TestDeleteDynamicServer:

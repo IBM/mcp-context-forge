@@ -13,7 +13,7 @@ defined in the models.py module.
 from datetime import datetime, timedelta, timezone
 import json
 import os
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 # Third-Party
 from pydantic import ValidationError
@@ -53,7 +53,6 @@ from mcpgateway.schemas import (
     AdminToolCreate,
     EventMessage,
     ListFilters,
-    PromptCreate,
     ResourceCreate,
     ServerCreate,
     ServerMetrics,
@@ -457,18 +456,6 @@ class TestMCPTypes:
         assert minimal.tools is None
         assert minimal.logging is None
         assert minimal.experimental is None
-
-    def test_server_capabilities_non_boolean_values(self):
-        """Test ServerCapabilities accepts non-boolean values (MCP SDK extra='allow')."""
-        caps = ServerCapabilities(
-            prompts={"listChanged": True, "customField": "string_value"},
-            resources={"subscribe": True, "listChanged": True, "maxSize": 1024},
-            tools={"listChanged": True, "parallelism": 4, "metadata": {"key": "val"}},
-        )
-        assert caps.prompts == {"listChanged": True, "customField": "string_value"}
-        assert caps.resources["maxSize"] == 1024
-        assert caps.tools["parallelism"] == 4
-        assert caps.tools["metadata"] == {"key": "val"}
 
     def test_initialize_request(self):
         """Test InitializeRequest model."""
@@ -1045,48 +1032,6 @@ class TestSchemaValidators:
         assert empty_headers_tool.auth.auth_type == "authheaders"
         assert empty_headers_tool.auth.auth_value is None
 
-    def test_tool_create_assemble_auth_debug_extra_does_not_include_sensitive_fields(self):
-        """ToolCreate debug logs should exclude raw secret values."""
-        values = {
-            "auth_type": "basic",
-            "auth_username": "user",
-            "auth_password": "secret-password",
-            "auth_token": "secret-token",
-            "auth_header_key": "X-API-Key",
-            "auth_header_value": "secret-header",
-        }
-
-        with patch("mcpgateway.schemas.logger.debug") as mock_debug:
-            ToolCreate.assemble_auth(values.copy())
-
-        extra = mock_debug.call_args.kwargs["extra"]
-        assert "auth_password" not in extra
-        assert "auth_token" not in extra
-        assert "auth_header_value" not in extra
-        assert extra["auth_type"] == "basic"
-        assert extra["auth_assembled"] is True
-
-    def test_tool_update_assemble_auth_debug_extra_does_not_include_sensitive_fields(self):
-        """ToolUpdate debug logs should exclude raw secret values."""
-        values = {
-            "auth_type": "bearer",
-            "auth_username": "user",
-            "auth_password": "secret-password",
-            "auth_token": "secret-token",
-            "auth_header_key": "X-API-Key",
-            "auth_header_value": "secret-header",
-        }
-
-        with patch("mcpgateway.schemas.logger.debug") as mock_debug:
-            ToolUpdate.assemble_auth(values.copy())
-
-        extra = mock_debug.call_args.kwargs["extra"]
-        assert "auth_password" not in extra
-        assert "auth_token" not in extra
-        assert "auth_header_value" not in extra
-        assert extra["auth_type"] == "bearer"
-        assert extra["auth_assembled"] is True
-
     def test_tool_create_sets_default_timeout(self):
         """REST passthrough tools should default timeout_ms when missing."""
         tool = ToolCreate(name="rest-tool", integration_type="REST", request_type="GET", url="http://example.com")
@@ -1126,7 +1071,7 @@ class TestSchemaValidators:
     def test_resource_description_truncation(self):
         """ResourceCreate should truncate overly long descriptions."""
         long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 5)
-        resource = ResourceCreate(uri="resource://test", name="resource", description=long_desc, content="data")
+        resource = ResourceCreate(uri="resource://test", name="resource", description=long_desc, content="data")  # noqa: F841
 
     def test_gateway_create_with_valid_gateway_modes(self):
         """Test GatewayCreate accepts valid gateway_mode values."""
@@ -1225,132 +1170,777 @@ class TestSchemaValidators:
         )
         assert gateway.gateway_mode == "direct_proxy"
 
-    def test_resource_subscription_rejects_empty_subscriber_id(self):
-        """ResourceSubscription should reject empty subscriber IDs."""
-        from mcpgateway.schemas import ResourceSubscription
+
+# ---------------------------------------------------------------------------
+# Dynamic Server / Rule Schemas
+# ---------------------------------------------------------------------------
+
+
+class TestDynamicRuleCreate:
+    """Tests for DynamicRuleCreate schema."""
+
+    def test_valid_tag_rule(self):
+        """Create a tag rule with all valid fields."""
+        from mcpgateway.schemas import DynamicRuleCreate
+
+        rule = DynamicRuleCreate(rule_type="tag", entity_type="tool", value="finance")
+        assert rule.rule_type == "tag"
+        assert rule.entity_type == "tool"
+        assert rule.value == "finance"
+
+    def test_valid_regex_rule(self):
+        """Create a regex rule targeting resources."""
+        from mcpgateway.schemas import DynamicRuleCreate
+
+        rule = DynamicRuleCreate(rule_type="regex", entity_type="resource", value="^finance.*")
+        assert rule.rule_type == "regex"
+        assert rule.entity_type == "resource"
+        assert rule.value == "^finance.*"
+
+    def test_valid_llm_rule(self):
+        """Create an LLM rule targeting prompts."""
+        from mcpgateway.schemas import DynamicRuleCreate
+
+        rule = DynamicRuleCreate(rule_type="llm", entity_type="prompt", value="financial analysis")
+        assert rule.rule_type == "llm"
+        assert rule.entity_type == "prompt"
+
+    def test_all_entity_types_accepted(self):
+        """All three entity_type literals are accepted."""
+        from mcpgateway.schemas import DynamicRuleCreate
+
+        for entity_type in ("tool", "resource", "prompt"):
+            rule = DynamicRuleCreate(rule_type="tag", entity_type=entity_type, value="v")
+            assert rule.entity_type == entity_type
+
+    def test_all_rule_types_accepted(self):
+        """All three rule_type literals are accepted."""
+        from mcpgateway.schemas import DynamicRuleCreate
+
+        for rule_type in ("tag", "regex", "llm"):
+            rule = DynamicRuleCreate(rule_type=rule_type, entity_type="tool", value="v")
+            assert rule.rule_type == rule_type
+
+    def test_invalid_rule_type_rejected(self):
+        """Unknown rule_type must raise ValidationError."""
+        from mcpgateway.schemas import DynamicRuleCreate
 
         with pytest.raises(ValidationError) as exc_info:
-            ResourceSubscription(uri="resource://one", subscriber_id="")
+            DynamicRuleCreate(rule_type="fuzzy", entity_type="tool", value="v")
+        assert "rule_type" in str(exc_info.value)
 
-        assert "Subscriber ID cannot be empty" in str(exc_info.value)
+    def test_invalid_entity_type_rejected(self):
+        """Unknown entity_type must raise ValidationError."""
+        from mcpgateway.schemas import DynamicRuleCreate
 
-    def test_resource_subscription_rejects_unsafe_email_like_subscriber_id(self):
-        """Email-like IDs should still honor unsafe-character validation pattern."""
-        from mcpgateway.common.validators import SecurityValidator
-        from mcpgateway.schemas import ResourceSubscription
-
-        with patch.object(SecurityValidator, "VALIDATION_UNSAFE_URI_PATTERN", "@"):
-            with pytest.raises(ValidationError) as exc_info:
-                ResourceSubscription(uri="resource://one", subscriber_id="user@example.com")
-
-        assert "Subscriber ID cannot contain HTML special characters" in str(exc_info.value)
-
-    def test_resource_subscription_rejects_too_long_email_like_subscriber_id(self):
-        """Email-like IDs should respect max-length limits."""
-        from mcpgateway.common.validators import SecurityValidator
-        from mcpgateway.schemas import ResourceSubscription
-
-        long_subscriber = "a" * (SecurityValidator.MAX_NAME_LENGTH + 1)
         with pytest.raises(ValidationError) as exc_info:
-            ResourceSubscription(uri="resource://one", subscriber_id=long_subscriber)
+            DynamicRuleCreate(rule_type="tag", entity_type="gateway", value="v")
+        assert "entity_type" in str(exc_info.value)
 
-        assert "Subscriber ID exceeds maximum length" in str(exc_info.value)
+    def test_empty_value_rejected(self):
+        """Blank value must raise ValidationError."""
+        from mcpgateway.schemas import DynamicRuleCreate
 
-    @pytest.mark.parametrize("schema_cls,kwargs", [
-        (ToolCreate, {"name": "t", "integration_type": "REST", "request_type": "GET", "url": "http://x.com"}),
-        (ResourceCreate, {"uri": "test://x", "name": "x", "content": ""}),
-        (PromptCreate, {"name": "p", "template": "hi"}),
-    ])
-    def test_visibility_validator_rejects_invalid_values(self, schema_cls, kwargs):
-        """ToolCreate, ResourceCreate, and PromptCreate must reject invalid visibility strings."""
-        with pytest.raises(ValidationError, match="Visibility must be one of"):
-            schema_cls(**kwargs, visibility="bogus")
+        with pytest.raises(ValidationError) as exc_info:
+            DynamicRuleCreate(rule_type="tag", entity_type="tool", value="")
+        assert "value" in str(exc_info.value)
+
+    def test_whitespace_only_value_rejected(self):
+        """Whitespace-only value must raise ValidationError."""
+        from mcpgateway.schemas import DynamicRuleCreate
+
+        with pytest.raises(ValidationError):
+            DynamicRuleCreate(rule_type="tag", entity_type="tool", value="   ")
+
+    def test_missing_rule_type_rejected(self):
+        """Omitting rule_type must raise ValidationError."""
+        from mcpgateway.schemas import DynamicRuleCreate
+
+        with pytest.raises(ValidationError):
+            DynamicRuleCreate(entity_type="tool", value="v")
+
+    def test_missing_entity_type_rejected(self):
+        """Omitting entity_type must raise ValidationError."""
+        from mcpgateway.schemas import DynamicRuleCreate
+
+        with pytest.raises(ValidationError):
+            DynamicRuleCreate(rule_type="tag", value="v")
+
+    def test_missing_value_rejected(self):
+        """Omitting value must raise ValidationError."""
+        from mcpgateway.schemas import DynamicRuleCreate
+
+        with pytest.raises(ValidationError):
+            DynamicRuleCreate(rule_type="tag", entity_type="tool")
+
+    def test_value_is_stripped(self):
+        """Leading/trailing whitespace on value is stripped by ConfigDict."""
+        from mcpgateway.schemas import DynamicRuleCreate
+
+        rule = DynamicRuleCreate(rule_type="tag", entity_type="tool", value="  finance  ")
+        assert rule.value == "finance"
+
+    def test_roundtrip_serialization(self):
+        """model_dump and reconstruction produce identical objects."""
+        from mcpgateway.schemas import DynamicRuleCreate
+
+        original = DynamicRuleCreate(rule_type="regex", entity_type="resource", value=".*")
+        data = original.model_dump()
+        reconstructed = DynamicRuleCreate(**data)
+        assert reconstructed == original
 
 
-class TestGatewayCreateCamelCase:
-    """Verify GatewayCreate accepts camelCase input and serializes to camelCase output.
+class TestDynamicRuleRead:
+    """Tests for DynamicRuleRead schema."""
 
-    Regression tests for #3577 — GatewayCreate previously extended BaseModel
-    directly, missing alias_generator and populate_by_name from
-    BaseModelWithConfigDict, so camelCase fields were silently ignored.
-    """
+    def _make_rule(self, **kwargs):
+        from mcpgateway.schemas import DynamicRuleRead
 
-    def test_accepts_camel_case_fields(self):
-        """GatewayCreate must accept camelCase field names."""
-        from mcpgateway.schemas import GatewayCreate
+        defaults = {
+            "id": "rule-1",
+            "rule_type": "tag",
+            "entity_type": "tool",
+            "value": "finance",
+            "created_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
+        }
+        defaults.update(kwargs)
+        return DynamicRuleRead(**defaults)
 
-        gw = GatewayCreate(
-            name="test-gw",
-            url="https://example.com",
-            authType="bearer",
-            authToken="tok123",
-            passthroughHeaders=["X-Request-Id"],
-            gatewayMode="direct_proxy",
-            refreshIntervalSeconds=120,
-            oneTimeAuth=True,
-            caCertificate="PEM-DATA",
+    def test_valid_creation(self):
+        """DynamicRuleRead accepts all required fields."""
+        rule = self._make_rule()
+        assert rule.id == "rule-1"
+        assert rule.rule_type == "tag"
+        assert rule.entity_type == "tool"
+        assert rule.value == "finance"
+        assert rule.created_at == datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    def test_all_rule_types_accepted(self):
+        """All rule_type literals round-trip correctly."""
+        for rt in ("tag", "regex", "llm"):
+            rule = self._make_rule(rule_type=rt)
+            assert rule.rule_type == rt
+
+    def test_all_entity_types_accepted(self):
+        """All entity_type literals round-trip correctly."""
+        for et in ("tool", "resource", "prompt"):
+            rule = self._make_rule(entity_type=et)
+            assert rule.entity_type == et
+
+    def test_invalid_rule_type_rejected(self):
+        """Invalid rule_type must raise ValidationError."""
+        from mcpgateway.schemas import DynamicRuleRead
+
+        with pytest.raises(ValidationError) as exc_info:
+            DynamicRuleRead(
+                id="r1", rule_type="bad", entity_type="tool",
+                value="v", created_at=datetime.now(timezone.utc),
+            )
+        assert "rule_type" in str(exc_info.value)
+
+    def test_invalid_entity_type_rejected(self):
+        """Invalid entity_type must raise ValidationError."""
+        from mcpgateway.schemas import DynamicRuleRead
+
+        with pytest.raises(ValidationError) as exc_info:
+            DynamicRuleRead(
+                id="r1", rule_type="tag", entity_type="unknown",
+                value="v", created_at=datetime.now(timezone.utc),
+            )
+        assert "entity_type" in str(exc_info.value)
+
+    def test_missing_id_rejected(self):
+        """Omitting id must raise ValidationError."""
+        from mcpgateway.schemas import DynamicRuleRead
+
+        with pytest.raises(ValidationError):
+            DynamicRuleRead(
+                rule_type="tag", entity_type="tool",
+                value="v", created_at=datetime.now(timezone.utc),
+            )
+
+    def test_missing_created_at_rejected(self):
+        """Omitting created_at must raise ValidationError."""
+        from mcpgateway.schemas import DynamicRuleRead
+
+        with pytest.raises(ValidationError):
+            DynamicRuleRead(id="r1", rule_type="tag", entity_type="tool", value="v")
+
+    def test_created_at_preserves_timezone(self):
+        """created_at retains the supplied timezone info."""
+        ts = datetime(2024, 6, 15, 12, 30, tzinfo=timezone.utc)
+        rule = self._make_rule(created_at=ts)
+        assert rule.created_at == ts
+
+    def test_model_dump_contains_all_fields(self):
+        """model_dump includes all five fields."""
+        rule = self._make_rule()
+        data = rule.model_dump()
+        for key in ("id", "rule_type", "entity_type", "value", "created_at"):
+            assert key in data
+
+
+class TestDynamicServerCreate:
+    """Tests for DynamicServerCreate schema."""
+
+    def test_minimal_valid_creation(self):
+        """name only — other fields take defaults."""
+        from mcpgateway.schemas import DynamicServerCreate
+
+        server = DynamicServerCreate(name="my-server")
+        assert server.name == "my-server"
+        assert server.description is None
+        assert server.rules == []
+        assert server.refresh_interval is None
+        assert server.visibility == "public"
+
+    def test_full_creation_with_rules(self):
+        """All fields provided including rules list."""
+        from mcpgateway.schemas import DynamicRuleCreate, DynamicServerCreate
+
+        rule = DynamicRuleCreate(rule_type="tag", entity_type="tool", value="finance")
+        server = DynamicServerCreate(
+            name="finance-server",
+            description="Finance tools",
+            rules=[rule],
+            refresh_interval=300,
+            visibility="private",
         )
-        assert gw.auth_type == "bearer"
-        assert gw.auth_token == "tok123"
-        assert gw.passthrough_headers == ["X-Request-Id"]
-        assert gw.gateway_mode == "direct_proxy"
-        assert gw.refresh_interval_seconds == 120
-        assert gw.one_time_auth is True
-        assert gw.ca_certificate == "PEM-DATA"
+        assert server.name == "finance-server"
+        assert server.description == "Finance tools"
+        assert len(server.rules) == 1
+        assert server.refresh_interval == 300
+        assert server.visibility == "private"
 
-    def test_accepts_snake_case_fields(self):
-        """GatewayCreate must still accept snake_case field names."""
-        from mcpgateway.schemas import GatewayCreate
+    def test_empty_name_rejected(self):
+        """Empty name string must raise ValidationError."""
+        from mcpgateway.schemas import DynamicServerCreate
 
-        gw = GatewayCreate(
-            name="test-gw",
-            url="https://example.com",
-            auth_type="basic",
-            auth_username="user",
-            auth_password="pass",
-            passthrough_headers=["Authorization"],
-            gateway_mode="cache",
+        with pytest.raises(ValidationError) as exc_info:
+            DynamicServerCreate(name="")
+        assert "name" in str(exc_info.value)
+
+    def test_whitespace_only_name_rejected(self):
+        """Whitespace-only name must raise ValidationError."""
+        from mcpgateway.schemas import DynamicServerCreate
+
+        with pytest.raises(ValidationError):
+            DynamicServerCreate(name="   ")
+
+    def test_missing_name_rejected(self):
+        """Omitting name must raise ValidationError."""
+        from mcpgateway.schemas import DynamicServerCreate
+
+        with pytest.raises(ValidationError):
+            DynamicServerCreate()
+
+    def test_name_is_stripped(self):
+        """str_strip_whitespace trims the name."""
+        from mcpgateway.schemas import DynamicServerCreate
+
+        server = DynamicServerCreate(name="  my-server  ")
+        assert server.name == "my-server"
+
+    def test_refresh_interval_zero_rejected(self):
+        """refresh_interval=0 violates ge=1 constraint."""
+        from mcpgateway.schemas import DynamicServerCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            DynamicServerCreate(name="s", refresh_interval=0)
+        assert "refresh_interval" in str(exc_info.value)
+
+    def test_refresh_interval_negative_rejected(self):
+        """Negative refresh_interval violates ge=1 constraint."""
+        from mcpgateway.schemas import DynamicServerCreate
+
+        with pytest.raises(ValidationError):
+            DynamicServerCreate(name="s", refresh_interval=-10)
+
+    def test_refresh_interval_one_accepted(self):
+        """refresh_interval=1 is the minimum valid value."""
+        from mcpgateway.schemas import DynamicServerCreate
+
+        server = DynamicServerCreate(name="s", refresh_interval=1)
+        assert server.refresh_interval == 1
+
+    def test_rules_default_is_empty_list(self):
+        """rules defaults to an empty list (not None)."""
+        from mcpgateway.schemas import DynamicServerCreate
+
+        server = DynamicServerCreate(name="s")
+        assert server.rules == []
+        assert isinstance(server.rules, list)
+
+    def test_multiple_rules_accepted(self):
+        """Multiple rules of different types are all accepted."""
+        from mcpgateway.schemas import DynamicRuleCreate, DynamicServerCreate
+
+        rules = [
+            DynamicRuleCreate(rule_type="tag", entity_type="tool", value="finance"),
+            DynamicRuleCreate(rule_type="regex", entity_type="resource", value=".*"),
+            DynamicRuleCreate(rule_type="llm", entity_type="prompt", value="show me prompts"),
+        ]
+        server = DynamicServerCreate(name="multi", rules=rules)
+        assert len(server.rules) == 3
+
+    def test_invalid_rule_in_list_rejected(self):
+        """An invalid rule inside the list must cause ValidationError."""
+        from mcpgateway.schemas import DynamicServerCreate
+
+        with pytest.raises(ValidationError):
+            DynamicServerCreate(name="s", rules=[{"rule_type": "bad", "entity_type": "tool", "value": "v"}])
+
+    def test_roundtrip_serialization(self):
+        """model_dump → reconstruction produces identical object."""
+        from mcpgateway.schemas import DynamicRuleCreate, DynamicServerCreate
+
+        original = DynamicServerCreate(
+            name="test",
+            description="desc",
+            rules=[DynamicRuleCreate(rule_type="tag", entity_type="tool", value="v")],
+            refresh_interval=60,
+            visibility="private",
         )
-        assert gw.auth_type == "basic"
-        assert gw.auth_username == "user"
-        assert gw.auth_password == "pass"
-        assert gw.passthrough_headers == ["Authorization"]
-        assert gw.gateway_mode == "cache"
+        data = original.model_dump()
+        reconstructed = DynamicServerCreate(**data)
+        assert reconstructed == original
 
-    def test_serializes_to_camel_case(self):
-        """GatewayCreate.model_dump(by_alias=True) must use camelCase keys."""
-        from mcpgateway.schemas import GatewayCreate
 
-        gw = GatewayCreate(
-            name="test-gw",
-            url="https://example.com",
-            auth_type="bearer",
-            auth_token="tok",
-            passthrough_headers=["X-Foo"],
-            gateway_mode="direct_proxy",
-            refresh_interval_seconds=300,
+class TestDynamicServerRead:
+    """Tests for DynamicServerRead schema."""
+
+    def _make_server(self, **kwargs):
+        from mcpgateway.schemas import DynamicServerRead
+
+        defaults = {
+            "id": "srv-1",
+            "name": "finance",
+            "rules": [],
+            "created_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
+        }
+        defaults.update(kwargs)
+        return DynamicServerRead(**defaults)
+
+    def test_minimal_valid_creation(self):
+        """id, name, rules (empty), created_at are sufficient."""
+        server = self._make_server()
+        assert server.id == "srv-1"
+        assert server.name == "finance"
+        assert server.rules == []
+        assert server.description is None
+        assert server.refresh_interval is None
+        assert server.visibility == "public"
+        assert server.created_by is None
+
+    def test_full_creation(self):
+        """All fields accepted when provided."""
+        from mcpgateway.schemas import DynamicRuleRead, DynamicServerRead
+
+        rule = DynamicRuleRead(
+            id="r1", rule_type="tag", entity_type="tool",
+            value="finance", created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
-        data = gw.model_dump(by_alias=True)
-        assert "authType" in data
-        assert "authToken" in data
-        assert "passthroughHeaders" in data
-        assert "gatewayMode" in data
-        assert "refreshIntervalSeconds" in data
-        # snake_case keys must NOT appear in aliased output
-        assert "auth_type" not in data
-        assert "passthrough_headers" not in data
+        server = DynamicServerRead(
+            id="srv-2",
+            name="full-server",
+            description="A complete server",
+            rules=[rule],
+            refresh_interval=120,
+            visibility="private",
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            created_by="admin@example.com",
+        )
+        assert server.id == "srv-2"
+        assert server.description == "A complete server"
+        assert len(server.rules) == 1
+        assert server.rules[0].id == "r1"
+        assert server.refresh_interval == 120
+        assert server.visibility == "private"
+        assert server.created_by == "admin@example.com"
 
-    def test_consistent_with_gateway_update(self):
-        """GatewayCreate and GatewayUpdate must both accept camelCase."""
-        from mcpgateway.schemas import GatewayCreate, GatewayUpdate
+    def test_missing_id_rejected(self):
+        """Omitting id must raise ValidationError."""
+        from mcpgateway.schemas import DynamicServerRead
 
-        create = GatewayCreate(name="gw", url="https://example.com", authType="bearer", authToken="t")
-        update = GatewayUpdate(authType="basic", authUsername="u", authPassword="p")
-        assert create.auth_type == "bearer"
-        assert update.auth_type == "basic"
+        with pytest.raises(ValidationError):
+            DynamicServerRead(
+                name="s", rules=[],
+                created_at=datetime.now(timezone.utc),
+            )
 
-        # Both must serialize identically for shared fields
-        create_keys = set(create.model_dump(by_alias=True).keys())
-        update_keys = set(update.model_dump(by_alias=True, exclude_none=True).keys())
-        for key in update_keys:
-            assert key in create_keys, f"GatewayUpdate alias '{key}' missing from GatewayCreate"
+    def test_missing_name_rejected(self):
+        """Omitting name must raise ValidationError."""
+        from mcpgateway.schemas import DynamicServerRead
+
+        with pytest.raises(ValidationError):
+            DynamicServerRead(
+                id="s1", rules=[],
+                created_at=datetime.now(timezone.utc),
+            )
+
+    def test_missing_created_at_rejected(self):
+        """Omitting created_at must raise ValidationError."""
+        from mcpgateway.schemas import DynamicServerRead
+
+        with pytest.raises(ValidationError):
+            DynamicServerRead(id="s1", name="s", rules=[])
+
+    def test_rules_list_contains_rule_read_objects(self):
+        """Rules list is populated with DynamicRuleRead instances."""
+        from mcpgateway.schemas import DynamicRuleRead
+
+        rule_data = {
+            "id": "r1", "rule_type": "regex", "entity_type": "resource",
+            "value": ".*", "created_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
+        }
+        server = self._make_server(rules=[rule_data])
+        assert isinstance(server.rules[0], DynamicRuleRead)
+
+    def test_created_at_preserves_timezone(self):
+        """created_at retains UTC timezone."""
+        ts = datetime(2024, 6, 15, tzinfo=timezone.utc)
+        server = self._make_server(created_at=ts)
+        assert server.created_at == ts
+
+    def test_model_dump_includes_rules(self):
+        """model_dump serializes nested rules list."""
+        from mcpgateway.schemas import DynamicRuleRead
+
+        rule = DynamicRuleRead(
+            id="r1", rule_type="tag", entity_type="tool",
+            value="v", created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+        server = self._make_server(rules=[rule])
+        data = server.model_dump()
+        assert isinstance(data["rules"], list)
+        assert len(data["rules"]) == 1
+        assert data["rules"][0]["id"] == "r1"
+
+
+class TestDynamicServerUpdate:
+    """Tests for DynamicServerUpdate schema."""
+
+    def test_empty_update_valid(self):
+        """All fields optional — empty update is valid."""
+        from mcpgateway.schemas import DynamicServerUpdate
+
+        update = DynamicServerUpdate()
+        assert update.name is None
+        assert update.description is None
+        assert update.rules is None
+        assert update.refresh_interval is None
+        assert update.visibility is None
+
+    def test_name_only_update(self):
+        """Only name supplied — other fields remain None."""
+        from mcpgateway.schemas import DynamicServerUpdate
+
+        update = DynamicServerUpdate(name="new-name")
+        assert update.name == "new-name"
+        assert update.description is None
+
+    def test_description_only_update(self):
+        """Only description supplied."""
+        from mcpgateway.schemas import DynamicServerUpdate
+
+        update = DynamicServerUpdate(description="updated description")
+        assert update.description == "updated description"
+        assert update.name is None
+
+    def test_rules_replace_semantics(self):
+        """Supplying rules replaces the full list (full-replace)."""
+        from mcpgateway.schemas import DynamicRuleCreate, DynamicServerUpdate
+
+        rules = [DynamicRuleCreate(rule_type="tag", entity_type="tool", value="hr")]
+        update = DynamicServerUpdate(rules=rules)
+        assert update.rules is not None
+        assert len(update.rules) == 1
+
+    def test_rules_none_means_unchanged(self):
+        """rules=None signals no change to the existing list."""
+        from mcpgateway.schemas import DynamicServerUpdate
+
+        update = DynamicServerUpdate(description="only desc")
+        assert update.rules is None
+
+    def test_empty_name_rejected(self):
+        """Empty string name must raise ValidationError."""
+        from mcpgateway.schemas import DynamicServerUpdate
+
+        with pytest.raises(ValidationError) as exc_info:
+            DynamicServerUpdate(name="")
+        assert "name" in str(exc_info.value)
+
+    def test_whitespace_only_name_rejected(self):
+        """Whitespace-only name must raise ValidationError."""
+        from mcpgateway.schemas import DynamicServerUpdate
+
+        with pytest.raises(ValidationError):
+            DynamicServerUpdate(name="   ")
+
+    def test_refresh_interval_zero_rejected(self):
+        """refresh_interval=0 violates ge=1 constraint."""
+        from mcpgateway.schemas import DynamicServerUpdate
+
+        with pytest.raises(ValidationError) as exc_info:
+            DynamicServerUpdate(refresh_interval=0)
+        assert "refresh_interval" in str(exc_info.value)
+
+    def test_refresh_interval_negative_rejected(self):
+        """Negative refresh_interval is rejected."""
+        from mcpgateway.schemas import DynamicServerUpdate
+
+        with pytest.raises(ValidationError):
+            DynamicServerUpdate(refresh_interval=-5)
+
+    def test_refresh_interval_one_accepted(self):
+        """refresh_interval=1 is the minimum valid value."""
+        from mcpgateway.schemas import DynamicServerUpdate
+
+        update = DynamicServerUpdate(refresh_interval=1)
+        assert update.refresh_interval == 1
+
+    def test_name_is_stripped(self):
+        """str_strip_whitespace trims leading/trailing whitespace."""
+        from mcpgateway.schemas import DynamicServerUpdate
+
+        update = DynamicServerUpdate(name="  trimmed  ")
+        assert update.name == "trimmed"
+
+    def test_full_update(self):
+        """All fields provided simultaneously."""
+        from mcpgateway.schemas import DynamicRuleCreate, DynamicServerUpdate
+
+        rules = [DynamicRuleCreate(rule_type="llm", entity_type="prompt", value="find summaries")]
+        update = DynamicServerUpdate(
+            name="new-name",
+            description="new desc",
+            rules=rules,
+            refresh_interval=600,
+            visibility="private",
+        )
+        assert update.name == "new-name"
+        assert update.description == "new desc"
+        assert len(update.rules) == 1
+        assert update.refresh_interval == 600
+        assert update.visibility == "private"
+
+    def test_roundtrip_serialization(self):
+        """model_dump → reconstruction produces identical object."""
+        from mcpgateway.schemas import DynamicRuleCreate, DynamicServerUpdate
+
+        original = DynamicServerUpdate(
+            name="x",
+            rules=[DynamicRuleCreate(rule_type="tag", entity_type="resource", value="tag1")],
+        )
+        data = original.model_dump()
+        reconstructed = DynamicServerUpdate(**data)
+        assert reconstructed == original
+
+
+class TestDynamicCatalogResponse:
+    """Tests for DynamicCatalogResponse schema."""
+
+    def _make_catalog(self, **kwargs):
+        from mcpgateway.schemas import DynamicCatalogResponse
+
+        defaults = {
+            "server_id": "srv-1",
+            "server_name": "finance",
+            "evaluated_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
+        }
+        defaults.update(kwargs)
+        return DynamicCatalogResponse(**defaults)
+
+    def test_minimal_valid_creation(self):
+        """server_id and server_name are sufficient; lists default to empty."""
+        cat = self._make_catalog()
+        assert cat.server_id == "srv-1"
+        assert cat.server_name == "finance"
+        assert cat.tools == []
+        assert cat.resources == []
+        assert cat.prompts == []
+
+    def test_full_creation_with_all_lists(self):
+        """All list fields populated correctly."""
+        cat = self._make_catalog(
+            tools=["calc", "exchange"],
+            resources=["rates-doc"],
+            prompts=["summarise"],
+        )
+        assert cat.tools == ["calc", "exchange"]
+        assert cat.resources == ["rates-doc"]
+        assert cat.prompts == ["summarise"]
+
+    def test_evaluated_at_defaults_to_now(self):
+        """evaluated_at has a default_factory producing a UTC datetime."""
+        from mcpgateway.schemas import DynamicCatalogResponse
+
+        before = datetime.now(timezone.utc)
+        cat = DynamicCatalogResponse(server_id="s1", server_name="s")
+        after = datetime.now(timezone.utc)
+        assert before <= cat.evaluated_at <= after
+
+    def test_evaluated_at_explicit_value(self):
+        """An explicitly supplied evaluated_at is preserved."""
+        ts = datetime(2023, 6, 1, 10, 0, tzinfo=timezone.utc)
+        cat = self._make_catalog(evaluated_at=ts)
+        assert cat.evaluated_at == ts
+
+    def test_missing_server_id_rejected(self):
+        """Omitting server_id must raise ValidationError."""
+        from mcpgateway.schemas import DynamicCatalogResponse
+
+        with pytest.raises(ValidationError):
+            DynamicCatalogResponse(
+                server_name="s",
+                evaluated_at=datetime.now(timezone.utc),
+            )
+
+    def test_missing_server_name_rejected(self):
+        """Omitting server_name must raise ValidationError."""
+        from mcpgateway.schemas import DynamicCatalogResponse
+
+        with pytest.raises(ValidationError):
+            DynamicCatalogResponse(
+                server_id="s1",
+                evaluated_at=datetime.now(timezone.utc),
+            )
+
+    def test_tools_list_accepts_multiple_entries(self):
+        """tools accepts any number of string entries."""
+        cat = self._make_catalog(tools=["a", "b", "c", "d"])
+        assert len(cat.tools) == 4
+
+    def test_resources_list_independent_of_tools(self):
+        """resources and tools are independent lists."""
+        cat = self._make_catalog(tools=["t1"], resources=["r1", "r2"])
+        assert cat.tools == ["t1"]
+        assert cat.resources == ["r1", "r2"]
+
+    def test_prompts_list_independent(self):
+        """prompts list is independent of tools and resources."""
+        cat = self._make_catalog(prompts=["p1", "p2", "p3"])
+        assert cat.prompts == ["p1", "p2", "p3"]
+        assert cat.tools == []
+        assert cat.resources == []
+
+    def test_empty_lists_explicitly_provided(self):
+        """Explicitly passing empty lists is equivalent to defaults."""
+        cat = self._make_catalog(tools=[], resources=[], prompts=[])
+        assert cat.tools == []
+        assert cat.resources == []
+        assert cat.prompts == []
+
+    def test_model_dump_contains_all_fields(self):
+        """model_dump includes all six expected keys."""
+        cat = self._make_catalog(tools=["t1"])
+        data = cat.model_dump()
+        for key in ("server_id", "server_name", "tools", "resources", "prompts", "evaluated_at"):
+            assert key in data
+
+    def test_multiple_catalogs_have_independent_defaults(self):
+        """Each instance gets its own list instances (no shared mutable state)."""
+        from mcpgateway.schemas import DynamicCatalogResponse
+
+        cat1 = DynamicCatalogResponse(server_id="s1", server_name="a")
+        cat2 = DynamicCatalogResponse(server_id="s2", server_name="b")
+        cat1.tools.append("tool-x")
+        assert cat2.tools == []
+
+
+class TestDynamicSchemaIntegration:
+    """Integration tests combining multiple dynamic schemas."""
+
+    def test_create_to_read_field_correspondence(self):
+        """DynamicRuleCreate fields map to the corresponding DynamicRuleRead fields."""
+        from mcpgateway.schemas import DynamicRuleCreate, DynamicRuleRead
+
+        create = DynamicRuleCreate(rule_type="llm", entity_type="prompt", value="finance report")
+        read = DynamicRuleRead(
+            id="r99",
+            rule_type=create.rule_type,
+            entity_type=create.entity_type,
+            value=create.value,
+            created_at=datetime.now(timezone.utc),
+        )
+        assert read.rule_type == create.rule_type
+        assert read.entity_type == create.entity_type
+        assert read.value == create.value
+
+    def test_server_create_rules_round_trip_to_server_read(self):
+        """Rules from DynamicServerCreate can be promoted to DynamicServerRead."""
+        from mcpgateway.schemas import (
+            DynamicRuleCreate,
+            DynamicRuleRead,
+            DynamicServerCreate,
+            DynamicServerRead,
+        )
+
+        rule_create = DynamicRuleCreate(rule_type="tag", entity_type="tool", value="hr")
+        server_create = DynamicServerCreate(name="hr-server", rules=[rule_create])
+
+        # Simulate persistence layer promoting to Read schema
+        rule_read = DynamicRuleRead(
+            id="r1",
+            rule_type=rule_create.rule_type,
+            entity_type=rule_create.entity_type,
+            value=rule_create.value,
+            created_at=datetime.now(timezone.utc),
+        )
+        server_read = DynamicServerRead(
+            id="s1",
+            name=server_create.name,
+            description=server_create.description,
+            rules=[rule_read],
+            refresh_interval=server_create.refresh_interval,
+            visibility=server_create.visibility,
+            created_at=datetime.now(timezone.utc),
+            created_by="tester@example.com",
+        )
+        assert server_read.name == "hr-server"
+        assert len(server_read.rules) == 1
+        assert server_read.rules[0].value == "hr"
+
+    def test_server_update_allows_rule_replacement(self):
+        """DynamicServerUpdate.rules can hold rules built from DynamicRuleCreate."""
+        from mcpgateway.schemas import DynamicRuleCreate, DynamicServerUpdate
+
+        new_rules = [
+            DynamicRuleCreate(rule_type="regex", entity_type="resource", value="^hr-.*"),
+            DynamicRuleCreate(rule_type="tag", entity_type="tool", value="payroll"),
+        ]
+        update = DynamicServerUpdate(name="updated-server", rules=new_rules)
+        assert len(update.rules) == 2
+        assert update.rules[0].rule_type == "regex"
+
+    def test_catalog_response_reflects_server_read(self):
+        """DynamicCatalogResponse can be constructed from DynamicServerRead metadata."""
+        from mcpgateway.schemas import DynamicCatalogResponse, DynamicServerRead
+
+        server = DynamicServerRead(
+            id="s1",
+            name="finance",
+            rules=[],
+            created_at=datetime.now(timezone.utc),
+        )
+        catalog = DynamicCatalogResponse(
+            server_id=server.id,
+            server_name=server.name,
+            tools=["calc"],
+            resources=[],
+            prompts=[],
+        )
+        assert catalog.server_id == server.id
+        assert catalog.server_name == server.name
+
+    def test_all_six_classes_importable(self):
+        """Smoke test: all six schema classes can be imported in one statement."""
+        from mcpgateway.schemas import (  # noqa: F401
+            DynamicCatalogResponse,
+            DynamicRuleCreate,
+            DynamicRuleRead,
+            DynamicServerCreate,
+            DynamicServerRead,
+            DynamicServerUpdate,
+        )

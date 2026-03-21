@@ -8,11 +8,11 @@ Unit tests for the dynamic server catalog router.
 Covers all 11 REST endpoints:
   - CRUD: create, list, get, update, delete dynamic servers
   - Rules: add rule, delete rule
-  - Catalog stubs: tools, resources, prompts, preview (all return 501)
+  - Catalog: tools, resources, prompts, preview
 """
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from fastapi import HTTPException, status
@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from mcpgateway.schemas import (
+    DynamicCatalogResponse,
     DynamicRuleCreate,
     DynamicRuleRead,
     DynamicServerCreate,
@@ -365,66 +366,229 @@ class TestDynamicRouter:
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
 
     # ------------------------------------------------------------------
-    # 10–13. Catalog Stubs — all return 501
+    # 10. GET /{server_id}/tools — get_catalog_tools
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_get_catalog_tools_stub_returns_501(self, mock_user_context, mock_db):
-        """Test that the catalog tools endpoint returns HTTP 501."""
-        from mcpgateway.routers.dynamic_router import get_catalog_tools
-
-        with pytest.raises(HTTPException) as exc_info:
-            await get_catalog_tools(
-                server_id=str(uuid4()),
-                current_user_ctx=mock_user_context,
-                db=mock_db,
-            )
-
-        assert exc_info.value.status_code == status.HTTP_501_NOT_IMPLEMENTED
-
-    @pytest.mark.asyncio
-    async def test_get_catalog_resources_stub_returns_501(self, mock_user_context, mock_db):
-        """Test that the catalog resources endpoint returns HTTP 501."""
-        from mcpgateway.routers.dynamic_router import get_catalog_resources
-
-        with pytest.raises(HTTPException) as exc_info:
-            await get_catalog_resources(
-                server_id=str(uuid4()),
-                current_user_ctx=mock_user_context,
-                db=mock_db,
-            )
-
-        assert exc_info.value.status_code == status.HTTP_501_NOT_IMPLEMENTED
-
-    @pytest.mark.asyncio
-    async def test_get_catalog_prompts_stub_returns_501(self, mock_user_context, mock_db):
-        """Test that the catalog prompts endpoint returns HTTP 501."""
-        from mcpgateway.routers.dynamic_router import get_catalog_prompts
-
-        with pytest.raises(HTTPException) as exc_info:
-            await get_catalog_prompts(
-                server_id=str(uuid4()),
-                current_user_ctx=mock_user_context,
-                db=mock_db,
-            )
-
-        assert exc_info.value.status_code == status.HTTP_501_NOT_IMPLEMENTED
-
-    @pytest.mark.asyncio
-    async def test_preview_catalog_stub_returns_501(self, mock_user_context, mock_db):
-        """Test that the catalog preview endpoint returns HTTP 501."""
-        from mcpgateway.routers.dynamic_router import preview_catalog
-
-        request = DynamicServerCreate(
-            name="preview-test",
-            rules=[],
+    async def test_get_catalog_tools_returns_matching_names(self, mock_user_context, mock_db):
+        """Test that catalog tools endpoint returns matching tool names."""
+        server_id = str(uuid4())
+        catalog = DynamicCatalogResponse(
+            server_id=server_id,
+            server_name="my-dynamic-server",
+            tools=["tool-a", "tool-b"],
+            resources=[],
+            prompts=[],
         )
 
-        with pytest.raises(HTTPException) as exc_info:
-            await preview_catalog(
+        with patch("mcpgateway.routers.dynamic_router.DynamicServerService") as mock_svc_cls:
+            mock_service = MagicMock()
+            mock_service.evaluate_catalog = AsyncMock(return_value=catalog)
+            mock_svc_cls.return_value = mock_service
+
+            from mcpgateway.routers.dynamic_router import get_catalog_tools
+
+            result = await get_catalog_tools(
+                server_id=server_id,
+                current_user_ctx=mock_user_context,
+                db=mock_db,
+            )
+
+        assert result == ["tool-a", "tool-b"]
+        mock_service.evaluate_catalog.assert_called_once_with(mock_db, server_id)
+
+    @pytest.mark.asyncio
+    async def test_get_catalog_tools_not_found(self, mock_user_context, mock_db):
+        """Test that catalog tools endpoint raises 404 when server not found."""
+        with patch("mcpgateway.routers.dynamic_router.DynamicServerService") as mock_svc_cls:
+            mock_service = MagicMock()
+            mock_service.evaluate_catalog = AsyncMock(
+                side_effect=HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dynamic server not found")
+            )
+            mock_svc_cls.return_value = mock_service
+
+            from mcpgateway.routers.dynamic_router import get_catalog_tools
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_catalog_tools(
+                    server_id="nonexistent-id",
+                    current_user_ctx=mock_user_context,
+                    db=mock_db,
+                )
+
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+
+    # ------------------------------------------------------------------
+    # 11. GET /{server_id}/resources — get_catalog_resources
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_get_catalog_resources_returns_matching_names(self, mock_user_context, mock_db):
+        """Test that catalog resources endpoint returns matching resource names."""
+        server_id = str(uuid4())
+        catalog = DynamicCatalogResponse(
+            server_id=server_id,
+            server_name="my-dynamic-server",
+            tools=[],
+            resources=["resource-x", "resource-y"],
+            prompts=[],
+        )
+
+        with patch("mcpgateway.routers.dynamic_router.DynamicServerService") as mock_svc_cls:
+            mock_service = MagicMock()
+            mock_service.evaluate_catalog = AsyncMock(return_value=catalog)
+            mock_svc_cls.return_value = mock_service
+
+            from mcpgateway.routers.dynamic_router import get_catalog_resources
+
+            result = await get_catalog_resources(
+                server_id=server_id,
+                current_user_ctx=mock_user_context,
+                db=mock_db,
+            )
+
+        assert result == ["resource-x", "resource-y"]
+        mock_service.evaluate_catalog.assert_called_once_with(mock_db, server_id)
+
+    @pytest.mark.asyncio
+    async def test_get_catalog_resources_not_found(self, mock_user_context, mock_db):
+        """Test that catalog resources endpoint raises 404 when server not found."""
+        with patch("mcpgateway.routers.dynamic_router.DynamicServerService") as mock_svc_cls:
+            mock_service = MagicMock()
+            mock_service.evaluate_catalog = AsyncMock(
+                side_effect=HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dynamic server not found")
+            )
+            mock_svc_cls.return_value = mock_service
+
+            from mcpgateway.routers.dynamic_router import get_catalog_resources
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_catalog_resources(
+                    server_id="nonexistent-id",
+                    current_user_ctx=mock_user_context,
+                    db=mock_db,
+                )
+
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+
+    # ------------------------------------------------------------------
+    # 12. GET /{server_id}/prompts — get_catalog_prompts
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_get_catalog_prompts_returns_matching_names(self, mock_user_context, mock_db):
+        """Test that catalog prompts endpoint returns matching prompt names."""
+        server_id = str(uuid4())
+        catalog = DynamicCatalogResponse(
+            server_id=server_id,
+            server_name="my-dynamic-server",
+            tools=[],
+            resources=[],
+            prompts=["prompt-one", "prompt-two"],
+        )
+
+        with patch("mcpgateway.routers.dynamic_router.DynamicServerService") as mock_svc_cls:
+            mock_service = MagicMock()
+            mock_service.evaluate_catalog = AsyncMock(return_value=catalog)
+            mock_svc_cls.return_value = mock_service
+
+            from mcpgateway.routers.dynamic_router import get_catalog_prompts
+
+            result = await get_catalog_prompts(
+                server_id=server_id,
+                current_user_ctx=mock_user_context,
+                db=mock_db,
+            )
+
+        assert result == ["prompt-one", "prompt-two"]
+        mock_service.evaluate_catalog.assert_called_once_with(mock_db, server_id)
+
+    @pytest.mark.asyncio
+    async def test_get_catalog_prompts_not_found(self, mock_user_context, mock_db):
+        """Test that catalog prompts endpoint raises 404 when server not found."""
+        with patch("mcpgateway.routers.dynamic_router.DynamicServerService") as mock_svc_cls:
+            mock_service = MagicMock()
+            mock_service.evaluate_catalog = AsyncMock(
+                side_effect=HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dynamic server not found")
+            )
+            mock_svc_cls.return_value = mock_service
+
+            from mcpgateway.routers.dynamic_router import get_catalog_prompts
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_catalog_prompts(
+                    server_id="nonexistent-id",
+                    current_user_ctx=mock_user_context,
+                    db=mock_db,
+                )
+
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+
+    # ------------------------------------------------------------------
+    # 13. POST /preview — preview_catalog
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_preview_catalog_returns_catalog_response(self, mock_user_context, mock_db):
+        """Test that preview endpoint returns a DynamicCatalogResponse."""
+        catalog = DynamicCatalogResponse(
+            server_id="preview",
+            server_name="preview",
+            tools=["tool-a"],
+            resources=["resource-x"],
+            prompts=[],
+        )
+
+        with patch("mcpgateway.routers.dynamic_router.DynamicServerService") as mock_svc_cls:
+            mock_service = MagicMock()
+            mock_service.preview_catalog = AsyncMock(return_value=catalog)
+            mock_svc_cls.return_value = mock_service
+
+            from mcpgateway.routers.dynamic_router import preview_catalog
+
+            request = DynamicServerCreate(
+                name="preview-test",
+                rules=[DynamicRuleCreate(rule_type="tag", entity_type="tool", value="analytics")],
+            )
+
+            result = await preview_catalog(
                 request=request,
                 current_user_ctx=mock_user_context,
                 db=mock_db,
             )
 
-        assert exc_info.value.status_code == status.HTTP_501_NOT_IMPLEMENTED
+        assert result.tools == ["tool-a"]
+        assert result.resources == ["resource-x"]
+        assert result.prompts == []
+        mock_service.preview_catalog.assert_called_once_with(mock_db, request.rules)
+
+    @pytest.mark.asyncio
+    async def test_preview_catalog_empty_rules(self, mock_user_context, mock_db):
+        """Test preview with no rules returns empty catalogs."""
+        catalog = DynamicCatalogResponse(
+            server_id="preview",
+            server_name="preview",
+            tools=[],
+            resources=[],
+            prompts=[],
+        )
+
+        with patch("mcpgateway.routers.dynamic_router.DynamicServerService") as mock_svc_cls:
+            mock_service = MagicMock()
+            mock_service.preview_catalog = AsyncMock(return_value=catalog)
+            mock_svc_cls.return_value = mock_service
+
+            from mcpgateway.routers.dynamic_router import preview_catalog
+
+            request = DynamicServerCreate(name="preview-empty", rules=[])
+
+            result = await preview_catalog(
+                request=request,
+                current_user_ctx=mock_user_context,
+                db=mock_db,
+            )
+
+        assert result.tools == []
+        assert result.resources == []
+        assert result.prompts == []
+        mock_service.preview_catalog.assert_called_once_with(mock_db, [])
