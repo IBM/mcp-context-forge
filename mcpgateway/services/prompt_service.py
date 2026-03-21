@@ -1641,8 +1641,11 @@ class PromptService(BaseService):
         try:
             return db.execute(scoped_query.where(or_(DbPrompt.name == prompt_id, DbPrompt.id == prompt_id))).scalar_one_or_none()
         except MultipleResultsFound:
-            # Name-ID collision across rows: prefer name match per MCP spec
-            return db.execute(scoped_query.where(DbPrompt.name == prompt_id)).scalar_one_or_none()
+            # OR matched multiple rows — try name-only (MCP spec primary key)
+            try:
+                return db.execute(scoped_query.where(DbPrompt.name == prompt_id)).scalar_one_or_none()
+            except MultipleResultsFound:
+                raise PromptError(f"Prompt name '{prompt_id}' is ambiguous across multiple scopes; use /servers/{{id}}/mcp to disambiguate.")
 
     async def get_prompt(
         self,

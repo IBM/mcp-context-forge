@@ -538,6 +538,27 @@ class TestPromptService:
         assert result.messages[0].content.text == "By name!"
 
     @pytest.mark.asyncio
+    async def test_get_prompt_ambiguous_name_raises_prompt_error(self, prompt_service, test_db):
+        """When multiple accessible prompts share the same name, raise explicit ambiguity error."""
+        # Third-Party
+        from sqlalchemy.exc import MultipleResultsFound
+
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptError
+
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+
+        # Both OR query and name-only fallback hit multiple rows
+        or_result = MagicMock()
+        or_result.scalar_one_or_none.side_effect = MultipleResultsFound()
+        name_result = MagicMock()
+        name_result.scalar_one_or_none.side_effect = MultipleResultsFound()
+        test_db.execute = Mock(side_effect=[or_result, name_result])
+
+        with pytest.raises(PromptError, match="ambiguous"):
+            await prompt_service.get_prompt(test_db, "code_review", {})
+
+    @pytest.mark.asyncio
     async def test_get_prompt_multi_team_same_name(self, prompt_service, test_db):
         """Issue #1704: Verify team scoping prevents cross-team prompt access with duplicate names.
 
