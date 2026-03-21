@@ -43,6 +43,7 @@ from mcpgateway.config import settings
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_client_chat_service import (
+    ChatProcessingError,
     GatewayConfig,
     LLMConfig,
     MCPChatService,
@@ -964,10 +965,14 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
         error_event = {"type": "error", "error": "Request timed out waiting for LLM response", "recoverable": True}
         async for part in sse("error", error_event):
             yield part
+    except ChatProcessingError as cpe:
+        # ChatProcessingError wraps tool/parsing/model errors —
+        # the session is still valid, so the frontend can retry.
+        error_event = {"type": "error", "error": f"Service error: {str(cpe)}", "recoverable": True}
+        async for part in sse("error", error_event):
+            yield part
     except RuntimeError as re:
-        # RuntimeError from chat_events wraps tool/parsing/model errors —
-        # the session is still valid, only ConnectionError is non-recoverable.
-        error_event = {"type": "error", "error": f"Service error: {str(re)}", "recoverable": True}
+        error_event = {"type": "error", "error": f"Service error: {str(re)}", "recoverable": False}
         async for part in sse("error", error_event):
             yield part
     except Exception as e:

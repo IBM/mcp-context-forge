@@ -100,6 +100,10 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+class ChatProcessingError(RuntimeError):
+    """Recoverable error wrapping tool, parsing, or model failures during chat streaming."""
+
+
 class MCPServerConfig(BaseModel):
     """
     Configuration for MCP server connection.
@@ -2639,6 +2643,7 @@ class MCPChatService:
             ValueError: If message is empty or whitespace only.
             ConnectionError: If the underlying MCP connection is lost.
             TimeoutError: If the LLM request times out.
+            ChatProcessingError: If a tool, parsing, or model error occurs during streaming.
 
         Examples:
             >>> import asyncio
@@ -2905,7 +2910,7 @@ class MCPChatService:
             raise
         except Exception as e:
             logger.error(f"Error in chat_events: {e}")
-            raise RuntimeError(f"Chat processing error: {e}") from e
+            raise ChatProcessingError(f"Chat processing error: {e}") from e
 
     async def get_conversation_history(self) -> List[Dict[str, str]]:
         """

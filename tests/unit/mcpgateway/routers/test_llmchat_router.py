@@ -12,6 +12,7 @@ from fastapi import HTTPException
 # First-Party
 from mcpgateway.routers import llmchat_router
 from mcpgateway.routers.llmchat_router import ChatInput, ConnectInput, DisconnectInput, LLMInput, ServerInput
+from mcpgateway.services.mcp_client_chat_service import ChatProcessingError
 
 
 class DummyChatService:
@@ -649,6 +650,7 @@ async def test_token_streamer_emits_events():
 
 @pytest.mark.asyncio
 async def test_token_streamer_handles_runtime_error():
+    """Plain RuntimeError (e.g. 'not initialized') must be non-recoverable."""
     chat_service = FailingStreamChatService(config=None, user_id="user1")
 
     parts = []
@@ -657,6 +659,27 @@ async def test_token_streamer_handles_runtime_error():
 
     joined = "".join(parts)
     assert "event: error" in joined
+    assert '"recoverable":false' in joined
+
+
+@pytest.mark.asyncio
+async def test_token_streamer_handles_chat_processing_error():
+    """ChatProcessingError (tool/parsing/model failures) must be recoverable."""
+
+    class ChatProcessingErrService(DummyChatService):
+        async def chat_events(self, message):
+            raise ChatProcessingError("tool parse failed")
+            if message:  # pragma: no cover - keep generator signature
+                yield {"type": "token", "content": message}
+
+    svc = ChatProcessingErrService(config=None, user_id="user1")
+    parts = []
+    async for part in llmchat_router.token_streamer(svc, "hi", "user1"):
+        parts.append(part.decode("utf-8"))
+
+    joined = "".join(parts)
+    assert "event: error" in joined
+    assert "tool parse failed" in joined
     assert '"recoverable":true' in joined
 
 

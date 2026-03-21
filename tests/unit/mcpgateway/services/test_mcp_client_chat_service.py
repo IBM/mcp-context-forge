@@ -1258,7 +1258,7 @@ async def test_chat_events_wraps_astream_event_errors(monkeypatch, patch_logger)
     service._agent = SimpleNamespace(astream_events=_astream_events)
     monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
 
-    with pytest.raises(RuntimeError, match="Chat processing error: stream blew up"):
+    with pytest.raises(svc.ChatProcessingError, match="Chat processing error: stream blew up"):
         async for _ev in service.chat_events("hello"):
             pass
 
