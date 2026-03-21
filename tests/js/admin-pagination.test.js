@@ -1294,8 +1294,8 @@ describe("Alpine.js reinit on OOB-swapped pagination controls (#3039)", () => {
 // ---------------------------------------------------------------------------
 // updateFilterStatus (#3647)
 //
-// Shows "Filtered: ..." or "Filters active" text in status spans when
-// URL params indicate active search/tag/inactive filters for a table.
+// Shows "Filters active" text in status spans when URL params indicate
+// active search/tag/inactive filters for a table.
 // ---------------------------------------------------------------------------
 describe("updateFilterStatus (#3647)", () => {
     function createFilterStatusSpan(tableName) {
@@ -1303,20 +1303,6 @@ describe("updateFilterStatus (#3647)", () => {
         span.id = tableName + "-filter-status";
         doc.body.appendChild(span);
         return span;
-    }
-
-    function createPaginationControlsWithInfo(tableName, totalItemsText) {
-        const container = doc.createElement("div");
-        container.id = tableName + "-pagination-controls";
-        const pageInfo = doc.createElement("span");
-        pageInfo.setAttribute(
-            "x-text",
-            "totalItems === 0 ? 'No items' : 'Showing 1 - 10 of 42 items'",
-        );
-        pageInfo.textContent = totalItemsText;
-        container.appendChild(pageInfo);
-        doc.body.appendChild(container);
-        return container;
     }
 
     test("shows empty text when no filters are active", () => {
@@ -1328,23 +1314,13 @@ describe("updateFilterStatus (#3647)", () => {
         expect(span.textContent).toBe("");
     });
 
-    test("shows 'Filters active' when query filter is active but no pagination", () => {
+    test("shows 'Filters active' when query filter is active", () => {
         const span = createFilterStatusSpan("tools");
         win.history.replaceState({}, "", "/admin?tools_q=search");
 
         win.updateFilterStatus();
 
         expect(span.textContent).toBe("Filters active");
-    });
-
-    test("shows 'Filtered: ...' with pagination info when available", () => {
-        const span = createFilterStatusSpan("tools");
-        createPaginationControlsWithInfo("tools", "Showing 1 - 10 of 42 items");
-        win.history.replaceState({}, "", "/admin?tools_q=search");
-
-        win.updateFilterStatus();
-
-        expect(span.textContent).toBe("Filtered: Showing 1 - 10 of 42 items");
     });
 
     test("shows status when tags filter is active", () => {
@@ -1516,47 +1492,50 @@ describe("htmx:afterSettle rehydration listener (#3647)", () => {
 // ---------------------------------------------------------------------------
 // pagination_controls: URL-param fallback for filter persistence (#3647)
 //
-// loadPage() reads DOM inputs first; when DOM inputs are empty, it falls
-// back to namespaced URL params (e.g. tools_q, tools_tags) written by
-// updatePanelSearchStateInUrl. This ensures filter state survives across
-// bookmarked URLs and restricted iframe contexts.
+// loadPage() trusts DOM inputs when the element exists (even if empty,
+// meaning the user cleared the filter).  It only falls back to namespaced
+// URL params when the element itself is absent (bookmarked URL, restricted
+// iframe, or ID mismatch like catalog/a2a-agents).
 // ---------------------------------------------------------------------------
 describe("pagination_controls URL-param filter fallback (#3647)", () => {
     /**
      * Simulates the merged loadPage() URL-building logic from
-     * pagination_controls.html with DOM-first + URL fallback.
+     * pagination_controls.html.
+     *
+     * @param {object} opts
+     * @param {string} opts.baseUrl
+     * @param {string} [opts.extraParamsJson='{}']
+     * @param {string} opts.tableName
+     * @param {object|null} [opts.searchEl]  null = element not in DOM
+     * @param {object|null} [opts.tagEl]     null = element not in DOM
+     * @param {string} [opts.currentSearch='']
      */
-    function buildUrlWithFallback(
-        baseUrl,
-        extraParamsJson,
-        tableName,
-        domInputs,
-        currentSearch,
-    ) {
-        const url = new URL(baseUrl, "http://localhost");
+    function buildUrlWithFallback(opts) {
+        const url = new URL(opts.baseUrl, "http://localhost");
         url.searchParams.set("page", "1");
         url.searchParams.set("per_page", "50");
 
-        // Extra params from server-rendered data attribute
-        const extraParams = JSON.parse(extraParamsJson || "{}");
+        const extraParams = JSON.parse(opts.extraParamsJson || "{}");
         Object.entries(extraParams).forEach(([k, v]) => {
             if (k !== "include_inactive" && v !== null && v !== undefined) {
                 url.searchParams.set(k, String(v));
             }
         });
 
-        // DOM-first + URL fallback (mirrors merged pagination_controls.html)
-        const currentUrlParams = new URLSearchParams(currentSearch || "");
-        if (tableName) {
-            const domQuery = (domInputs?.search || "").trim();
-            const domTags = (domInputs?.tags || "").trim();
+        const currentUrlParams = new URLSearchParams(opts.currentSearch || "");
+        if (opts.tableName) {
+            const searchInput = opts.searchEl ?? null;
+            const tagInput = opts.tagEl ?? null;
+            const livePrefix = opts.tableName + "_";
 
-            const livePrefix = tableName + "_";
-            const urlQuery = currentUrlParams.get(livePrefix + "q") || "";
-            const urlTags = currentUrlParams.get(livePrefix + "tags") || "";
-
-            const finalQuery = domQuery || urlQuery;
-            const finalTags = domTags || urlTags;
+            const finalQuery =
+                searchInput !== null
+                    ? (searchInput.value || "").trim()
+                    : currentUrlParams.get(livePrefix + "q") || "";
+            const finalTags =
+                tagInput !== null
+                    ? (tagInput.value || "").trim()
+                    : currentUrlParams.get(livePrefix + "tags") || "";
 
             if (finalQuery) {
                 url.searchParams.set("q", finalQuery);
@@ -1570,146 +1549,150 @@ describe("pagination_controls URL-param filter fallback (#3647)", () => {
             }
         }
 
-        // team_id fallback
         const teamIdFromUrl = currentUrlParams.get("team_id");
         if (teamIdFromUrl && !extraParams.team_id) {
             url.searchParams.set("team_id", teamIdFromUrl);
         }
-
         return url;
     }
 
     test("DOM input takes precedence over URL params", () => {
-        const url = buildUrlWithFallback(
-            "/admin/tools/partial",
-            "{}",
-            "tools",
-            { search: "dom-value" },
-            "?tools_q=url-value",
-        );
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: { value: "dom-value" },
+            currentSearch: "?tools_q=url-value",
+        });
         expect(url.searchParams.get("q")).toBe("dom-value");
     });
 
-    test("falls back to URL param when DOM input is empty", () => {
-        const url = buildUrlWithFallback(
-            "/admin/tools/partial",
-            "{}",
-            "tools",
-            { search: "" },
-            "?tools_q=url-value",
-        );
+    test("empty DOM input clears filter (does NOT fall back to stale URL)", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: { value: "" },
+            currentSearch: "?tools_q=stale-value",
+        });
+        expect(url.searchParams.has("q")).toBe(false);
+    });
+
+    test("empty DOM tags input clears tags (does NOT fall back to stale URL)", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            tagEl: { value: "" },
+            currentSearch: "?tools_tags=stale-tags",
+        });
+        expect(url.searchParams.has("tags")).toBe(false);
+    });
+
+    test("falls back to URL param when DOM element is absent", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: null,
+            currentSearch: "?tools_q=url-value",
+        });
         expect(url.searchParams.get("q")).toBe("url-value");
     });
 
-    test("falls back to URL tags when DOM tags input is empty", () => {
-        const url = buildUrlWithFallback(
-            "/admin/tools/partial",
-            "{}",
-            "tools",
-            { tags: "" },
-            "?tools_tags=prod,staging",
-        );
+    test("falls back to URL tags when DOM element is absent", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            tagEl: null,
+            currentSearch: "?tools_tags=prod,staging",
+        });
         expect(url.searchParams.get("tags")).toBe("prod,staging");
     });
 
     test("uses correct namespaced prefix per table", () => {
-        const toolsUrl = buildUrlWithFallback(
-            "/admin/tools/partial",
-            "{}",
-            "tools",
-            {},
-            "?tools_q=alpha&servers_q=beta",
-        );
+        const toolsUrl = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: null,
+            currentSearch: "?tools_q=alpha&servers_q=beta",
+        });
         expect(toolsUrl.searchParams.get("q")).toBe("alpha");
 
-        const serversUrl = buildUrlWithFallback(
-            "/admin/servers/partial",
-            "{}",
-            "servers",
-            {},
-            "?tools_q=alpha&servers_q=beta",
-        );
+        const serversUrl = buildUrlWithFallback({
+            baseUrl: "/admin/servers/partial",
+            tableName: "servers",
+            searchEl: null,
+            currentSearch: "?tools_q=alpha&servers_q=beta",
+        });
         expect(serversUrl.searchParams.get("q")).toBe("beta");
     });
 
-    test("extraParams are preserved when DOM/URL override q", () => {
-        const json = JSON.stringify({ gateway_id: "7", q: "old" });
-        const url = buildUrlWithFallback(
-            "/admin/tools/partial",
-            json,
-            "tools",
-            { search: "new" },
-            "",
-        );
+    test("extraParams are preserved when DOM overrides q", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            extraParamsJson: JSON.stringify({ gateway_id: "7", q: "old" }),
+            tableName: "tools",
+            searchEl: { value: "new" },
+        });
         expect(url.searchParams.get("q")).toBe("new");
         expect(url.searchParams.get("gateway_id")).toBe("7");
     });
 
     test("team_id from URL preserved when not in extraParams", () => {
-        const url = buildUrlWithFallback(
-            "/admin/tools/partial",
-            "{}",
-            "tools",
-            {},
-            "?team_id=t1",
-        );
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            currentSearch: "?team_id=t1",
+        });
         expect(url.searchParams.get("team_id")).toBe("t1");
     });
 
     test("extraParams team_id takes precedence over URL team_id", () => {
-        const json = JSON.stringify({ team_id: "from-params" });
-        const url = buildUrlWithFallback(
-            "/admin/tools/partial",
-            json,
-            "tools",
-            {},
-            "?team_id=from-url",
-        );
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            extraParamsJson: JSON.stringify({ team_id: "from-params" }),
+            tableName: "tools",
+            currentSearch: "?team_id=from-url",
+        });
         expect(url.searchParams.get("team_id")).toBe("from-params");
     });
 
-    test("no q/tags params when both DOM and URL are empty", () => {
-        const url = buildUrlWithFallback(
-            "/admin/tools/partial",
-            "{}",
-            "tools",
-            { search: "", tags: "" },
-            "",
-        );
+    test("no q/tags when DOM elements exist but are empty and URL has nothing", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: { value: "" },
+            tagEl: { value: "" },
+        });
         expect(url.searchParams.has("q")).toBe(false);
         expect(url.searchParams.has("tags")).toBe(false);
     });
 
     test("namespaces are isolated: tools_q does not leak to servers", () => {
-        const url = buildUrlWithFallback(
-            "/admin/servers/partial",
-            "{}",
-            "servers",
-            {},
-            "?tools_q=should-not-leak",
-        );
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/servers/partial",
+            tableName: "servers",
+            searchEl: null,
+            currentSearch: "?tools_q=should-not-leak",
+        });
         expect(url.searchParams.has("q")).toBe(false);
     });
 
-    test("whitespace-only DOM input falls back to URL", () => {
-        const url = buildUrlWithFallback(
-            "/admin/tools/partial",
-            "{}",
-            "tools",
-            { search: "   " },
-            "?tools_q=from-url",
-        );
-        expect(url.searchParams.get("q")).toBe("from-url");
+    test("whitespace-only DOM input is treated as cleared (no fallback)", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: { value: "   " },
+            currentSearch: "?tools_q=from-url",
+        });
+        expect(url.searchParams.has("q")).toBe(false);
     });
 
-    test("both q and tags can be set simultaneously from different sources", () => {
-        const url = buildUrlWithFallback(
-            "/admin/tools/partial",
-            "{}",
-            "tools",
-            { search: "dom-search", tags: "" },
-            "?tools_tags=url-tags",
-        );
+    test("q from DOM and tags from URL fallback work simultaneously", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: { value: "dom-search" },
+            tagEl: null,
+            currentSearch: "?tools_tags=url-tags",
+        });
         expect(url.searchParams.get("q")).toBe("dom-search");
         expect(url.searchParams.get("tags")).toBe("url-tags");
     });

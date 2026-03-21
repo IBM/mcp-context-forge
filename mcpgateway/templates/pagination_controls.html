@@ -110,21 +110,25 @@
     });
 
     // Read live search/tag filters: DOM inputs are primary (always current),
-    // URL params (written by updatePanelSearchStateInUrl) are fallback for
-    // bookmarked URLs where inputs may not yet be populated.
+    // URL params (written by updatePanelSearchStateInUrl) are fallback only
+    // when the DOM element is not found (bookmarked URL, restricted iframe,
+    // or search-input ID mismatch like catalog/a2a-agents).
     const currentUrlParams = new URLSearchParams(window.location.search);
     if (this.tableName) {
       const searchInput = document.getElementById(this.tableName + '-search-input');
       const tagInput = document.getElementById(this.tableName + '-tag-filter');
-      const domQuery = searchInput ? searchInput.value.trim() : '';
-      const domTags = tagInput ? tagInput.value.trim() : '';
 
       const livePrefix = this.tableName + '_';
-      const urlQuery = currentUrlParams.get(livePrefix + 'q') || '';
-      const urlTags = currentUrlParams.get(livePrefix + 'tags') || '';
 
-      const finalQuery = domQuery || urlQuery;
-      const finalTags = domTags || urlTags;
+      // When the input element exists, trust its value even if empty (user
+      // may have intentionally cleared the filter).  Only fall back to URL
+      // params when the element itself is absent.
+      const finalQuery = searchInput !== null
+        ? searchInput.value.trim()
+        : (currentUrlParams.get(livePrefix + 'q') || '');
+      const finalTags = tagInput !== null
+        ? tagInput.value.trim()
+        : (currentUrlParams.get(livePrefix + 'tags') || '');
 
       if (finalQuery) {
         url.searchParams.set('q', finalQuery);

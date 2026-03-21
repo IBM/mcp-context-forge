@@ -18904,8 +18904,7 @@ const {
 
 /**
  * Update visible filter-status text for each table panel.
- * Reads the pagination total from the Alpine-rendered pagination controls
- * and shows a summary when any filter (search, tags, inactive) is active.
+ * Shows "Filters active" when any filter (search, tags, inactive) is active.
  */
 function updateFilterStatus() {
     Object.values(PANEL_SEARCH_CONFIG).forEach((config) => {
@@ -18919,27 +18918,9 @@ function updateFilterStatus() {
         const hasQuery = Boolean(params.get(prefix + "q"));
         const hasTags = Boolean(params.get(prefix + "tags"));
         const hasInactive = params.get(prefix + "inactive") === "true";
-        const hasFilters = hasQuery || hasTags || hasInactive;
 
-        if (!hasFilters) {
-            statusEl.textContent = "";
-            return;
-        }
-
-        // Read totalItems from the pagination controls Alpine component
-        const paginationEl = document.getElementById(
-            config.tableName + "-pagination-controls",
-        );
-        if (paginationEl) {
-            const pageInfoSpan = paginationEl.querySelector(
-                "[x-text*='totalItems']",
-            );
-            if (pageInfoSpan && pageInfoSpan.textContent) {
-                statusEl.textContent = "Filtered: " + pageInfoSpan.textContent;
-                return;
-            }
-        }
-        statusEl.textContent = "Filters active";
+        statusEl.textContent =
+            hasQuery || hasTags || hasInactive ? "Filters active" : "";
     });
 }
 window.updateFilterStatus = updateFilterStatus;
