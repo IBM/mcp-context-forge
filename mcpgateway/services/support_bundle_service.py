@@ -100,7 +100,7 @@ class SupportBundleService:
         (re.compile(r"bearer\s+[A-Za-z0-9\-._~+/]+=*", re.IGNORECASE), r"bearer *****"),
         (re.compile(r'authorization:\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), r"authorization: *****"),
         # Database URLs
-        (re.compile(r"(postgresql|mysql|redis)://([^:]+):([^@]+)@"), r"\1://\2:*****@"),
+        (re.compile(r"(postgresql|redis)://([^:]+):([^@]+)@"), r"\1://\2:*****@"),
         # JWT tokens (eyJ pattern)
         (re.compile(r"eyJ[A-Za-z0-9\-_]+\.eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+"), r"eyJ*****"),
     ]

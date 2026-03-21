@@ -256,6 +256,15 @@ def test_tool_metrics_summary_detached():
     assert summary["failure_rate"] == 0.0
 
 
+@pytest.mark.parametrize("unsupported_backend", ["mysql", "mariadb", "mongodb", "oracle"])
+def test_build_engine_rejects_unsupported_backend(monkeypatch, unsupported_backend):
+    """build_engine() raises ValueError for any backend other than postgresql/sqlite."""
+    monkeypatch.setattr(db, "backend", unsupported_backend)
+    monkeypatch.setattr(db.settings, "database_url", f"{unsupported_backend}://user:pass@host/db")
+    with pytest.raises(ValueError, match="Unsupported database backend"):
+        db.build_engine()
+
+
 def test_build_engine_null_pool_branch(monkeypatch):
     monkeypatch.setattr(db, "backend", "postgresql")
     monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@localhost/db")
