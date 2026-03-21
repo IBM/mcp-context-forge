@@ -2637,6 +2637,8 @@ class MCPChatService:
         Raises:
             RuntimeError: If service not initialized.
             ValueError: If message is empty or whitespace only.
+            ConnectionError: If the underlying MCP connection is lost.
+            TimeoutError: If the LLM request times out.
 
         Examples:
             >>> import asyncio
