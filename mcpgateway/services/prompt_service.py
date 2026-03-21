@@ -31,7 +31,7 @@ from mcp.client.streamable_http import streamablehttp_client
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError, MultipleResultsFound, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
@@ -1614,6 +1614,42 @@ class PromptService(BaseService):
 
         return False
 
+    def _find_prompt_by_name_or_id(
+        self,
+        db: Session,
+        scoped_query: Any,
+        prompt_id: str,
+    ) -> Optional[DbPrompt]:
+        """Find a prompt by name or ID using a scoped query.
+
+        Uses a single OR query for efficiency, with a fallback to name-only
+        lookup if the OR matches multiple rows (e.g. one prompt's name equals
+        another prompt's ID).
+
+        Args:
+            db: Database session
+            scoped_query: Pre-scoped SQLAlchemy query with access control applied
+            prompt_id: Name or ID of the prompt to find
+
+        Returns:
+            DbPrompt instance if found, None otherwise
+
+        Raises:
+            PromptError: If multiple accessible prompts share the same name.
+
+        Note:
+            The scoped_query must already have team-based access control applied
+            via _apply_access_control() to ensure multi-tenancy security.
+        """
+        try:
+            return db.execute(scoped_query.where(or_(DbPrompt.name == prompt_id, DbPrompt.id == prompt_id))).scalar_one_or_none()
+        except MultipleResultsFound:
+            # OR matched multiple rows — try name-only (MCP spec primary key)
+            try:
+                return db.execute(scoped_query.where(DbPrompt.name == prompt_id)).scalar_one_or_none()
+            except MultipleResultsFound:
+                raise PromptError(f"Prompt name '{prompt_id}' is ambiguous across multiple scopes; use /servers/{{id}}/mcp to disambiguate.")
+
     async def get_prompt(
         self,
         db: Session,
@@ -1628,11 +1664,17 @@ class PromptService(BaseService):
         plugin_global_context: Optional[GlobalContext] = None,
         _meta_data: Optional[Dict[str, Any]] = None,
     ) -> PromptResult:
-        """Get a prompt template and optionally render it.
+        """Retrieve and render a prompt by name or ID.
+
+        This method implements MCP specification-compliant prompt lookup with
+        multi-tenancy support and backward compatibility.
 
         Args:
             db: Database session
-            prompt_id: ID of the prompt to retrieve
+            prompt_id: Name or ID of the prompt to retrieve. Name-based lookup
+                is prioritized per MCP spec, with ID fallback for backward
+                compatibility. Team-based access control is applied before the
+                lookup to ensure multi-tenancy security.
             arguments: Optional arguments for rendering
             user: Optional user email for authorization checks
             tenant_id: Optional tenant identifier for plugin context
@@ -1749,29 +1791,40 @@ class PromptService(BaseService):
                         payload = pre_result.modified_payload
                         arguments = payload.args
 
-                # Find prompt by ID first, then by name (active prompts only)
+                # ═══════════════════════════════════════════════════════════════════════════
+                # SECURITY: Apply team scoping BEFORE lookup to prevent multi-tenancy issues
+                # This ensures users only see prompts they have access to, matching list_prompts()
+                # Build base query and apply access control (matches list_prompts architecture)
+                # ═══════════════════════════════════════════════════════════════════════════
                 search_key = str(prompt_id)
-                prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.id == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
-                if not prompt:
-                    prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.name == prompt_id).where(DbPrompt.enabled)).scalar_one_or_none()
 
+                # Build base query with server + team scoping applied FIRST
+                base_query = select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.enabled)
+                if server_id:
+                    base_query = base_query.join(server_prompt_association, DbPrompt.id == server_prompt_association.c.prompt_id).where(server_prompt_association.c.server_id == server_id)
+                scoped_query = await self._apply_access_control(base_query, db, user, token_teams, team_id=None)
+
+                # Find prompt by name or ID (active prompts only) using optimized OR query
+                prompt = self._find_prompt_by_name_or_id(db, scoped_query, prompt_id)
+
+                # If not found in active prompts, check inactive prompts (with team + server scoping)
                 if not prompt:
-                    # Check if an inactive prompt exists
-                    inactive_prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
-                    if not inactive_prompt:
-                        inactive_prompt = db.execute(select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(DbPrompt.name == prompt_id).where(not_(DbPrompt.enabled))).scalar_one_or_none()
+                    inactive_base_query = select(DbPrompt).options(joinedload(DbPrompt.gateway)).where(not_(DbPrompt.enabled))
+                    if server_id:
+                        inactive_base_query = inactive_base_query.join(server_prompt_association, DbPrompt.id == server_prompt_association.c.prompt_id).where(
+                            server_prompt_association.c.server_id == server_id
+                        )
+                    inactive_scoped_query = await self._apply_access_control(inactive_base_query, db, user, token_teams, team_id=None)
+
+                    # Find in inactive prompts using optimized OR query
+                    inactive_prompt = self._find_prompt_by_name_or_id(db, inactive_scoped_query, prompt_id)
 
                     if inactive_prompt:
                         raise PromptNotFoundError(f"Prompt '{search_key}' exists but is inactive")
 
                     raise PromptNotFoundError(f"Prompt not found: {search_key}")
 
-                # ═══════════════════════════════════════════════════════════════════════════
-                # SECURITY: Check prompt access based on visibility and team membership
-                # ═══════════════════════════════════════════════════════════════════════════
-                if not await self._check_prompt_access(db, prompt, user, token_teams):
-                    # Don't reveal prompt existence - return generic "not found"
-                    raise PromptNotFoundError(f"Prompt not found: {search_key}")
+                # Access control already applied via scoped query - no additional check needed
 
                 # ═══════════════════════════════════════════════════════════════════════════
                 # SECURITY: Enforce server scoping if server_id is provided

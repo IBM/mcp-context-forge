@@ -517,6 +517,12 @@ class GatewaysPage(BasePage):
         is_checked = self.show_inactive_checkbox.is_checked()
         if (show and not is_checked) or (not show and is_checked):
             self.click_locator(self.show_inactive_checkbox)
+            # Wait for the HTMX table swap triggered by the checkbox
+            self.page.wait_for_function(
+                "() => !document.querySelector('#gateways-loading.htmx-request')",
+                timeout=15000,
+            )
+            self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
 
     def get_gateway_row(self, gateway_index: int) -> Locator:
         """Get a specific gateway row by index.
@@ -611,7 +617,7 @@ class GatewaysPage(BasePage):
             gateway_index: Index of the gateway row (default: 0 for first gateway)
         """
         gateway_row = self.gateway_rows.nth(gateway_index)
-        activate_btn = gateway_row.locator('button:has-text("Activate")')
+        activate_btn = gateway_row.locator('button:text-is("Activate")')
         self.click_locator(activate_btn)
 
     def _click_delete_and_wait(self, delete_btn, confirm: bool = True) -> None:
