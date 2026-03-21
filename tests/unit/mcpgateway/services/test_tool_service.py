@@ -3258,7 +3258,7 @@ class TestToolService:
 
         bind = MagicMock()
         bind.dialect = MagicMock()
-        bind.dialect.name = "sqlite"  # or "postgresql" or "mysql"
+        bind.dialect.name = "sqlite"  # or "postgresql"
         session.get_bind.return_value = bind
 
         # Mock convert_tool_to_read

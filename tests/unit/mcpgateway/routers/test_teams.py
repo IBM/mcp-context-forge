@@ -447,7 +447,7 @@ class TestTeamsRouter:
             result = await update_team(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
-            mock_service.update_team.assert_called_once_with(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members)
+            mock_service.update_team.assert_called_once_with(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members, skip_limits=False)
 
     @pytest.mark.asyncio
     async def test_update_team_insufficient_permissions(self, mock_user_context, mock_db):

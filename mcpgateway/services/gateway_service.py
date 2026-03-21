@@ -2889,7 +2889,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db.expire(gateway)
 
             # Use DELETE with rowcount check for database-agnostic atomic delete
-            # (RETURNING is not supported on MySQL/MariaDB)
             stmt = delete(DbGateway).where(DbGateway.id == gateway_id)
             result = db.execute(stmt)
             if result.rowcount == 0:
@@ -3667,7 +3666,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                     root_cause = root_cause.exceptions[0]
             sanitized_url = sanitize_url_for_logging(url, auth_query_params)
-            sanitized_error = sanitize_exception_message(str(root_cause), auth_query_params)
+            raw_error = str(root_cause) or type(root_cause).__name__
+            sanitized_error = sanitize_exception_message(raw_error, auth_query_params)
             logger.error(f"Gateway initialization failed for {sanitized_url}: {sanitized_error}", exc_info=True)
             raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}")
 

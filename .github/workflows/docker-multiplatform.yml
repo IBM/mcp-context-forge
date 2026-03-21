@@ -5,8 +5,8 @@
 # This workflow builds container images for multiple architectures:
 #   - linux/amd64 (native on ubuntu-latest) - built on all triggers
 #   - linux/arm64 (native on ubuntu-24.04-arm) - skipped on PRs
-#   - linux/s390x (QEMU emulation on ubuntu-latest) - skipped on PRs
-#   - linux/ppc64le (QEMU emulation on ubuntu-latest) - only on tagged releases
+#   - linux/s390x (native on ubuntu-24.04-s390x) - skipped on PRs
+#   - linux/ppc64le (native on ubuntu-24.04-ppc64le) - skipped on PRs
 #
 # Pipeline:
 #   1. Build platform images in parallel (amd64 only on PRs)
@@ -76,24 +76,21 @@ jobs:
             cache_mode: max
             run_on_pr: false  # Skip on PRs to speed up CI
           - platform: linux/s390x
-            runner: ubuntu-latest
+            runner: ubuntu-24.04-s390x
             suffix: s390x
-            qemu: true
             cache_mode: max
-            run_on_pr: false  # Skip on PRs (QEMU is slow)
+            run_on_pr: false
           - platform: linux/ppc64le
-            runner: ubuntu-latest
+            runner: ubuntu-24.04-ppc64le
             suffix: ppc64le
-            qemu: true
-            cache_mode: min
-            run_on_pr: false  # Skip on PRs (QEMU is slow)
-            tag_only: true    # Only build on tagged releases (QEMU is slow)
+            cache_mode: max
+            run_on_pr: false
 
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
 
     # Skip non-amd64 builds on PRs for faster CI feedback
-    # Skip tag_only builds (ppc64le) on non-tag pushes
+    # Skip tag_only builds on non-tag pushes
     # Condition: run if ((run_on_pr is true) OR (not a pull_request)) AND (not tag_only OR is a tag)
     steps:
       - name: Checkout code
@@ -106,6 +103,8 @@ jobs:
           IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
           echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> $GITHUB_ENV
 
+      # QEMU is not currently triggered (native runners are used for all platforms)
+      # but is retained so it can be re-enabled via matrix.qemu if needed.
       - name: Set up QEMU
         if: matrix.qemu && (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
         uses: docker/setup-qemu-action@v3
@@ -198,20 +197,11 @@ jobs:
         run: |
           SHA=${{ github.sha }}
           IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
-          IS_TAG="${{ startsWith(github.ref, 'refs/tags/') }}"
 
           echo "Creating multiplatform manifest..."
 
-          # Base images (always included)
-          IMAGES="${IMAGE}:amd64-${SHA} ${IMAGE}:arm64-${SHA} ${IMAGE}:s390x-${SHA}"
-
-          # Include ppc64le only on tagged releases
-          if [ "$IS_TAG" = "true" ]; then
-            echo "Tagged release detected - including ppc64le"
-            IMAGES="${IMAGES} ${IMAGE}:ppc64le-${SHA}"
-          else
-            echo "Non-tagged build - skipping ppc64le"
-          fi
+          # All four architectures are built on every non-PR push
+          IMAGES="${IMAGE}:amd64-${SHA} ${IMAGE}:arm64-${SHA} ${IMAGE}:s390x-${SHA} ${IMAGE}:ppc64le-${SHA}"
 
           docker buildx imagetools create \
             --tag "${IMAGE}:${SHA}" \

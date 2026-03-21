@@ -208,10 +208,16 @@
       // Sync checkbox state from URL on page load (for shareable links)
       function syncCheckboxFromUrl(tableName, checkboxId) {
         const params = getPaginationParams(tableName);
+        const urlParams = new URLSearchParams(window.location.search);
         if (params.includeInactive !== null) {
           const checkbox = document.getElementById(checkboxId);
           if (checkbox) {
             checkbox.checked = params.includeInactive === 'true';
+          }
+        } else if (urlParams.has('include_inactive')) {
+          const checkbox = document.getElementById(checkboxId);
+          if (checkbox) {
+            checkbox.checked = urlParams.get('include_inactive') === 'true';
           }
         }
       }
@@ -2405,6 +2411,7 @@
               id="show-inactive-servers"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
+              checked
               x-init="syncCheckboxFromUrl('servers', 'show-inactive-servers')"
               @change="updateInactiveUrlState('servers', $el.checked)"
               hx-get="{{ root_path }}/admin/servers/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
@@ -2447,6 +2454,7 @@
                 class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
+              <span id="servers-filter-status" class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite" role="status"></span>
             </div>
 
             <!-- Hidden tag filter (for internal JavaScript usage) -->
@@ -2471,7 +2479,7 @@
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="servers-table"
-                 x-init="$el.setAttribute('hx-get', buildTableUrl('servers', '{{ root_path }}/admin/servers/partial', {include_inactive: (document.getElementById('show-inactive-servers')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('servers', '{{ root_path }}/admin/servers/partial', {include_inactive: (document.getElementById('show-inactive-servers')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#servers-loading">
@@ -3455,6 +3463,7 @@
                 class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
+              <span id="tools-filter-status" class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite" role="status"></span>
             </div>
 
             <!-- Hidden tag filter for functionality -->
@@ -4472,6 +4481,7 @@
                 class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
+              <span id="resources-filter-status" class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite" role="status"></span>
             </div>
 
             <!-- Hidden tag filter for functionality -->
@@ -4715,6 +4725,7 @@
                 class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
+              <span id="prompts-filter-status" class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite" role="status"></span>
             </div>
 
             <!-- Hidden tag filter for functionality -->
@@ -4967,6 +4978,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               id="show-inactive-gateways"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
+              checked
               x-init="syncCheckboxFromUrl('gateways', 'show-inactive-gateways')"
               @change="updateInactiveUrlState('gateways', $el.checked)"
               hx-get="{{ root_path }}/admin/gateways/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
@@ -5003,6 +5015,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
+              <span id="gateways-filter-status" class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite" role="status"></span>
             </div>
 
             <!-- Hidden tag filter for functionality -->
@@ -5014,7 +5027,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="gateways-table"
-                 x-init="$el.setAttribute('hx-get', buildTableUrl('gateways', '{{ root_path }}/admin/gateways/partial', {include_inactive: (document.getElementById('show-inactive-gateways')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('gateways', '{{ root_path }}/admin/gateways/partial', {include_inactive: (document.getElementById('show-inactive-gateways')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#gateways-loading">
@@ -6796,6 +6809,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
+              <span id="agents-filter-status" class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite" role="status"></span>
             </div>
 
             <!-- Hidden tag filter for functionality -->
@@ -14947,6 +14961,9 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-request', {
             target: button.parentElement,
             swap: 'innerHTML'
+          }).catch(error => {
+            // Handle network errors with toast notification
+            showToast('Failed to create join request. Please try again.', 'error');
           });
         }
       }

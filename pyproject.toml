@@ -194,14 +194,6 @@ postgres = [
     "psycopg[c,binary]>=3.3.3",
 ]
 
-mysql = [
-    "pymysql>=1.1.2",
-]
-
-mariadb = [
-    "mariadb>=1.1.14",
-]
-
 llmchat = [
     "langchain-core>=1.2.19",
     "langchain-mcp-adapters>=0.2.2",

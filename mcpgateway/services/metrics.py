@@ -141,14 +141,10 @@ def setup_metrics(app):
     if enable_metrics:
         # Detect database engine from DATABASE_URL
         database_url = settings.database_url.lower()
-        if database_url.startswith("mysql+pymysql://") or "mariadb" in database_url:
-            db_engine = "mariadb"
-        elif database_url.startswith("postgresql://") or database_url.startswith("postgres://"):
+        if database_url.startswith(("postgresql", "postgres://")):
             db_engine = "postgresql"
-        elif database_url.startswith("sqlite://"):
+        elif database_url.startswith("sqlite"):
             db_engine = "sqlite"
-        elif database_url.startswith("mongodb://"):
-            db_engine = "mongodb"
         else:
             db_engine = "unknown"
 
