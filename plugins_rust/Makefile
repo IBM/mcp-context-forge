@@ -1,7 +1,7 @@
 # Makefile for Rust Plugins
 # Automatically discovers and installs all plugins (subdirectories with Cargo.toml)
 
-.PHONY: install clean list help build test fmt clippy doc test-python test-verbose clean-all fmt-check doc-open bench bench-compare compare check verify verify-stubs clean-stubs test-integration test-all uninstall
+.PHONY: install clean list help build test fmt clippy doc test-python test-verbose clean-all fmt-check doc-open bench bench-compare compare check verify verify-stubs clean-stubs test-integration test-all uninstall deny
 
 # Discover all plugin directories containing Cargo.toml
 PLUGIN_DIRS := $(shell find . -mindepth 1 -maxdepth 1 -type d -exec test -f {}/Cargo.toml \; -print | sed 's|^\./||' | sort)
@@ -161,6 +161,14 @@ audit:
 		(cd $$plugin && cargo audit) || exit 1; \
 	done
 	@echo "✓ All plugins audited successfully"
+
+deny:
+	@echo "Running cargo-deny policy checks for all Rust plugins..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Checking dependency policy: $$plugin"; \
+		(cd $$plugin && cargo deny check licenses bans sources) || exit 1; \
+	done
+	@echo "✓ All plugins passed cargo-deny"
 
 coverage:
 	@echo "Running coverage for all Rust plugins..."
