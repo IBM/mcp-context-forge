@@ -1479,6 +1479,22 @@ def test_gateway_provider_bedrock_default_region(monkeypatch):
     assert llm.kwargs["region_name"] == "us-east-1"
 
 
+def test_gateway_provider_bedrock_profile_name(monkeypatch):
+    """GatewayProvider bedrock maps profile_name to credentials_profile_name."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider(
+        "bedrock",
+        config={"region": "us-east-1", "profile_name": "my-profile"},
+    )
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm.kwargs["credentials_profile_name"] == "my-profile"
+    assert "aws_access_key_id" not in llm.kwargs
+
+
 def test_gateway_provider_anthropic_not_available(monkeypatch):
     """GatewayProvider raises ImportError when anthropic not available."""
     _patch_gateway_llms(monkeypatch)
