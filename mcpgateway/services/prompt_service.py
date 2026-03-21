@@ -1634,6 +1634,9 @@ class PromptService(BaseService):
         Returns:
             DbPrompt instance if found, None otherwise
 
+        Raises:
+            PromptError: If multiple accessible prompts share the same name.
+
         Note:
             The scoped_query must already have team-based access control applied
             via _apply_access_control() to ensure multi-tenancy security.
