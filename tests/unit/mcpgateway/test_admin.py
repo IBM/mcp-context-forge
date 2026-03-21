@@ -249,6 +249,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     save_observability_query,
     serialize_datetime,
     track_query_usage,
+    UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
     UI_HIDE_SECTIONS_COOKIE_NAME,
     update_global_passthrough_headers,
     update_observability_query,
@@ -8139,14 +8140,7 @@ async def test_admin_users_partial_html_selector(monkeypatch, mock_request, mock
         return_value=SimpleNamespace(
             data=[
                 SimpleNamespace(
-                    email=current_user_email,
-                    full_name="Owner",
-                    is_active=True,
-                    is_admin=True,
-                    auth_provider="local",
-                    created_at=datetime.now(timezone.utc),
-                    password_change_required=False,
-                    is_account_locked=lambda: False,
+                    email=current_user_email, full_name="Owner", is_active=True, is_admin=True, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False, is_account_locked=lambda: False
                 )
             ],
             pagination=SimpleNamespace(model_dump=lambda: {"page": 1}),
@@ -12501,7 +12495,7 @@ async def test_admin_teams_partial_html_enriched_non_admin(monkeypatch, mock_req
 @pytest.mark.asyncio
 async def test_admin_team_members_partial_html_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_team_members_partial_html("team-1", request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html("team-1", request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert "Email authentication is disabled" in response.body.decode()
 
@@ -12520,7 +12514,7 @@ async def test_admin_team_members_partial_html_success(monkeypatch, mock_request
     team_service.count_team_owners.return_value = 1
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     assert template_call[0][1] == "team_users_selector.html"
@@ -12530,7 +12524,7 @@ async def test_admin_team_members_partial_html_success(monkeypatch, mock_request
 async def test_admin_team_members_partial_html_invalid_team_id(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock())
-    response = await admin_team_members_partial_html("not-a-uuid", request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html("not-a-uuid", request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "invalid team id" in response.body.decode().lower()
 
@@ -12545,7 +12539,7 @@ async def test_admin_team_members_partial_html_team_not_found(monkeypatch, mock_
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 404
     assert "team not found" in response.body.decode().lower()
 
@@ -12561,7 +12555,7 @@ async def test_admin_team_members_partial_html_not_owner(monkeypatch, mock_reque
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 403
     assert "only team owners" in response.body.decode().lower()
 
@@ -12573,9 +12567,29 @@ async def test_admin_team_members_partial_html_exception(monkeypatch, mock_reque
     team_service.get_team_by_id = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_members_partial_html(str(uuid4()), request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(str(uuid4()), request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 200
     assert "error loading members" in response.body.decode().lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_team_members_partial_html_with_search(monkeypatch, mock_request, mock_db, allow_permission):
+    """Members partial passes search term to service and propagates it in pagination URL."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    team_id = str(uuid4())
+    normalized_id = UUID(team_id).hex
+
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id=normalized_id))
+    team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+    pagination = make_pagination_meta(page=1, per_page=5, total_items=1)
+    team_service.get_team_members = AsyncMock(return_value={"data": [("user", "member")], "pagination": pagination})
+    team_service.count_team_owners.return_value = 1
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="john", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    team_service.get_team_members.assert_awaited_once_with(normalized_id, page=1, per_page=5, search="john")
 
 
 @pytest.mark.asyncio
@@ -12593,16 +12607,56 @@ async def test_admin_team_non_members_partial_html_success(monkeypatch, mock_req
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     assert template_call[0][1] == "team_users_selector.html"
 
 
 @pytest.mark.asyncio
+async def test_admin_team_non_members_partial_html_empty_search(monkeypatch, mock_request, mock_db, allow_permission):
+    """Non-members endpoint returns a search prompt when no search term is provided."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    team_id = str(uuid4())
+    normalized_id = UUID(team_id).hex
+
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id=normalized_id))
+    team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
+
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 200
+    assert "search for users" in response.body.decode().lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_team_non_members_partial_html_short_search(monkeypatch, mock_request, mock_db, allow_permission):
+    """Non-members endpoint requires at least 2 characters before querying users."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    team_id = str(uuid4())
+    normalized_id = UUID(team_id).hex
+
+    auth_service = MagicMock()
+    auth_service.list_users_not_in_team = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id=normalized_id))
+    team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="a", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 200
+    assert "type at least 2 characters" in response.body.decode().lower()
+    auth_service.list_users_not_in_team.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_admin_team_non_members_partial_html_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_team_non_members_partial_html("team-1", request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html("team-1", request=mock_request, page=1, per_page=5, search="", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 200
     assert "email authentication is disabled" in response.body.decode().lower()
 
@@ -12613,7 +12667,7 @@ async def test_admin_team_non_members_partial_html_invalid_team_id(monkeypatch, 
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock())
 
-    response = await admin_team_non_members_partial_html("not-a-uuid", request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html("not-a-uuid", request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 400
     assert "invalid team id" in response.body.decode().lower()
 
@@ -12632,7 +12686,7 @@ async def test_admin_team_non_members_partial_html_team_not_found(monkeypatch, m
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 404
     assert "team not found" in response.body.decode().lower()
 
@@ -12652,7 +12706,7 @@ async def test_admin_team_non_members_partial_html_not_owner(monkeypatch, mock_r
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 403
     assert "only team owners" in response.body.decode().lower()
 
@@ -12672,7 +12726,7 @@ async def test_admin_team_non_members_partial_html_exception(monkeypatch, mock_r
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, search="test", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 200
     assert "error loading non-members" in response.body.decode().lower()
 
