@@ -493,31 +493,33 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
+    const tableToEntityType = {
+        "servers-table": "catalog",
+        "tools-table": "tools",
+        "resources-table": "resources",
+        "prompts-table": "prompts",
+        "gateways-table": "gateways",
+        "agents-table": "a2a-agents",
+    };
+
     // Re-initialize search inputs when HTMX content loads
     // Only re-initialize if the swap affects search-related content
     document.body.addEventListener("htmx:afterSwap", function (event) {
-        const target = event.detail.target;
-        const relevantPanels = [
-            "catalog-panel",
-            "gateways-panel",
-            "tools-panel",
-            "resources-panel",
-            "prompts-panel",
-            "a2a-agents-panel",
-        ];
-
-        if (
-            target &&
-            relevantPanels.some(
-                (panelId) =>
-                    target.id === panelId || target.closest(`#${panelId}`),
-            )
-        ) {
+        const targetId = event.detail.target && event.detail.target.id;
+        if (targetId && tableToEntityType[targetId]) {
             console.log(
-                `📝 HTMX swap detected in ${target.id}, resetting search state`,
+                `📝 HTMX swap detected in ${targetId}, resetting search state`,
             );
             resetSearchInputsState();
             initializeSearchInputsDebounced();
+        }
+    });
+
+    document.body.addEventListener("htmx:afterSettle", function (event) {
+        const targetId = event.detail.target && event.detail.target.id;
+        const entityType = targetId && tableToEntityType[targetId];
+        if (entityType) {
+            updateAvailableTags(entityType);
         }
     });
 
@@ -8913,7 +8915,6 @@ function showTab(tabName) {
                 }
 
                 if (tabName === "catalog") {
-                    // Load servers list if not already loaded
                     const serversList = safeGetElement("servers-table");
                     if (serversList) {
                         const hasLoadingMessage =
@@ -8921,9 +8922,31 @@ function showTab(tabName) {
                                 "Loading servers...",
                             );
                         if (hasLoadingMessage) {
-                            // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
                                 window.htmx.trigger(serversList, "load");
+                            }
+                        } else {
+                            const catalogConfig =
+                                getPanelSearchConfig("catalog");
+                            if (catalogConfig) {
+                                const searchState = getPanelSearchStateFromUrl(
+                                    catalogConfig.tableName,
+                                );
+                                const tagInput = document.getElementById(
+                                    catalogConfig.tagInputId,
+                                );
+                                const searchInput = document.getElementById(
+                                    catalogConfig.searchInputId,
+                                );
+                                if (tagInput && searchState.tags) {
+                                    tagInput.value = searchState.tags;
+                                }
+                                if (searchInput && searchState.query) {
+                                    searchInput.value = searchState.query;
+                                }
+                                if (searchState.tags || searchState.query) {
+                                    queueSearchablePanelReload("catalog", 0);
+                                }
                             }
                         }
                     }
@@ -18634,8 +18657,8 @@ const PANEL_SEARCH_CONFIG = {
         partialPath: "servers/partial",
         targetSelector: "#servers-table",
         indicatorSelector: "#servers-loading",
-        searchInputId: "catalog-search-input",
-        tagInputId: "catalog-tag-filter",
+        searchInputId: "servers-search-input",
+        tagInputId: "servers-tag-filter",
         inactiveCheckboxId: "show-inactive-servers",
         defaultPerPage: 50,
     },
@@ -20040,14 +20063,20 @@ window.goBackToSelection = goBackToSelection;
  */
 function extractAvailableTags(entityType) {
     const tags = new Set();
+
+    if (entityType === "catalog") {
+        document
+            .querySelectorAll("#servers-table-body [data-tag]")
+            .forEach((el) => {
+                const t = el.getAttribute("data-tag").trim();
+                if (t && t.length >= 1 && t.length <= 50) tags.add(t);
+            });
+        return Array.from(tags).sort();
+    }
+
     const tableSelector = `#${entityType}-panel tbody tr:not(.inactive-row)`;
     const rows = document.querySelectorAll(tableSelector);
 
-    console.log(
-        `[DEBUG] extractAvailableTags for ${entityType}: Found ${rows.length} rows`,
-    );
-
-    // Find the Tags column index by examining the table header
     const tableHeaderSelector = `#${entityType}-panel thead tr th`;
     const headerCells = document.querySelectorAll(tableHeaderSelector);
     let tagsColumnIndex = -1;
@@ -20056,67 +20085,25 @@ function extractAvailableTags(entityType) {
         const headerText = header.textContent.trim().toLowerCase();
         if (headerText === "tags") {
             tagsColumnIndex = index;
-            console.log(
-                `[DEBUG] Found Tags column at index ${index} for ${entityType}`,
-            );
         }
     });
 
     if (tagsColumnIndex === -1) {
-        console.log(`[DEBUG] Could not find Tags column for ${entityType}`);
         return [];
     }
 
-    rows.forEach((row, index) => {
+    rows.forEach((row) => {
         const cells = row.querySelectorAll("td");
-
         if (tagsColumnIndex < cells.length) {
             const tagsCell = cells[tagsColumnIndex];
-
-            // Look for tag badges ONLY within the Tags column
-            const tagElements = tagsCell.querySelectorAll(`
-                span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
-                span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
-            `);
-
-            console.log(
-                `[DEBUG] Row ${index}: Found ${tagElements.length} tag elements in Tags column`,
-            );
-
-            tagElements.forEach((tagEl) => {
-                const tagText = tagEl.textContent.trim();
-                console.log(
-                    `[DEBUG] Row ${index}: Tag element text: "${tagText}"`,
-                );
-
-                // Basic validation for tag content
-                if (
-                    tagText &&
-                    tagText !== "No tags" &&
-                    tagText !== "None" &&
-                    tagText !== "N/A" &&
-                    tagText.length >= 2 &&
-                    tagText.length <= 50
-                ) {
-                    tags.add(tagText);
-                    console.log(
-                        `[DEBUG] Row ${index}: Added tag: "${tagText}"`,
-                    );
-                } else {
-                    console.log(
-                        `[DEBUG] Row ${index}: Filtered out: "${tagText}"`,
-                    );
-                }
+            tagsCell.querySelectorAll("[data-tag]").forEach((el) => {
+                const t = el.getAttribute("data-tag").trim();
+                if (t && t.length >= 1 && t.length <= 50) tags.add(t);
             });
         }
     });
 
-    const result = Array.from(tags).sort();
-    console.log(
-        `[DEBUG] extractAvailableTags for ${entityType}: Final result:`,
-        result,
-    );
-    return result;
+    return Array.from(tags).sort();
 }
 
 /**
@@ -20158,7 +20145,11 @@ function updateAvailableTags(entityType) {
  * @param {string} tag - The tag to add
  */
 function addTagToFilter(entityType, tag) {
-    const filterInput = document.getElementById(`${entityType}-tag-filter`);
+    const panelConfig = getPanelSearchConfig(entityType);
+    const tagInputId = panelConfig
+        ? panelConfig.tagInputId
+        : `${entityType}-tag-filter`;
+    const filterInput = document.getElementById(tagInputId);
     if (!filterInput) {
         return;
     }
@@ -20170,7 +20161,15 @@ function addTagToFilter(entityType, tag) {
     if (!currentTags.includes(tag)) {
         currentTags.push(tag);
         filterInput.value = currentTags.join(", ");
-        if (getPanelSearchConfig(entityType)) {
+        if (panelConfig) {
+            const searchInput = document.getElementById(
+                panelConfig.searchInputId,
+            );
+            updatePanelSearchStateInUrl(
+                panelConfig.tableName,
+                searchInput?.value || "",
+                filterInput.value,
+            );
             queueSearchablePanelReload(entityType, 0);
         } else {
             filterEntitiesByTags(entityType, filterInput.value);
@@ -20202,34 +20201,11 @@ function filterEntitiesByTags(entityType, tagsInput) {
             return;
         }
 
-        // Extract tags from this row using specific tag selectors (not status badges)
+        // Extract tags from this row using data-tag attributes
         const rowTags = new Set();
-
-        const tagElements = row.querySelectorAll(`
-            /* Gateways */
-            span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full,
-            /* A2A Agents */
-            span.inline-flex.items-center.px-2.py-1.rounded.text-xs.bg-gray-100.text-gray-700,
-            /* Prompts & Resources */
-            span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
-            /* Gray tags for A2A agent metadata */
-            span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-gray-100.text-gray-700
-        `);
-
-        tagElements.forEach((tagEl) => {
-            const tagText = tagEl.textContent.trim().toLowerCase();
-            // Filter out any remaining non-tag content
-            if (
-                tagText &&
-                tagText !== "no tags" &&
-                tagText !== "none" &&
-                tagText !== "active" &&
-                tagText !== "inactive" &&
-                tagText !== "online" &&
-                tagText !== "offline"
-            ) {
-                rowTags.add(tagText);
-            }
+        row.querySelectorAll("[data-tag]").forEach((el) => {
+            const t = el.getAttribute("data-tag").trim().toLowerCase();
+            if (t) rowTags.add(t);
         });
 
         // Check if any of the filter tags match any of the row tags (OR logic)
@@ -20305,12 +20281,16 @@ function updateFilterEmptyState(entityType, visibleCount, isFiltering) {
  * @param {string} entityType - The entity type
  */
 function clearTagFilter(entityType) {
-    const filterInput = document.getElementById(`${entityType}-tag-filter`);
+    const panelConfig = getPanelSearchConfig(entityType);
+    const tagInputId = panelConfig
+        ? panelConfig.tagInputId
+        : `${entityType}-tag-filter`;
+    const filterInput = document.getElementById(tagInputId);
     if (filterInput) {
         filterInput.value = "";
         // Apply immediate local reset for responsive UX and test compatibility.
         filterEntitiesByTags(entityType, "");
-        if (getPanelSearchConfig(entityType)) {
+        if (panelConfig) {
             loadSearchablePanel(entityType);
         }
     }
