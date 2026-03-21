@@ -1290,3 +1290,427 @@ describe("Alpine.js reinit on OOB-swapped pagination controls (#3039)", () => {
         expect(toggle.disabled).toBe(false);
     });
 });
+
+// ---------------------------------------------------------------------------
+// updateFilterStatus (#3647)
+//
+// Shows "Filtered: ..." or "Filters active" text in status spans when
+// URL params indicate active search/tag/inactive filters for a table.
+// ---------------------------------------------------------------------------
+describe("updateFilterStatus (#3647)", () => {
+    function createFilterStatusSpan(tableName) {
+        const span = doc.createElement("span");
+        span.id = tableName + "-filter-status";
+        doc.body.appendChild(span);
+        return span;
+    }
+
+    function createPaginationControlsWithInfo(tableName, totalItemsText) {
+        const container = doc.createElement("div");
+        container.id = tableName + "-pagination-controls";
+        const pageInfo = doc.createElement("span");
+        pageInfo.setAttribute(
+            "x-text",
+            "totalItems === 0 ? 'No items' : 'Showing 1 - 10 of 42 items'",
+        );
+        pageInfo.textContent = totalItemsText;
+        container.appendChild(pageInfo);
+        doc.body.appendChild(container);
+        return container;
+    }
+
+    test("shows empty text when no filters are active", () => {
+        const span = createFilterStatusSpan("tools");
+        win.history.replaceState({}, "", "/admin");
+
+        win.updateFilterStatus();
+
+        expect(span.textContent).toBe("");
+    });
+
+    test("shows 'Filters active' when query filter is active but no pagination", () => {
+        const span = createFilterStatusSpan("tools");
+        win.history.replaceState({}, "", "/admin?tools_q=search");
+
+        win.updateFilterStatus();
+
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("shows 'Filtered: ...' with pagination info when available", () => {
+        const span = createFilterStatusSpan("tools");
+        createPaginationControlsWithInfo("tools", "Showing 1 - 10 of 42 items");
+        win.history.replaceState({}, "", "/admin?tools_q=search");
+
+        win.updateFilterStatus();
+
+        expect(span.textContent).toBe("Filtered: Showing 1 - 10 of 42 items");
+    });
+
+    test("shows status when tags filter is active", () => {
+        const span = createFilterStatusSpan("tools");
+        win.history.replaceState({}, "", "/admin?tools_tags=prod");
+
+        win.updateFilterStatus();
+
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("shows status when inactive filter is active", () => {
+        const span = createFilterStatusSpan("tools");
+        win.history.replaceState({}, "", "/admin?tools_inactive=true");
+
+        win.updateFilterStatus();
+
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("does not show status when inactive is false", () => {
+        const span = createFilterStatusSpan("tools");
+        win.history.replaceState({}, "", "/admin?tools_inactive=false");
+
+        win.updateFilterStatus();
+
+        expect(span.textContent).toBe("");
+    });
+
+    test("updates multiple table statuses independently", () => {
+        const toolsSpan = createFilterStatusSpan("tools");
+        const serversSpan = createFilterStatusSpan("servers");
+        win.history.replaceState({}, "", "/admin?tools_q=search");
+
+        win.updateFilterStatus();
+
+        expect(toolsSpan.textContent).toBe("Filters active");
+        expect(serversSpan.textContent).toBe("");
+    });
+
+    test("clears status when filters are removed", () => {
+        const span = createFilterStatusSpan("tools");
+
+        // First set active filters
+        win.history.replaceState({}, "", "/admin?tools_q=search");
+        win.updateFilterStatus();
+        expect(span.textContent).toBe("Filters active");
+
+        // Then clear filters
+        win.history.replaceState({}, "", "/admin");
+        win.updateFilterStatus();
+        expect(span.textContent).toBe("");
+    });
+
+    test("no-ops when status span is missing from DOM", () => {
+        win.history.replaceState({}, "", "/admin?tools_q=search");
+
+        // Should not throw
+        expect(() => win.updateFilterStatus()).not.toThrow();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// htmx:afterSettle rehydration listener (#3647)
+//
+// After HTMX content swaps targeting table containers, the listener
+// rehydrates search inputs from URL state and updates filter status text.
+// ---------------------------------------------------------------------------
+describe("htmx:afterSettle rehydration listener (#3647)", () => {
+    function fireAfterSettleWithTarget(targetId) {
+        const targetEl =
+            doc.getElementById(targetId) || doc.createElement("div");
+        if (!targetEl.id) targetEl.id = targetId;
+        const event = new win.CustomEvent("htmx:afterSettle", {
+            bubbles: true,
+            detail: { target: targetEl },
+        });
+        doc.body.dispatchEvent(event);
+    }
+
+    test("triggers rehydration for -table suffix target", () => {
+        const el = doc.createElement("div");
+        el.id = "tools-table";
+        doc.body.appendChild(el);
+
+        const span = doc.createElement("span");
+        span.id = "tools-filter-status";
+        doc.body.appendChild(span);
+
+        win.history.replaceState({}, "", "/admin?tools_q=hello");
+        fireAfterSettleWithTarget("tools-table");
+
+        // updateFilterStatus was called — status span should be updated
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("triggers rehydration for -table-body suffix target", () => {
+        const el = doc.createElement("div");
+        el.id = "tools-table-body";
+        doc.body.appendChild(el);
+
+        const span = doc.createElement("span");
+        span.id = "tools-filter-status";
+        doc.body.appendChild(span);
+
+        win.history.replaceState({}, "", "/admin?tools_tags=v1");
+        fireAfterSettleWithTarget("tools-table-body");
+
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("triggers rehydration for -list-container suffix target", () => {
+        const el = doc.createElement("div");
+        el.id = "servers-list-container";
+        doc.body.appendChild(el);
+
+        const span = doc.createElement("span");
+        span.id = "servers-filter-status";
+        doc.body.appendChild(span);
+
+        win.history.replaceState({}, "", "/admin?servers_q=test");
+        fireAfterSettleWithTarget("servers-list-container");
+
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("triggers rehydration for -pagination-controls suffix target", () => {
+        const el = doc.createElement("div");
+        el.id = "tools-pagination-controls";
+        doc.body.appendChild(el);
+
+        const span = doc.createElement("span");
+        span.id = "tools-filter-status";
+        doc.body.appendChild(span);
+
+        win.history.replaceState({}, "", "/admin?tools_q=test");
+        fireAfterSettleWithTarget("tools-pagination-controls");
+
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("does not trigger for unrelated target IDs", () => {
+        const span = doc.createElement("span");
+        span.id = "tools-filter-status";
+        span.textContent = "initial";
+        doc.body.appendChild(span);
+
+        win.history.replaceState({}, "", "/admin?tools_q=test");
+        fireAfterSettleWithTarget("some-random-div");
+
+        // Status should not have changed
+        expect(span.textContent).toBe("initial");
+    });
+
+    test("does not throw when detail is undefined", () => {
+        const event = new win.Event("htmx:afterSettle", { bubbles: true });
+        expect(() => doc.body.dispatchEvent(event)).not.toThrow();
+    });
+
+    test("does not throw when target has no id", () => {
+        const event = new win.CustomEvent("htmx:afterSettle", {
+            bubbles: true,
+            detail: { target: doc.createElement("div") },
+        });
+        expect(() => doc.body.dispatchEvent(event)).not.toThrow();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// pagination_controls: URL-param fallback for filter persistence (#3647)
+//
+// loadPage() reads DOM inputs first; when DOM inputs are empty, it falls
+// back to namespaced URL params (e.g. tools_q, tools_tags) written by
+// updatePanelSearchStateInUrl. This ensures filter state survives across
+// bookmarked URLs and restricted iframe contexts.
+// ---------------------------------------------------------------------------
+describe("pagination_controls URL-param filter fallback (#3647)", () => {
+    /**
+     * Simulates the merged loadPage() URL-building logic from
+     * pagination_controls.html with DOM-first + URL fallback.
+     */
+    function buildUrlWithFallback(
+        baseUrl,
+        extraParamsJson,
+        tableName,
+        domInputs,
+        currentSearch,
+    ) {
+        const url = new URL(baseUrl, "http://localhost");
+        url.searchParams.set("page", "1");
+        url.searchParams.set("per_page", "50");
+
+        // Extra params from server-rendered data attribute
+        const extraParams = JSON.parse(extraParamsJson || "{}");
+        Object.entries(extraParams).forEach(([k, v]) => {
+            if (k !== "include_inactive" && v !== null && v !== undefined) {
+                url.searchParams.set(k, String(v));
+            }
+        });
+
+        // DOM-first + URL fallback (mirrors merged pagination_controls.html)
+        const currentUrlParams = new URLSearchParams(currentSearch || "");
+        if (tableName) {
+            const domQuery = (domInputs?.search || "").trim();
+            const domTags = (domInputs?.tags || "").trim();
+
+            const livePrefix = tableName + "_";
+            const urlQuery = currentUrlParams.get(livePrefix + "q") || "";
+            const urlTags = currentUrlParams.get(livePrefix + "tags") || "";
+
+            const finalQuery = domQuery || urlQuery;
+            const finalTags = domTags || urlTags;
+
+            if (finalQuery) {
+                url.searchParams.set("q", finalQuery);
+            } else {
+                url.searchParams.delete("q");
+            }
+            if (finalTags) {
+                url.searchParams.set("tags", finalTags);
+            } else {
+                url.searchParams.delete("tags");
+            }
+        }
+
+        // team_id fallback
+        const teamIdFromUrl = currentUrlParams.get("team_id");
+        if (teamIdFromUrl && !extraParams.team_id) {
+            url.searchParams.set("team_id", teamIdFromUrl);
+        }
+
+        return url;
+    }
+
+    test("DOM input takes precedence over URL params", () => {
+        const url = buildUrlWithFallback(
+            "/admin/tools/partial",
+            "{}",
+            "tools",
+            { search: "dom-value" },
+            "?tools_q=url-value",
+        );
+        expect(url.searchParams.get("q")).toBe("dom-value");
+    });
+
+    test("falls back to URL param when DOM input is empty", () => {
+        const url = buildUrlWithFallback(
+            "/admin/tools/partial",
+            "{}",
+            "tools",
+            { search: "" },
+            "?tools_q=url-value",
+        );
+        expect(url.searchParams.get("q")).toBe("url-value");
+    });
+
+    test("falls back to URL tags when DOM tags input is empty", () => {
+        const url = buildUrlWithFallback(
+            "/admin/tools/partial",
+            "{}",
+            "tools",
+            { tags: "" },
+            "?tools_tags=prod,staging",
+        );
+        expect(url.searchParams.get("tags")).toBe("prod,staging");
+    });
+
+    test("uses correct namespaced prefix per table", () => {
+        const toolsUrl = buildUrlWithFallback(
+            "/admin/tools/partial",
+            "{}",
+            "tools",
+            {},
+            "?tools_q=alpha&servers_q=beta",
+        );
+        expect(toolsUrl.searchParams.get("q")).toBe("alpha");
+
+        const serversUrl = buildUrlWithFallback(
+            "/admin/servers/partial",
+            "{}",
+            "servers",
+            {},
+            "?tools_q=alpha&servers_q=beta",
+        );
+        expect(serversUrl.searchParams.get("q")).toBe("beta");
+    });
+
+    test("extraParams are preserved when DOM/URL override q", () => {
+        const json = JSON.stringify({ gateway_id: "7", q: "old" });
+        const url = buildUrlWithFallback(
+            "/admin/tools/partial",
+            json,
+            "tools",
+            { search: "new" },
+            "",
+        );
+        expect(url.searchParams.get("q")).toBe("new");
+        expect(url.searchParams.get("gateway_id")).toBe("7");
+    });
+
+    test("team_id from URL preserved when not in extraParams", () => {
+        const url = buildUrlWithFallback(
+            "/admin/tools/partial",
+            "{}",
+            "tools",
+            {},
+            "?team_id=t1",
+        );
+        expect(url.searchParams.get("team_id")).toBe("t1");
+    });
+
+    test("extraParams team_id takes precedence over URL team_id", () => {
+        const json = JSON.stringify({ team_id: "from-params" });
+        const url = buildUrlWithFallback(
+            "/admin/tools/partial",
+            json,
+            "tools",
+            {},
+            "?team_id=from-url",
+        );
+        expect(url.searchParams.get("team_id")).toBe("from-params");
+    });
+
+    test("no q/tags params when both DOM and URL are empty", () => {
+        const url = buildUrlWithFallback(
+            "/admin/tools/partial",
+            "{}",
+            "tools",
+            { search: "", tags: "" },
+            "",
+        );
+        expect(url.searchParams.has("q")).toBe(false);
+        expect(url.searchParams.has("tags")).toBe(false);
+    });
+
+    test("namespaces are isolated: tools_q does not leak to servers", () => {
+        const url = buildUrlWithFallback(
+            "/admin/servers/partial",
+            "{}",
+            "servers",
+            {},
+            "?tools_q=should-not-leak",
+        );
+        expect(url.searchParams.has("q")).toBe(false);
+    });
+
+    test("whitespace-only DOM input falls back to URL", () => {
+        const url = buildUrlWithFallback(
+            "/admin/tools/partial",
+            "{}",
+            "tools",
+            { search: "   " },
+            "?tools_q=from-url",
+        );
+        expect(url.searchParams.get("q")).toBe("from-url");
+    });
+
+    test("both q and tags can be set simultaneously from different sources", () => {
+        const url = buildUrlWithFallback(
+            "/admin/tools/partial",
+            "{}",
+            "tools",
+            { search: "dom-search", tags: "" },
+            "?tools_tags=url-tags",
+        );
+        expect(url.searchParams.get("q")).toBe("dom-search");
+        expect(url.searchParams.get("tags")).toBe("url-tags");
+    });
+});

@@ -18950,7 +18950,7 @@ window.updateFilterStatus = updateFilterStatus;
  * input elements after pagination or partial refresh replaces table content.
  */
 document.body.addEventListener("htmx:afterSettle", function (evt) {
-    const target = evt.detail.target;
+    const target = evt.detail?.target;
     if (!target || !target.id) return;
 
     // Only rehydrate when a table partial or pagination was swapped
