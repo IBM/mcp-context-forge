@@ -2716,6 +2716,15 @@ async def admin_edit_server(
         team_id_raw = form.get("team_id", None)
         team_id = str(team_id_raw) if team_id_raw is not None else None
 
+        # Preserve existing server's team_id when no explicit team_id is provided.
+        # Without this guard, verify_team_for_user() falls back to the user's
+        # personal team, silently reassigning the server on every edit.
+        if not team_id:
+            existing_server = db.get(DbServer, server_id)
+            existing_team = getattr(existing_server, "team_id", None) if existing_server else None
+            if isinstance(existing_team, str) and existing_team:
+                team_id = existing_team
+
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
 

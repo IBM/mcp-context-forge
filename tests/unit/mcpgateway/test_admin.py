@@ -983,6 +983,52 @@ class TestAdminServerRoutes:
         assert isinstance(response, JSONResponse)
         assert response.status_code == 500
 
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_preserves_team_id_when_not_in_form(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """Editing a server without team_id in form should preserve the existing team, not fall back to personal team."""
+        server_id = "00000000-0000-0000-0000-000000000099"
+        existing_team_id = "team-original"
+
+        # Form data WITHOUT team_id (simulates All Teams view edit)
+        form_data = FakeForm({
+            "id": server_id,
+            "name": "My_Server",
+            "visibility": "team",
+            "associatedTools": [],
+            "associatedResources": [],
+            "associatedPrompts": [],
+        })
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+
+        # Mock existing server in DB with original team
+        mock_existing_server = MagicMock()
+        mock_existing_server.team_id = existing_team_id
+        mock_db.get.return_value = mock_existing_server
+
+        # Mock verify_team_for_user to return whatever team_id is passed
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+
+        mock_server_read = MagicMock()
+        mock_server_read.model_dump.return_value = {"id": server_id, "name": "My_Server"}
+        mock_update_server.return_value = mock_server_read
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        # verify_team_for_user should have been called with the EXISTING team_id, not None
+        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
+        # ServerUpdate should have the existing team_id
+        call_args = mock_update_server.call_args
+        server_update = call_args[0][2]
+        assert server_update.team_id == existing_team_id
+
     @patch.object(ServerService, "set_server_state")
     async def test_admin_set_server_state_activate(self, mock_set_state, mock_request, mock_db):
         """Test activating a server."""
