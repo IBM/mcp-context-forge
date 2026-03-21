@@ -657,6 +657,7 @@ async def test_token_streamer_handles_runtime_error():
 
     joined = "".join(parts)
     assert "event: error" in joined
+    assert '"recoverable":true' in joined
 
 
 @pytest.mark.asyncio
@@ -864,6 +865,7 @@ async def test_token_streamer_connection_error():
     joined = "".join(parts)
     assert "event: error" in joined
     assert "Connection lost" in joined
+    assert '"recoverable":false' in joined
 
 
 @pytest.mark.asyncio
@@ -882,6 +884,7 @@ async def test_token_streamer_timeout_error():
     joined = "".join(parts)
     assert "event: error" in joined
     assert "timed out" in joined
+    assert '"recoverable":true' in joined
 
 
 @pytest.mark.asyncio
@@ -900,6 +903,7 @@ async def test_token_streamer_generic_error():
     joined = "".join(parts)
     assert "event: error" in joined
     assert "Unexpected error" in joined
+    assert '"recoverable":false' in joined
 
 
 @pytest.mark.asyncio
