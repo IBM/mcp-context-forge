@@ -536,6 +536,7 @@ async def get_sso_provider(
         "is_enabled": provider.is_enabled,
         "created_at": provider.created_at,
         "updated_at": provider.updated_at,
+        "provider_metadata": provider.provider_metadata,
     }
     db.commit()
     db.close()
