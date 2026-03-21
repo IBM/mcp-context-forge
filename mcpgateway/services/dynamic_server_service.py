@@ -181,16 +181,24 @@ class DynamicServerService:
             'read'
         """
         owner_email: Optional[str] = user_ctx.get("email")
+        visibility = data.visibility or "public"
 
-        # Validate name uniqueness within (team_id=None, owner_email)
+        # Resolve team_id: use the caller's first team when visibility is "team"
+        team_id: Optional[str] = None
+        if visibility == "team":
+            teams: List[str] = user_ctx.get("teams") or []
+            if not teams:
+                raise HTTPException(status_code=400, detail="Cannot create a team-scoped dynamic server: no team membership found in token")
+            team_id = teams[0]
+
+        # Validate name uniqueness within (team_id, owner_email)
+        uniqueness_filter = [
+            DbDynamicServer.name == data.name,
+            DbDynamicServer.team_id == team_id if team_id else DbDynamicServer.team_id.is_(None),
+            DbDynamicServer.owner_email == owner_email if owner_email else DbDynamicServer.owner_email.is_(None),
+        ]
         existing = db.execute(
-            select(DbDynamicServer).where(
-                and_(
-                    DbDynamicServer.name == data.name,
-                    DbDynamicServer.team_id.is_(None),
-                    DbDynamicServer.owner_email == owner_email if owner_email else DbDynamicServer.owner_email.is_(None),
-                )
-            )
+            select(DbDynamicServer).where(and_(*uniqueness_filter))
         ).scalar_one_or_none()
 
         if existing:
@@ -200,8 +208,8 @@ class DynamicServerService:
             name=data.name,
             description=data.description,
             refresh_interval=data.refresh_interval,
-            visibility=data.visibility or "public",
-            team_id=None,
+            visibility=visibility,
+            team_id=team_id,
             owner_email=owner_email,
             created_by=owner_email,
             modified_by=owner_email,
@@ -357,7 +365,19 @@ class DynamicServerService:
         if not server:
             raise HTTPException(status_code=404, detail=f"Dynamic server not found: {server_id}")
 
-        if data.name is not None:
+        if data.name is not None and data.name != server.name:
+            conflict = db.execute(
+                select(DbDynamicServer).where(
+                    and_(
+                        DbDynamicServer.name == data.name,
+                        DbDynamicServer.team_id == server.team_id if server.team_id else DbDynamicServer.team_id.is_(None),
+                        DbDynamicServer.owner_email == server.owner_email if server.owner_email else DbDynamicServer.owner_email.is_(None),
+                        DbDynamicServer.id != server_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if conflict:
+                raise HTTPException(status_code=409, detail=f"Dynamic server with name '{data.name}' already exists")
             server.name = data.name
         if data.description is not None:
             server.description = data.description

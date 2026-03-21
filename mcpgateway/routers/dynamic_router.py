@@ -8,8 +8,6 @@ Dynamic Server Catalog Router.
 Exposes the DynamicServerService via REST endpoints for creating, reading,
 updating, and deleting dynamic servers and their filtering rules.
 
-Catalog endpoints (tools, resources, prompts, preview) are stubbed with
-HTTP 501 until the rule evaluation engine (Issue 4) is merged.
 
 Examples:
     >>> from fastapi import FastAPI
@@ -356,10 +354,8 @@ async def get_catalog_tools(
         List[str]: Sorted list of matching tool names.
 
     Raises:
-        HTTPException: 501 while catalog evaluation is not implemented.
+        HTTPException: 404 if server not found, 500 on unexpected errors.
     """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Catalog tools preview is not implemented")
-
     try:
         logger.info(f"Evaluating catalog tools for server {server_id}")
         service = DynamicServerService()
@@ -393,10 +389,8 @@ async def get_catalog_resources(
         List[str]: Sorted list of matching resource names.
 
     Raises:
-        HTTPException: 501 while catalog evaluation is not implemented.
+        HTTPException: 404 if server not found, 500 on unexpected errors.
     """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Catalog resources preview is not implemented")
-
     try:
         logger.info(f"Evaluating catalog resources for server {server_id}")
         service = DynamicServerService()
@@ -430,10 +424,8 @@ async def get_catalog_prompts(
         List[str]: Sorted list of matching prompt names.
 
     Raises:
-        HTTPException: 501 while catalog evaluation is not implemented.
+        HTTPException: 404 if server not found, 500 on unexpected errors.
     """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Catalog prompts preview is not implemented")
-
     try:
         logger.info(f"Evaluating catalog prompts for server {server_id}")
         service = DynamicServerService()
@@ -468,10 +460,8 @@ async def preview_catalog(
         DynamicCatalogResponse: Matching tools, resources, and prompts.
 
     Raises:
-        HTTPException: 501 while catalog evaluation is not implemented.
+        HTTPException: 500 on unexpected errors.
     """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Catalog preview is not implemented")
-
     try:
         logger.info("Evaluating catalog preview")
         service = DynamicServerService()
