@@ -56,6 +56,7 @@ from sqlalchemy import engine_from_config, pool
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Base
+from plugins.image_signing.storage.models import Base as ImageSigningBase
 
 # from mcpgateway.db import get_metadata
 # target_metadata = get_metadata()
@@ -158,7 +159,7 @@ def _modify_metadata_for_mariadb():
 # MariaDB modifications will be applied when needed during table creation
 # Do not apply automatically during import to avoid SQLAlchemy column management issues
 
-target_metadata = Base.metadata
+target_metadata = [Base.metadata, ImageSigningBase.metadata]
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
