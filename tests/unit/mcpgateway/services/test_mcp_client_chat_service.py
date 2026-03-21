@@ -1258,7 +1258,55 @@ async def test_chat_events_wraps_astream_event_errors(monkeypatch, patch_logger)
     service._agent = SimpleNamespace(astream_events=_astream_events)
     monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
 
-    with pytest.raises(RuntimeError, match="Chat processing error: stream blew up"):
+    with pytest.raises(svc.ChatProcessingError, match="Chat processing error: stream blew up"):
+        async for _ev in service.chat_events("hello"):
+            pass
+
+    assert patch_logger.error.called
+
+
+@pytest.mark.asyncio
+async def test_chat_events_reraises_connection_error(monkeypatch, patch_logger):
+    """ConnectionError must propagate without being wrapped as RuntimeError."""
+    cfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
+    )
+    service = svc.MCPChatService(cfg)
+    service._initialized = True
+
+    async def _astream_events(_payload, version="v2"):
+        yield {"event": "on_chat_model_stream", "data": {"chunk": SimpleNamespace(content="hi")}}
+        raise ConnectionError("peer reset")
+
+    service._agent = SimpleNamespace(astream_events=_astream_events)
+    monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
+
+    with pytest.raises(ConnectionError, match="peer reset"):
+        async for _ev in service.chat_events("hello"):
+            pass
+
+    assert patch_logger.error.called
+
+
+@pytest.mark.asyncio
+async def test_chat_events_reraises_timeout_error(monkeypatch, patch_logger):
+    """TimeoutError must propagate without being wrapped as RuntimeError."""
+    cfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
+    )
+    service = svc.MCPChatService(cfg)
+    service._initialized = True
+
+    async def _astream_events(_payload, version="v2"):
+        yield {"event": "on_chat_model_stream", "data": {"chunk": SimpleNamespace(content="hi")}}
+        raise TimeoutError("request timed out")
+
+    service._agent = SimpleNamespace(astream_events=_astream_events)
+    monkeypatch.setattr(svc, "HumanMessage", MagicMock(return_value=MagicMock()))
+
+    with pytest.raises(TimeoutError, match="request timed out"):
         async for _ev in service.chat_events("hello"):
             pass
 
