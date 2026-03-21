@@ -1,4 +1,4 @@
-description: "Fixed-window in-memory rate limiting by user/tenant/tool"
+description: "Fixed-window rate limiting by user/tenant/tool — memory (single-process) or Redis (shared across instances)"
 author: "Mihai Criveti"
 version: "0.1.0"
 available_hooks:
