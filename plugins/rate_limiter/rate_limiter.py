@@ -9,6 +9,10 @@ Enforces rate limits by user, tenant, and/or tool using a pluggable algorithm:
   - fixed_window  : simple counter per time bucket (default)
   - sliding_window: rolling timestamp log, prevents burst at window boundary
   - token_bucket  : token refill model, allows short controlled bursts
+
+All three algorithms support both memory and Redis backends with identical
+semantics. The Redis backend uses atomic Lua scripts for each algorithm —
+one round-trip per check with no race conditions.
 """
 
 # Future
@@ -16,10 +20,11 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
+import uuid
 
 # Third-Party
 from pydantic import BaseModel, Field
@@ -63,10 +68,13 @@ def _parse_rate(rate: str) -> tuple[int, int]:
         Tuple of (count, window_seconds) for the rate limit.
 
     Raises:
-        ValueError: If the rate unit is not supported.
+        ValueError: If the rate string is malformed or the unit is not supported.
     """
-    count_str, per = rate.split("/")
-    count = int(count_str)
+    try:
+        count_str, per = rate.split("/", maxsplit=1)
+        count = int(count_str)
+    except (ValueError, AttributeError):
+        raise ValueError(f"Invalid rate string {rate!r}: expected '<count>/<unit>' e.g. '60/m'")
     per = per.strip().lower()
     if per in ("s", "sec", "second"):
         return count, 1
@@ -74,7 +82,7 @@ def _parse_rate(rate: str) -> tuple[int, int]:
         return count, 60
     if per in ("h", "hr", "hour"):
         return count, 3600
-    raise ValueError(f"Unsupported rate unit: {per}")
+    raise ValueError(f"Invalid rate string {rate!r}: unsupported unit {per!r}, expected s/m/h")
 
 
 def _make_headers(limit: int, remaining: int, reset_timestamp: int, retry_after: int, include_retry_after: bool = True) -> dict[str, str]:
@@ -100,6 +108,24 @@ def _make_headers(limit: int, remaining: int, reset_timestamp: int, retry_after:
     return headers
 
 
+def _extract_user_identity(user: Any) -> str:
+    """Return a stable, normalised string identity from a user context value.
+
+    Handles three cases:
+    - dict (production JWT context): extract ``email`` → ``id`` → ``sub`` fallback
+    - string: strip whitespace; empty/whitespace-only falls back to 'anonymous'
+    - None / falsy: 'anonymous'
+    """
+    if isinstance(user, dict):
+        identity = user.get("email") or user.get("id") or user.get("sub") or ""
+        identity = str(identity).strip()
+    elif user is None:
+        identity = ""
+    else:
+        identity = str(user).strip()
+    return identity if identity else "anonymous"
+
+
 def _select_most_restrictive(
     results: list[tuple[bool, int, int, dict[str, Any]]]
 ) -> tuple[bool, int, int, int, dict[str, Any]]:
@@ -120,8 +146,10 @@ def _select_most_restrictive(
     allowed_dims = [(allowed, limit, reset_ts, meta) for allowed, limit, reset_ts, meta in limited_results if allowed]
 
     if violated:
-        most_restrictive = min(violated, key=lambda x: x[3].get("reset_in", float("inf")))
-        _, limit, reset_ts, meta = most_restrictive
+        # Pick the violated dimension that will unblock soonest — its reset_in is the
+        # Retry-After value the client should use to know when to retry.
+        soonest_reset = min(violated, key=lambda x: x[3].get("reset_in", float("inf")))
+        _, limit, reset_ts, meta = soonest_reset
         remaining = meta.get("remaining", 0)
         retry_after = meta.get("reset_in", 0)
         aggregated_meta = {
@@ -135,8 +163,10 @@ def _select_most_restrictive(
         }
         return False, limit, remaining, reset_ts, aggregated_meta
 
-    most_restrictive = min(allowed_dims, key=lambda x: x[3].get("remaining", float("inf")))
-    _, limit, reset_ts, meta = most_restrictive
+    # All dimensions are within limit — surface the tightest one (fewest remaining
+    # requests) so headers reflect the dimension the caller is closest to exhausting.
+    tightest = min(allowed_dims, key=lambda x: x[3].get("remaining", float("inf")))
+    _, limit, reset_ts, meta = tightest
     remaining = meta.get("remaining", 0)
     retry_after = meta.get("reset_in", 0)
     aggregated_meta = {
@@ -178,9 +208,11 @@ class FixedWindowAlgorithm:
     """
 
     def __init__(self) -> None:
+        """Initialise with an empty window store."""
         self._store: Dict[str, _Window] = {}
 
     async def allow(self, lock: asyncio.Lock, key: str, count: int, window: int) -> Tuple[bool, int, int, Dict[str, Any]]:
+        """Check and increment the fixed-window counter for *key*."""
         now = int(time.time())
         win_key = f"{key}:{window}"
 
@@ -220,9 +252,11 @@ class SlidingWindowAlgorithm:
     """
 
     def __init__(self) -> None:
+        """Initialise with an empty timestamp store."""
         self._store: Dict[str, List[float]] = {}
 
     async def allow(self, lock: asyncio.Lock, key: str, count: int, window: int) -> Tuple[bool, int, int, Dict[str, Any]]:
+        """Check the sliding-window log for *key* and record the request if allowed."""
         now = time.time()
         cutoff = now - window
 
@@ -246,7 +280,6 @@ class SlidingWindowAlgorithm:
 
     async def sweep(self, lock: asyncio.Lock) -> None:
         """Evict keys whose timestamp list is empty (no recent requests)."""
-        now = time.time()
         async with lock:
             # We don't know window per key here — just remove empty lists
             # (full eviction happens naturally as timestamps age out on next allow())
@@ -267,9 +300,11 @@ class TokenBucketAlgorithm:
     """
 
     def __init__(self) -> None:
+        """Initialise with an empty bucket store."""
         self._store: Dict[str, _Bucket] = {}
 
     async def allow(self, lock: asyncio.Lock, key: str, count: int, window: int) -> Tuple[bool, int, int, Dict[str, Any]]:
+        """Consume one token from *key*'s bucket, refilling proportionally to elapsed time."""
         now = time.time()
         refill_rate = count / window  # tokens per second
 
@@ -308,8 +343,6 @@ class TokenBucketAlgorithm:
             now = time.time()
             full = []
             for k, bucket in self._store.items():
-                # Estimate current tokens
-                refill_rate_approx = 1.0  # we don't store count/window here — just evict old
                 elapsed = now - bucket.last_refill
                 if elapsed > 3600:  # inactive for over an hour
                     full.append(k)
@@ -345,12 +378,14 @@ class MemoryBackend:
     """
 
     def __init__(self, algorithm: FixedWindowAlgorithm | SlidingWindowAlgorithm | TokenBucketAlgorithm, sweep_interval: float = 0.5) -> None:
+        """Initialise the backend with the given algorithm and sweep interval."""
         self._algorithm = algorithm
         self._lock = asyncio.Lock()
         self._sweep_interval = sweep_interval
         self._sweep_task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
 
     def _ensure_sweep_task(self) -> None:
+        """Start the background sweep task if it is not already running."""
         if self._sweep_task is None or self._sweep_task.done():
             try:
                 loop = asyncio.get_running_loop()
@@ -359,11 +394,13 @@ class MemoryBackend:
                 pass
 
     async def _sweep_loop(self) -> None:
+        """Periodically invoke the algorithm's sweep to evict expired entries."""
         while True:
             await asyncio.sleep(self._sweep_interval)
             await self._algorithm.sweep(self._lock)
 
     async def allow(self, key: str, limit: Optional[str]) -> tuple[bool, int, int, dict[str, Any]]:
+        """Check the rate limit for *key* against *limit* using the in-process algorithm."""
         self._ensure_sweep_task()
         if not limit:
             return True, 0, 0, {"limited": False}
@@ -374,8 +411,8 @@ class MemoryBackend:
 class RedisBackend:
     """Shared rate limit backend backed by Redis.
 
-    Supports fixed_window and sliding_window algorithms via different Lua scripts.
-    Token bucket is not supported in Redis mode — falls back to memory backend.
+    Supports all three algorithms via atomic Lua scripts — one round-trip per
+    check with no race conditions.
 
     Attributes:
         _url: Redis connection URL.
@@ -394,20 +431,73 @@ local ttl = redis.call('TTL', KEYS[1])
 return {current, ttl}
 """
 
-    # Sliding window: ZADD timestamp, remove old entries, count remaining.
-    # Returns [current_count, oldest_timestamp_ms_or_0].
+    # Sliding window: remove expired entries, check count, ZADD only if allowed.
+    # ARGV: [now_float, window_seconds, limit_int, unique_member]
+    # Returns [allowed_int, current_count, oldest_timestamp_or_0].
+    # Fix: check count before ZADD (blocked requests must not inflate the set).
+    # Fix: use a unique member (ARGV[4]) so simultaneous requests with identical
+    #      timestamps do not collapse into a single sorted-set entry.
     _LUA_SLIDING = """
 local now = tonumber(ARGV[1])
 local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local member = ARGV[4]
 local cutoff = now - window
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', cutoff)
-redis.call('ZADD', KEYS[1], now, now)
+local count = tonumber(redis.call('ZCARD', KEYS[1]))
 redis.call('EXPIRE', KEYS[1], window + 1)
-local count = redis.call('ZCARD', KEYS[1])
 local oldest = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
 local oldest_ts = 0
 if #oldest > 0 then oldest_ts = tonumber(oldest[2]) end
-return {count, oldest_ts}
+if count >= limit then
+    return {0, count, oldest_ts}
+end
+redis.call('ZADD', KEYS[1], now, member)
+count = count + 1
+oldest = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+oldest_ts = 0
+if #oldest > 0 then oldest_ts = tonumber(oldest[2]) end
+return {1, count, oldest_ts}
+"""
+
+    # Token bucket: HMGET {tokens, last_refill}, refill proportionally, consume 1.
+    # ARGV: [capacity, refill_rate_per_sec, now_as_float]
+    # Returns [allowed_int, remaining_floor, time_to_next_token_seconds].
+    _LUA_TOKEN_BUCKET = """
+local data = redis.call('HMGET', KEYS[1], 'tokens', 'last_refill')
+local capacity = tonumber(ARGV[1])
+local rate     = tonumber(ARGV[2])
+local now      = tonumber(ARGV[3])
+
+local tokens      = tonumber(data[1])
+local last_refill = tonumber(data[2])
+
+if tokens == nil then
+    tokens = capacity - 1
+    redis.call('HSET', KEYS[1], 'tokens', tokens, 'last_refill', now)
+    local ttl = math.ceil(capacity / rate) + 1
+    redis.call('EXPIRE', KEYS[1], ttl)
+    return {1, math.floor(tokens), 0}
+end
+
+local elapsed = now - last_refill
+tokens = math.min(capacity, tokens + elapsed * rate)
+
+local allowed
+local time_to_next = 0
+if tokens >= 1.0 then
+    tokens  = tokens - 1.0
+    allowed = 1
+else
+    allowed      = 0
+    time_to_next = math.ceil((1.0 - tokens) / rate)
+end
+
+redis.call('HSET', KEYS[1], 'tokens', tokens, 'last_refill', now)
+local ttl = math.ceil((capacity - tokens) / rate) + 1
+redis.call('EXPIRE', KEYS[1], ttl)
+
+return {allowed, math.floor(tokens), time_to_next}
 """
 
     def __init__(
@@ -418,6 +508,7 @@ return {count, oldest_ts}
         fallback: Optional[MemoryBackend] = None,
         _client: Any = None,
     ) -> None:
+        """Initialise the Redis backend with connection URL, key prefix, algorithm, and optional fallback."""
         self._url = redis_url
         self._prefix = key_prefix
         self._algorithm_name = algorithm_name
@@ -426,6 +517,7 @@ return {count, oldest_ts}
         self._real_client: Any = None
 
     async def _get_client(self) -> Any:
+        """Return the Redis client, lazily initialising a real connection if needed."""
         if self._client is not None:
             return self._client
         if self._real_client is None:
@@ -434,6 +526,7 @@ return {count, oldest_ts}
         return self._real_client
 
     async def allow(self, key: str, limit: Optional[str]) -> tuple[bool, int, int, dict[str, Any]]:
+        """Check the rate limit for *key* against *limit* using an atomic Redis Lua script."""
         if not limit:
             return True, 0, 0, {"limited": False}
 
@@ -445,7 +538,8 @@ return {count, oldest_ts}
 
             if self._algorithm_name == ALGORITHM_SLIDING_WINDOW:
                 return await self._allow_sliding(client, redis_key, count, window_seconds)
-            # fixed_window (token_bucket not supported in Redis — handled at init)
+            if self._algorithm_name == ALGORITHM_TOKEN_BUCKET:
+                return await self._allow_token_bucket(client, redis_key, count, window_seconds)
             return await self._allow_fixed(client, redis_key, count, window_seconds)
 
         except Exception:
@@ -455,6 +549,7 @@ return {count, oldest_ts}
             return True, 0, 0, {"limited": False}
 
     async def _allow_fixed(self, client: Any, redis_key: str, count: int, window_seconds: int) -> tuple[bool, int, int, dict[str, Any]]:
+        """Run the fixed-window Lua script and return the allow/block decision."""
         result = await client.eval(self._LUA_FIXED, 1, redis_key, window_seconds)
         current_count = int(result[0])
         ttl = int(result[1])
@@ -468,17 +563,40 @@ return {count, oldest_ts}
         return True, count, reset_timestamp, {"limited": True, "remaining": remaining, "reset_in": reset_in}
 
     async def _allow_sliding(self, client: Any, redis_key: str, count: int, window_seconds: int) -> tuple[bool, int, int, dict[str, Any]]:
+        """Run the sliding-window Lua script and return the allow/block decision."""
         now = time.time()
-        result = await client.eval(self._LUA_SLIDING, 1, redis_key, now, window_seconds)
-        current_count = int(result[0])
-        oldest_ts = float(result[1]) if result[1] else now
+        unique_member = f"{now}:{uuid.uuid4().hex}"
+        result = await client.eval(self._LUA_SLIDING, 1, redis_key, now, window_seconds, count, unique_member)
+        allowed_int = int(result[0])
+        current_count = int(result[1])
+        oldest_ts = float(result[2]) if result[2] else now
         reset_timestamp = int(oldest_ts + window_seconds)
         reset_in = max(0, int(reset_timestamp - now))
         remaining = max(0, count - current_count)
 
-        if current_count > count:
+        if not allowed_int:
             return False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": reset_in}
         return True, count, reset_timestamp, {"limited": True, "remaining": remaining, "reset_in": reset_in}
+
+    async def _allow_token_bucket(self, client: Any, redis_key: str, count: int, window_seconds: int) -> tuple[bool, int, int, dict[str, Any]]:
+        """Run the token-bucket Lua script and return the allow/block decision."""
+        now = time.time()
+        refill_rate = count / window_seconds  # tokens per second
+        result = await client.eval(self._LUA_TOKEN_BUCKET, 1, redis_key, count, refill_rate, now)
+        allowed_int = int(result[0])
+        remaining = int(result[1])
+        time_to_next = int(result[2])
+
+        if not allowed_int:
+            reset_timestamp = int(now + time_to_next)
+            return False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": time_to_next}
+
+        # Compute time-to-full consistent with the memory backend: tokens_needed / refill_rate.
+        # Use max(1, ...) so sub-second refill times round up to a future integer timestamp.
+        tokens_needed = count - remaining
+        time_to_full = max(1, int(tokens_needed / refill_rate)) if tokens_needed > 0 else 0
+        reset_timestamp = int(now + time_to_full)
+        return True, count, reset_timestamp, {"limited": True, "remaining": remaining, "reset_in": time_to_full}
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +637,7 @@ class RateLimiterPlugin(Plugin):
     """Rate limiter with pluggable algorithm (fixed_window, sliding_window, token_bucket)."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialise the plugin, parse config, and set up the rate limiting backend."""
         super().__init__(config)
         self._cfg = RateLimiterConfig(**(config.config or {}))
         self._validate_config()
@@ -526,27 +645,18 @@ class RateLimiterPlugin(Plugin):
         algorithm = _make_algorithm(self._cfg.algorithm)
 
         if self._cfg.backend == "redis":
-            if self._cfg.algorithm == ALGORITHM_TOKEN_BUCKET:
-                # Token bucket in Redis requires per-key refill-rate metadata that
-                # complicates the Lua script significantly. Fall back to memory backend
-                # for token_bucket and log a notice so operators are aware.
-                logger.warning(
-                    "RateLimiterPlugin: token_bucket algorithm is not supported with the Redis backend. "
-                    "Falling back to memory backend for rate limiting. Use fixed_window or sliding_window with Redis."
-                )
-                self._rate_backend: MemoryBackend | RedisBackend = MemoryBackend(algorithm)
-            else:
-                fallback_backend = MemoryBackend(_make_algorithm(self._cfg.algorithm)) if self._cfg.redis_fallback else None
-                self._rate_backend = RedisBackend(
-                    redis_url=self._cfg.redis_url or "redis://localhost:6379/0",
-                    key_prefix=self._cfg.redis_key_prefix,
-                    algorithm_name=self._cfg.algorithm,
-                    fallback=fallback_backend,
-                )
+            fallback_backend = MemoryBackend(_make_algorithm(self._cfg.algorithm)) if self._cfg.redis_fallback else None
+            self._rate_backend: MemoryBackend | RedisBackend = RedisBackend(
+                redis_url=self._cfg.redis_url or "redis://localhost:6379/0",
+                key_prefix=self._cfg.redis_key_prefix,
+                algorithm_name=self._cfg.algorithm,
+                fallback=fallback_backend,
+            )
         else:
             self._rate_backend = MemoryBackend(algorithm)
 
     def _validate_config(self) -> None:
+        """Validate rate strings and algorithm/backend settings; raise ValueError on error."""
         errors: list[str] = []
 
         if self._cfg.algorithm not in VALID_ALGORITHMS:
@@ -569,20 +679,27 @@ class RateLimiterPlugin(Plugin):
         if errors:
             raise ValueError("RateLimiterPlugin config errors: " + "; ".join(errors))
 
+        # Pre-compute normalised by_tool keys once — used on every hook call.
+        self._normalised_by_tool: Dict[str, str] = (
+            {k.strip().lower(): v for k, v in self._cfg.by_tool.items()}
+            if self._cfg.by_tool
+            else {}
+        )
+
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
+        """Enforce rate limits before a prompt is fetched."""
         try:
-            prompt = payload.prompt_id
-            user = context.global_context.user or "anonymous"
-            tenant = context.global_context.tenant_id or "default"
+            prompt = payload.prompt_id.strip().lower()
+            user = _extract_user_identity(context.global_context.user)
+            tenant = (str(context.global_context.tenant_id).strip() if context.global_context.tenant_id else "") or "default"
 
             results = [
                 await self._rate_backend.allow(f"user:{user}", self._cfg.by_user),
                 await self._rate_backend.allow(f"tenant:{tenant}", self._cfg.by_tenant),
             ]
 
-            by_tool_config = self._cfg.by_tool
-            if by_tool_config and prompt in by_tool_config:  # pylint: disable=unsupported-membership-test
-                results.append(await self._rate_backend.allow(f"tool:{prompt}", by_tool_config[prompt]))
+            if self._normalised_by_tool and prompt in self._normalised_by_tool:
+                results.append(await self._rate_backend.allow(f"tool:{prompt}", self._normalised_by_tool[prompt]))
 
             allowed, limit, remaining, reset_ts, meta = _select_most_restrictive(results)
             retry_after = meta.get("reset_in", 0)
@@ -612,20 +729,19 @@ class RateLimiterPlugin(Plugin):
             return PromptPrehookResult()
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        """Enforce rate limits before a tool is invoked."""
         try:
-            tool = payload.name
-            user = context.global_context.user or "anonymous"
-            tenant = context.global_context.tenant_id or "default"
+            tool = payload.name.strip().lower()
+            user = _extract_user_identity(context.global_context.user)
+            tenant = (str(context.global_context.tenant_id).strip() if context.global_context.tenant_id else "") or "default"
 
             results = [
                 await self._rate_backend.allow(f"user:{user}", self._cfg.by_user),
                 await self._rate_backend.allow(f"tenant:{tenant}", self._cfg.by_tenant),
             ]
 
-            by_tool_config = self._cfg.by_tool
-            if by_tool_config:
-                if hasattr(by_tool_config, "__contains__") and tool in by_tool_config:  # pylint: disable=unsupported-membership-test
-                    results.append(await self._rate_backend.allow(f"tool:{tool}", by_tool_config[tool]))
+            if self._normalised_by_tool and tool in self._normalised_by_tool:
+                results.append(await self._rate_backend.allow(f"tool:{tool}", self._normalised_by_tool[tool]))
 
             allowed, limit, remaining, reset_ts, meta = _select_most_restrictive(results)
             retry_after = meta.get("reset_in", 0)
@@ -653,19 +769,3 @@ class RateLimiterPlugin(Plugin):
         except Exception:
             logger.exception("RateLimiterPlugin.tool_pre_invoke encountered an unexpected error; allowing request")
             return ToolPreInvokeResult()
-
-
-# ---------------------------------------------------------------------------
-# Module-level helpers — kept for test compatibility
-# ---------------------------------------------------------------------------
-
-# _store and _allow are no longer meaningful at module level since each plugin
-# instance owns its own backend. Tests should access plugin._rate_backend._algorithm._store
-# directly. These stubs are kept so existing imports don't break.
-_store: Dict[str, Any] = {}
-
-
-async def _allow(key: str, limit: Optional[str]) -> tuple[bool, int, int, dict[str, Any]]:
-    """Legacy module-level wrapper — creates a temporary MemoryBackend for the call.
-    Prefer plugin._rate_backend.allow() directly."""
-    return await MemoryBackend(FixedWindowAlgorithm()).allow(key, limit)

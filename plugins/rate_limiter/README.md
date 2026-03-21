@@ -81,7 +81,7 @@ Three counting algorithms are available, selected via the `algorithm` config fie
 |---|---|---|---|
 | Fixed window | `fixed_window` | General use, lowest overhead | Up to 2× the limit at window boundaries |
 | Sliding window | `sliding_window` | Smooth enforcement, no boundary burst | Higher memory: stores one timestamp per request per key |
-| Token bucket | `token_bucket` | Bursty workloads — allows short spikes up to capacity | Redis not supported; falls back to memory automatically |
+| Token bucket | `token_bucket` | Bursty workloads — allows short spikes up to capacity | Slightly higher Redis overhead: stores `{tokens, last_refill}` hash per key |
 
 ### Fixed window (default)
 
@@ -95,7 +95,7 @@ Stores a timestamp for every request in the current window. At each check, expir
 
 Each identity (user, tenant, tool) has a bucket that holds up to `count` tokens. Tokens refill at a steady rate of `count/window`. A request consumes one token. Bursts up to the bucket capacity are allowed; sustained rate above `count/window` is rejected. Useful for APIs where short spikes are acceptable but sustained overload is not.
 
-**Note:** `token_bucket` with `backend: redis` is not currently supported. The plugin logs a warning and automatically falls back to the in-process memory backend when this combination is configured.
+**Redis support:** `token_bucket` with `backend: redis` is fully supported. The plugin stores `{tokens, last_refill}` in a Redis hash per key and uses an atomic Lua script to refill and consume tokens in a single round-trip — the same pattern as the other two algorithms. This means `token_bucket` enforces a true cluster-wide limit in multi-instance deployments.
 
 ## Backends
 
@@ -110,7 +110,7 @@ Each identity (user, tenant, tool) has a bucket that holds up to `count` tokens.
 
 - `fixed_window`: atomic Lua `INCR`+`EXPIRE` — one Redis round-trip per check, no race condition
 - `sliding_window`: atomic Lua `ZADD`+`ZREMRANGEBYSCORE`+`ZCARD`+`EXPIRE` — one round-trip, no race condition
-- `token_bucket`: not supported with Redis; falls back to memory automatically with a logged warning
+- `token_bucket`: atomic Lua script — reads `{tokens, last_refill}` hash, refills proportionally, consumes 1 token, writes back — one round-trip, no race condition
 - All gateway instances share the same counter — the configured limit is the true cluster-wide limit
 - Requires `redis_url` to be set
 - If `redis_fallback: true` (default) and Redis is unavailable, the plugin falls back to the in-process `MemoryBackend` automatically — requests are never blocked due to Redis downtime
@@ -150,12 +150,23 @@ config:
   by_tenant: "300/m"
 ```
 
-### Token bucket (allow bursts, throttle sustained rate)
+### Token bucket — memory backend (default)
 
 ```yaml
 config:
   algorithm: "token_bucket"
   by_user: "30/m"   # bucket holds 30 tokens, refills at 30/min
+```
+
+### Token bucket — Redis backend (multi-instance)
+
+```yaml
+config:
+  algorithm: "token_bucket"
+  backend: "redis"
+  redis_url: "redis://redis:6379/0"
+  redis_fallback: true
+  by_user: "30/m"
 ```
 
 ### Permissive mode (observe without blocking)
@@ -173,7 +184,6 @@ In `permissive` mode the plugin records violations and emits `X-RateLimit-*` hea
 | Limitation | Severity | Status |
 |---|---|---|
 | Memory backend not shared across processes | HIGH | Use Redis backend for multi-instance deployments |
-| `token_bucket` + Redis not supported | MEDIUM | Falls back to memory automatically; fix deferred |
 | Fixed window allows up to 2× limit at window boundary | LOW | Use `sliding_window` algorithm, or use `by_user` with headroom |
 | `by_tool` matching is case-sensitive | LOW | `search` and `Search` are treated as different tools; normalise tool names as a workaround |
 | Whitespace-only user identity bypasses anonymous bucket | LOW | Documented gap; strip identities before passing to hooks |

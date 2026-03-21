@@ -2321,6 +2321,11 @@ load-test-agentgateway-mcp-server-time:    ## Load test external MCP server (loc
 
 MCP_PROTOCOL_LOCUSTFILE ?= tests/loadtest/locustfile_mcp_protocol.py
 MCP_RATE_LIMITER_LOCUSTFILE ?= tests/loadtest/locustfile_rate_limiter.py
+MCP_RATE_LIMITER_ALGO_LOCUSTFILE ?= tests/loadtest/locustfile_rate_limiter_algorithms.py
+MCP_RATE_LIMITER_SCALE_LOCUSTFILE ?= tests/loadtest/locustfile_rate_limiter_scale.py
+RL_ALGORITHM ?= fixed_window
+RL_USERS ?= 100
+RL_SPAWN_RATE ?= 5
 MCP_PROTOCOL_HOST ?= http://localhost:4444
 MCP_BENCHMARK_HOST ?= http://localhost:8080
 MCP_BENCHMARK_SERVER_ID ?= 9779b6698cbd4b4995ee04a4fab38737
@@ -2436,6 +2441,65 @@ benchmark-rate-limiter:                     ## Rate limiter correctness test (1 
 			--headless \
 			--only-summary \
 			RateLimitedUser || true'
+
+# help: benchmark-rate-limiter-algorithms - Compare fixed_window / sliding_window / token_bucket at 2x rate
+.PHONY: benchmark-rate-limiter-algorithms
+benchmark-rate-limiter-algorithms:          ## Compare rate limiter algorithms (1 user, 1 req/s, 2 min — shows per-window block distribution)
+	@echo "🔬 Running rate limiter algorithm comparison test..."
+	@echo "   Algorithm: $(RL_ALGORITHM)  (must match algorithm: in plugins/config.yaml)"
+	@echo "   Host:      $(MCP_BENCHMARK_HOST)"
+	@echo "   Limit:     $(RL_LIMIT_PER_MIN) req/min  |  Pace: 60 req/min (2x)"
+	@echo "   Duration:  120s  (two full 60s windows)"
+	@echo ""
+	@echo "   To compare all three algorithms:"
+	@echo "     1. Set algorithm: fixed_window in plugins/config.yaml, restart gateways"
+	@echo "        RL_ALGORITHM=fixed_window make benchmark-rate-limiter-algorithms"
+	@echo "     2. Set algorithm: sliding_window, restart, run again"
+	@echo "     3. Set algorithm: token_bucket, restart, run again"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		LOCUST_LOG_LEVEL=ERROR \
+		RL_ALGORITHM=$(RL_ALGORITHM) \
+		RL_LIMIT_PER_MIN=$(RL_LIMIT_PER_MIN) \
+		MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		locust -f $(MCP_RATE_LIMITER_ALGO_LOCUSTFILE) \
+			--host=$(MCP_BENCHMARK_HOST) \
+			--users=1 \
+			--spawn-rate=1 \
+			--run-time=120s \
+			--headless \
+			--only-summary \
+			AlgorithmComparisonUser || true'
+
+# help: benchmark-rate-limiter-scale  - Multi-user scale test showing Redis memory divergence across algorithms
+.PHONY: benchmark-rate-limiter-scale
+benchmark-rate-limiter-scale:               ## Scale test: 100 unique users, Redis memory timeline per algorithm
+	@echo "📈 Running rate limiter scale test (resource divergence)..."
+	@echo "   Algorithm: $(RL_ALGORITHM)  (must match plugins/config.yaml)"
+	@echo "   Users:     $(RL_USERS) unique identities  (each creates own Redis key)"
+	@echo "   Spawn:     $(RL_SPAWN_RATE) users/s"
+	@echo "   Limit:     $(RL_LIMIT_PER_MIN) req/min per user"
+	@echo ""
+	@echo "   Redis memory diverges between algorithms as users ramp up:"
+	@echo "     fixed_window:   ~0.1-0.3 KiB/key  (single integer)"
+	@echo "     sliding_window: ~1-3 KiB/key       (sorted set, $(RL_LIMIT_PER_MIN) entries)"
+	@echo "     token_bucket:   ~0 KiB             (memory-only, no Redis keys)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		LOCUST_LOG_LEVEL=ERROR \
+		RL_ALGORITHM=$(RL_ALGORITHM) \
+		RL_LIMIT_PER_MIN=$(RL_LIMIT_PER_MIN) \
+		RL_USERS=$(RL_USERS) \
+		RL_SPAWN_RATE=$(RL_SPAWN_RATE) \
+		MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		locust -f $(MCP_RATE_LIMITER_SCALE_LOCUSTFILE) \
+			--host=$(MCP_BENCHMARK_HOST) \
+			--users=$(RL_USERS) \
+			--spawn-rate=$(RL_SPAWN_RATE) \
+			--run-time=90s \
+			--headless \
+			--only-summary \
+			ScaleComparisonUser || true'
 
 .PHONY: benchmark-mcp-mixed-300
 benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP benchmark
