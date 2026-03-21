@@ -724,10 +724,10 @@ async def test_concurrent_requests_respect_limit():
     This test PASSES under asyncio (single-threaded event loop, no real concurrency).
     It documents that the asyncio path is safe.
 
-    NOTE: Under gunicorn threaded workers the dict read-modify-write in _allow()
-    is NOT atomic. Two threads can both read count=9, both pass the check, and both
-    increment — allowing more than the configured limit. That scenario cannot be
-    demonstrated in a single-threaded asyncio test.
+    NOTE: Under gunicorn threaded workers the dict read-modify-write in allow()
+    is NOT atomic without the asyncio.Lock. Two threads can both read count=9,
+    both pass the check, and both increment — allowing more than the configured
+    limit. That scenario cannot be demonstrated in a single-threaded asyncio test.
     """
     plugin = _mk("10/s")
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
@@ -966,14 +966,46 @@ def test_unsupported_rate_unit_raises_at_init():
         )
 
 
-@pytest.mark.asyncio
-async def test_graceful_degradation_unexpected_runtime_error_does_not_crash_caller():
+def test_invalid_backend_raises_at_init():
     """
-    If an unexpected runtime error occurs inside a hook (e.g. a bug in _allow()),
+    An unrecognised backend (e.g. typo 'reddis') raises ValueError at startup
+    via _validate_config() rather than silently falling back to memory.
+    """
+    with pytest.raises(ValueError, match="RateLimiterPlugin config errors"):
+        RateLimiterPlugin(
+            PluginConfig(
+                name="rl",
+                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                hooks=[ToolHookType.TOOL_PRE_INVOKE],
+                config={"by_user": "10/s", "backend": "reddis"},
+            )
+        )
+
+
+def test_malformed_by_tool_rate_raises_at_init():
+    """
+    A malformed rate string inside by_tool (e.g. 'abc/m') raises ValueError
+    at plugin initialisation listing the invalid tool entry.
+    """
+    with pytest.raises(ValueError, match="by_tool"):
+        RateLimiterPlugin(
+            PluginConfig(
+                name="rl",
+                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                hooks=[ToolHookType.TOOL_PRE_INVOKE],
+                config={"by_tool": {"search": "abc/m"}},
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_graceful_degradation_tool_pre_invoke_does_not_crash_caller():
+    """
+    If an unexpected runtime error occurs inside tool_pre_invoke (e.g. a bug in the backend),
     the exception is caught, logged, and a permissive result is returned.
 
     The gateway request is NOT crashed by a plugin error.
-    This is tested by patching _allow to raise a RuntimeError mid-hook.
+    This is tested by patching the backend's allow method to raise a RuntimeError.
     """
     plugin = RateLimiterPlugin(
         PluginConfig(
@@ -986,10 +1018,34 @@ async def test_graceful_degradation_unexpected_runtime_error_does_not_crash_call
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
     payload = ToolPreInvokePayload(name="test_tool", arguments={})
 
-    with patch("plugins.rate_limiter.rate_limiter._allow", side_effect=RuntimeError("simulated internal error")):
+    with patch.object(plugin._rate_backend, "allow", side_effect=RuntimeError("simulated internal error")):
         result = await plugin.tool_pre_invoke(payload, ctx)
 
-    assert result is not None, "Plugin should return a result even when _allow() raises unexpectedly"
+    assert result is not None, "Plugin should return a result even when backend.allow() raises unexpectedly"
+    assert result.violation is None, "Permissive degradation: unexpected errors allow the request through"
+
+
+@pytest.mark.asyncio
+async def test_graceful_degradation_prompt_pre_fetch_does_not_crash_caller():
+    """
+    If an unexpected runtime error occurs inside prompt_pre_fetch, the exception
+    is caught, logged, and a permissive result is returned.
+    """
+    plugin = RateLimiterPlugin(
+        PluginConfig(
+            name="rl",
+            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            hooks=[PromptHookType.PROMPT_PRE_FETCH],
+            config={"by_user": "10/s"},
+        )
+    )
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = PromptPrehookPayload(prompt_id="my_prompt", args={})
+
+    with patch.object(plugin._rate_backend, "allow", side_effect=RuntimeError("simulated internal error")):
+        result = await plugin.prompt_pre_fetch(payload, ctx)
+
+    assert result is not None, "Plugin should return a result even when backend.allow() raises unexpectedly"
     assert result.violation is None, "Permissive degradation: unexpected errors allow the request through"
 
 

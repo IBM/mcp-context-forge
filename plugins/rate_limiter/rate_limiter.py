@@ -287,19 +287,6 @@ _backend = MemoryBackend()
 _store: Dict[str, _Window] = _backend._store
 
 
-async def _allow(key: str, limit: Optional[str]) -> tuple[bool, int, int, dict[str, Any]]:
-    """Async wrapper around the module-level MemoryBackend.
-
-    Args:
-        key: Composite key identifying the dimension (e.g. 'user:alice', 'tool:search').
-        limit: Rate string (e.g. '60/m') or None for unlimited.
-
-    Returns:
-        Tuple of (allowed, limit_count, reset_timestamp, metadata).
-    """
-    return await _backend.allow(key, limit)
-
-
 def _make_headers(limit: int, remaining: int, reset_timestamp: int, retry_after: int, include_retry_after: bool = True) -> dict[str, str]:
     """Create RFC-compliant rate limit headers.
 
@@ -412,7 +399,7 @@ class RateLimiterPlugin(Plugin):
             self._rate_backend = _backend
 
     def _validate_config(self) -> None:
-        """Validate all configured rate strings at startup.
+        """Validate all configured rate strings and backend at startup.
 
         Parses every rate string (by_user, by_tenant, and all by_tool entries) so that
         malformed or unsupported values raise immediately at plugin initialisation rather
@@ -422,6 +409,9 @@ class RateLimiterPlugin(Plugin):
             ValueError: Collected error message listing every invalid rate string found.
         """
         errors: list[str] = []
+
+        if self._cfg.backend not in ("memory", "redis"):
+            errors.append(f"backend={self._cfg.backend!r}: must be 'memory' or 'redis'")
 
         for field, value in [("by_user", self._cfg.by_user), ("by_tenant", self._cfg.by_tenant)]:
             if value is not None:
@@ -519,9 +509,8 @@ class RateLimiterPlugin(Plugin):
 
             # Check per-tool limit if configured
             by_tool_config = self._cfg.by_tool
-            if by_tool_config:
-                if hasattr(by_tool_config, "__contains__") and tool in by_tool_config:  # pylint: disable=unsupported-membership-test
-                    results.append(await self._rate_backend.allow(f"tool:{tool}", by_tool_config[tool]))
+            if by_tool_config and tool in by_tool_config:  # pylint: disable=unsupported-membership-test
+                results.append(await self._rate_backend.allow(f"tool:{tool}", by_tool_config[tool]))
 
             # Select most restrictive
             allowed, limit, remaining, reset_ts, meta = _select_most_restrictive(results)

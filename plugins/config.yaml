@@ -214,7 +214,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
-    mode: "enforce"
+    mode: "permissive"
     priority: 20
     conditions: []
     config:
