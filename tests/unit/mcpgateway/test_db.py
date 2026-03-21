@@ -2822,6 +2822,18 @@ def test_llm_provider_type_helpers():
     assert "api_base" in defaults[db.LLMProviderType.OPENAI]
 
 
+def test_ollama_provider_defaults_use_native_api():
+    """Ollama defaults must point to native API, not the OpenAI-compatible /v1 shim."""
+    defaults = db.LLMProviderType.get_provider_defaults()
+    ollama = defaults[db.LLMProviderType.OLLAMA]
+
+    assert ollama["api_base"] == "http://localhost:11434", "api_base must not include /v1"
+    assert ollama["models_endpoint"] == "/api/tags", "models_endpoint must use native Ollama endpoint"
+    assert ollama["requires_api_key"] is False
+    assert ollama["supports_model_list"] is True
+    assert "OpenAI" not in ollama["description"]
+
+
 def test_slug_listeners_gateway_a2a_agent_email_team(monkeypatch):
     monkeypatch.setattr(db, "slugify", lambda s: s.lower().replace(" ", "-"))
 
