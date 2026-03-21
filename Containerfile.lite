@@ -5,7 +5,7 @@
 #
 # This multi-stage Dockerfile produces a minimal runtime image using
 # ubi10-minimal as the base, supporting multiplatform builds (amd64, arm64,
-# s390x, ppc64le) including QEMU emulation for cross-platform builds.
+# s390x, ppc64le) with native runners for each architecture.
 #
 # Key design points:
 #   - Builder stage has full DNF + devel headers for wheel compilation
@@ -69,7 +69,7 @@ COPY tools_rust/mcp_runtime/ /build/tools_rust/mcp_runtime/
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         mkdir -p /build/rust-wheels && \
         /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin && \
-        for plugin_dir in /build/plugins_rust/*/; do \
+        for plugin_dir in "/build/plugins_rust/"*/; do \
             if [ -f "$plugin_dir/Cargo.toml" ]; then \
                 plugin_name=$(basename "$plugin_dir"); \
                 echo "🦀 Building Rust plugin: $plugin_name"; \
@@ -171,15 +171,15 @@ RUN set -euo pipefail \
     && if [ "$(uname -m)" = "s390x" ]; then \
         echo "📦 Installing dependencies for s390x architecture..."; \
         dnf install -y libpq-devel 2>/dev/null || true; \
-        /app/.venv/bin/pip install --no-cache-dir ".[redis,mysql,observability,granian]" \
+        /app/.venv/bin/pip install --no-cache-dir ".[redis,observability,granian]" \
         && (/app/.venv/bin/pip install --no-cache-dir "psycopg[c]>=3.3.3" \
             || /app/.venv/bin/pip install --no-cache-dir "psycopg>=3.3.3"); \
     else \
-        /app/.venv/bin/uv pip install ".[redis,postgres,mysql,observability,granian]"; \
+        /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian]"; \
     fi \
-    && if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
+    && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/rust-wheels/"*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing Rust plugins..."; \
-        /app/.venv/bin/python3 -m pip install /tmp/rust-wheels/*.whl && \
+        /app/.venv/bin/python3 -m pip install "/tmp/rust-wheels/"*.whl && \
         /app/.venv/bin/python3 -c "from pii_filter_rust.pii_filter_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')"; \
     else \
         echo "⏭️  Rust plugins not available - using Python implementations"; \
@@ -198,7 +198,7 @@ RUN set -euo pipefail \
         \( -name "pip-*" -o -name "setuptools-*" -o -name "wheel-*" -o -name "pdm-*" -o -name "uv-*" \) \
         -exec rm -rf {} + 2>/dev/null || true \
     && rm -rf /app/.venv/share/python-wheels \
-    && rm -rf /app/*.egg-info /app/build /app/dist /app/.eggs
+    && rm -rf "/app/"*.egg-info /app/build /app/dist /app/.eggs
 
 # ----------------------------------------------------------------------------
 # Now copy only the application files needed for runtime
@@ -246,7 +246,7 @@ RUN chown -R 1001:0 /app \
 ###########################
 # Final runtime stage
 ###########################
-# Using ubi10-minimal for cross-platform compatibility (works with QEMU emulation)
+# Using ubi10-minimal for cross-platform compatibility
 # hadolint ignore=DL3006
 FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549 AS runtime
 
