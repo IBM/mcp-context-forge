@@ -18930,7 +18930,7 @@ window.updateFilterStatus = updateFilterStatus;
  * This ensures that search/tag values from the URL are restored into the
  * input elements after pagination or partial refresh replaces table content.
  */
-document.body.addEventListener("htmx:afterSettle", function (evt) {
+document.addEventListener("htmx:afterSettle", function (evt) {
     const target = evt.detail?.target;
     if (!target || !target.id) return;
 
