@@ -8167,6 +8167,9 @@ rust-build-wheels: rust-ensure-deps     ## Build Python wheels for all Rust plug
 rust-audit: rust-ensure-deps            ## Run security audit on all Rust plugins
 	@$(MAKE) -C plugins_rust audit
 
+rust-deny: rust-ensure-deps             ## Run cargo-deny policy checks on all Rust plugins
+	@$(MAKE) -C plugins_rust deny
+
 rust-coverage: rust-ensure-deps         ## Run coverage for all Rust plugins
 	@$(MAKE) -C plugins_rust coverage
 

@@ -121,8 +121,15 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit
 
+      - name: Install cargo-deny
+        run: cargo install cargo-deny
+
       - name: Run security audit on all plugins
         run: make rust-audit
+
+      # cargo-audit covers advisories separately; cargo-deny here enforces policy and licensing.
+      - name: Run cargo-deny policy checks on all plugins
+        run: make rust-deny
 
   # Benchmark tests (verify benchmarks compile and run)
   benchmark-tests:

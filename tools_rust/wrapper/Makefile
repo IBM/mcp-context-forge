@@ -94,8 +94,11 @@ coverage cov cv:
 	@echo "Coverage report generated at target/llvm-cov/html/index.html"
 	@xdg-open target/llvm-cov/html/index.html 2>/dev/null || true
 
-# help: licenses		- Check licenses
-licenses license lic l:
-	@echo Check licenses
+# help: deny		- Run cargo-deny license and policy checks
+deny:
+	@echo "Running cargo-deny checks"
 	@cargo install cargo-deny
-	@cargo deny check licenses
+	@cargo deny check
+
+# help: licenses		- Check licenses
+licenses license lic l: deny
