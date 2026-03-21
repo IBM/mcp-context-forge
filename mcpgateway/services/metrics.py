@@ -141,7 +141,7 @@ def setup_metrics(app):
     if enable_metrics:
         # Detect database engine from DATABASE_URL
         database_url = settings.database_url.lower()
-        if "postgresql" in database_url or "postgres" in database_url:
+        if database_url.startswith(("postgresql", "postgres://")):
             db_engine = "postgresql"
         elif database_url.startswith("sqlite"):
             db_engine = "sqlite"
