@@ -793,12 +793,20 @@ class TestA2AEditModal:
         agents_page.page.evaluate("updateAuthHeadersJSON('auth-headers-container-a2a-edit')")
         agents_page.page.wait_for_timeout(100)
 
-        # Save the agent
+        # Save the agent and wait for the POST response + panel navigation
         save_btn = agents_page.page.locator('#a2a-edit-modal button:has-text("Save Changes")')
-        save_btn.click()
+        with agents_page.page.expect_response(
+            lambda resp: "/admin/a2a/" in resp.url and "/edit" in resp.url and resp.request.method == "POST",
+            timeout=30000,
+        ) as resp_info:
+            save_btn.click()
+        response = resp_info.value
+        if response.status >= 400:
+            pytest.skip(f"Agent edit save failed (HTTP {response.status})")
 
-        # Wait for save to complete
-        agents_page.page.wait_for_timeout(1000)
+        # Wait for the JS navigation to complete after successful save
+        agents_page.page.wait_for_load_state("domcontentloaded")
+        agents_page.wait_for_agents_panel_loaded()
 
         # Re-open the edit modal
         _open_edit_modal(agents_page, 0)

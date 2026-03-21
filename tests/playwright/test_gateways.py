@@ -88,7 +88,6 @@ class TestGatewaysPage:
         # Test toggle
         initial_state = gateways_page.show_inactive_checkbox.is_checked()
         gateways_page.toggle_show_inactive(not initial_state)
-        gateways_page.page.wait_for_timeout(500)
         assert gateways_page.show_inactive_checkbox.is_checked() == (not initial_state)
 
     def test_transport_type_options(self, gateways_page: GatewaysPage):
@@ -639,9 +638,8 @@ class TestGatewayActions:
         gateways_page.navigate_to_gateways_tab()
         gateways_page.wait_for_gateways_table_loaded()
 
-        # Enable showing inactive gateways
+        # Enable showing inactive gateways (waits for HTMX table swap)
         gateways_page.toggle_show_inactive(True)
-        gateways_page.page.wait_for_timeout(1000)
 
         # Skip if no gateways exist
         if gateways_page.get_gateway_count() == 0:
