@@ -835,19 +835,12 @@ class SecurityValidator:
                 ...
             ValueError: Template contains potentially dangerous expressions
 
-            Length limit testing:
-
-            >>> long_template = 'a' * 65537
-            >>> SecurityValidator.validate_template(long_template)
-            Traceback (most recent call last):
-                ...
-            ValueError: Template exceeds maximum length of 65536
+            Length limit note: size validation is performed at the service layer
+            using configurable limits (ContentSecurityService). This validator
+            only checks encoding, dangerous patterns, and SSTI prevention.
         """
         if not value:
             return value
-
-        if len(value) > cls.MAX_TEMPLATE_LENGTH:
-            raise ValueError(f"Template exceeds maximum length of {cls.MAX_TEMPLATE_LENGTH}")
 
         # Block dangerous tags but allow Jinja2 syntax {{ }} and {% %} (uses precompiled regex)
         if _DANGEROUS_TEMPLATE_TAGS_RE.search(value):

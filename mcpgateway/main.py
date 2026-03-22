@@ -2163,7 +2163,7 @@ async def content_size_exception_handler(_request: Request, exc: ContentSizeErro
     Returns:
         ORJSONResponse: A 413 Payload Too Large response with structured error details.
     """
-    return ORJSONResponse(status_code=413, content={"error": f"{exc.content_type} size limit exceeded", "message": str(exc), "actual_size": exc.actual_size, "max_size": exc.max_size})
+    return ORJSONResponse(status_code=413, content={"detail": {"error": f"{exc.content_type} size limit exceeded", "message": str(exc), "actual_size": exc.actual_size, "max_size": exc.max_size}})
 
 
 # RFC 9110 §5.6.2 'token' pattern for header field names:

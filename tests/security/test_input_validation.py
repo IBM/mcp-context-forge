@@ -795,11 +795,11 @@ class TestSecurityValidation:
                 PromptCreate(name="test_prompt", template=payload)
             logger.debug(f"Validation error: {exc_info.value}")
 
-        # Invalid templates - too long
-        logger.debug("Testing template that exceeds max length")
-        with pytest.raises(ValidationError) as exc_info:
-            PromptCreate(name="test_prompt", template="x" * (SecurityValidator.MAX_TEMPLATE_LENGTH + 1))
-        logger.debug(f"Validation error: {exc_info.value}")
+        # Template size validation is enforced at the service layer (returns 413),
+        # not at the Pydantic schema level. Verify oversized template passes schema.
+        logger.debug("Testing template exceeding max length passes schema (validated at service layer)")
+        oversized = PromptCreate(name="test_prompt", template="x" * (SecurityValidator.MAX_TEMPLATE_LENGTH + 1))
+        assert len(oversized.template) == SecurityValidator.MAX_TEMPLATE_LENGTH + 1
 
     def test_prompt_argument_validation(self):
         """Test prompt argument validation."""

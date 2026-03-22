@@ -583,7 +583,7 @@ class ResourceService(BaseService):
             )
             raise rce
         except ContentSizeError as cse:
-
+            db.rollback()
             structured_logger.log(
                 level="ERROR",
                 message=f"Resource content size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)",
@@ -2949,7 +2949,7 @@ class ResourceService(BaseService):
             )
             raise ie
         except ContentSizeError as cse:
-
+            db.rollback()
             structured_logger.log(
                 level="ERROR",
                 message=f"Resource content size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)",
