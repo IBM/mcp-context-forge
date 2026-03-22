@@ -1188,11 +1188,12 @@ async def get_current_user(
             # Get plugin contexts from request state if available
             global_context = getattr(request.state, "plugin_global_context", None) if request else None
             if not global_context:
-                # Create global context
+                # Propagate team_id → tenant_id for by_tenant rate limiting
+                team_id = getattr(getattr(request, "state", None), "team_id", None) if request else None
                 global_context = GlobalContext(
                     request_id=request_id,
                     server_id=None,
-                    tenant_id=None,
+                    tenant_id=team_id,
                 )
 
             context_table = getattr(request.state, "plugin_context_table", None) if request else None
@@ -1739,6 +1740,12 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
         global_context.user["email"] = user.email
         global_context.user["is_admin"] = user.is_admin
         global_context.user["full_name"] = user.full_name
+
+    # Propagate team_id → tenant_id for by_tenant rate limiting (only when not already set)
+    if request and global_context.tenant_id is None:
+        team_id = getattr(getattr(request, "state", None), "team_id", None)
+        if team_id:
+            global_context.tenant_id = team_id
 
     if request and global_context:
         request.state.plugin_global_context = global_context

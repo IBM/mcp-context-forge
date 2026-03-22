@@ -2575,7 +2575,11 @@ load-test-agentgateway-mcp-server-time:    ## Load test external MCP server (loc
 # help: load-test-mcp-protocol-heavy - MCP-only protocol heavy test (500 users, 5min)
 
 MCP_PROTOCOL_LOCUSTFILE ?= tests/loadtest/locustfile_mcp_protocol.py
-MCP_RATE_LIMITER_LOCUSTFILE ?= tests/loadtest/locustfile_rate_limiter.py
+MCP_RATE_LIMITER_LOCUSTFILE ?= tests/loadtest/locustfile_rate_limiter_backend_correctness.py
+MCP_RATE_LIMITER_SCALE_LOCUSTFILE ?= tests/loadtest/locustfile_rate_limiter_scale.py
+RL_ALGORITHM ?= fixed_window
+RL_USERS ?= 100
+RL_SPAWN_RATE ?= 10
 MCP_PROTOCOL_HOST ?= http://localhost:4444
 MCP_BENCHMARK_HOST ?= http://localhost:8080
 MCP_BENCHMARK_SERVER_ID ?= 9779b6698cbd4b4995ee04a4fab38737
@@ -2691,6 +2695,40 @@ benchmark-rate-limiter:                     ## Rate limiter correctness test (1 
 			--headless \
 			--only-summary \
 			RateLimitedUser || true'
+
+
+# help: benchmark-rate-limiter-scale  - Multi-user scale test showing Redis memory divergence across algorithms
+.PHONY: benchmark-rate-limiter-scale
+RL_RUN_TIME ?= 300s
+benchmark-rate-limiter-scale:               ## Scale test: 500 unique users, Redis memory timeline per algorithm
+	@echo "📈 Running rate limiter scale test (resource divergence)..."
+	@echo "   Algorithm: $(RL_ALGORITHM)  (must match plugins/config.yaml)"
+	@echo "   Users:     $(RL_USERS) unique identities  (each creates own Redis key)"
+	@echo "   Spawn:     $(RL_SPAWN_RATE) users/s"
+	@echo "   Limit:     $(RL_LIMIT_PER_MIN) req/min per user"
+	@echo "   Duration:  $(RL_RUN_TIME)  (includes ~40s bootstrap for user registration)"
+	@echo ""
+	@echo "   Redis memory diverges between algorithms as users ramp up:"
+	@echo "     fixed_window:   ~0.1-0.3 KiB/key  (single integer)"
+	@echo "     sliding_window: ~1-3 KiB/key       (sorted set, $(RL_LIMIT_PER_MIN) entries)"
+	@echo "     token_bucket:   ~0.2 KiB/key       (hash: tokens + last_refill)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		LOCUST_LOG_LEVEL=ERROR \
+		RL_ALGORITHM=$(RL_ALGORITHM) \
+		RL_LIMIT_PER_MIN=$(RL_LIMIT_PER_MIN) \
+		RL_USERS=$(RL_USERS) \
+		RL_SPAWN_RATE=$(RL_SPAWN_RATE) \
+		RL_RUN_TIME=$(RL_RUN_TIME) \
+		MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		locust -f $(MCP_RATE_LIMITER_SCALE_LOCUSTFILE) \
+			--host=$(MCP_BENCHMARK_HOST) \
+			--users=$(RL_USERS) \
+			--spawn-rate=$(RL_SPAWN_RATE) \
+			--run-time=$(RL_RUN_TIME) \
+			--headless \
+			--only-summary \
+			ScaleComparisonUser || true'
 
 .PHONY: benchmark-mcp-mixed-300
 benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP benchmark

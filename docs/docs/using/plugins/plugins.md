@@ -40,7 +40,7 @@ Plugins for improving system reliability, performance, and resource management.
 |--------|------|-------------|
 | [Circuit Breaker](https://github.com/IBM/mcp-context-forge/tree/main/plugins/circuit_breaker) | Native | Trips per-tool breaker on high error rates or consecutive failures and blocks during cooldown |
 | [Watchdog](https://github.com/IBM/mcp-context-forge/tree/main/plugins/watchdog) | Native | Enforces maximum runtime for tools with warn or block actions on threshold violations |
-| [Rate Limiter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/rate_limiter) | Native | Fixed-window in-memory rate limiting by user, tenant, or tool |
+| [Rate Limiter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/rate_limiter) | Native | Per-user, tenant, and tool rate limiting with selectable algorithms (fixed_window, sliding_window, token_bucket) and memory or Redis backends |
 | [Cached Tool Result](https://github.com/IBM/mcp-context-forge/tree/main/plugins/cached_tool_result) | Native | Caches idempotent tool results in-memory with configurable TTL and key fields |
 | [Response Cache by Prompt](https://github.com/IBM/mcp-context-forge/tree/main/plugins/response_cache_by_prompt) | Native | Advisory response cache using cosine similarity over prompt/input fields with configurable threshold |
 | [Retry with Backoff](https://github.com/IBM/mcp-context-forge/tree/main/plugins/retry_with_backoff) | Native | Annotates retry/backoff policy in metadata with exponential backoff on specific HTTP status codes |

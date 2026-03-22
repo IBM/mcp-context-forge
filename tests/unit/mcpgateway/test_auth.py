@@ -3790,3 +3790,187 @@ async def test_resolve_trace_team_name_uses_preresolved_name_before_claims(monke
     )
 
     assert resolved == "Batched Team"
+
+
+# =============================================================================
+# P0/P1 Tests — tenant_id propagation from auth layer to GlobalContext
+# =============================================================================
+
+
+class TestTenantIdPropagation:
+    """Verify that _inject_userinfo_instate and auth paths propagate team_id → tenant_id.
+
+    The auth middleware resolves request.state.team_id from the JWT teams claim
+    (single-team tokens only).  These tests verify that this value is propagated
+    into GlobalContext.tenant_id so that the rate limiter plugin can enforce
+    per-tenant limits correctly.
+
+    All tests here reflect DESIRED behavior after the fix.  They fail against
+    the current implementation where _inject_userinfo_instate never reads
+    request.state.team_id.
+    """
+
+    def _make_request(self, team_id=None, existing_global_context=None):
+        """Build a minimal mock request with configurable state."""
+        state = SimpleNamespace(
+            team_id=team_id,
+            plugin_global_context=existing_global_context,
+        )
+        return SimpleNamespace(state=state, client=None, headers={})
+
+    def _make_user(self, email="alice@example.com"):
+        from mcpgateway.db import EmailUser  # noqa: PLC0415
+        from datetime import datetime, timezone  # noqa: PLC0415
+
+        return EmailUser(
+            email=email,
+            password_hash="h",
+            full_name="Alice",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+    def test_single_team_propagates_tenant_id(self):
+        """P0: _inject_userinfo_instate must copy request.state.team_id into global_context.tenant_id.
+
+        When the JWT contains exactly one team (the common single-tenant API token case),
+        the resolved team_id is already on request.state.  The function must write it
+        into GlobalContext.tenant_id so the rate limiter can enforce per-tenant limits.
+        """
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+        from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
+
+        global_context = GlobalContext(request_id="r1")
+        request = self._make_request(team_id="team-acme", existing_global_context=global_context)
+        user = self._make_user()
+
+        auth_module._inject_userinfo_instate(request=request, user=user)
+
+        assert request.state.plugin_global_context.tenant_id == "team-acme", (
+            "_inject_userinfo_instate must propagate request.state.team_id into "
+            "global_context.tenant_id for single-team tokens"
+        )
+
+    def test_no_team_id_leaves_tenant_id_none(self):
+        """P1: when request.state.team_id is None (multi-team or no team), tenant_id stays None.
+
+        Multi-team tokens have team_id=None because there is no single authoritative tenant.
+        The plugin must receive tenant_id=None and skip by_tenant — not invent a 'default'.
+        """
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+        from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
+
+        global_context = GlobalContext(request_id="r1")
+        request = self._make_request(team_id=None, existing_global_context=global_context)
+        user = self._make_user()
+
+        auth_module._inject_userinfo_instate(request=request, user=user)
+
+        assert request.state.plugin_global_context.tenant_id is None, (
+            "When team_id is None (multi-team or no-team token), "
+            "tenant_id must remain None — no fake 'default' tenant should be invented"
+        )
+
+    def test_existing_tenant_id_is_not_overwritten(self):
+        """P1: if global_context.tenant_id is already set (e.g. by an auth plugin), do not overwrite it.
+
+        A custom auth plugin may have already populated tenant_id via the
+        http_auth_resolve_user hook.  The _inject_userinfo_instate function must
+        not clobber an explicit tenant identity with a team_id resolution.
+        """
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+        from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
+
+        global_context = GlobalContext(request_id="r1", tenant_id="existing-tenant")
+        request = self._make_request(team_id="different-team", existing_global_context=global_context)
+        user = self._make_user()
+
+        auth_module._inject_userinfo_instate(request=request, user=user)
+
+        assert request.state.plugin_global_context.tenant_id == "existing-tenant", (
+            "An already-set tenant_id must not be overwritten by team_id resolution"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_current_user_fallback_propagates_team_id_to_tenant_id(self):
+        """get_current_user() fallback constructs GlobalContext with tenant_id=team_id.
+
+        When request.state has no plugin_global_context (i.e. middleware did not
+        pre-populate it), get_current_user() must construct a GlobalContext with
+        tenant_id set from request.state.team_id so the rate limiter can enforce
+        per-tenant limits on this request path.
+        """
+        from mcpgateway.plugins.framework import PluginResult  # noqa: PLC0415
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+        request = SimpleNamespace(
+            state=SimpleNamespace(team_id="team-acme"),  # no plugin_global_context set
+            client=None,
+            headers={},
+        )
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(return_value=True)
+        mock_pm.config.plugin_settings.include_user_info = False
+        plugin_result = PluginResult(modified_payload={"email": "alice@example.com"}, continue_processing=False)
+        mock_pm.invoke_hook = AsyncMock(return_value=(plugin_result, None))
+        db_user = self._make_user("alice@example.com")
+
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth._inject_userinfo_instate"),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=db_user),
+        ):
+            await get_current_user(credentials=credentials, request=request)
+
+        call_kwargs = mock_pm.invoke_hook.call_args
+        global_context = call_kwargs.kwargs.get("global_context")
+        assert global_context is not None
+        assert global_context.tenant_id == "team-acme", (
+            "get_current_user() fallback must propagate request.state.team_id "
+            "into GlobalContext.tenant_id for by_tenant rate limiting"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_current_user_fallback_tenant_id_none_when_no_team(self):
+        """get_current_user() fallback sets tenant_id=None when team_id is absent.
+
+        When request.state.team_id is None (multi-team or admin token), the
+        constructed GlobalContext must have tenant_id=None so the rate limiter
+        skips by_tenant enforcement rather than inventing a phantom tenant.
+        """
+        from mcpgateway.plugins.framework import PluginResult  # noqa: PLC0415
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+        request = SimpleNamespace(
+            state=SimpleNamespace(team_id=None),  # no plugin_global_context set
+            client=None,
+            headers={},
+        )
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(return_value=True)
+        mock_pm.config.plugin_settings.include_user_info = False
+        plugin_result = PluginResult(modified_payload={"email": "alice@example.com"}, continue_processing=False)
+        mock_pm.invoke_hook = AsyncMock(return_value=(plugin_result, None))
+        db_user = self._make_user("alice@example.com")
+
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth._inject_userinfo_instate"),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=db_user),
+        ):
+            await get_current_user(credentials=credentials, request=request)
+
+        call_kwargs = mock_pm.invoke_hook.call_args
+        global_context = call_kwargs.kwargs.get("global_context")
+        assert global_context is not None
+        assert global_context.tenant_id is None, (
+            "When team_id is None, GlobalContext.tenant_id must be None — "
+            "no phantom tenant should be invented"
+        )

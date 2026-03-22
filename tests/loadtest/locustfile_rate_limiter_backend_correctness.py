@@ -27,7 +27,7 @@ Usage
     make benchmark-rate-limiter
 
     # Or direct invocation:
-    locust -f tests/loadtest/locustfile_rate_limiter.py \\
+    locust -f tests/loadtest/locustfile_rate_limiter_backend_correctness.py \\
         --host=http://localhost:8080 \\
         --users=1 --spawn-rate=1 --run-time=120s \\
         --headless RateLimitedUser
@@ -271,7 +271,7 @@ def on_test_stop(environment, **kwargs):
     print("=" * 90)
     print(f"\n  {'OVERALL':^86}")
     print("  " + "-" * 86)
-    print(f"  Total tool call requests:  {total - (rl_entry.num_requests if rl_entry else 0):>8,}  (tool calls sent)")
+    print(f"  Total tool call requests:  {total:>8,}  (tool calls sent)")
     print(f"  Allowed through:           {allowed_count:>8,}")
     print(f"  Rate-limited (blocked):    {rl_count:>8,}  ({rl_pct:.1f}%  |  expected ~{expected_pct:.0f}% with Redis)")
     print(f"  Infrastructure failures:   {infra_fails:>8,}  ({infra_pct:.1f}%)")
@@ -419,15 +419,20 @@ class RateLimitedUser(FastHttpUser):
     @task
     @tag("rate-limit", "tools", "call")
     def call_tool(self) -> None:
-        """Call a tool and separately count rate-limited responses.
+        """Call a tool; classify the response in-place as allowed, rate-limited, or infra-error.
 
-        Two named requests are used:
-          - 'MCP tools/call [allowed]'      — the actual request (always fired)
-          - 'MCP tools/call [rate-limited]' — a zero-cost marker fired only
-            when the result contains isError=true (rate limit hit)
-        This lets Locust show allowed vs blocked as separate rows in the table.
+        A single tools/call request is sent. The Locust stat name is set based on
+        the semantic outcome — no second request is fired:
+          - 'MCP tools/call [allowed]'      — gateway processed the call normally
+          - 'MCP tools/call [rate-limited]' — MCP result.isError is set; includes plugin rate-limit blocks
+                                              and other tool errors — the two cannot be distinguished here
+          - 'MCP tools/call [infra-error]'  — HTTP error or malformed response
+
+        Rate-limited responses are recorded as success() so they do not inflate
+        the infrastructure failure count.  Block-rate and latency numbers are
+        purely observational — the harness is never a participant in rate limiting.
         """
-        if not _tool_names:
+        if not _tool_names or not _server_id:
             return
 
         tool = _tool_names[0]
@@ -441,20 +446,48 @@ class RateLimitedUser(FastHttpUser):
         else:
             args = {}
 
-        result = self._mcp_post("tools/call", {"name": tool, "arguments": args}, "MCP tools/call [allowed]")
+        try:
+            with self.client.post(
+                f"/servers/{_server_id}/mcp",
+                data=json.dumps(_jsonrpc("tools/call", {"name": tool, "arguments": args})),
+                headers=self._headers(),
+                name="MCP tools/call",
+                catch_response=True,
+            ) as response:
+                sid = response.headers.get("Mcp-Session-Id") if response.headers else None
+                if sid:
+                    self._mcp_session_id = sid
 
-        # If the MCP result has isError=true the gateway rate-limited the request
-        # (PluginViolationError is surfaced as a tool error, not a JSON-RPC error).
-        # Fire an extra named request as a failure marker so it's visible in stats.
-        if isinstance(result, dict) and result.get("isError"):
-            try:
-                with self.client.post(
-                    f"/servers/{_server_id}/mcp",
-                    data=json.dumps(_jsonrpc("tools/call", {"name": tool, "arguments": args})),
-                    headers=self._headers(),
-                    name="MCP tools/call [rate-limited]",
-                    catch_response=True,
-                ) as resp:
-                    resp.failure("rate limited")
-            except Exception:
-                pass
+                if response.status_code in (502, 503, 504):
+                    response.request_meta["name"] = "MCP tools/call [infra-error]"
+                    response.failure(f"Infrastructure error: {response.status_code}")
+                    return
+                if response.status_code != 200:
+                    response.request_meta["name"] = "MCP tools/call [infra-error]"
+                    response.failure(f"HTTP {response.status_code}")
+                    return
+                try:
+                    data = response.json()
+                except Exception:
+                    response.request_meta["name"] = "MCP tools/call [infra-error]"
+                    response.failure("Invalid JSON")
+                    return
+                if data is None:
+                    response.request_meta["name"] = "MCP tools/call [infra-error]"
+                    response.failure("Null response")
+                    return
+                if "error" in data:
+                    err = data["error"]
+                    response.request_meta["name"] = "MCP tools/call [infra-error]"
+                    response.failure(f"JSON-RPC error {err.get('code', '?')}: {err.get('message', '?')}")
+                    return
+
+                result = data.get("result")
+                if isinstance(result, dict) and result.get("isError"):
+                    response.request_meta["name"] = "MCP tools/call [rate-limited]"
+                    response.success()
+                else:
+                    response.request_meta["name"] = "MCP tools/call [allowed]"
+                    response.success()
+        except Exception as exc:
+            logger.warning("Request failed (tools/call): %s", exc)
