@@ -410,6 +410,12 @@ mcpContextForge:
     # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
     # SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example only, adjust to your cluster CIDR
 
+    # ─ Content Security - Size Limits ─
+    # Maximum content sizes (bytes) to prevent DoS via oversized uploads.
+    # Exceeding these returns HTTP 413 Payload Too Large.
+    CONTENT_MAX_RESOURCE_SIZE: "102400"        # 100KB default (min 1KB, max 10MB)
+    CONTENT_MAX_PROMPT_SIZE: "10240"           # 10KB default (min 512B, max 1MB)
+
     # ─ Logging ─
     LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
     LOG_FORMAT: json                 # json or text format
