@@ -18,5 +18,4 @@ classifiers = [
 
 [tool.maturin]
 module-name = "url_reputation_rust"
-python-source = "python"
 features = ["pyo3/extension-module"]
