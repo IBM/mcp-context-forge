@@ -250,7 +250,7 @@ class AdminPage(BasePage):
         except PlaywrightTimeoutError:
             # Fallback: explicitly trigger the server-side reload for the catalog panel.
             self.page.evaluate(
-                "(q) => { const el = document.getElementById('catalog-search-input'); if (el) { el.value = q; } if (window.loadSearchablePanel) { window.loadSearchablePanel('catalog'); } }",
+                "(q) => { const el = document.getElementById('servers-search-input'); if (el) { el.value = q; } if (window.loadSearchablePanel) { window.loadSearchablePanel('catalog'); } }",
                 query,
             )
             try:

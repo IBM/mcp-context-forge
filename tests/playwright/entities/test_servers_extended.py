@@ -416,7 +416,7 @@ class TestServersExtended:
         assert servers_page.visibility_public_radio.is_checked()
 
     def test_search_servers_using_catalog_search(self, servers_page: ServersPage):
-        """Test server search using #catalog-search-input."""
+        """Test server search using #servers-search-input."""
         servers_page.navigate_to_servers_tab()
         servers_page.wait_for_servers_table_loaded()
 
@@ -425,8 +425,8 @@ class TestServersExtended:
         if initial_count == 0:
             pytest.skip("No servers available to test search functionality")
 
-        # Search using the catalog search input (id="catalog-search-input")
-        catalog_search = servers_page.page.locator("#catalog-search-input")
+        # Search using the servers search input (id="servers-search-input")
+        catalog_search = servers_page.page.locator("#servers-search-input")
         expect(catalog_search).to_be_visible()
 
         # Search for something that won't match
