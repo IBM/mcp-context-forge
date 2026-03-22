@@ -2405,6 +2405,9 @@ class MCPChatService:
             logger.warning("Chat service already initialized")
             return
 
+        if not _LLMCHAT_AVAILABLE:
+            raise ImportError("LLM chat dependencies are missing. Install them with: pip install '.[llmchat]'")
+
         try:
             logger.info("Initializing chat service...")
 
@@ -2416,8 +2419,6 @@ class MCPChatService:
             llm = self.llm_provider.get_llm()
 
             # Create ReAct agent with tools
-            if create_react_agent is None:
-                raise RuntimeError("Some dependencies are missing. Install those with: pip install '.[llmchat]'")
             self._agent = create_react_agent(llm, self._tools)
 
             self._initialized = True
@@ -3065,13 +3066,14 @@ class MCPChatService:
         if not self._initialized:
             raise RuntimeError("Chat service not initialized")
 
+        if not _LLMCHAT_AVAILABLE:
+            raise ImportError("LLM chat dependencies are missing. Install them with: pip install '.[llmchat]'")
+
         try:
             logger.info("Reloading tools from MCP server...")
             tools = await self.mcp_client.get_tools(force_reload=True)
 
             # Recreate agent with new tools
-            if create_react_agent is None:
-                raise RuntimeError("Some dependencies are missing. Install those with: pip install '.[llmchat]'")
             llm = self.llm_provider.get_llm()
             self._agent = create_react_agent(llm, tools)
             self._tools = tools

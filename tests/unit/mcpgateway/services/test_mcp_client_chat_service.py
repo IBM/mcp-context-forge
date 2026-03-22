@@ -320,6 +320,7 @@ async def test_mcpchatservice_initialize_success_and_idempotent(monkeypatch, pat
         llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
     )
     service = svc.MCPChatService(cfg, user_id="u1")
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", True)
     monkeypatch.setattr(service.mcp_client, "connect", AsyncMock(return_value=None))
     monkeypatch.setattr(service.mcp_client, "get_tools", AsyncMock(return_value=["t1", "t2"]))
     service.llm_provider = MagicMock()
@@ -1422,6 +1423,7 @@ async def test_reload_tools_success(monkeypatch, patch_logger):
     )
     service = svc.MCPChatService(cfg)
     service._initialized = True
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", True)
     monkeypatch.setattr(service.mcp_client, "get_tools", AsyncMock(return_value=["t1", "t2"]))
     service.llm_provider = SimpleNamespace(get_llm=MagicMock(return_value=object()))
     agent_obj = object()
@@ -1442,6 +1444,7 @@ async def test_reload_tools_logs_and_raises_on_error(monkeypatch, patch_logger):
     )
     service = svc.MCPChatService(cfg)
     service._initialized = True
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", True)
     monkeypatch.setattr(service.mcp_client, "get_tools", AsyncMock(side_effect=RuntimeError("reload failed")))
 
     with pytest.raises(RuntimeError, match="reload failed"):
@@ -1451,40 +1454,36 @@ async def test_reload_tools_logs_and_raises_on_error(monkeypatch, patch_logger):
 
 
 # --------------------------------------------------------------------------- #
-# GUARD TESTS: create_react_agent is None (langgraph not installed)
+# GUARD TESTS: _LLMCHAT_AVAILABLE is False (langgraph not installed)
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.asyncio
-async def test_initialize_raises_when_create_react_agent_is_none(monkeypatch, patch_logger):
-    """initialize() raises RuntimeError with install hint when some dependencies are missing."""
+async def test_initialize_raises_when_llmchat_unavailable(monkeypatch, patch_logger):
+    """initialize() raises ImportError with install hint when llmchat deps are missing."""
     cfg = svc.MCPClientConfig(
         mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
         llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
     )
     service = svc.MCPChatService(cfg, user_id="u1")
-    monkeypatch.setattr(service.mcp_client, "connect", AsyncMock(return_value=None))
-    monkeypatch.setattr(service.mcp_client, "get_tools", AsyncMock(return_value=["t1"]))
-    service.llm_provider = MagicMock()
-    service.llm_provider.get_llm.return_value = object()
-    monkeypatch.setattr(svc, "create_react_agent", None)
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", False)
 
-    with pytest.raises(RuntimeError, match="Some dependencies are missing"):
+    with pytest.raises(ImportError, match="LLM chat dependencies are missing"):
         await service.initialize()
 
     assert service.is_initialized is False
 
 
 @pytest.mark.asyncio
-async def test_reload_tools_raises_when_create_react_agent_is_none(monkeypatch, patch_logger):
-    """reload_tools() raises RuntimeError with install hint when some dependencies are missing."""
+async def test_reload_tools_raises_when_llmchat_unavailable(monkeypatch, patch_logger):
+    """reload_tools() raises ImportError with install hint when llmchat deps are missing."""
     cfg = svc.MCPClientConfig(
         mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
         llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
     )
     service = svc.MCPChatService(cfg)
     service._initialized = True
-    monkeypatch.setattr(service.mcp_client, "get_tools", AsyncMock(return_value=["t1", "t2"]))
-    monkeypatch.setattr(svc, "create_react_agent", None)
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", False)
 
-    with pytest.raises(RuntimeError, match="Some dependencies are missing"):
+    with pytest.raises(ImportError, match="LLM chat dependencies are missing"):
         await service.reload_tools()
