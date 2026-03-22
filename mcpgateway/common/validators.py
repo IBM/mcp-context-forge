@@ -76,7 +76,7 @@ logger = logging.getLogger(__name__)
 _HTML_SPECIAL_CHARS_RE: Pattern[str] = re.compile(r'[<>"\']')  # / removed per SEP-986
 _DANGEROUS_TEMPLATE_TAGS_RE: Pattern[str] = re.compile(r"<(script|iframe|object|embed|link|meta|base|form)\b", re.IGNORECASE)
 _EVENT_HANDLER_RE: Pattern[str] = re.compile(r"on\w+\s*=", re.IGNORECASE)
-_MIME_TYPE_RE: Pattern[str] = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*$")
+_MIME_TYPE_RE: Pattern[str] = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*(?:\s*;\s*[a-zA-Z0-9!#$&\-\^_+\.]+=(?:[a-zA-Z0-9!#$&\-\^_+\.]+|"[^"\r\n]*"))*$')  # noqa: DUO138 - no ReDoS: inner groups require literal ; and = delimiters preventing backtrack ambiguity
 _URI_SCHEME_RE: Pattern[str] = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://")
 _SHELL_DANGEROUS_CHARS_RE: Pattern[str] = re.compile(r"[;&|`$(){}\[\]<>]")
 _ANSI_ESCAPE_RE: Pattern[str] = re.compile(r"\x1B\[[0-9;]*[A-Za-z]")
@@ -1545,6 +1545,13 @@ class SecurityValidator:
             >>> SecurityValidator.validate_mime_type('image/svg+xml')
             'image/svg+xml'
 
+            Valid MIME types with parameters:
+
+            >>> SecurityValidator.validate_mime_type('application/json; charset=utf-8')
+            'application/json; charset=utf-8'
+            >>> SecurityValidator.validate_mime_type('text/plain; charset=utf-8')
+            'text/plain; charset=utf-8'
+
             Invalid MIME type formats:
 
             >>> SecurityValidator.validate_mime_type('invalid')
@@ -1589,12 +1596,12 @@ class SecurityValidator:
             ...     'not in the allowed list' in str(e)
             True
 
-            Test MIME type with parameters (line 618):
+            Test MIME type with parameters:
 
             >>> try:
             ...     SecurityValidator.validate_mime_type('application/evil; charset=utf-8')
             ... except ValueError as e:
-            ...     'Invalid MIME type format' in str(e)
+            ...     'not in the allowed list' in str(e)
             True
         """
         if not value:
@@ -1606,9 +1613,9 @@ class SecurityValidator:
 
         # Common safe MIME types
         safe_mime_types = settings.validation_allowed_mime_types
-        if value not in safe_mime_types:
+        base_type = value.split(";", 1)[0].strip()
+        if value not in safe_mime_types and base_type not in safe_mime_types:
             # Allow x- vendor types and + suffixes
-            base_type = value.split(";", maxsplit=1)[0].strip()
             if not (base_type.startswith("application/x-") or base_type.startswith("text/x-") or "+" in base_type):
                 raise ValueError(f"MIME type '{value}' is not in the allowed list")
 
