@@ -1674,7 +1674,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 if not response.is_success:
                     try:
                         response_data = response.json()
-                    except Exception:
+                    except ValueError:
+                        response_data = {}
+                    if not isinstance(response_data, dict):
                         response_data = {}
 
                     # If body is a JSON-RPC error ({"error": {...}}), propagate it
@@ -1683,7 +1685,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                         return {"error": response_data["error"]}
 
                     # Non-JSON-RPC error body (e.g. {"detail": "..."}): map to JSON-RPC error
-                    detail = response_data.get("detail", response.text[:200] if response.text else "Unknown error")
+                    detail = response_data.get("detail", response.text[:200] or "Unknown error")
                     logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
                     return {"error": {"code": -32603, "message": f"Forwarded request failed (HTTP {response.status_code}): {detail}"}}
 
