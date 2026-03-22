@@ -32,7 +32,7 @@ Environment Variables:
     LOADTEST_HOST:             Gateway URL           (default: http://localhost:4444)
     MCP_SERVER_ID:             Virtual server UUID   (auto-detected from /servers if empty)
     MCP_TOOL_NAMES:            Comma-sep tool names  (auto-detected from tools/list if empty)
-    JWT_SECRET_KEY:            JWT signing secret     (default: my-test-key)
+    JWT_SECRET_KEY:            JWT signing secret     (default: my-test-key-but-now-longer-than-32-bytes)
     JWT_ALGORITHM:             JWT algorithm          (default: HS256)
     JWT_AUDIENCE:              JWT audience           (default: mcpgateway-api)
     JWT_ISSUER:                JWT issuer             (default: mcpgateway)
@@ -96,7 +96,7 @@ def _cfg(key: str, default: str = "") -> str:
 
 
 # JWT / Auth
-JWT_SECRET_KEY = _cfg("JWT_SECRET_KEY", "my-test-key")
+JWT_SECRET_KEY = _cfg("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 JWT_ALGORITHM = _cfg("JWT_ALGORITHM", "HS256")
 JWT_AUDIENCE = _cfg("JWT_AUDIENCE", "mcpgateway-api")
 JWT_ISSUER = _cfg("JWT_ISSUER", "mcpgateway")
