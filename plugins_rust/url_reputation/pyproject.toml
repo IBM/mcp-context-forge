@@ -1,13 +1,22 @@
 [build-system]
-requires = ["maturin>=1.11,<2.0"]
+requires = ["maturin>=1.4,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "url_reputation_rust"
-requires-python = ">=3.8"
+name = "mcpgateway-url-reputation"
+version = "0.1.1"
+description = "High-performance URL reputation validation for MCP Gateway"
+authors = [{ name = "ContextForge Contributors" }]
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
-dynamic = ["version"]
+
+[tool.maturin]
+module-name = "url_reputation_rust"
+python-source = "python"
+features = ["pyo3/extension-module"]

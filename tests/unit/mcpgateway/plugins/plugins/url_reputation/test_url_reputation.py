@@ -8,12 +8,10 @@ Tests for URLReputationPlugin.
 """
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from mcpgateway.plugins.framework import (
-    GlobalContext,
     PluginConfig,
-    PluginContext,
     ResourceHookType,
     ResourcePreFetchPayload,
 )
@@ -21,11 +19,11 @@ from mcpgateway.plugins.framework import (
 from plugins.url_reputation.url_reputation import URLReputationPlugin, URLReputationConfig
 
 try:
-    from url_reputation_rust import URLReputationPlugin as _rust_plugin
+    import url_reputation_rust  # noqa: F401
     _RUST_AVAILABLE = True
-except ImportError as e:
+except ImportError:
     _RUST_AVAILABLE = False
-except Exception as e:
+except Exception:
     _RUST_AVAILABLE = False
 
 
@@ -332,6 +330,162 @@ async def test_python_whitelist_bypasses_blocked_domain():
         plugin = URLReputationPlugin(config)
         res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://example.com/path"), None)
     assert res.continue_processing
+
+
+@pytest.mark.asyncio
+async def test_python_http_allowed_when_not_enforced():
+    """Python path: HTTP URLs are allowed when block_non_secure_http is False."""
+    config = PluginConfig(
+        name="urlrep",
+        kind="plugins.url_reputation.url_reputation.URLReputationPlugin",
+        hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
+        config={
+            "whitelist_domains": [],
+            "allowed_patterns": [],
+            "blocked_domains": [],
+            "blocked_patterns": [],
+            "use_heuristic_check": False,
+            "entropy_threshold": 3.5,
+            "block_non_secure_http": False,
+        },
+    )
+    with patch(f"{_PLUGIN_MODULE}._RUST_AVAILABLE", False):
+        plugin = URLReputationPlugin(config)
+        res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="http://safe.com/page"), None)
+    assert res.continue_processing
+
+
+@pytest.mark.asyncio
+async def test_python_clean_url_passes_all_checks():
+    """Python path: a clean HTTPS URL with no matches passes all checks."""
+    config = PluginConfig(
+        name="urlrep",
+        kind="plugins.url_reputation.url_reputation.URLReputationPlugin",
+        hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
+        config={
+            "whitelist_domains": [],
+            "allowed_patterns": [],
+            "blocked_domains": ["evil.com"],
+            "blocked_patterns": ["malware"],
+            "use_heuristic_check": False,
+            "entropy_threshold": 3.5,
+            "block_non_secure_http": True,
+        },
+    )
+    with patch(f"{_PLUGIN_MODULE}._RUST_AVAILABLE", False):
+        plugin = URLReputationPlugin(config)
+        res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://safe.example.com/path"), None)
+    assert res.continue_processing
+    assert res.violation is None
+
+
+@pytest.mark.asyncio
+async def test_python_blocked_pattern_substring():
+    """Python path: blocked_patterns uses substring matching (not regex)."""
+    config = PluginConfig(
+        name="urlrep",
+        kind="plugins.url_reputation.url_reputation.URLReputationPlugin",
+        hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
+        config={
+            "whitelist_domains": [],
+            "allowed_patterns": [],
+            "blocked_domains": [],
+            "blocked_patterns": ["phishing"],
+            "use_heuristic_check": False,
+            "entropy_threshold": 3.5,
+            "block_non_secure_http": False,
+        },
+    )
+    with patch(f"{_PLUGIN_MODULE}._RUST_AVAILABLE", False):
+        plugin = URLReputationPlugin(config)
+        res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://example.com/phishing-page"), None)
+    assert not res.continue_processing
+    assert res.violation.reason == "Blocked pattern"
+
+
+@pytest.mark.asyncio
+async def test_python_allowed_patterns_not_honored():
+    """Python path: allowed_patterns are not implemented in Python fallback."""
+    config = PluginConfig(
+        name="urlrep",
+        kind="plugins.url_reputation.url_reputation.URLReputationPlugin",
+        hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
+        config={
+            "whitelist_domains": [],
+            "allowed_patterns": ["trusted"],
+            "blocked_domains": [],
+            "blocked_patterns": ["trusted"],
+            "use_heuristic_check": False,
+            "entropy_threshold": 3.5,
+            "block_non_secure_http": False,
+        },
+    )
+    with patch(f"{_PLUGIN_MODULE}._RUST_AVAILABLE", False):
+        plugin = URLReputationPlugin(config)
+        # In Python fallback, allowed_patterns are not checked, so blocked_patterns will block
+        res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://trusted.example.com/path"), None)
+    assert not res.continue_processing
+
+
+@pytest.mark.asyncio
+async def test_rust_error_fallback_blocks_url():
+    """When Rust plugin raises an exception, URL should be blocked for security."""
+    config = PluginConfig(
+        name="urlrep",
+        kind="plugins.url_reputation.url_reputation.URLReputationPlugin",
+        hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
+        config={
+            "whitelist_domains": [],
+            "allowed_patterns": [],
+            "blocked_domains": [],
+            "blocked_patterns": [],
+            "use_heuristic_check": False,
+            "entropy_threshold": 3.5,
+            "block_non_secure_http": False,
+        },
+    )
+    mock_rust = MagicMock()
+    mock_rust.validate_url_py.side_effect = RuntimeError("Rust engine crashed")
+    with patch(f"{_PLUGIN_MODULE}._RUST_AVAILABLE", True), \
+         patch(f"{_PLUGIN_MODULE}.URLReputationPluginRust", return_value=mock_rust, create=True):
+        plugin = URLReputationPlugin(config)
+        res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://example.com"), None)
+    assert not res.continue_processing
+    assert res.violation.reason == "Rust validation failure"
+    assert res.violation.code == "URL_REPUTATION_BLOCK"
+
+
+@pytest.mark.asyncio
+async def test_config_normalize_domains_empty():
+    """URLReputationConfig normalizes empty domain sets correctly."""
+    cfg = URLReputationConfig(
+        whitelist_domains=set(),
+        blocked_domains=set(),
+    )
+    assert cfg.whitelist_domains == set()
+    assert cfg.blocked_domains == set()
+
+
+@pytest.mark.asyncio
+async def test_config_normalize_domains_none():
+    """URLReputationConfig normalizes None domain sets to empty sets."""
+    cfg = URLReputationConfig(
+        whitelist_domains=None,
+        blocked_domains=None,
+    )
+    assert cfg.whitelist_domains == set()
+    assert cfg.blocked_domains == set()
+
+
+@pytest.mark.asyncio
+async def test_config_normalize_domains_mixed_case():
+    """URLReputationConfig normalizes domain sets to lowercase."""
+    cfg = URLReputationConfig(
+        whitelist_domains={"EXAMPLE.COM", "Test.ORG"},
+        blocked_domains={"BAD.com"},
+    )
+    assert cfg.whitelist_domains == {"example.com", "test.org"}
+    assert cfg.blocked_domains == {"bad.com"}
 
 
 @pytest.mark.asyncio

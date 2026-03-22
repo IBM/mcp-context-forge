@@ -38,10 +38,10 @@ try:
     logger.info("Rust url reputation plugin available")
 except ImportError as e:
     _RUST_AVAILABLE = False
-    logger.warning(f"Rust url reputation not available (will use Python): {e}")
+    logger.warning("Rust url reputation not available (will use Python): %s", e)
 except Exception as e:
     _RUST_AVAILABLE = False
-    logger.error(f"Unexpected error loading Rust module: {e}", exc_info=True)
+    logger.error("Unexpected error loading Rust module: %s", e, exc_info=True)
 
 
 class URLReputationConfig(BaseModel):
