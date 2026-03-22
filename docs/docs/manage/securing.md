@@ -425,7 +425,20 @@ The CI pipeline automatically verifies SRI hashes on every build to detect unexp
 - [x] Hashes use SHA-384 algorithm (W3C recommended)
 - [ ] Review SRI hashes after any CDN library updates
 
-### 9. Container Security
+### 9. Content Size Limits
+
+Configure content size limits to prevent DoS via oversized resource or prompt submissions:
+
+```bash
+# Defaults shown — adjust to your workload requirements
+CONTENT_MAX_RESOURCE_SIZE=102400  # 100KB for resources (range: 1KB–10MB)
+CONTENT_MAX_PROMPT_SIZE=10240     # 10KB for prompt templates (range: 512B–1MB)
+```
+
+- [ ] Review default size limits for your use case
+- [ ] Monitor 413 responses in logs for legitimate content being blocked
+
+### 10. Container Security
 
 ```bash
 # Run containers with security constraints
@@ -443,7 +456,7 @@ docker run \
 - [ ] Set resource limits (CPU, memory)
 - [ ] Scan images for vulnerabilities
 
-### 10. Secrets Management
+### 11. Secrets Management
 
 - [ ] **Never store secrets in environment variables directly**
 - [ ] Use a secrets management system (Vault, AWS Secrets Manager, etc.)
@@ -451,7 +464,7 @@ docker run \
 - [ ] Restrict container access to secrets
 - [ ] Never commit `.env` files to version control
 
-### 11. MCP Server Validation
+### 12. MCP Server Validation
 
 Before connecting any MCP server:
 
@@ -461,7 +474,7 @@ Before connecting any MCP server:
 - [ ] Monitor server behavior for anomalies
 - [ ] Implement rate limiting for untrusted servers
 
-### 12. Database Security
+### 13. Database Security
 
 - [ ] Use TLS for database connections
 - [ ] Configure strong passwords
@@ -469,7 +482,7 @@ Before connecting any MCP server:
 - [ ] Enable audit logging
 - [ ] Regular backups with encryption
 
-### 13. Monitoring & Logging
+### 14. Monitoring & Logging
 
 - [ ] Set up structured logging without sensitive data
 - [ ] Configure log rotation and secure storage
@@ -477,7 +490,7 @@ Before connecting any MCP server:
 - [ ] Set up anomaly detection
 - [ ] Create incident response procedures
 
-### 14. Integration Security
+### 15. Integration Security
 
 ContextForge should be integrated with:
 
@@ -487,7 +500,7 @@ ContextForge should be integrated with:
 - [ ] SIEM for security monitoring
 - [ ] Load balancer with TLS termination
 
-### 15. Well-Known URI Security
+### 16. Well-Known URI Security
 
 Configure well-known URIs appropriately for your deployment:
 
@@ -511,7 +524,7 @@ Security considerations:
 - [ ] Update security.txt Expires field before expiration
 - [ ] Consider custom well-known files only if necessary
 
-### 16. Downstream Application Security
+### 17. Downstream Application Security
 
 Applications consuming ContextForge data must:
 

@@ -586,14 +586,14 @@ def test_validate_template_dangerous():
 
 
 def test_validate_template_length():
-    """Test template length validation."""
+    """Test template length passes schema validation (size enforced at service layer)."""
     # At limit (10000 chars)
     valid_template = "a" * 10000
     assert SecurityValidator.validate_template(valid_template) == valid_template
 
-    # Over limit
-    with pytest.raises(ValueError, match="exceeds maximum length"):
-        SecurityValidator.validate_template("a" * 10001)
+    # Over limit - schema no longer rejects; size enforcement is at service layer
+    over_limit = "a" * 10001
+    assert SecurityValidator.validate_template(over_limit) == over_limit
 
 
 # =============================================================================

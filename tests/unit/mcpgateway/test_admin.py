@@ -2413,6 +2413,29 @@ class TestAdminResourceRoutes:
         result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
+    @patch.object(ResourceService, "register_resource")
+    async def test_admin_add_resource_content_size_error(self, mock_register_resource, mock_request, mock_db, monkeypatch):
+        """Test adding resource with ContentSizeError."""
+        from mcpgateway.services.content_security import ContentSizeError
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+        )
+
+        mock_register_resource.side_effect = ContentSizeError(
+            content_type="resource",
+            actual_size=200000,
+            max_size=102400
+        )
+
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 413
+
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_validation_conflict_and_rollback_failure(self, mock_register_resource, mock_request, mock_db, monkeypatch):
@@ -2461,7 +2484,34 @@ class TestAdminResourceRoutes:
         assert mock_update_resource.call_args[0][1] == uri
 
     @patch.object(ResourceService, "update_resource")
-    async def test_admin_edit_resource_error_handlers(self, mock_update_resource, mock_request, mock_db, monkeypatch):
+    async def test_admin_edit_resource_content_size_error(self, mock_request, mock_db, monkeypatch):
+        """Test editing resource with ContentSizeError."""
+        from mcpgateway.services.content_security import ContentSizeError
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+
+        form_data = FakeForm({"uri": "/test/resource", "name": "Updated", "mimeType": "text/plain", "content": "x", "template": "t"})
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        # Mock the module-level resource_service instance
+        mock_update = AsyncMock(side_effect=ContentSizeError(
+            content_type="resource",
+            actual_size=200000,
+            max_size=102400
+        ))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
+
+        result = await admin_edit_resource("test-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 413
+
+    async def test_admin_edit_resource_error_handlers(self, mock_request, mock_db, monkeypatch):
         """Cover admin_edit_resource error branches (permission, validation, integrity, conflict, generic)."""
         # First-Party
         from mcpgateway.services.resource_service import ResourceURIConflictError
@@ -2474,24 +2524,34 @@ class TestAdminResourceRoutes:
         form_data = FakeForm({"uri": "/test/resource", "name": "Updated", "mimeType": "text/plain", "content": "x", "template": "t"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        mock_update_resource.side_effect = PermissionError("nope")
+        # Test PermissionError
+        mock_update = AsyncMock(side_effect=PermissionError("nope"))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 403
 
+        # Test ValidationError
         error_details = [InitErrorDetails(type="missing", loc=("name",), input={})]
-        mock_update_resource.side_effect = ValidationError.from_exception_data("test", error_details)
+        mock_update = AsyncMock(side_effect=ValidationError.from_exception_data("test", error_details))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 422
 
-        mock_update_resource.side_effect = IntegrityError("stmt", {}, Exception("constraint"))
+        # Test IntegrityError
+        mock_update = AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("constraint")))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 409
 
-        mock_update_resource.side_effect = ResourceURIConflictError("conflict")
+        # Test ResourceURIConflictError
+        mock_update = AsyncMock(side_effect=ResourceURIConflictError("conflict"))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 409
 
-        mock_update_resource.side_effect = Exception("boom")
+        # Test generic Exception
+        mock_update = AsyncMock(side_effect=Exception("boom"))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 500
 
@@ -2660,7 +2720,7 @@ class TestAdminPromptRoutes:
     @patch.object(PromptService, "register_prompt")
     async def test_admin_add_prompt_error_handlers(self, mock_register_prompt, mock_request, mock_db, monkeypatch):
         """Cover ValidationError/IntegrityError/name conflict and generic exception paths in admin_add_prompt."""
-        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
         from mcpgateway.services.prompt_service import PromptNameConflictError
 
         team_service = MagicMock()
@@ -2702,6 +2762,14 @@ class TestAdminPromptRoutes:
         mock_register_prompt.side_effect = RuntimeError("boom")
         resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert resp.status_code == 500
+        mock_register_prompt.side_effect = ContentSizeError(
+            content_type="prompt",
+            actual_size=20000,
+            max_size=10240
+        )
+        resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert resp.status_code == 413
+
 
     @patch.object(PromptService, "update_prompt")
     async def test_admin_edit_prompt_name_change(self, mock_update_prompt, mock_request, mock_db):
@@ -2825,6 +2893,16 @@ class TestAdminPromptRoutes:
         mock_update_prompt.side_effect = Exception("boom")
         response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 500
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_update_prompt.side_effect = ContentSizeError(
+            content_type="prompt",
+            actual_size=20000,
+            max_size=10240
+        )
+        response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert response.status_code == 413
+
 
     @patch.object(PromptService, "set_prompt_state")
     async def test_admin_set_prompt_state_edge_cases(self, mock_toggle_status, mock_request, mock_db):
