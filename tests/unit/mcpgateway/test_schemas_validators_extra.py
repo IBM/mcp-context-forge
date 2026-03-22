@@ -128,6 +128,41 @@ def test_tool_update_validators():
         ToolUpdate.prevent_manual_mcp_update({"integration_type": "A2A"})
 
 
+@pytest.mark.parametrize(
+    "pattern",
+    ["&&", ";", "||", "$(", "|", "> ", "< "],
+    ids=["double-amp", "semicolon", "double-pipe", "dollar-paren", "pipe", "redirect-out", "redirect-in"],
+)
+def test_tool_update_description_rejects_forbidden_patterns(pattern):
+    """ToolUpdate.validate_description must reject the same forbidden patterns as ToolCreate."""
+    payload = f"some text {pattern} more text"
+    with pytest.raises(ValueError, match="Description contains unsafe characters"):
+        ToolUpdate.validate_description(payload)
+
+
+def test_tool_update_description_accepts_safe_text():
+    """ToolUpdate.validate_description must accept clean descriptions."""
+    safe = "This is a perfectly safe tool description with `code` examples"
+    result = ToolUpdate.validate_description(safe)
+    assert result is not None
+
+
+def test_tool_update_description_accepts_none():
+    """ToolUpdate.validate_description must pass through None."""
+    assert ToolUpdate.validate_description(None) is None
+
+
+def test_tool_update_description_forbidden_patterns_match_tool_create():
+    """Ensure ToolCreate and ToolUpdate reject the exact same set of forbidden patterns."""
+    forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
+    for pat in forbidden_patterns:
+        payload = f"test {pat} injection"
+        with pytest.raises(ValueError, match="Description contains unsafe characters"):
+            ToolCreate.validate_description(payload)
+        with pytest.raises(ValueError, match="Description contains unsafe characters"):
+            ToolUpdate.validate_description(payload)
+
+
 def test_resource_update_content_and_description():
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 5)
     truncated = ResourceUpdate.validate_description(long_desc)

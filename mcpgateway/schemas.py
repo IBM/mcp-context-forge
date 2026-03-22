@@ -1041,13 +1041,13 @@ class ToolUpdate(BaseModelWithConfigDict):
     @field_validator("description")
     @classmethod
     def validate_description(cls, v: Optional[str]) -> Optional[str]:
-        """Ensure descriptions display safely
+        """Ensure descriptions display safely, truncate if too long
 
         Args:
             v (str): Value to validate
 
         Returns:
-            str: Value if validated as safe
+            str: Value if validated as safe and truncated if too long
 
         Raises:
             ValueError: When value is unsafe
@@ -1066,6 +1066,14 @@ class ToolUpdate(BaseModelWithConfigDict):
         """
         if v is None:
             return v
+
+        # Note: backticks (`) are allowed as they are commonly used in Markdown
+        # for inline code examples in tool descriptions
+        forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
+        for pat in forbidden_patterns:
+            if pat in v:
+                raise ValueError(f"Description contains unsafe characters: '{pat}'")
+
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
             truncated = v[: SecurityValidator.MAX_DESCRIPTION_LENGTH]
