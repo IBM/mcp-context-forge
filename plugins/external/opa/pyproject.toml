@@ -1,10 +1,10 @@
 # ----------------------------------------------------------------
 # 💡 Build system (PEP 517)
-#     - setuptools ≥ 77 gives SPDX licence support (PEP 639)
+#     - setuptools ≥ 78.1.1 gives SPDX licence support (PEP 639) and fixes CVE-2025-47273
 #     - wheel is needed by most build front-ends
 # ----------------------------------------------------------------
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = ["setuptools>=78.1.1", "wheel>=0.46.2"]
 build-backend = "setuptools.build_meta"
 
 # ----------------------------------------------------------------
@@ -64,7 +64,7 @@ mcp-contextforge-gateway = { git = "https://github.com/IBM/mcp-context-forge.git
 # ----------------------------------------------------------------
 [project.optional-dependencies]
 dev = [
-    "black>=26.1.0",
+    "black>=26.3.0",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
@@ -73,8 +73,8 @@ dev = [
     "pytest-rerunfailures>=16.1",
     "pytest-trio>=0.8.0",
     "pytest-xdist>=3.8.0",
-    "ruff>=0.15.1",
-    "uv>=0.10.4",
+    "ruff>=0.15.5",
+    "uv>=0.10.9",
 ]
 
 # --------------------------------------------------------------------

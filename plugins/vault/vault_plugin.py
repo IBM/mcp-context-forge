@@ -120,8 +120,8 @@ class Vault(Plugin):
         Returns:
             Result with potentially modified headers containing bearer token.
         """
-        logger.debug(f"Processing tool pre-invoke for tool {payload}  with context {context}")
-        logger.debug(f"Gateway metadata {context.global_context.metadata['gateway']}")
+        logger.debug("Processing tool pre-invoke for tool %s", payload.name)
+        logger.debug("Gateway metadata for server %s", context.global_context.server_id)
 
         gateway_metadata = context.global_context.metadata.get("gateway")
 
@@ -144,13 +144,13 @@ class Vault(Plugin):
             system_tag = next((tag for tag in normalized_tags if tag.startswith(system_prefix)), None)
             if system_tag:
                 system_key = system_tag.split(system_prefix)[1]
-                logger.info(f"Using vault system from GW tags: {system_key}")
+                logger.debug("Using vault system from GW tags: %s", system_key)
             # Find auth header tag with the configured prefix (e.g., "AUTH_HEADER:X-GitHub-Token")
             auth_header_prefix = self._sconfig.auth_header_tag_prefix + ":"
             auth_header_tag = next((tag for tag in normalized_tags if tag.startswith(auth_header_prefix)), None)
             if auth_header_tag:
                 auth_header = auth_header_tag.split(auth_header_prefix)[1]
-                logger.info(f"Found AUTH_HEADER tag: {auth_header}")
+                logger.debug("Found AUTH_HEADER tag: %s", auth_header)
 
         elif self._sconfig.system_handling == SystemHandling.OAUTH2_CONFIG:
             gen = get_db()
@@ -160,23 +160,24 @@ class Vault(Plugin):
                 gw_id = context.global_context.server_id
                 if gw_id:
                     gateway = await gateway_service.get_gateway(db, gw_id)
-                    logger.info(f"Gateway used {gateway.oauth_config}")
+                    logger.debug("Gateway oauth_config resolved")
                     if gateway.oauth_config and "token_url" in gateway.oauth_config:
                         token_url = gateway.oauth_config["token_url"]
                         parsed_url = urlparse(token_url)
                         system_key = parsed_url.hostname
-                        logger.info(f"Using vault system from oauth_config: {system_key}")
+                        logger.debug("Using vault system from oauth_config: %s", system_key)
             finally:
                 gen.close()
 
         if not system_key:
             logger.warning("System cannot be determined from gateway metadata.")
             # SECURITY: Strip vault header even when system cannot be determined
-            hdrs: dict[str, str] = payload.headers.model_dump() if payload.headers else {}
-            if self._sconfig.vault_header_name in hdrs:
-                del hdrs[self._sconfig.vault_header_name]
-                payload.headers = HttpHeaderPayload(root=hdrs)
-                return ToolPreInvokeResult(modified_payload=payload)
+            if payload.headers:
+                safe_headers = payload.headers.model_dump()
+                if self._sconfig.vault_header_name in safe_headers:
+                    del safe_headers[self._sconfig.vault_header_name]
+                    payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=safe_headers)})
+                    return ToolPreInvokeResult(modified_payload=payload)
             return ToolPreInvokeResult()
 
         modified = False
@@ -184,16 +185,16 @@ class Vault(Plugin):
 
         # Check if vault header exists
         if self._sconfig.vault_header_name not in headers:
-            logger.debug(f"Vault header '{self._sconfig.vault_header_name}' not found in headers")
+            logger.debug("Vault header '%s' not found in headers", self._sconfig.vault_header_name)
             return ToolPreInvokeResult()
 
         try:
             vault_tokens = orjson.loads(headers[self._sconfig.vault_header_name])
         except (orjson.JSONDecodeError, TypeError) as e:
-            logger.error(f"Failed to parse vault tokens from header: {e}")
+            logger.error("Failed to parse vault tokens from header: %s", e)
             # SECURITY: Always remove vault header even on parse error
             del headers[self._sconfig.vault_header_name]
-            payload.headers = HttpHeaderPayload(root=headers)
+            payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
             return ToolPreInvokeResult(modified_payload=payload)
 
         # SECURITY: Always remove vault header immediately after successful parsing
@@ -201,10 +202,10 @@ class Vault(Plugin):
         del headers[self._sconfig.vault_header_name]
 
         if not isinstance(vault_tokens, dict):
-            logger.error(f"Vault tokens header is not a JSON object: {type(vault_tokens).__name__}")
-            payload.headers = HttpHeaderPayload(root=headers)
+            logger.error("Vault tokens header is not a JSON object: %s", type(vault_tokens).__name__)
+            payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
             return ToolPreInvokeResult(modified_payload=payload)
-        logger.debug(f"Removed vault header '{self._sconfig.vault_header_name}' from headers")
+        logger.debug("Removed vault header '%s' from headers", self._sconfig.vault_header_name)
 
         vault_handling = self._sconfig.vault_handling
 
@@ -215,7 +216,7 @@ class Vault(Plugin):
         if system_key in vault_tokens:
             token_value = str(vault_tokens[system_key])
             token_key_used = str(system_key)
-            logger.info(f"Found exact match for system key: {system_key}")
+            logger.debug("Found exact match for system key: %s", system_key)
         else:
             # Try to find a key that starts with system_key (complex key format)
             for key in vault_tokens.keys():
@@ -223,7 +224,7 @@ class Vault(Plugin):
                 if parsed_system == system_key:
                     token_value = vault_tokens[key]
                     token_key_used = key
-                    logger.info(f"Found matching token with complex key: {key} (system: {parsed_system}, scope: {scope}, type: {token_type}, name: {token_name})")
+                    logger.debug("Found matching token with complex key for system: %s", parsed_system)
                     break
 
         if token_value and token_key_used:
@@ -232,41 +233,38 @@ class Vault(Plugin):
             # Determine how to handle the token based on token_type and AUTH_HEADER tag
             if token_type == "PAT":
                 # Handle Personal Access Token
-                logger.info(f"Processing PAT token for system: {parsed_system}")
+                logger.debug("Processing PAT token for system: %s", parsed_system)
                 # Check if AUTH_HEADER tag is defined
                 if auth_header:
-                    logger.info(f"Using AUTH_HEADER tag for {parsed_system}: header={auth_header}")
+                    logger.debug("Using AUTH_HEADER tag for %s: header=%s", parsed_system, auth_header)
                     headers[auth_header] = str(token_value)
                     modified = True
                 else:
                     # No AUTH_HEADER tag, use default Bearer token
-                    logger.info(f"No AUTH_HEADER tag found for {parsed_system}, using Bearer token")
+                    logger.debug("No AUTH_HEADER tag found for %s, using Bearer token", parsed_system)
                     headers["Authorization"] = f"Bearer {token_value}"
                     modified = True
             elif token_type == "OAUTH2" or token_type is None:
                 # Handle OAuth2 token or default behavior (when token_type is missing)
                 if vault_handling == VaultHandling.RAW:
-                    logger.info(f"Set Bearer token for system: {parsed_system}")
+                    logger.debug("Set Bearer token for system: %s", parsed_system)
                     headers["Authorization"] = f"Bearer {token_value}"
                     modified = True
             else:
                 # Unknown token type, use default behavior
-                logger.warning(f"Unknown token type '{token_type}', using default Bearer token")
+                logger.warning("Unknown token type '%s', using default Bearer token", token_type)
                 if vault_handling == VaultHandling.RAW:
                     headers["Authorization"] = f"Bearer {token_value}"
                     modified = True
 
-            payload.headers = HttpHeaderPayload(root=headers)
-
         if modified:
-            logger.info(f"Modified tool '{payload.name}' to add auth header")
-            return ToolPreInvokeResult(modified_payload=payload)
+            logger.debug("Modified tool '%s' to add auth header", payload.name)
+        elif not token_value:
+            # Even if we didn't modify headers (no token match), we still removed the vault header
+            logger.warning("Vault tokens provided but no match found for system '%s' - possible misconfiguration", system_key)
 
-        # Even if we didn't modify headers (no token match), we still removed the vault header
-        # so we need to return the modified payload
-        if not token_value:
-            logger.warning(f"Vault tokens provided but no match found for system '{system_key}' - possible misconfiguration")
-        payload.headers = HttpHeaderPayload(root=headers)
+        # Always return modified payload since the vault header was stripped
+        payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
         return ToolPreInvokeResult(modified_payload=payload)
 
     async def shutdown(self) -> None:

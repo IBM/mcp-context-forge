@@ -29,5 +29,8 @@
     "overrides": {
         "keyv": "5.1.0",
         "minimatch": ">=10.2.1"
+    },
+    "dependencies": {
+        "alpinejs": "^3.15.8"
     }
 }

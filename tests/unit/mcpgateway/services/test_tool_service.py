@@ -10,7 +10,7 @@ Tests for tool service implementation.
 # Standard
 import asyncio
 import base64
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 import logging
 import time
@@ -30,6 +30,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.plugins.framework import PluginManager
+from mcpgateway.plugins.framework.hooks.tools import ToolHookType
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     _decrypt_tool_header_value,
@@ -125,7 +126,6 @@ def setup_db_execute_mock(test_db, mock_tool, mock_global_config):
     mock_scalar_tool.scalars.return_value = mock_scalar_tool
     mock_scalar_tool.all.return_value = [mock_tool] if mock_tool else []
 
-
     test_db.execute = Mock(return_value=mock_scalar_tool)
 
     # Mock db.query() for GlobalConfig cache (Issue #1715)
@@ -216,14 +216,26 @@ class TestToolServiceHelpersExtended:
 
     def test_tool_service_plugin_env_override(self, monkeypatch):
         """PLUGINS_ENABLED env flag should override settings."""
+        # First-Party
+        import mcpgateway.plugins.framework as pf_mod  # pylint: disable=import-outside-toplevel
+        from mcpgateway.plugins.framework.settings import settings as plugin_settings  # pylint: disable=import-outside-toplevel
+
+        # Reset singleton so get_plugin_manager() re-evaluates settings
+        monkeypatch.setattr(pf_mod, "_plugin_manager", None)
         monkeypatch.setenv("PLUGINS_ENABLED", "yes")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+        plugin_settings.cache_clear()
+
+        with patch("mcpgateway.plugins.framework.PluginManager") as mock_pm:
             service = ToolService()
         assert service._plugin_manager is not None
         mock_pm.assert_called_once()
 
+        # Reset singleton again for the disabled case
+        monkeypatch.setattr(pf_mod, "_plugin_manager", None)
         monkeypatch.setenv("PLUGINS_ENABLED", "no")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+        plugin_settings.cache_clear()
+
+        with patch("mcpgateway.plugins.framework.PluginManager") as mock_pm:
             service = ToolService()
         assert service._plugin_manager is None
         mock_pm.assert_not_called()
@@ -236,9 +248,15 @@ class TestToolServiceHelpersExtended:
 
         service = ToolService()
         cached = [SimpleNamespace(id="tool-1")]
+        # Only return cached for the key get_top_tools uses (default limit=5, include_deleted=False).
+        # Other keys (e.g. "a2a", "tools") must get None to avoid polluting aggregate_metrics tests.
+        top_tools_key = "top_tools:5:include_deleted=False"
+
+        def get_only_top_tools(key):
+            return cached if key == top_tools_key else None
 
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
-        cache_module.metrics_cache.get = MagicMock(return_value=cached)
+        monkeypatch.setattr(cache_module.metrics_cache, "get", MagicMock(side_effect=get_only_top_tools))
 
         mock_combined = MagicMock()
         monkeypatch.setattr("mcpgateway.services.tool_service.get_top_performers_combined", mock_combined)
@@ -487,6 +505,28 @@ class TestToolService:
         assert tool_read.auth.auth_type == "authheaders"
         assert tool_read.auth.auth_header_key == "test-api-key"
         assert tool_read.auth.auth_header_value == settings.masked_auth_value
+        # Verify multi-header format (authHeaders array)
+        assert tool_read.auth.authHeaders is not None
+        assert len(tool_read.auth.authHeaders) == 1
+        assert tool_read.auth.authHeaders[0]["key"] == "test-api-key"
+        assert tool_read.auth.authHeaders[0]["value"] == settings.masked_auth_value
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_authheaders_multi(self, tool_service, mock_tool):
+        """Check auth for authheaders with multiple headers returns all headers."""
+        mock_tool.auth_type = "authheaders"
+        mock_tool.auth_value = encode_auth({"X-API-Key": "secret1", "X-Custom": "secret2"})
+        tool_read = tool_service.convert_tool_to_read(mock_tool)
+
+        assert tool_read.auth.auth_type == "authheaders"
+        assert tool_read.auth.authHeaders is not None
+        assert len(tool_read.auth.authHeaders) == 2
+        header_keys = [h["key"] for h in tool_read.auth.authHeaders]
+        assert "X-API-Key" in header_keys
+        assert "X-Custom" in header_keys
+        # All values should be masked
+        for h in tool_read.auth.authHeaders:
+            assert h["value"] == settings.masked_auth_value
 
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_authheaders_empty(self, tool_service, mock_tool):
@@ -1079,7 +1119,7 @@ class TestToolService:
         test_db.commit = Mock()
 
         mock_team = MagicMock(id="team-1", is_personal=True)
-        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
             tool_service.convert_tool_to_read = Mock(side_effect=[MagicMock(), MagicMock()])
 
@@ -1092,16 +1132,19 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_list_tools_denies_unknown_team(self, tool_service, test_db):
         """Test list_tools returns empty when user lacks team membership."""
-        test_db.execute = Mock()
+        # Mock DB execute chain for unified_paginate: execute().scalars().all()
+        # Returns empty list because query has WHERE FALSE condition
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[])))))
         mock_team = MagicMock(id="other-team", is_personal=True)
 
-        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
             result, next_cursor = await tool_service.list_tools(test_db, user_email="user@example.com", team_id="team-1")
 
         assert result == []
         assert next_cursor is None
-        test_db.execute.assert_not_called()
+        # Query IS executed but returns empty due to WHERE FALSE condition
+        test_db.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_list_tools_with_limit(self, tool_service, test_db, monkeypatch):
@@ -1321,6 +1364,39 @@ class TestToolService:
         assert len(captured_tools) == 1
         assert captured_tools[0]["team"] == "Engineering Team"
         assert captured_tools[0]["team_id"] == "team-123"
+
+    @pytest.mark.asyncio
+    async def test_list_server_tools_with_include_metrics_true(self):
+        """Test that list_server_tools eager loads metrics when include_metrics=True.
+
+        This test ensures that when include_metrics=True, the query includes
+        selectinload for both metrics and metrics_hourly relationships to prevent N+1 queries.
+        Regression test for PR #3649 performance optimization.
+        """
+        mock_db = Mock()
+        mock_tool = Mock(enabled=True, team_id=None, team=None)
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_tool]
+
+        service = ToolService()
+        service.convert_tool_to_read = Mock(return_value="converted_tool_with_metrics")
+
+        # Call with include_metrics=True to trigger eager loading code path
+        tools = await service.list_server_tools(
+            mock_db,
+            server_id="server123",
+            include_metrics=True
+        )
+
+        assert tools == ["converted_tool_with_metrics"]
+        # Verify convert_tool_to_read was called with include_metrics=True
+        service.convert_tool_to_read.assert_called_once_with(
+            mock_tool,
+            include_metrics=True,  # This exercises the eager loading code path
+            include_auth=False,
+            requesting_user_email=None,
+            requesting_user_is_admin=False,
+            requesting_user_team_roles=None
+        )
 
     @pytest.mark.asyncio
     async def test_get_tool(self, tool_service, mock_tool, test_db):
@@ -1962,9 +2038,10 @@ class TestToolService:
         tool_service._http_client.get = AsyncMock(return_value=mock_response)
 
         # ------------- metrics -----------------
-        # Mock the metrics buffer service
+        # Mock the metrics buffer at module level
         mock_metrics_buffer = Mock()
-        with patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer):
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
             # -------------- invoke -----------------
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
@@ -1991,10 +2068,11 @@ class TestToolService:
         tool_service._http_client.get = AsyncMock(return_value=mock_response)
 
         # ------------- metrics -----------------
-        tool_service._record_tool_metric_sync = Mock()
-
-        # -------------- invoke -----------------
-        result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            # -------------- invoke -----------------
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
         assert result.content[0].text == "Request completed successfully (No Content)"
 
@@ -2007,10 +2085,11 @@ class TestToolService:
         tool_service._http_client.get = AsyncMock(return_value=mock_response)
 
         # ------------- metrics -----------------
-        tool_service._record_tool_metric_sync = Mock()
-
-        # -------------- invoke -----------------
-        result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            # -------------- invoke -----------------
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
         assert result.content[0].text == "Tool error encountered"
 
@@ -2033,10 +2112,11 @@ class TestToolService:
         mock_response.json = Mock(return_value={"result": "REST tool response"})  # Make json() synchronous
         tool_service._http_client.request.return_value = mock_response
 
-        # Mock metrics buffer service and other dependencies
+        # Mock metrics buffer at module level and other dependencies
         mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
         with (
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
             patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}),
         ):
@@ -2089,12 +2169,7 @@ class TestToolService:
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=Mock()),
             patch(
                 "mcpgateway.services.tool_service.decode_auth",
-                side_effect=lambda value: (
-                    {"value": "Bearer runtime-secret"}
-                    if value
-                    == mock_tool.headers["Authorization"]["_mcpgateway_encrypted_header_value_v1"]
-                    else {}
-                ),
+                side_effect=lambda value: {"value": "Bearer runtime-secret"} if value == mock_tool.headers["Authorization"]["_mcpgateway_encrypted_header_value_v1"] else {},
             ),
             patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}),
         ):
@@ -2155,8 +2230,9 @@ class TestToolService:
         jq_error = [TextContent(type="text", text="Error applying jsonpath filter")]
 
         mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
         with (
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
             patch("mcpgateway.services.tool_service.extract_using_jq", return_value=jq_error),
         ):
@@ -2553,6 +2629,73 @@ class TestToolService:
         assert test_db.execute.called
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_cache_hit_hydrates_authheaders_dict_from_db(self, tool_service, test_db):
+        """Cache-miss hydration encodes DbGateway.auth_value dict (JSON col) to str for downstream use."""
+        cached_payload = {
+            "status": "active",
+            "tool": {
+                "id": "tool-cache-2",
+                "name": "cached_tool_ah",
+                "original_name": "cached_tool_ah",
+                "url": "http://example.com/tool",
+                "integration_type": "ABC",
+                "request_type": "POST",
+                "auth_type": "authheaders",
+                "headers": {},
+                "annotations": {},
+                "jsonpath_filter": "",
+                "output_schema": {},
+                "enabled": True,
+                "reachable": True,
+                "visibility": "public",
+                "owner_email": None,
+                "team_id": None,
+                "gateway_id": "gw-cache-2",
+            },
+            "gateway": {
+                "id": "gw-cache-2",
+                "name": "cached-gw-ah",
+                "url": "http://example.com/gateway",
+                "auth_type": "authheaders",
+                "passthrough_headers": [],
+            },
+        }
+
+        lookup_cache = SimpleNamespace(
+            enabled=True,
+            get=AsyncMock(return_value=cached_payload),
+            set=AsyncMock(),
+            set_negative=AsyncMock(),
+        )
+
+        # DbGateway.auth_value is a JSON dict — the path under test encodes it
+        hydrated_gateway = SimpleNamespace(
+            auth_value={"X-Custom-Auth-Header": "my-token"},
+            auth_query_params=None,
+            oauth_config=None,
+        )
+        hydrated_tool = SimpleNamespace(
+            auth_value=None,
+            oauth_config=None,
+            gateway=hydrated_gateway,
+        )
+        hydration_result = Mock()
+        hydration_result.scalar_one_or_none.return_value = hydrated_tool
+        test_db.execute = Mock(return_value=hydration_result)
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.encode_auth", wraps=encode_auth) as spy_encode,
+        ):
+            response = await tool_service.invoke_tool(test_db, "cached_tool_ah", {"param": "value"}, request_headers=None)
+
+        assert response.content[0].text == "Invalid tool type"
+        assert test_db.execute.called
+        # Verify the hydration path actually called encode_auth on the dict
+        spy_encode.assert_called_once_with({"X-Custom-Auth-Header": "my-token"})
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_mcp_tool_basic_auth(self, tool_service, mock_tool, mock_gateway, test_db):
         """Test invoking an invalid tool type."""
         # Basic auth_value
@@ -2603,8 +2746,10 @@ class TestToolService:
             class Result:
                 def scalar_one_or_none(self_inner):
                     return value
+
                 def scalars(self_inner):
                     return self_inner
+
                 def all(self_inner):
                     return [value] if value else []
 
@@ -2671,10 +2816,11 @@ class TestToolService:
         # Mock HTTP client to raise an error
         tool_service._http_client.request.side_effect = Exception("HTTP error")
 
-        # Mock metrics buffer service and decode_auth
+        # Mock metrics buffer at module level and decode_auth
         mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
         with (
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
         ):
             # Should raise ToolInvocationError
@@ -2759,10 +2905,11 @@ class TestToolService:
         # Mock HTTP client to raise an ExceptionGroup
         tool_service._http_client.request.side_effect = outer_group
 
-        # Mock metrics buffer service and decode_auth
+        # Mock metrics buffer at module level and decode_auth
         mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
         with (
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
         ):
             # Should raise ToolInvocationError with the unwrapped root cause message
@@ -2866,6 +3013,7 @@ class TestToolService:
 
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
+        from mcpgateway.schemas import ToolMetrics
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         cache_module.metrics_cache.invalidate("tools")
@@ -2891,16 +3039,15 @@ class TestToolService:
         with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
             result = await tool_service.aggregate_metrics(mock_db)
 
-        assert result == {
-            "total_executions": 10,
-            "successful_executions": 8,
-            "failed_executions": 2,
-            "failure_rate": 0.2,
-            "min_response_time": 0.5,
-            "max_response_time": 5.0,
-            "avg_response_time": 2.3,
-            "last_execution_time": "2025-01-10T12:00:00",
-        }
+        assert isinstance(result, ToolMetrics)
+        assert result.total_executions == 10
+        assert result.successful_executions == 8
+        assert result.failed_executions == 2
+        assert result.failure_rate == 0.2
+        assert result.min_response_time == 0.5
+        assert result.max_response_time == 5.0
+        assert result.avg_response_time == 2.3
+        assert str(result.last_execution_time) == "2025-01-10 12:00:00"
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics_no_data(self, tool_service, monkeypatch):
@@ -2910,6 +3057,7 @@ class TestToolService:
 
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
+        from mcpgateway.schemas import ToolMetrics
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         cache_module.metrics_cache.invalidate("tools")
@@ -2935,16 +3083,15 @@ class TestToolService:
         with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
             result = await tool_service.aggregate_metrics(mock_db)
 
-        assert result == {
-            "total_executions": 0,
-            "successful_executions": 0,
-            "failed_executions": 0,
-            "failure_rate": 0.0,
-            "min_response_time": None,
-            "max_response_time": None,
-            "avg_response_time": None,
-            "last_execution_time": None,
-        }
+        assert isinstance(result, ToolMetrics)
+        assert result.total_executions == 0
+        assert result.successful_executions == 0
+        assert result.failed_executions == 0
+        assert result.failure_rate == 0.0
+        assert result.min_response_time is None
+        assert result.max_response_time is None
+        assert result.avg_response_time is None
+        assert result.last_execution_time is None
 
     async def test_validate_tool_url_success(self, tool_service):
         """Test successful tool URL validation."""
@@ -3111,7 +3258,7 @@ class TestToolService:
 
         bind = MagicMock()
         bind.dialect = MagicMock()
-        bind.dialect.name = "sqlite"  # or "postgresql" or "mysql"
+        bind.dialect.name = "sqlite"  # or "postgresql"
         session.get_bind.return_value = bind
 
         # Mock convert_tool_to_read
@@ -3870,7 +4017,7 @@ class TestToolServiceTokenTeamsFiltering:
         mock_team = MagicMock(id="team_a", is_personal=False)
 
         # When token_teams is None, TeamManagementService SHOULD be called
-        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+        with patch("mcpgateway.services.base_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
             result, _ = await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=None)
 
@@ -4050,7 +4197,6 @@ class TestToolListingGracefulErrorHandling:
         # Use patch.object to properly mock the instance method
         # Also patch _get_registry_cache to ensure we don't hit polluted cache
         with patch.object(service, "convert_tool_to_read", side_effect=mock_convert), patch("mcpgateway.services.tool_service._get_registry_cache") as mock_get_cache:
-
             # Setup mock cache to miss and handle async set
             mock_get_cache.return_value.get = AsyncMock(return_value=None)
             mock_get_cache.return_value.set = AsyncMock()
@@ -4194,7 +4340,8 @@ class TestToolListingGracefulErrorHandling:
     @pytest.mark.asyncio
     async def test_list_tools_for_user_team_no_access(self, tool_service, test_db):
         """Team filter should return empty when user lacks access."""
-        test_db.execute = Mock()
+        # Mock DB execute - should NOT be called due to early return
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[])))))
         mock_team = MagicMock(id="team-1", is_personal=True)
 
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
@@ -4203,6 +4350,7 @@ class TestToolListingGracefulErrorHandling:
 
         assert result == []
         assert next_cursor is None
+        # Early return when user lacks team access - no DB query executed
         test_db.execute.assert_not_called()
 
 
@@ -6397,6 +6545,1240 @@ class TestInvokeToolDirectProxyViaHeader:
                     {},
                     request_headers=request_headers,
                 )
+
+
+class TestRustMcpExecutionPlan:
+    """Tests for ToolService.prepare_rust_mcp_tool_execution()."""
+
+    @pytest.fixture
+    def mock_direct_gateway(self):
+        """Create a direct-proxy gateway payload for header-based lookup tests."""
+        return SimpleNamespace(
+            id="gw-dp-1",
+            name="direct_proxy_gw",
+            slug="direct-proxy-gw",
+            url="http://remote-mcp:8080/mcp",
+            gateway_mode="direct_proxy",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value={"Authorization": "Bearer remote-token"},
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            passthrough_headers=[],
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            signing_algorithm=None,
+            transport="STREAMABLEHTTP",
+        )
+
+    @staticmethod
+    def _cache_payload(**tool_overrides):
+        gateway_payload = {
+            "id": "gw-1",
+            "name": "gateway-one",
+            "url": "http://gateway.example/mcp",
+            "auth_type": None,
+            "auth_value": None,
+            "auth_query_params": None,
+            "oauth_config": None,
+            "ca_certificate": None,
+            "ca_certificate_sig": None,
+            "passthrough_headers": [],
+        }
+        gateway_payload.update(tool_overrides.pop("gateway", {}))
+        tool_payload = {
+            "id": "tool-1",
+            "name": "tool-one",
+            "original_name": "tool-one",
+            "enabled": True,
+            "reachable": True,
+            "integration_type": "MCP",
+            "request_type": "streamablehttp",
+            "gateway_id": "gw-1",
+            "jsonpath_filter": None,
+            "timeout_ms": None,
+        }
+        tool_payload.update(tool_overrides)
+        return {"status": "active", "tool": tool_payload, "gateway": gateway_payload}
+
+    @staticmethod
+    def _cache_mock(payload):
+        mock_cache = AsyncMock()
+        mock_cache.enabled = True
+        mock_cache.get = AsyncMock(return_value=payload)
+        mock_cache.set = AsyncMock()
+        mock_cache.set_negative = AsyncMock()
+        return mock_cache
+
+    def _setup_db_for_header_lookup(self, test_db, gateway, tool=None):
+        """Set up execute() to return gateway on first call and tool on subsequent calls."""
+        call_count = [0]
+
+        def execute_side_effect(*_args, **_kwargs):
+            call_count[0] += 1
+            result = Mock()
+            if call_count[0] == 1:
+                result.scalar_one_or_none.return_value = gateway
+            else:
+                result.scalar_one_or_none.return_value = tool
+                result.scalars.return_value = result
+                result.all.return_value = [tool] if tool else []
+            return result
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+    @pytest.mark.asyncio
+    async def test_list_server_mcp_tool_definitions_public_only_and_output_schema(self, tool_service):
+        """Server-scoped MCP tool definitions should include outputSchema only when present."""
+        rows = [
+            {
+                "name": "tool-public",
+                "description": "desc",
+                "input_schema": {"type": "object"},
+                "output_schema": None,
+                "annotations": None,
+                "owner_email": None,
+                "team_id": None,
+                "visibility": "public",
+            },
+            {
+                "name": "tool-team",
+                "description": "team-desc",
+                "input_schema": None,
+                "output_schema": {"type": "object"},
+                "annotations": {"title": "Team"},
+                "owner_email": "owner@example.com",
+                "team_id": "team-a",
+                "visibility": "team",
+            },
+        ]
+        db = MagicMock()
+        db.execute.return_value.mappings.return_value.all.return_value = rows
+
+        payload = await tool_service.list_server_mcp_tool_definitions(
+            db,
+            "srv-1",
+            include_inactive=False,
+            user_email="owner@example.com",
+            token_teams=["team-a"],
+        )
+
+        assert payload == [
+            {
+                "name": "tool-public",
+                "description": "desc",
+                "inputSchema": {"type": "object"},
+                "annotations": {},
+            },
+            {
+                "name": "tool-team",
+                "description": "team-desc",
+                "inputSchema": {"type": "object", "properties": {}},
+                "annotations": {"title": "Team"},
+                "outputSchema": {"type": "object"},
+            },
+        ]
+        db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_post_invoke_hooks_force_fallback(self, tool_service):
+        """Post-invoke hooks should force fallback even when pre-invoke hooks are also registered."""
+        tool_service._plugin_manager = MagicMock()
+        tool_service._plugin_manager.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type in (ToolHookType.TOOL_PRE_INVOKE, ToolHookType.TOOL_POST_INVOKE))
+
+        with patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+        assert plan == {"eligible": False, "fallbackReason": "post-invoke-hooks-configured"}
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_trace_id_forces_fallback(self, tool_service):
+        """Active observability trace should bypass Rust direct execution."""
+        tool_service._plugin_manager = None
+
+        with patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value="trace-1"))):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+        assert plan == {"eligible": False, "fallbackReason": "observability-trace-active"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status", "error_match"),
+        [
+            ("missing", "Tool not found"),
+            ("inactive", "exists but is inactive"),
+            ("offline", "currently offline"),
+        ],
+    )
+    async def test_prepare_rust_mcp_tool_execution_respects_negative_cache_entries(self, tool_service, status, error_match):
+        """Negative cache entries should short-circuit with the expected error."""
+        cache = self._cache_mock({"status": status})
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+        ):
+            with pytest.raises(ToolNotFoundError, match=error_match):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_direct_proxy_fallback(self, tool_service):
+        """Direct-proxy gateways should fall back to the Python execution path."""
+        gateway = SimpleNamespace(
+            id="gw-1",
+            name="gw",
+            url="http://gateway.example/mcp",
+            gateway_mode="direct_proxy",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            passthrough_headers=[],
+        )
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.settings.mcpgateway_direct_proxy_enabled", True),
+            patch("mcpgateway.services.tool_service.check_gateway_access", new=AsyncMock(return_value=True)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                db,
+                "tool-one",
+                request_headers={"x-context-forge-gateway-id": "gw-1"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan == {"eligible": False, "fallbackReason": "direct-proxy"}
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_direct_proxy_access_denied(self, tool_service):
+        """Direct-proxy lookup should deny inaccessible gateways as not-found."""
+        gateway = SimpleNamespace(
+            id="gw-1",
+            name="gw",
+            url="http://gateway.example/mcp",
+            gateway_mode="direct_proxy",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            passthrough_headers=[],
+        )
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.settings.mcpgateway_direct_proxy_enabled", True),
+            patch("mcpgateway.services.tool_service.check_gateway_access", new=AsyncMock(return_value=False)),
+        ):
+            with pytest.raises(ToolNotFoundError, match="Tool not found"):
+                await tool_service.prepare_rust_mcp_tool_execution(
+                    db,
+                    "tool-one",
+                    request_headers={"x-context-forge-gateway-id": "gw-1"},
+                    user_email="user@example.com",
+                    token_teams=["team-a"],
+                )
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_loads_missing_tool_from_db(self, tool_service):
+        """DB lookup should raise not-found when no invocable tool exists."""
+        cache = self._cache_mock(None)
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[]),
+        ):
+            with pytest.raises(ToolNotFoundError, match="Tool not found"):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_rejects_ambiguous_accessible_tool_candidates(self, tool_service):
+        """Multiple equally visible accessible tools should be treated as ambiguous."""
+        cache = self._cache_mock(None)
+        tool_service._plugin_manager = None
+        candidate_a = SimpleNamespace(
+            enabled=True,
+            reachable=True,
+            visibility="team",
+            team_id="team-a",
+            owner_email="user@example.com",
+            gateway=SimpleNamespace(),
+        )
+        candidate_b = SimpleNamespace(
+            enabled=True,
+            reachable=True,
+            visibility="team",
+            team_id="team-b",
+            owner_email="user@example.com",
+            gateway=SimpleNamespace(),
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[candidate_a, candidate_b]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            with pytest.raises(ToolInvocationError, match="ambiguous"):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", user_email="user@example.com", token_teams=["team-a"])
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_selects_highest_priority_accessible_candidate(self, tool_service):
+        """A single best-priority accessible candidate should be selected successfully."""
+        cache = self._cache_mock(None)
+        tool_service._plugin_manager = None
+        selected_gateway = SimpleNamespace(
+            id="gw-1",
+            name="gateway-one",
+            url="http://gateway.example/mcp",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            passthrough_headers=[],
+        )
+        candidate_team = SimpleNamespace(
+            id="tool-team",
+            enabled=True,
+            reachable=True,
+            visibility="team",
+            team_id="team-a",
+            owner_email="user@example.com",
+            gateway=selected_gateway,
+        )
+        candidate_public = SimpleNamespace(
+            id="tool-public",
+            enabled=True,
+            reachable=True,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            gateway=selected_gateway,
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda request_headers, headers, *_args, **_kwargs: headers),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[candidate_public, candidate_team]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(side_effect=[True, True, True])),
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=self._cache_payload(id="tool-team", gateway_id="gw-1")),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan["eligible"] is True
+        assert plan["gatewayId"] == "gw-1"
+        assert plan["toolName"] == "tool-one"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_rejects_inaccessible_db_candidates(self, tool_service):
+        """DB-loaded candidates with no accessible match should surface as not-found."""
+        cache = self._cache_mock(None)
+        tool_service._plugin_manager = None
+        candidate_a = SimpleNamespace(enabled=True, reachable=True, visibility="team", team_id="team-a", owner_email="user@example.com", gateway=SimpleNamespace())
+        candidate_b = SimpleNamespace(enabled=True, reachable=True, visibility="public", team_id=None, owner_email=None, gateway=SimpleNamespace())
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[candidate_a, candidate_b]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=False)),
+        ):
+            with pytest.raises(ToolNotFoundError, match="Tool not found"):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", user_email="user@example.com", token_teams=["team-a"])
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_rejects_inactive_db_tool(self, tool_service):
+        """Inactive DB-loaded tools should fail before plan generation."""
+        cache = self._cache_mock(None)
+        tool_service._plugin_manager = None
+        tool = SimpleNamespace(
+            enabled=False,
+            reachable=True,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            gateway=SimpleNamespace(),
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[tool]),
+        ):
+            with pytest.raises(ToolNotFoundError, match="inactive"):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_marks_unreachable_tools_offline_and_caches_negative_result(self, tool_service):
+        """Unreachable DB-loaded tools should set a negative cache entry before failing."""
+        cache = self._cache_mock(None)
+        tool_service._plugin_manager = None
+        tool = SimpleNamespace(
+            enabled=True,
+            reachable=False,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            gateway=SimpleNamespace(),
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[tool]),
+        ):
+            with pytest.raises(ToolNotFoundError, match="currently offline"):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+        cache.set_negative.assert_awaited_once_with("tool-one", "offline")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("payload", "error_match"),
+        [
+            ({"enabled": False}, "inactive"),
+            ({"reachable": False}, "currently offline"),
+        ],
+    )
+    async def test_prepare_rust_mcp_tool_execution_rejects_inactive_or_offline_cached_payloads(self, tool_service, payload, error_match):
+        """Cached payloads should honor enabled/reachable flags before plan generation."""
+        cache = self._cache_mock(self._cache_payload(**payload))
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+        ):
+            with pytest.raises(ToolNotFoundError, match=error_match):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_rejects_cached_payload_when_access_is_denied(self, tool_service):
+        """Cached payloads should still pass through access checks."""
+        cache = self._cache_mock(self._cache_payload())
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=False)),
+        ):
+            with pytest.raises(ToolNotFoundError, match="Tool not found"):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", user_email="user@example.com", token_teams=["team-a"])
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_rejects_server_scoped_cached_payload_without_tool_id(self, tool_service):
+        """Server-scoped cached payloads need a concrete tool id for membership checks."""
+        cache = self._cache_mock(self._cache_payload(id=None))
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            with pytest.raises(ToolNotFoundError, match="Tool not found"):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", server_id="srv-1")
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_uses_live_gateway_auth_fields_for_loaded_tools(self, tool_service):
+        """Loaded DB tools should prefer live gateway auth metadata over cached payload values."""
+        cache = self._cache_mock(None)
+        tool_service._plugin_manager = None
+        gateway = SimpleNamespace(
+            id="gw-1",
+            name="gateway-one",
+            description="gateway-one",
+            slug="gateway-one",
+            url="http://gateway.example/mcp",
+            transport="streamablehttp",
+            capabilities={},
+            auth_type="basic",
+            auth_value={"Authorization": "Bearer live-token"},
+            auth_query_params={"api_key": "live-query"},
+            oauth_config={"grant_type": "client_credentials"},
+            ca_certificate=None,
+            enabled=True,
+            reachable=True,
+            team_id=None,
+            owner_email=None,
+            visibility="public",
+            tags=[],
+            gateway_mode="cache",
+            passthrough_headers=[],
+        )
+        tool = SimpleNamespace(
+            id="tool-1",
+            url=None,
+            description="tool-one",
+            original_description="tool-one",
+            enabled=True,
+            reachable=True,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            integration_type="MCP",
+            request_type="streamablehttp",
+            original_name="tool-one",
+            name="tool-one",
+            timeout_ms=None,
+            jsonpath_filter=None,
+            headers={},
+            input_schema={"type": "object"},
+            output_schema=None,
+            annotations={},
+            auth_type=None,
+            custom_name=None,
+            custom_name_slug=None,
+            display_name=None,
+            tags=[],
+            gateway_id="gw-1",
+            gateway=gateway,
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[tool]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.encode_auth", return_value="encoded-live-auth"),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer live-token"}),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"Authorization": "Bearer live-token"}),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+        assert plan["eligible"] is True
+        assert plan["headers"] == {"Authorization": "Bearer live-token"}
+        cache.set.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_uses_live_gateway_string_auth_values(self, tool_service):
+        """Loaded DB tools should honor pre-encoded gateway auth strings."""
+        cache = self._cache_mock(None)
+        tool_service._plugin_manager = None
+        gateway = SimpleNamespace(
+            id="gw-1",
+            name="gateway-one",
+            description="gateway-one",
+            slug="gateway-one",
+            url="http://gateway.example/mcp",
+            transport="streamablehttp",
+            capabilities={},
+            auth_type="bearer",
+            auth_value="encoded-string-auth",
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            enabled=True,
+            reachable=True,
+            team_id=None,
+            owner_email=None,
+            visibility="public",
+            tags=[],
+            gateway_mode="cache",
+            passthrough_headers=[],
+        )
+        tool = SimpleNamespace(
+            id="tool-1",
+            url=None,
+            description="tool-one",
+            original_description="tool-one",
+            enabled=True,
+            reachable=True,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            integration_type="MCP",
+            request_type="streamablehttp",
+            original_name="tool-one",
+            name="tool-one",
+            timeout_ms=None,
+            jsonpath_filter=None,
+            headers={},
+            input_schema={"type": "object"},
+            output_schema=None,
+            annotations={},
+            auth_type=None,
+            custom_name=None,
+            custom_name_slug=None,
+            display_name=None,
+            tags=[],
+            gateway_id="gw-1",
+            gateway=gateway,
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[tool]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer string-token"}),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"Authorization": "Bearer string-token"}),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+        assert plan["headers"] == {"Authorization": "Bearer string-token"}
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_hydrates_gateway_auth_from_db_when_tool_is_cached(self, tool_service):
+        """Cached tool payloads should hydrate gateway auth details from the DB when needed."""
+        cache = self._cache_mock(
+            self._cache_payload(
+                gateway={"auth_type": "basic", "auth_value": None, "auth_query_params": None, "oauth_config": None},
+            )
+        )
+        tool_service._plugin_manager = None
+        tool_auth_row = SimpleNamespace(
+            gateway=SimpleNamespace(
+                auth_value={"Authorization": "Bearer hydrated-token"},
+                auth_query_params={"api_key": "hydrated"},
+                oauth_config={"grant_type": "client_credentials"},
+            )
+        )
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = tool_auth_row
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.encode_auth", return_value="encoded-hydrated-auth"),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer hydrated-token"}),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"Authorization": "Bearer hydrated-token"}),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(db, "tool-one")
+
+        assert plan["eligible"] is True
+        assert plan["headers"] == {"Authorization": "Bearer hydrated-token"}
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_hydrates_gateway_string_auth_from_db(self, tool_service):
+        """Cached payload hydration should also honor string auth values from the DB row."""
+        cache = self._cache_mock(
+            self._cache_payload(
+                gateway={"auth_type": "basic", "auth_value": None, "auth_query_params": None, "oauth_config": None},
+            )
+        )
+        tool_service._plugin_manager = None
+        tool_auth_row = SimpleNamespace(
+            gateway=SimpleNamespace(
+                auth_value="encoded-hydrated-string",
+                auth_query_params=None,
+                oauth_config=None,
+            )
+        )
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = tool_auth_row
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer hydrated-string"}),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"Authorization": "Bearer hydrated-string"}),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(db, "tool-one")
+
+        assert plan["headers"] == {"Authorization": "Bearer hydrated-string"}
+
+    def test_load_invocable_tools_applies_server_scope_filter(self, tool_service):
+        """Server-scoped tool loading should join through the server association table."""
+        db = MagicMock()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        db.execute.return_value = result
+
+        assert tool_service._load_invocable_tools(db, "tool-one", server_id="srv-1") == []
+        db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_overrides", "expected_reason"),
+        [
+            ({"integration_type": "REST"}, "unsupported-integration:REST"),
+            ({"request_type": "sse"}, "unsupported-transport:sse"),
+            ({"jsonpath_filter": "$.items[*]"}, "jsonpath-filter-configured"),
+            ({"gateway": {"ca_certificate": "cert"}}, "custom-ca-certificate"),
+            ({"gateway": {"url": None}}, "missing-gateway-url"),
+        ],
+    )
+    async def test_prepare_rust_mcp_tool_execution_returns_expected_fallback_reasons(self, tool_service, tool_overrides, expected_reason):
+        """Unsupported execution plans should report explicit fallback reasons."""
+        cache = self._cache_mock(self._cache_payload(**tool_overrides))
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+        assert plan == {"eligible": False, "fallbackReason": expected_reason}
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_checks_server_membership(self, tool_service):
+        """Server-scoped execution should reject tools not attached to the requested server."""
+        cache = self._cache_mock(self._cache_payload())
+        db = MagicMock()
+        db.execute.return_value.first.return_value = None
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            with pytest.raises(ToolNotFoundError, match="Tool not found"):
+                await tool_service.prepare_rust_mcp_tool_execution(db, "tool-one", server_id="srv-1")
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_handles_query_param_auth_and_passthrough(self, tool_service):
+        """Query-param auth should be applied before returning an eligible Rust plan."""
+        cache = self._cache_mock(
+            self._cache_payload(
+                gateway={
+                    "auth_type": "query_param",
+                    "auth_query_params": {
+                        "api_key": base64.b64encode(orjson.dumps({"api_key": "secret"})).decode(),
+                        "broken": "not-decodable",
+                    },
+                    "passthrough_headers": ["X-Tenant-Id"],
+                }
+            )
+        )
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=["X-Tenant-Id"]))),
+            patch("mcpgateway.services.tool_service.decode_auth", side_effect=lambda value: {"api_key": "secret"} if value != "not-decodable" else (_ for _ in ()).throw(ValueError("bad"))),
+            patch("mcpgateway.services.tool_service.apply_query_param_auth", side_effect=lambda url, params: f"{url}?api_key={params['api_key']}"),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"X-Tenant-Id": "tenant-1"}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                request_headers={"x-tenant-id": "tenant-1"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan["eligible"] is True
+        assert plan["serverUrl"] == "http://gateway.example/mcp?api_key=secret"
+        assert plan["headers"] == {"X-Tenant-Id": "tenant-1"}
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_oauth_authorization_code_requires_user(self, tool_service):
+        """Authorization-code OAuth plans should require an authenticated app user."""
+        cache = self._cache_mock(
+            self._cache_payload(
+                gateway={
+                    "auth_type": "oauth",
+                    "oauth_config": {"grant_type": "authorization_code"},
+                }
+            )
+        )
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            with pytest.raises(ToolInvocationError, match="OAuth token retrieval failed"):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_oauth_client_credentials_failure(self, tool_service):
+        """Client-credentials OAuth failures should bubble up as ToolInvocationError."""
+        cache = self._cache_mock(
+            self._cache_payload(
+                gateway={
+                    "auth_type": "oauth",
+                    "oauth_config": {"grant_type": "client_credentials"},
+                }
+            )
+        )
+        tool_service._plugin_manager = None
+        tool_service.oauth_manager = MagicMock(get_access_token=AsyncMock(side_effect=RuntimeError("boom")))
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            with pytest.raises(ToolInvocationError, match="OAuth authentication failed"):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_oauth_authorization_code_uses_stored_token(self, tool_service):
+        """Authorization-code OAuth plans should inject a stored bearer token when available."""
+        cache = self._cache_mock(
+            self._cache_payload(
+                gateway={
+                    "auth_type": "oauth",
+                    "oauth_config": {"grant_type": "authorization_code"},
+                }
+            )
+        )
+        token_storage = MagicMock()
+        token_storage.get_user_token = AsyncMock(return_value="stored-oauth-token")
+        fresh_session = MagicMock()
+        tool_service._plugin_manager = None
+
+        @contextmanager
+        def _fresh_db_session():
+            yield fresh_session
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _request_headers, headers, *_args, **_kwargs: headers),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", app_user_email="user@example.com")
+
+        assert plan["eligible"] is True
+        assert plan["headers"] == {"Authorization": "Bearer stored-oauth-token"}
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_oauth_authorization_code_requires_prior_authorization(self, tool_service):
+        """Authorization-code OAuth plans should fail when no stored token exists for the user."""
+        cache = self._cache_mock(
+            self._cache_payload(
+                gateway={
+                    "auth_type": "oauth",
+                    "oauth_config": {"grant_type": "authorization_code"},
+                }
+            )
+        )
+        token_storage = MagicMock()
+        token_storage.get_user_token = AsyncMock(return_value=None)
+        fresh_session = MagicMock()
+        tool_service._plugin_manager = None
+
+        @contextmanager
+        def _fresh_db_session():
+            yield fresh_session
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
+        ):
+            with pytest.raises(ToolInvocationError, match="OAuth token retrieval failed"):
+                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", app_user_email="user@example.com")
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_oauth_client_credentials_success(self, tool_service):
+        """Client-credentials OAuth plans should inject a freshly acquired access token."""
+        cache = self._cache_mock(
+            self._cache_payload(
+                gateway={
+                    "auth_type": "oauth",
+                    "oauth_config": {"grant_type": "client_credentials"},
+                }
+            )
+        )
+        tool_service._plugin_manager = None
+        tool_service.oauth_manager = MagicMock(get_access_token=AsyncMock(return_value="oauth-access-token"))
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _request_headers, headers, *_args, **_kwargs: headers),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+        assert plan["eligible"] is True
+        assert plan["headers"] == {"Authorization": "Bearer oauth-access-token"}
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_returns_eligible_plan(self, tool_service):
+        """Simple MCP streamable-http tools should produce an eligible Rust execution plan."""
+        cache = self._cache_mock(self._cache_payload(timeout_ms=2500))
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"Authorization": "Bearer abc"}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                request_headers={"authorization": "Bearer abc"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan == {
+            "eligible": True,
+            "transport": "streamablehttp",
+            "serverUrl": "http://gateway.example/mcp",
+            "remoteToolName": "tool-one",
+            "headers": {"Authorization": "Bearer abc"},
+            "timeoutMs": 2500,
+            "gatewayId": "gw-1",
+            "toolName": "tool-one",
+            "toolId": "tool-1",
+            "serverId": None,
+        }
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_only_returns_eligible_plan_with_hooks(self, tool_service):
+        """Pre-invoke hooks only (no post-invoke) should produce eligible plan with hook results."""
+        # First-Party
+        from mcpgateway.plugins.framework import HttpHeaderPayload, ToolPreInvokePayload
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        cache = self._cache_mock(self._cache_payload(timeout_ms=2500))
+
+        # Configure plugin manager: pre-invoke YES, post-invoke NO
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+
+        # Mock invoke_hook to return modified args and headers
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            modified = ToolPreInvokePayload(
+                name=payload.name,
+                args={"cleaned_arg": "value"},
+                headers=HttpHeaderPayload({"x-injected-cred": "secret123"}),
+            )
+            return PluginResult(modified_payload=modified, continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+        tool_service._plugin_manager = mock_pm
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"authorization": "Bearer abc"}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                arguments={"wxo_connection_id": "conn-1", "original_arg": "data"},
+                request_headers={"authorization": "Bearer abc"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan["eligible"] is True
+        assert plan["hasPreInvokeHooks"] is True
+        assert plan["modifiedArgs"] == {"cleaned_arg": "value"}
+        # Plugin-injected header should appear (lowercase normalized)
+        assert plan["headers"]["x-injected-cred"] == "secret123"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_hook_modifies_tool_name(self, tool_service):
+        """Pre-invoke hook that renames tool should update remoteToolName in plan."""
+        # First-Party
+        from mcpgateway.plugins.framework import ToolPreInvokePayload
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        cache = self._cache_mock(self._cache_payload())
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            modified = ToolPreInvokePayload(name="renamed-tool", args=payload.args)
+            return PluginResult(modified_payload=modified, continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+        tool_service._plugin_manager = mock_pm
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                arguments={"key": "val"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan["eligible"] is True
+        assert plan["remoteToolName"] == "renamed-tool"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_no_hooks_omits_hook_fields(self, tool_service):
+        """When no pre-invoke hooks are registered, plan should not contain hook fields."""
+        cache = self._cache_mock(self._cache_payload())
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan["eligible"] is True
+        assert "hasPreInvokeHooks" not in plan
+        assert "modifiedArgs" not in plan
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_passes_runtime_headers_not_request_headers(self, tool_service):
+        """Pre-invoke hook should receive outbound runtime headers, not inbound request headers."""
+        # First-Party
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        cache = self._cache_mock(self._cache_payload())
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+
+        received_headers = {}
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            received_headers.update(payload.headers.root)
+            return PluginResult(continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+        tool_service._plugin_manager = mock_pm
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"Authorization": "Bearer gateway-token"}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                arguments={"key": "val"},
+                request_headers={"authorization": "Bearer user-token", "x-request-id": "req-1"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        # Hook should receive runtime (outbound) headers, not inbound request headers
+        assert "Authorization" in received_headers
+        assert received_headers["Authorization"] == "Bearer gateway-token"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_receives_plugin_global_context(self, tool_service):
+        """Pre-invoke hook should receive the middleware-provided GlobalContext, not a fresh one."""
+        # First-Party
+        from mcpgateway.plugins.framework import GlobalContext
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        cache = self._cache_mock(self._cache_payload())
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+
+        received_context = {}
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            received_context["request_id"] = global_context.request_id
+            received_context["user"] = global_context.user
+            received_context["state"] = dict(global_context.state) if hasattr(global_context, "state") else {}
+            received_context["metadata_keys"] = list(global_context.metadata.keys()) if hasattr(global_context, "metadata") else []
+            received_context["local_contexts"] = local_contexts
+            return PluginResult(continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+        tool_service._plugin_manager = mock_pm
+
+        # Simulate middleware-provided context with JWT claims state
+        provided_ctx = GlobalContext(request_id="corr-123", server_id="srv-1", tenant_id=None, user="jwt-user@example.com")
+        provided_ctx.state["jwt_claims"] = {"sub": "jwt-user@example.com", "teams": ["team-a"]}
+        provided_context_table = {"prior_plugin": {"key": "value"}}
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                arguments={"key": "val"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+                plugin_global_context=provided_ctx,
+                plugin_context_table=provided_context_table,
+            )
+
+        # Hook should have received the middleware context, not a fresh one
+        assert received_context["request_id"] == "corr-123"
+        assert received_context["user"] == "jwt-user@example.com"
+        assert received_context["state"]["jwt_claims"]["sub"] == "jwt-user@example.com"
+        # Prior context table should be passed through
+        assert received_context["local_contexts"] == provided_context_table
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_injects_user_into_global_context(self, tool_service):
+        """Pre-invoke hook should populate global_context.user from app_user_email when the provided context has no user."""
+        # First-Party
+        from mcpgateway.plugins.framework import GlobalContext
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        cache = self._cache_mock(self._cache_payload())
+
+        received_context = {}
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            received_context["user"] = global_context.user
+            return PluginResult(continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+        tool_service._plugin_manager = mock_pm
+
+        # Provide a context with user=None so the fallback injection fires
+        provided_ctx = GlobalContext(request_id="corr-456", server_id="srv-1", tenant_id=None, user=None)
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                arguments={"key": "val"},
+                app_user_email="injected-user@example.com",
+                user_email="user@example.com",
+                token_teams=["team-a"],
+                plugin_global_context=provided_ctx,
+            )
+
+        assert received_context["user"] == "injected-user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_pre_invoke_injects_tool_and_gateway_metadata(self, tool_service):
+        """Pre-invoke hook should inject PydanticTool and PydanticGateway metadata into global context."""
+        # First-Party
+        from mcpgateway.plugins.framework import GlobalContext
+        from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
+        from mcpgateway.plugins.framework.models import PluginResult
+
+        # Supply fields required by PydanticTool (url) and PydanticGateway
+        # (id, slug, transport, capabilities, last_seen) so model_validate succeeds.
+        cache = self._cache_mock(
+            self._cache_payload(
+                url="http://gateway.example/mcp",
+                gateway={
+                    "id": "gw-1",
+                    "slug": "gateway-one",
+                    "transport": "streamablehttp",
+                    "capabilities": {},
+                    "last_seen": None,
+                },
+            )
+        )
+
+        received_metadata = {}
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+            received_metadata["keys"] = list(global_context.metadata.keys())
+            received_metadata["has_tool"] = TOOL_METADATA in global_context.metadata
+            received_metadata["has_gateway"] = GATEWAY_METADATA in global_context.metadata
+            if received_metadata["has_tool"]:
+                received_metadata["tool_name"] = global_context.metadata[TOOL_METADATA].name
+            if received_metadata["has_gateway"]:
+                received_metadata["gateway_name"] = global_context.metadata[GATEWAY_METADATA].name
+            return PluginResult(continue_processing=True), {}
+
+        mock_pm.invoke_hook = mock_invoke_hook
+        tool_service._plugin_manager = mock_pm
+
+        provided_ctx = GlobalContext(request_id="corr-789", server_id=None, tenant_id=None, user="user@example.com")
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                arguments={"key": "val"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+                plugin_global_context=provided_ctx,
+            )
+
+        assert received_metadata["has_tool"] is True
+        assert received_metadata["has_gateway"] is True
+        assert received_metadata["tool_name"] == "tool-one"
+        assert received_metadata["gateway_name"] == "gateway-one"
 
     @pytest.mark.asyncio
     async def test_invoke_tool_header_gateway_not_found(self, tool_service, test_db):

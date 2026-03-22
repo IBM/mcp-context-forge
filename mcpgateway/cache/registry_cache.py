@@ -29,7 +29,7 @@ import hashlib
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -531,18 +531,37 @@ def get_registry_cache() -> RegistryCache:
 registry_cache = get_registry_cache()
 
 
+# Upper bound on the in-memory revoked-JTI set.
+#
+# Prevents unbounded memory growth if a compromised Redis channel floods
+# ``revoke:`` messages.  When the cap is reached new JTIs are still
+# processed (cache eviction) but are not added to the local set;
+# subsequent ``is_token_revoked()`` / ``get_auth_context()`` calls will
+# fall through to the Redis check on L1 cache miss, so revocation is
+# still enforced.
+_MAX_REVOKED_JTIS = 100_000
+
+
 class CacheInvalidationSubscriber:
     """Redis pubsub subscriber for cross-worker cache invalidation.
 
-    This class subscribes to the 'mcpgw:cache:invalidate' Redis channel
-    and processes invalidation messages from other workers, ensuring
-    local in-memory caches stay synchronized in multi-worker deployments.
+    This class subscribes to both 'mcpgw:cache:invalidate' and
+    'mcpgw:auth:invalidate' Redis channels and processes invalidation
+    messages from other workers, ensuring local in-memory caches stay
+    synchronized in multi-worker deployments.
 
     Message formats handled:
         - registry:{cache_type} - Invalidate registry cache (tools, prompts, etc.)
         - tool_lookup:{name} - Invalidate specific tool lookup
         - tool_lookup:gateway:{gateway_id} - Invalidate all tools for a gateway
         - admin:{prefix} - Invalidate admin stats cache
+        - user:{email} - Invalidate auth user cache
+        - revoke:{jti} - Invalidate auth revocation cache
+        - team:{email} - Invalidate auth team cache
+        - role:{email}:{team_id} - Invalidate auth role cache
+        - team_roles:{team_id} - Invalidate all roles for a team
+        - teams:{email} - Invalidate auth teams list cache
+        - membership:{email} - Invalidate auth team membership cache
 
     Examples:
         >>> subscriber = CacheInvalidationSubscriber()
@@ -557,7 +576,7 @@ class CacheInvalidationSubscriber:
         self._task: Optional[asyncio.Task[None]] = None
         self._stop_event: Optional[asyncio.Event] = None
         self._pubsub: Optional[Any] = None
-        self._channel = "mcpgw:cache:invalidate"
+        self._channels = ["mcpgw:cache:invalidate", "mcpgw:auth:invalidate"]
         self._started = False
 
     async def start(self) -> None:
@@ -586,11 +605,11 @@ class CacheInvalidationSubscriber:
 
             self._stop_event = asyncio.Event()
             self._pubsub = redis.pubsub()
-            await self._pubsub.subscribe(self._channel)  # pyright: ignore[reportOptionalMemberAccess]
+            await self._pubsub.subscribe(*self._channels)  # pyright: ignore[reportOptionalMemberAccess]
 
             self._task = asyncio.create_task(self._listen_loop())
             self._started = True
-            logger.info("CacheInvalidationSubscriber started on channel '%s'", self._channel)
+            logger.info("CacheInvalidationSubscriber started on channels %s", self._channels)
 
         except Exception as e:
             logger.warning("CacheInvalidationSubscriber failed to start: %s", e)
@@ -638,7 +657,7 @@ class CacheInvalidationSubscriber:
         if self._pubsub:
             cleanup_timeout = _get_cleanup_timeout()
             try:
-                await asyncio.wait_for(self._pubsub.unsubscribe(self._channel), timeout=cleanup_timeout)
+                await asyncio.wait_for(self._pubsub.unsubscribe(*self._channels), timeout=cleanup_timeout)
             except asyncio.TimeoutError:
                 logger.debug("Pubsub unsubscribe timed out - proceeding anyway")
             except Exception as e:
@@ -676,8 +695,11 @@ class CacheInvalidationSubscriber:
                         data = message.get("data")
                         if isinstance(data, bytes):
                             data = data.decode("utf-8")
+                        channel = message.get("channel", "")
+                        if isinstance(channel, bytes):
+                            channel = channel.decode("utf-8")
                         if data:
-                            await self._process_invalidation(data)
+                            await self._process_invalidation(data, channel=channel)
                 except asyncio.TimeoutError:
                     continue
                 except Exception as e:  # pylint: disable=broad-exception-caught
@@ -689,13 +711,19 @@ class CacheInvalidationSubscriber:
         finally:
             logger.debug("CacheInvalidationSubscriber listen loop exited")
 
-    async def _process_invalidation(self, message: str) -> None:  # pylint: disable=too-many-branches
+    _AUTH_PREFIXES = ("user:", "revoke:", "team_roles:", "teams:", "team:", "role:", "membership:")
+    """Message prefixes that belong exclusively to the auth invalidation channel."""
+
+    async def _process_invalidation(self, message: str, *, channel: str = "") -> None:  # pylint: disable=too-many-branches
         """Process a cache invalidation message.
 
         Args:
             message: The invalidation message in format 'type:identifier'
+            channel: The Redis pubsub channel the message arrived on.
+                     Used to enforce that auth-prefixed messages are only
+                     accepted from ``mcpgw:auth:invalidate``.
         """
-        logger.debug("CacheInvalidationSubscriber received: %s", message)
+        logger.debug("CacheInvalidationSubscriber received on %s: %s", channel, message)
 
         # pylint: disable=protected-access
         # pyright: ignore[reportPrivateUsage]
@@ -752,11 +780,99 @@ class CacheInvalidationSubscriber:
                         admin_stats_cache._cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
                 logger.debug("CacheInvalidationSubscriber: Cleared local admin:%s cache (%d keys)", prefix, len(keys_to_remove))
 
+            elif message.startswith(self._AUTH_PREFIXES):
+                if channel != "mcpgw:auth:invalidate":
+                    logger.warning("CacheInvalidationSubscriber: Ignoring auth message on wrong channel %s: %s", channel, message)
+                else:
+                    self._process_auth_invalidation(message)
+
             else:
                 logger.debug("CacheInvalidationSubscriber: Unknown message format: %s", message)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.warning("CacheInvalidationSubscriber: Error processing '%s': %s", message, e)
+
+    @staticmethod
+    def _evict_keys(cache_dict: dict, predicate: "Callable[[str], bool]") -> int:
+        """Remove all keys from *cache_dict* that satisfy *predicate*.
+
+        Must be called while holding the owning cache's ``_lock``.
+
+        Args:
+            cache_dict: The dictionary to evict keys from.
+            predicate: A callable that returns True for keys to remove.
+
+        Returns:
+            Number of keys removed.
+        """
+        keys = [k for k in cache_dict if predicate(k)]
+        for k in keys:
+            cache_dict.pop(k, None)
+        return len(keys)
+
+    def _process_auth_invalidation(self, message: str) -> None:  # pylint: disable=too-many-branches
+        """Dispatch an auth-channel invalidation message to the local auth cache.
+
+        Called from :meth:`_process_invalidation` for messages received on
+        ``mcpgw:auth:invalidate``.
+
+        Args:
+            message: The invalidation message (e.g. ``user:alice@test.com``).
+        """
+        # pylint: disable=protected-access
+        # First-Party
+        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+        # Dispatch auth message to the correct handler
+        if message.startswith("user:"):
+            email = message[len("user:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._context_cache, lambda k: k.startswith(f"{email}:"))  # pyright: ignore[reportPrivateUsage]
+                auth_cache._user_cache.pop(email, None)  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._team_cache, lambda k: k.startswith(f"{email}:"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth user cache for %s", email)
+
+        elif message.startswith("revoke:"):
+            jti = message[len("revoke:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                if len(auth_cache._revoked_jtis) < _MAX_REVOKED_JTIS:  # pyright: ignore[reportPrivateUsage]
+                    auth_cache._revoked_jtis.add(jti)  # pyright: ignore[reportPrivateUsage]
+                else:
+                    logger.warning("CacheInvalidationSubscriber: _revoked_jtis at cap (%d), skipping add for jti=%s", _MAX_REVOKED_JTIS, jti[:8])
+                auth_cache._revocation_cache.pop(jti, None)  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._context_cache, lambda k: k.endswith(f":{jti}"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth revocation cache for jti=%s", jti[:8])
+
+        elif message.startswith("team_roles:"):
+            team_id = message[len("team_roles:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._role_cache, lambda k: k.endswith(f":{team_id}"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth team_roles cache for team %s", team_id)
+
+        elif message.startswith("teams:"):
+            email = message[len("teams:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._teams_list_cache, lambda k: k.startswith(f"{email}:"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth teams list cache for %s", email)
+
+        elif message.startswith("team:"):
+            email = message[len("team:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                auth_cache._team_cache.pop(email, None)  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._context_cache, lambda k: k.startswith(f"{email}:"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth team cache for %s", email)
+
+        elif message.startswith("role:"):
+            cache_key = message[len("role:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                auth_cache._role_cache.pop(cache_key, None)  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth role cache for %s", cache_key)
+
+        elif message.startswith("membership:"):
+            user_email = message[len("membership:") :]
+            with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                self._evict_keys(auth_cache._team_cache, lambda k: k.startswith(f"{user_email}:"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth membership cache for %s", user_email)
 
 
 # Global singleton for cache invalidation subscriber

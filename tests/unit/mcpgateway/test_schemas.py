@@ -53,6 +53,7 @@ from mcpgateway.schemas import (
     AdminToolCreate,
     EventMessage,
     ListFilters,
+    PromptCreate,
     ResourceCreate,
     ServerCreate,
     ServerMetrics,
@@ -456,6 +457,18 @@ class TestMCPTypes:
         assert minimal.tools is None
         assert minimal.logging is None
         assert minimal.experimental is None
+
+    def test_server_capabilities_non_boolean_values(self):
+        """Test ServerCapabilities accepts non-boolean values (MCP SDK extra='allow')."""
+        caps = ServerCapabilities(
+            prompts={"listChanged": True, "customField": "string_value"},
+            resources={"subscribe": True, "listChanged": True, "maxSize": 1024},
+            tools={"listChanged": True, "parallelism": 4, "metadata": {"key": "val"}},
+        )
+        assert caps.prompts == {"listChanged": True, "customField": "string_value"}
+        assert caps.resources["maxSize"] == 1024
+        assert caps.tools["parallelism"] == 4
+        assert caps.tools["metadata"] == {"key": "val"}
 
     def test_initialize_request(self):
         """Test InitializeRequest model."""
@@ -1032,6 +1045,48 @@ class TestSchemaValidators:
         assert empty_headers_tool.auth.auth_type == "authheaders"
         assert empty_headers_tool.auth.auth_value is None
 
+    def test_tool_create_assemble_auth_debug_extra_does_not_include_sensitive_fields(self):
+        """ToolCreate debug logs should exclude raw secret values."""
+        values = {
+            "auth_type": "basic",
+            "auth_username": "user",
+            "auth_password": "secret-password",
+            "auth_token": "secret-token",
+            "auth_header_key": "X-API-Key",
+            "auth_header_value": "secret-header",
+        }
+
+        with patch("mcpgateway.schemas.logger.debug") as mock_debug:
+            ToolCreate.assemble_auth(values.copy())
+
+        extra = mock_debug.call_args.kwargs["extra"]
+        assert "auth_password" not in extra
+        assert "auth_token" not in extra
+        assert "auth_header_value" not in extra
+        assert extra["auth_type"] == "basic"
+        assert extra["auth_assembled"] is True
+
+    def test_tool_update_assemble_auth_debug_extra_does_not_include_sensitive_fields(self):
+        """ToolUpdate debug logs should exclude raw secret values."""
+        values = {
+            "auth_type": "bearer",
+            "auth_username": "user",
+            "auth_password": "secret-password",
+            "auth_token": "secret-token",
+            "auth_header_key": "X-API-Key",
+            "auth_header_value": "secret-header",
+        }
+
+        with patch("mcpgateway.schemas.logger.debug") as mock_debug:
+            ToolUpdate.assemble_auth(values.copy())
+
+        extra = mock_debug.call_args.kwargs["extra"]
+        assert "auth_password" not in extra
+        assert "auth_token" not in extra
+        assert "auth_header_value" not in extra
+        assert extra["auth_type"] == "bearer"
+        assert extra["auth_assembled"] is True
+
     def test_tool_create_sets_default_timeout(self):
         """REST passthrough tools should default timeout_ms when missing."""
         tool = ToolCreate(name="rest-tool", integration_type="REST", request_type="GET", url="http://example.com")
@@ -1200,3 +1255,102 @@ class TestSchemaValidators:
             ResourceSubscription(uri="resource://one", subscriber_id=long_subscriber)
 
         assert "Subscriber ID exceeds maximum length" in str(exc_info.value)
+
+    @pytest.mark.parametrize("schema_cls,kwargs", [
+        (ToolCreate, {"name": "t", "integration_type": "REST", "request_type": "GET", "url": "http://x.com"}),
+        (ResourceCreate, {"uri": "test://x", "name": "x", "content": ""}),
+        (PromptCreate, {"name": "p", "template": "hi"}),
+    ])
+    def test_visibility_validator_rejects_invalid_values(self, schema_cls, kwargs):
+        """ToolCreate, ResourceCreate, and PromptCreate must reject invalid visibility strings."""
+        with pytest.raises(ValidationError, match="Visibility must be one of"):
+            schema_cls(**kwargs, visibility="bogus")
+
+
+class TestGatewayCreateCamelCase:
+    """Verify GatewayCreate accepts camelCase input and serializes to camelCase output.
+
+    Regression tests for #3577 — GatewayCreate previously extended BaseModel
+    directly, missing alias_generator and populate_by_name from
+    BaseModelWithConfigDict, so camelCase fields were silently ignored.
+    """
+
+    def test_accepts_camel_case_fields(self):
+        """GatewayCreate must accept camelCase field names."""
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(
+            name="test-gw",
+            url="https://example.com",
+            authType="bearer",
+            authToken="tok123",
+            passthroughHeaders=["X-Request-Id"],
+            gatewayMode="direct_proxy",
+            refreshIntervalSeconds=120,
+            oneTimeAuth=True,
+            caCertificate="PEM-DATA",
+        )
+        assert gw.auth_type == "bearer"
+        assert gw.auth_token == "tok123"
+        assert gw.passthrough_headers == ["X-Request-Id"]
+        assert gw.gateway_mode == "direct_proxy"
+        assert gw.refresh_interval_seconds == 120
+        assert gw.one_time_auth is True
+        assert gw.ca_certificate == "PEM-DATA"
+
+    def test_accepts_snake_case_fields(self):
+        """GatewayCreate must still accept snake_case field names."""
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(
+            name="test-gw",
+            url="https://example.com",
+            auth_type="basic",
+            auth_username="user",
+            auth_password="pass",
+            passthrough_headers=["Authorization"],
+            gateway_mode="cache",
+        )
+        assert gw.auth_type == "basic"
+        assert gw.auth_username == "user"
+        assert gw.auth_password == "pass"
+        assert gw.passthrough_headers == ["Authorization"]
+        assert gw.gateway_mode == "cache"
+
+    def test_serializes_to_camel_case(self):
+        """GatewayCreate.model_dump(by_alias=True) must use camelCase keys."""
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(
+            name="test-gw",
+            url="https://example.com",
+            auth_type="bearer",
+            auth_token="tok",
+            passthrough_headers=["X-Foo"],
+            gateway_mode="direct_proxy",
+            refresh_interval_seconds=300,
+        )
+        data = gw.model_dump(by_alias=True)
+        assert "authType" in data
+        assert "authToken" in data
+        assert "passthroughHeaders" in data
+        assert "gatewayMode" in data
+        assert "refreshIntervalSeconds" in data
+        # snake_case keys must NOT appear in aliased output
+        assert "auth_type" not in data
+        assert "passthrough_headers" not in data
+
+    def test_consistent_with_gateway_update(self):
+        """GatewayCreate and GatewayUpdate must both accept camelCase."""
+        from mcpgateway.schemas import GatewayCreate, GatewayUpdate
+
+        create = GatewayCreate(name="gw", url="https://example.com", authType="bearer", authToken="t")
+        update = GatewayUpdate(authType="basic", authUsername="u", authPassword="p")
+        assert create.auth_type == "bearer"
+        assert update.auth_type == "basic"
+
+        # Both must serialize identically for shared fields
+        create_keys = set(create.model_dump(by_alias=True).keys())
+        update_keys = set(update.model_dump(by_alias=True, exclude_none=True).keys())
+        for key in update_keys:
+            assert key in create_keys, f"GatewayUpdate alias '{key}' missing from GatewayCreate"

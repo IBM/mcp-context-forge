@@ -31,7 +31,7 @@ async def test_chat_completions_denies_without_llm_invoke_permission(monkeypatch
         await llm_proxy_router.chat_completions(request, db=MagicMock(), current_user=USER_CTX)
 
     assert excinfo.value.status_code == 403
-    assert "llm.invoke" in excinfo.value.detail
+    assert "Access denied" in excinfo.value.detail
     chat_completion.assert_not_awaited()
 
 
@@ -166,7 +166,7 @@ async def test_list_models_denies_without_llm_read_permission(monkeypatch: pytes
         await llm_proxy_router.list_models(db=MagicMock(), current_user=USER_CTX)
 
     assert excinfo.value.status_code == 403
-    assert "llm.read" in excinfo.value.detail
+    assert "Access denied" in excinfo.value.detail
 
 
 @pytest.mark.asyncio

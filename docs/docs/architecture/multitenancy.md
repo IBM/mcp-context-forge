@@ -286,8 +286,9 @@ Applies to Tools, Servers, Resources, Prompts, and A2A Agents. All resources are
 
 - Private:
 
-  - Who sees it: Only the resource owner (owner_email).
+  - Who sees it: Only the resource owner (owner_email), and only when their token is not a public-only token (token_teams must be non-empty).
   - Team members cannot see or use it unless they are the owner.
+  - Public-only tokens (token_teams=[]) cannot access private resources even as the owner.
   - Mutations: Owner and Platform Admin can update/delete; team owners may be allowed by policy (see Enhancements).
 
 - Team:
@@ -302,7 +303,9 @@ Applies to Tools, Servers, Resources, Prompts, and A2A Agents. All resources are
 
 Enforcement summary:
 
-- Listing queries include resources where (a) owner_email == user.email, (b) team_id ∈ user_teams with visibility ∈ {team, public}, and (c) visibility == public.
+- Listing queries include resources where (a) visibility == public, (b) team_id ∈ token_teams with visibility ∈ {team, public}, or (c) owner_email == user.email with visibility == private.
+- Owner-based access applies only to private resources. Owners cannot use ownership to bypass team scoping for team-visibility resources outside their token scope.
+- Public-only tokens (token_teams=[]) see only public resources — owner and team access are both suppressed.
 - Read follows the same rules as list; write operations require ownership or delegated/team administrative rights.
 
 ---
@@ -407,7 +410,7 @@ Request: POST /tools/{id}/execute
 | Admin UI | ✅ | ✅ | Permission-based rendering |
 | Service Layer | ✅ | N/A | Database query filtering |
 | WebSocket | ✅ | ✅ | Forwards auth to /rpc |
-| MCP Transport | ✅ | N/A | Streamable HTTP filtering |
+| MCP Transport | ✅ | N/A | Streamable HTTP filtering + per-server OAuth enforcement |
 
 ---
 
@@ -1094,13 +1097,18 @@ sequenceDiagram
 
 # Team Settings
 AUTO_CREATE_PERSONAL_TEAMS=true
-PERSONAL_TEAM_PREFIX=personal
+# PERSONAL_TEAM_PREFIX=personal  # optional: set to get collision-safe email-based slugs
 MAX_TEAMS_PER_USER=50
-MAX_MEMBERS_PER_TEAM=100
+MAX_MEMBERS_PER_TEAM=100        # platform admins are exempt from this cap
 
 # Team Invitation Settings
 INVITATION_EXPIRY_DAYS=7
 REQUIRE_EMAIL_VERIFICATION_FOR_INVITES=true
+
+# Team Governance
+ALLOW_TEAM_CREATION=true
+ALLOW_TEAM_JOIN_REQUESTS=true
+ALLOW_TEAM_INVITATIONS=true
 
 # Visibility
 # NOTE: Resources default to 'private' (not configurable via env today)
@@ -1209,11 +1217,12 @@ These behaviors are enforced consistently across all access paths:
 
 1. `normalize_token_teams()` is the ONLY function that interprets JWT team claims
 2. Missing `teams` key always returns `[]` (public-only, secure default)
-3. Admin bypass requires BOTH `teams: null` AND `is_admin: true`
+3. Admin bypass requires BOTH `teams: null` AND `is_admin: true`, and both `token_teams=None` AND `user_email=None` in the service layer
 4. Empty teams list (`[]`) results in public-only access, even for admins
 5. All list endpoints pass `token_teams` to the service layer
-6. Service layer applies visibility filtering based on `token_teams`
-7. Public-only tokens can ONLY access `visibility='public'` resources
+6. Service layer applies visibility filtering based on `token_teams` via `BaseService._apply_access_control()`
+7. Public-only tokens can ONLY access `visibility='public'` resources — owner and team access are both suppressed
+8. Owner-based access (`owner_email`) grants visibility only for `visibility='private'` resources — it does not bypass team scoping for team-visibility resources
 
 ### Related Documentation
 

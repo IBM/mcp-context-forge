@@ -178,8 +178,12 @@ Front-channel logout enables automatic session clearing when users log out from 
    - Production: `https://gateway.yourcompany.com/admin/logout`
    - Development: `http://localhost:8000/admin/logout`
 
-2. When users log out from Microsoft, Entra ID sends a GET request to this URL
-3. ContextForge clears the session cookie and returns HTTP 200
+2. **How it works**: The `/admin/logout` endpoint supports three scenarios:
+   - **OIDC front-channel logout**: When users log out from Microsoft Entra ID, it sends a GET request without browser headers. ContextForge clears the session and returns HTTP 200 (per OpenID Connect Front-Channel Logout 1.0 spec).
+   - **Browser navigation**: If a user navigates directly to `/admin/logout` in their browser (GET with `Accept: text/html` header), they are redirected to the login page.
+   - **User-initiated logout**: POST requests from the Admin UI logout button redirect to the login page after clearing the session.
+
+3. All three scenarios properly clear authentication cookies and SSO session state.
 
 ## Step 5: Configure ContextForge Environment
 
@@ -601,12 +605,20 @@ After configuration, test role assignment:
 curl -H "Authorization: Bearer YOUR_TOKEN" \
   http://localhost:8000/rbac/my/roles
 
-# Should return assigned roles:
+# Should return assigned roles (abbreviated):
 [
   {
+    "id": "...",
+    "user_email": "user@example.com",
+    "role_id": "...",
     "role_name": "developer",
     "scope": "team",
-    "granted_by": "sso_system"
+    "scope_id": null,
+    "granted_by": "user@example.com",
+    "granted_at": "2026-02-20T21:20:20Z",
+    "expires_at": null,
+    "is_active": true,
+    "grant_source": "sso"
   }
 ]
 ```
@@ -643,7 +655,7 @@ Roles are automatically synchronized:
 
 - Admins can manually assign additional roles via Admin UI
 - Manually assigned roles are preserved during sync
-- Only SSO-granted roles (granted_by='sso_system') are synchronized
+- Only SSO-granted roles (`grant_source='sso'`) are synchronized
 
 ### 8.5.7 Troubleshooting Role Mapping
 

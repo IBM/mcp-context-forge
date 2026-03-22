@@ -7,12 +7,12 @@ branch coverage beyond the current 63%.
 
 # Standard
 import asyncio
-import base64
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import json
 import time
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, call, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, call, MagicMock, patch
 
 # Third-Party
 import jsonschema
@@ -21,13 +21,12 @@ import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 # First-Party
-from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
 from mcpgateway.common.models import TextContent, ToolResult
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
+from mcpgateway.schemas import ToolMetrics, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     _canonicalize_schema,
     _get_registry_cache,
@@ -43,7 +42,6 @@ from mcpgateway.services.tool_service import (
     ToolTimeoutError,
     ToolValidationError,
 )
-from mcpgateway.utils.services_auth import encode_auth
 
 # ─── autouse fixtures ────────────────────────────────────────────────────────
 
@@ -121,6 +119,19 @@ def mock_gateway():
     gw.owner_email = None
     gw.visibility = "public"
     gw.tags = []
+    gw.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    gw.updated_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    gw.created_by = None
+    gw.created_from_ip = None
+    gw.created_via = None
+    gw.created_user_agent = None
+    gw.modified_by = None
+    gw.modified_from_ip = None
+    gw.modified_via = None
+    gw.modified_user_agent = None
+    gw.import_batch_id = None
+    gw.federation_source = None
+    gw.version = None
     return gw
 
 
@@ -182,6 +193,32 @@ def mock_tool(mock_gateway):
         "last_execution_time": None,
     }
     return tool
+
+
+def _make_tool_update(**overrides) -> MagicMock:
+    """Build a ToolUpdate MagicMock with all fields defaulting to None."""
+    update = MagicMock(spec=ToolUpdate)
+    defaults = dict(
+        name=None,
+        custom_name=None,
+        displayName=None,
+        url=None,
+        description=None,
+        integration_type=None,
+        request_type=None,
+        headers=None,
+        input_schema=None,
+        output_schema=None,
+        annotations=None,
+        jsonpath_filter=None,
+        visibility=None,
+        auth=None,
+        tags=None,
+    )
+    defaults.update(overrides)
+    for attr, value in defaults.items():
+        setattr(update, attr, value)
+    return update
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -354,33 +391,16 @@ class TestInitializeShutdown:
         service._http_client.aclose.assert_awaited_once()
         service._event_service.shutdown.assert_awaited_once()
 
-    def test_init_plugins_enabled_env_true(self, monkeypatch):
-        """PLUGINS_ENABLED=true env should enable plugin manager."""
-        monkeypatch.setenv("PLUGINS_ENABLED", "true")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+    def test_init_delegates_to_get_plugin_manager(self):
+        """ToolService.__init__ should assign whatever get_plugin_manager() returns."""
+        mock_pm = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_plugin_manager", return_value=mock_pm):
             service = ToolService()
-        assert service._plugin_manager is not None
-        mock_pm.assert_called_once()
+        assert service._plugin_manager is mock_pm
 
-    def test_init_plugins_enabled_env_false(self, monkeypatch):
-        """PLUGINS_ENABLED=false env should disable plugin manager."""
-        monkeypatch.setenv("PLUGINS_ENABLED", "false")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
-            service = ToolService()
-        assert service._plugin_manager is None
-        mock_pm.assert_not_called()
-
-    def test_init_plugins_enabled_env_on(self, monkeypatch):
-        """PLUGINS_ENABLED=on env should enable plugin manager."""
-        monkeypatch.setenv("PLUGINS_ENABLED", "on")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
-            service = ToolService()
-        assert service._plugin_manager is not None
-
-    def test_init_plugins_enabled_env_off(self, monkeypatch):
-        """PLUGINS_ENABLED=off env should disable plugin manager."""
-        monkeypatch.setenv("PLUGINS_ENABLED", "off")
-        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+    def test_init_plugin_manager_none_when_disabled(self):
+        """ToolService._plugin_manager should be None when get_plugin_manager() returns None."""
+        with patch("mcpgateway.services.tool_service.get_plugin_manager", return_value=None):
             service = ToolService()
         assert service._plugin_manager is None
 
@@ -803,49 +823,77 @@ class TestAggregateMetrics:
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics_cached(self, tool_service, monkeypatch):
-        """When cache is enabled and has data, return cached."""
+        """When cache is enabled and has data, return cached as ToolMetrics."""
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
 
-        cached_data = {"total": 100, "success": 90}
+        cached_data = {"total_executions": 100, "successful_executions": 90, "failed_executions": 10, "failure_rate": 0.1}
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
-        cache_module.metrics_cache.get = MagicMock(return_value=cached_data)
+        monkeypatch.setattr(cache_module.metrics_cache, "get", MagicMock(return_value=cached_data))
 
         db = MagicMock()
         result = await tool_service.aggregate_metrics(db)
-        assert result == cached_data
+        assert isinstance(result, ToolMetrics)
+        assert result.total_executions == 100
+        assert result.successful_executions == 90
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics_not_cached(self, tool_service, monkeypatch):
         """When cache miss, compute and cache result."""
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
+        from mcpgateway.schemas import ToolMetrics
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
-        cache_module.metrics_cache.get = MagicMock(return_value=None)
-        cache_module.metrics_cache.set = MagicMock()
+        monkeypatch.setattr(cache_module.metrics_cache, "get", MagicMock(return_value=None))
+        monkeypatch.setattr(cache_module.metrics_cache, "set", MagicMock())
 
-        mock_result = MagicMock()
-        mock_result.to_dict.return_value = {"total": 50}
+        mock_result = AggregatedMetrics(
+            total_executions=50,
+            successful_executions=45,
+            failed_executions=5,
+            failure_rate=0.1,
+            min_response_time=0.1,
+            max_response_time=1.0,
+            avg_response_time=0.5,
+            last_execution_time=None,
+            raw_count=10,
+            rollup_count=5,
+        )
 
         with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
             result = await tool_service.aggregate_metrics(MagicMock())
-        assert result == {"total": 50}
+        assert isinstance(result, ToolMetrics)
+        assert result.total_executions == 50
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics_cache_disabled(self, tool_service, monkeypatch):
         """When cache is disabled, compute directly."""
         # First-Party
         from mcpgateway.cache import metrics_cache as cache_module
+        from mcpgateway.schemas import ToolMetrics
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: False)
 
-        mock_result = MagicMock()
-        mock_result.to_dict.return_value = {"total": 25}
+        mock_result = AggregatedMetrics(
+            total_executions=25,
+            successful_executions=20,
+            failed_executions=5,
+            failure_rate=0.2,
+            min_response_time=0.1,
+            max_response_time=2.0,
+            avg_response_time=0.8,
+            last_execution_time=None,
+            raw_count=5,
+            rollup_count=5,
+        )
 
         with patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result):
             result = await tool_service.aggregate_metrics(MagicMock())
-        assert result == {"total": 25}
+        assert isinstance(result, ToolMetrics)
+        assert result.total_executions == 25
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1380,8 +1428,8 @@ class TestGetTopTools:
         from mcpgateway.cache import metrics_cache as cache_module
 
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
-        cache_module.metrics_cache.get = MagicMock(return_value=None)
-        cache_module.metrics_cache.set = MagicMock()
+        monkeypatch.setattr(cache_module.metrics_cache, "get", MagicMock(return_value=None))
+        monkeypatch.setattr(cache_module.metrics_cache, "set", MagicMock())
 
         mock_results = []
         monkeypatch.setattr("mcpgateway.services.tool_service.get_top_performers_combined", MagicMock(return_value=mock_results))
@@ -2528,6 +2576,128 @@ class TestInvokeA2AToolCoverage:
         assert result.content[0].text == "raw-response"
 
     @pytest.mark.asyncio
+    async def test_success_with_dict_response_value(self, tool_service):
+        """When response value is a dict, it should be serialized as valid JSON, not Python repr."""
+        tool = self._make_a2a_tool()
+        agent = MagicMock()
+        agent.enabled = True
+        agent.name = "agent"
+        agent.endpoint_url = "http://agent.test"
+        agent.agent_type = "generic"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value={"response": {"has_chart": False, "tracking_system": "IPP", "sql_queries": []}})
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {"query": "hi"})
+        assert result.is_error is False
+        text = result.content[0].text
+        # Must be valid JSON, not Python repr
+        parsed = json.loads(text)
+        assert parsed["has_chart"] is False
+        assert "False" not in text  # Python repr would have capital False
+
+    @pytest.mark.asyncio
+    async def test_success_without_response_key_dict(self, tool_service):
+        """When entire response is a dict without 'response' key, it should be valid JSON."""
+        tool = self._make_a2a_tool()
+        agent = MagicMock()
+        agent.enabled = True
+        agent.name = "agent"
+        agent.endpoint_url = "http://agent.test"
+        agent.agent_type = "custom"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value={"id": 1, "jsonrpc": "2.0", "result": {"has_chart": False}})
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {})
+        assert result.is_error is False
+        text = result.content[0].text
+        parsed = json.loads(text)
+        assert parsed["result"]["has_chart"] is False
+        assert "False" not in text
+
+    def _make_agent_mock(self):
+        agent = MagicMock()
+        agent.enabled = True
+        agent.name = "agent"
+        agent.endpoint_url = "http://agent.test"
+        agent.agent_type = "generic"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_response_value_none_serialized_as_json_null(self, tool_service):
+        """When response value is None, it should serialize as 'null' (valid JSON)."""
+        tool = self._make_a2a_tool()
+        agent = self._make_agent_mock()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value={"response": None})
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {})
+        assert result.is_error is False
+        assert result.content[0].text == "null"
+        assert json.loads(result.content[0].text) is None
+
+    @pytest.mark.asyncio
+    async def test_response_value_numeric_serialized_as_json(self, tool_service):
+        """When response value is a number, it should serialize as valid JSON."""
+        tool = self._make_a2a_tool()
+        agent = self._make_agent_mock()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value={"response": 42})
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {})
+        assert result.is_error is False
+        assert result.content[0].text == "42"
+        assert json.loads(result.content[0].text) == 42
+
+    @pytest.mark.asyncio
+    async def test_response_value_list_serialized_as_json(self, tool_service):
+        """When response value is a list, it should serialize as valid JSON array."""
+        tool = self._make_a2a_tool()
+        agent = self._make_agent_mock()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value={"response": [1, "two", False]})
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {})
+        assert result.is_error is False
+        parsed = json.loads(result.content[0].text)
+        assert parsed == [1, "two", False]
+        assert "False" not in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_root_list_response_serialized_as_json(self, tool_service):
+        """When entire response_data is a list (no 'response' key), it should serialize as JSON array."""
+        tool = self._make_a2a_tool()
+        agent = self._make_agent_mock()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value=[{"id": 1, "active": True}, {"id": 2, "active": False}])
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {})
+        assert result.is_error is False
+        parsed = json.loads(result.content[0].text)
+        assert len(parsed) == 2
+        assert parsed[0]["active"] is True
+        assert parsed[1]["active"] is False
+        assert "True" not in result.content[0].text
+        assert "False" not in result.content[0].text
+
+    @pytest.mark.asyncio
     async def test_exception_returns_error_result(self, tool_service):
         tool = self._make_a2a_tool()
         agent = MagicMock()
@@ -3121,6 +3291,7 @@ class TestConvertToolToReadMetrics:
 class TestExtractUsingJqErrors:
     def test_jq_filter_returns_none_result(self):
         """When jq filter produces [None], returns error TextContent in list."""
+        # First-Party
         import mcpgateway.services.tool_service as ts
 
         with patch.object(ts, "_compile_jq_filter") as mock_compile:
@@ -3138,6 +3309,7 @@ class TestExtractUsingJqErrors:
 
     def test_jq_filter_exception(self):
         """When jq raises exception, returns error message as TextContent in list."""
+        # First-Party
         import mcpgateway.services.tool_service as ts
 
         with patch.object(ts, "_compile_jq_filter", side_effect=ValueError("bad filter")):
@@ -4049,7 +4221,7 @@ class TestUpdateToolBranches:
         tool.description = "old desc"
         tool.original_description = "old desc"
         tool.version = 3
-        tool.team_id = None
+        tool.team_id = "team-1"
         tool.visibility = "public"
 
         tool_update = MagicMock(spec=ToolUpdate)
@@ -4066,7 +4238,6 @@ class TestUpdateToolBranches:
         tool_update.annotations = None
         tool_update.jsonpath_filter = None
         tool_update.visibility = "team"
-        tool_update.team_id = "team-1"
         tool_update.auth = None
         tool_update.tags = ["api", "v2"]
 
@@ -4078,7 +4249,6 @@ class TestUpdateToolBranches:
             patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
             patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
         ):
-
             result = await tool_service.update_tool(
                 db,
                 "t1",
@@ -4163,7 +4333,6 @@ class TestUpdateToolBranches:
         tool_update.annotations = None
         tool_update.jsonpath_filter = None
         tool_update.visibility = "team"
-        tool_update.team_id = "team-1"
         tool_update.auth = None
         tool_update.tags = None
 
@@ -4177,6 +4346,344 @@ class TestUpdateToolBranches:
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
             with pytest.raises(ToolNameConflictError):
                 await tool_service.update_tool(db, "t1", tool_update)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_visibility_none_team_conflict_check(self, tool_service, mock_tool):
+        """When ToolUpdate.visibility is None and tool.visibility is team, should check team conflicts and allow successful update."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "old_name"
+        tool.custom_name = "old_name"
+        tool.team_id = "team-1"
+        tool.visibility = "team"
+        tool.version = 1
+
+        tool_update = _make_tool_update(name="conflict_name", custom_name="conflict_name", description="Updated description")
+
+        # Test 1: Conflict detection - should raise error when name conflicts
+        existing = MagicMock()
+        existing.custom_name = "conflict_name"
+        existing.enabled = True
+        existing.id = "t2"
+        existing.visibility = "team"
+
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "t1", tool_update)
+
+        # Test 2: Successful update - should work when no conflict and preserve visibility
+        tool_update.name = "new_name"
+        tool_update.custom_name = "new_name"
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, None]),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1", "name": "new_name", "visibility": "team"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.name == "new_name"
+        assert tool.custom_name == "new_name"
+        assert tool.description == "Updated description"
+        assert tool.visibility == "team"
+        assert tool.team_id == "team-1"
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_visibility_none_public_conflict_check(self, tool_service, mock_tool):
+        """When ToolUpdate.visibility is None and tool.visibility is public, should check public conflicts and allow successful update."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "old_name"
+        tool.custom_name = "old_name"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 5
+
+        tool_update = _make_tool_update(name="conflict_name", custom_name="conflict_name", displayName="Updated Tool")
+
+        # Test 1: Conflict detection
+        existing = MagicMock()
+        existing.custom_name = "conflict_name"
+        existing.enabled = True
+        existing.id = "t2"
+        existing.visibility = "public"
+
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "t1", tool_update)
+
+        # Test 2: Successful update
+        tool_update.name = "new_public_name"
+        tool_update.custom_name = "new_public_name"
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, None]),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1", "name": "new_public_name", "visibility": "public"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.name == "new_public_name"
+        assert tool.custom_name == "new_public_name"
+        assert tool.display_name == "Updated Tool"
+        assert tool.visibility == "public"
+        assert tool.team_id is None
+        assert tool.version == 6
+
+    @pytest.mark.asyncio
+    async def test_update_tool_team_id_fallback_from_db(self, tool_service, mock_tool):
+        """When ToolUpdate.team_id is None, should fall back to tool.team_id for conflict check."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "old_name"
+        tool.custom_name = "old_name"
+        tool.team_id = "team-1"
+        tool.visibility = "team"
+        tool.version = 1
+
+        tool_update = _make_tool_update(name="conflict_name", custom_name="conflict_name")
+
+        existing = MagicMock()
+        existing.custom_name = "conflict_name"
+        existing.enabled = True
+        existing.id = "t2"
+        existing.visibility = "team"
+
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "t1", tool_update)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_custom_name_fallback_in_conflict_check(self, tool_service, mock_tool):
+        """When ToolUpdate.custom_name is None, conflict check should use tool_update.name."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "old_name"
+        tool.custom_name = "old_name"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+
+        tool_update = _make_tool_update(name="conflict_name", visibility="public")
+
+        existing = MagicMock()
+        existing.custom_name = "conflict_name"
+        existing.enabled = True
+        existing.id = "t2"
+        existing.visibility = "public"
+
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "t1", tool_update)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_visibility_change_conflict_check(self, tool_service, mock_tool):
+        """Changing visibility without changing name should still check for conflicts in the target scope."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "my_tool"
+        tool.custom_name = "my_tool"
+        tool.team_id = "team-1"
+        tool.visibility = "team"
+        tool.version = 1
+
+        tool_update = _make_tool_update(visibility="public")
+
+        existing = MagicMock()
+        existing.custom_name = "my_tool"
+        existing.enabled = True
+        existing.id = "t2"
+        existing.visibility = "public"
+
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "t1", tool_update)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_visibility_change_to_team_conflict(self, tool_service, mock_tool):
+        """Changing visibility from public to team should check for team-scoped conflicts."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "my_tool"
+        tool.custom_name = "my_tool"
+        tool.team_id = "team-1"
+        tool.visibility = "public"
+        tool.version = 1
+
+        tool_update = _make_tool_update(visibility="team")
+
+        existing = MagicMock()
+        existing.custom_name = "my_tool"
+        existing.enabled = True
+        existing.id = "t2"
+        existing.visibility = "team"
+
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "t1", tool_update)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_auth_not_reset_when_omitted(self, tool_service, mock_tool):
+        """When ToolUpdate.auth is None (not provided), existing auth_type should be preserved."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "my_tool"
+        tool.custom_name = "my_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.auth_type = "bearer"
+        tool.auth_value = "secret-token"
+        tool.version = 1
+
+        tool_update = _make_tool_update(description="Updated description")
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.auth_type == "bearer"  # Should NOT have been wiped
+        assert tool.auth_value == "secret-token"
+        assert tool.description == "Updated description"
+
+    @pytest.mark.asyncio
+    async def test_update_tool_private_visibility_name_conflict(self, tool_service, mock_tool):
+        """Renaming a private tool should check for conflicts scoped by owner_email."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "old_name"
+        tool.custom_name = "old_name"
+        tool.team_id = None
+        tool.visibility = "private"
+        tool.owner_email = "owner@example.com"
+        tool.version = 1
+
+        tool_update = _make_tool_update(name="conflict_name", custom_name="conflict_name")
+
+        existing = MagicMock()
+        existing.custom_name = "conflict_name"
+        existing.enabled = True
+        existing.id = "t2"
+        existing.visibility = "private"
+
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "t1", tool_update)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_visibility_change_to_private_conflict(self, tool_service, mock_tool):
+        """Changing visibility to private should check for owner-scoped conflicts."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "my_tool"
+        tool.custom_name = "my_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.owner_email = "owner@example.com"
+        tool.version = 1
+
+        tool_update = _make_tool_update(visibility="private")
+
+        existing = MagicMock()
+        existing.custom_name = "my_tool"
+        existing.enabled = True
+        existing.id = "t2"
+        existing.visibility = "private"
+
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "t1", tool_update)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_rename_with_divergent_custom_name(self, tool_service, mock_tool):
+        """When custom_name differs from name, renaming should check conflict against the existing custom_name (which won't change)."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "internal_name"
+        tool.custom_name = "display_name"  # Diverges from name
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+
+        # Rename the internal name — custom_name should stay "display_name"
+        tool_update = _make_tool_update(name="new_internal_name")
+
+        # A tool with custom_name "display_name" already exists in public scope
+        existing = MagicMock()
+        existing.custom_name = "display_name"
+        existing.enabled = True
+        existing.id = "t2"
+        existing.visibility = "public"
+
+        db = MagicMock()
+        # The conflict check should query for "display_name" (the unchanged custom_name),
+        # NOT "new_internal_name"
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "t1", tool_update)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_rename_with_divergent_custom_name_no_conflict(self, tool_service, mock_tool):
+        """When custom_name differs from name, renaming should succeed if custom_name has no conflict."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "internal_name"
+        tool.custom_name = "display_name"  # Diverges from name
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+
+        tool_update = _make_tool_update(name="new_internal_name")
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, None]),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1", "name": "new_internal_name"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.name == "new_internal_name"
+        assert tool.custom_name == "display_name"  # Should NOT have changed
+        assert tool.version == 2
+
+    def test_check_tool_name_conflict_skips_team_without_team_id(self, tool_service):
+        """When visibility is 'team' but team_id is None, should log warning and skip conflict check."""
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.logger") as mock_logger:
+            tool_service._check_tool_name_conflict(db, "my_tool", "team", "t1", team_id=None, owner_email=None)
+        mock_logger.warning.assert_called_once()
+        assert mock_logger.warning.call_args[0][3] == "team_id"
+
+    def test_check_tool_name_conflict_skips_private_without_owner_email(self, tool_service):
+        """When visibility is 'private' but owner_email is None, should log warning and skip conflict check."""
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.logger") as mock_logger:
+            tool_service._check_tool_name_conflict(db, "my_tool", "private", "t1", team_id=None, owner_email=None)
+        mock_logger.warning.assert_called_once()
+        assert mock_logger.warning.call_args[0][3] == "owner_email"
+
+    def test_tool_name_conflict_error_private_label(self):
+        """ToolNameConflictError should label private conflicts as 'Private', not 'Public'."""
+        err = ToolNameConflictError("my_tool", enabled=True, tool_id="t1", visibility="private")
+        assert "Private" in str(err)
+        assert "Public" not in str(err)
 
     @pytest.mark.asyncio
     async def test_permission_check_on_update(self, tool_service):
@@ -4599,9 +5106,6 @@ class TestInvokeToolRestSuccess:
         mock_response.json = MagicMock(return_value={"result": "ok"})
         mock_response.raise_for_status = MagicMock()
 
-        # Standard
-        import asyncio as aio
-
         async def fake_get(*a, **kw):
             return mock_response
 
@@ -4705,6 +5209,69 @@ class TestInvokeToolRestSuccess:
 
 
 class TestInvokeToolRestErrorResponse:
+    async def _invoke_with_error_response(self, tool_service, status_code, json_return, text_body):
+        """Helper to invoke a REST GET tool with a mocked error response."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        mock_response.json = MagicMock(return_value=json_return)
+        mock_response.text = text_body
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            return await tool_service.invoke_tool(db, "test_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_rest_error_dict_serialized_as_json(self, tool_service):
+        """When REST error field is a dict, it should be serialized as valid JSON, not Python repr."""
+        result = await self._invoke_with_error_response(
+            tool_service,
+            status_code=400,
+            json_return={"error": {"code": "INVALID", "details": {"field": "name", "required": True}}},
+            text_body="Bad Request",
+        )
+        assert result.is_error is True
+        text = result.content[0].text
+        # Must be valid JSON, not Python repr
+        parsed = json.loads(text)
+        assert parsed["code"] == "INVALID"
+        assert parsed["details"]["required"] is True
+        assert "True" not in text  # Python repr would have capital True
+
+    @pytest.mark.asyncio
+    async def test_rest_error_string_passed_through(self, tool_service):
+        """When REST error field is a string, it should be passed through as-is."""
+        result = await self._invoke_with_error_response(
+            tool_service,
+            status_code=500,
+            json_return={"error": "Internal server error"},
+            text_body="Internal Server Error",
+        )
+        assert result.is_error is True
+        assert result.content[0].text == "Internal server error"
+
     @pytest.mark.asyncio
     async def test_rest_non_standard_status_non_json(self, tool_service):
         """REST tool 207 Multi-Status with non-JSON body."""
@@ -5155,20 +5722,22 @@ class TestInvokeToolPluginContext:
 
         gc = GlobalContext(request_id="req-1", server_id="old-server", tenant_id=None, user=None)
 
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer.record_tool_metric = MagicMock()
+
         with (
             _setup_cache_for_invoke(tp),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
             mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
-            mock_mbuf.return_value = MagicMock()
 
             tool_service._http_client = AsyncMock()
             tool_service._http_client.get = fake_get
@@ -5234,6 +5803,125 @@ class TestInvokeToolPluginContext:
         assert gc.server_id == "old-server"
         # user already set -> should not overwrite
         assert gc.user == "already@test.com"
+
+
+class TestInvokeToolPluginPostInvokeSerialization:
+    @pytest.mark.asyncio
+    async def test_plugin_post_invoke_dict_result_serialized_as_json(self, tool_service):
+        """When plugin post-invoke returns a dict without 'content' key, it should be serialized as valid JSON."""
+        # First-Party
+        from mcpgateway.plugins.framework import ToolHookType
+
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        # Plugin post-invoke returns a modified_payload whose result is a dict without "content" key
+        plugin_manager = MagicMock()
+        plugin_manager.has_hooks_for = MagicMock(return_value=True)
+        plugin_manager.invoke_hook = AsyncMock(
+            side_effect=[
+                (SimpleNamespace(modified_payload=None), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"status": "transformed", "valid": False})), {}),  # post-invoke
+            ]
+        )
+        tool_service._plugin_manager = plugin_manager
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert result.is_error is False
+        text = result.content[0].text
+        # Must be valid JSON, not Python repr
+        parsed = json.loads(text)
+        assert parsed["status"] == "transformed"
+        assert parsed["valid"] is False
+        assert "False" not in text  # Python repr would have capital False
+
+        # Cleanup
+        tool_service._plugin_manager = None
+
+    @pytest.mark.asyncio
+    async def test_plugin_post_invoke_unserializable_result_falls_back_to_str(self, tool_service):
+        """When plugin post-invoke returns an unserializable value (e.g. set), it should fall back to str() instead of crashing."""
+        # First-Party
+        from mcpgateway.plugins.framework import ToolHookType
+
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        # Plugin post-invoke returns an unserializable set
+        plugin_manager = MagicMock()
+        plugin_manager.has_hooks_for = MagicMock(return_value=True)
+        plugin_manager.invoke_hook = AsyncMock(
+            side_effect=[
+                (SimpleNamespace(modified_payload=None), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"unserializable", "set", "values"})), {}),  # post-invoke
+            ]
+        )
+        tool_service._plugin_manager = plugin_manager
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        # Should not crash — falls back to str() representation
+        assert result.is_error is False
+        text = result.content[0].text
+        # str() on a set produces something like "{'unserializable', 'set', 'values'}"
+        assert isinstance(text, str)
+        assert len(text) > 0
+
+        # Cleanup
+        tool_service._plugin_manager = None
 
 
 class TestInvokeToolPluginMetadataFromPayload:
@@ -5495,6 +6183,72 @@ class TestInvokeToolA2A:
         assert result is not None
         assert result.is_error is False
         assert "Hello from A2A" in result.content[0].text
+
+    async def _invoke_a2a_tool_via_invoke_tool(self, tool_service, response_json):
+        """Helper: invoke an A2A tool through invoke_tool with a given HTTP 200 JSON response."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value=response_json)
+
+        async def fake_post(url, json=None, headers=None):
+            return mock_http_response
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            return await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+
+    @pytest.mark.asyncio
+    async def test_a2a_invoke_tool_response_value_none(self, tool_service):
+        """invoke_tool A2A path: response['response'] is None -> serialized as 'null'."""
+        result = await self._invoke_a2a_tool_via_invoke_tool(tool_service, {"response": None})
+        assert result.is_error is False
+        assert result.content[0].text == "null"
+        assert json.loads(result.content[0].text) is None
+
+    @pytest.mark.asyncio
+    async def test_a2a_invoke_tool_response_value_list(self, tool_service):
+        """invoke_tool A2A path: response['response'] is a list -> serialized as JSON array."""
+        result = await self._invoke_a2a_tool_via_invoke_tool(tool_service, {"response": [1, False, "x"]})
+        assert result.is_error is False
+        parsed = json.loads(result.content[0].text)
+        assert parsed == [1, False, "x"]
+        assert "False" not in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_a2a_invoke_tool_root_list_response(self, tool_service):
+        """invoke_tool A2A path: response_data is a list (no 'response' key) -> serialized as JSON."""
+        result = await self._invoke_a2a_tool_via_invoke_tool(tool_service, [{"active": True}, {"active": False}])
+        assert result.is_error is False
+        parsed = json.loads(result.content[0].text)
+        assert parsed[0]["active"] is True
+        assert parsed[1]["active"] is False
+        assert "True" not in result.content[0].text
+        assert "False" not in result.content[0].text
 
     @pytest.mark.asyncio
     async def test_a2a_jsonrpc_success_no_query(self, tool_service):
@@ -6811,7 +7565,6 @@ class TestInvokeToolLookupLogic:
             patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=AsyncMock(get=AsyncMock(return_value=None))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
         ):
-
             with pytest.raises(ToolInvocationError, match="ambiguous"):
                 await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=["team-A"])
 

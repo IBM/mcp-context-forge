@@ -85,7 +85,7 @@ cp .env.example .env
 Edit `.env` to enable plugins:
 ```bash
 PLUGINS_ENABLED=true
-PLUGIN_CONFIG_FILE=plugins/config.yaml
+PLUGINS_CONFIG_FILE=plugins/config.yaml
 ```
 
 Add the TOON encoder to `plugins/config.yaml`:
@@ -192,7 +192,7 @@ plugins:
 
 ```bash
 PLUGINS_ENABLED=true
-PLUGIN_CONFIG_FILE=plugins/config.yaml
+PLUGINS_CONFIG_FILE=plugins/config.yaml
 ```
 
 ## Configuration Options

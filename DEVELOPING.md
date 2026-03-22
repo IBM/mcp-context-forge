@@ -43,7 +43,7 @@ make doctest test htmlcov flake8 pylint verify
 - **Make** for automation
 - **Docker/Podman** (optional, for container development)
 - **Node.js 18+** (for UI development and MCP Inspector)
-- **PostgreSQL/MySQL** (optional, for production database testing)
+- **PostgreSQL** (optional, for production database testing)
 
 ### Environment Setup
 
@@ -141,7 +141,7 @@ mcp-context-forge/
 - **Admin UI**: HTMX + Alpine.js
 - **Testing**: Pytest + Playwright
 - **Package Management**: uv (or pip)
-- **Database**: SQLite (dev), PostgreSQL/MySQL (production)
+- **Database**: SQLite (dev), PostgreSQL (production)
 - **Caching**: Redis (optional)
 - **Observability**: OpenTelemetry
 
@@ -217,6 +217,43 @@ make doctest test htmlcov smoketest
 make flake8 bandit interrogate pylint verify
 ```
 
+### Nginx Cache Management
+
+The nginx cache in docker-compose is **ephemeral** (not persisted to a volume) for local development. This means the cache is automatically cleared when containers are removed (via `compose-down` / `compose-up`), eliminating stale content issues after rebuilding the gateway.
+
+```bash
+# Standard development workflow (cache clears on container removal)
+make docker-prod                    # Rebuild gateway image
+make compose-down                   # Remove containers (ephemeral cache cleared)
+make compose-up                     # Start with fresh cache
+
+# Manual cache clearing while containers are running
+make compose-cache-clear            # Clears cache inside running nginx container
+
+# For development without nginx proxy
+# Use port 4444 directly (bypasses nginx and cache entirely)
+# Uncomment in docker-compose.yml:
+#   gateway:
+#     ports:
+#       - "4444:4444"
+```
+
+**Cache behavior:**
+
+- **Ephemeral storage**: Cache exists only in the container's writable layer
+- **Auto-cleared**: Removed when containers are destroyed (`compose-down` / `compose-up`)
+- **Static assets**: Cached for 30 days (while container runs)
+- **API responses**: Cached for 5 minutes
+- **Admin UI pages**: Cached for 5 seconds
+
+**For production deployments:**
+Uncomment the `nginx_cache` volume in `docker-compose.yml` to persist cache across restarts:
+
+```yaml
+volumes:
+  - nginx_cache:/var/cache/nginx # Persistent cache storage
+```
+
 ## Code Quality
 
 ### Style Guidelines
@@ -234,11 +271,12 @@ make flake8 bandit interrogate pylint verify
 
 ```bash
 # Format code
-make black              # Python formatter
-make isort              # Import sorter
+make black              # Python formatter (CHECK=1 for dry-run)
+make isort              # Import sorter (CHECK=1 for dry-run)
 make autoflake          # Remove unused imports
 
 # Lint code
+make ruff               # Ruff linter (RUFF_MODE=check|fix|format)
 make flake8             # Style checker
 make pylint             # Advanced linting
 make mypy               # Type checking
@@ -279,7 +317,6 @@ alembic downgrade base && alembic upgrade head
 # Different database backends
 DATABASE_URL=sqlite:///./dev.db make dev           # SQLite
 DATABASE_URL=postgresql://localhost/mcp make dev   # PostgreSQL
-DATABASE_URL=mysql+pymysql://localhost/mcp make dev # MySQL
 
 # Database utilities
 python3 -m mcpgateway.cli db upgrade    # Apply migrations
@@ -421,7 +458,7 @@ plugins:
 ```bash
 # Enable plugin system
 export PLUGINS_ENABLED=true
-export PLUGIN_CONFIG_FILE=plugins/config.yaml
+export PLUGINS_CONFIG_FILE=plugins/config.yaml
 
 # Test plugin
 make dev

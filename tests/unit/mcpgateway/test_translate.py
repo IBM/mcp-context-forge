@@ -770,6 +770,38 @@ async def test_fastapi_message_no_restart_when_no_env_vars_and_already_running(m
 
 
 @pytest.mark.asyncio
+async def test_fastapi_message_restart_rate_limited_on_consecutive_requests(monkeypatch, translate):
+    """Second immediate request should skip restart due minimum restart interval."""
+    ps = translate._PubSub()
+    stdio = AsyncMock()
+    stdio.stop = AsyncMock()
+    stdio.start = AsyncMock()
+    stdio.send = AsyncMock()
+    stdio.is_running = Mock(return_value=True)
+
+    monkeypatch.setattr(translate, "extract_env_vars_from_headers", lambda *_args, **_kwargs: {"ENV_VAR": "1"})
+    monkeypatch.setattr(translate.asyncio, "sleep", AsyncMock())
+
+    app = translate._build_fastapi(ps, stdio, header_mappings={"X-Env": "ENV_VAR"})
+    handler = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/message")
+
+    class DummyRequest:
+        headers = {"X-Env": "1"}
+
+        async def body(self):
+            return b'{"jsonrpc":"2.0","method":"ping","id":1}'
+
+    resp1 = await handler(DummyRequest(), session_id="one")
+    resp2 = await handler(DummyRequest(), session_id="two")
+
+    assert resp1.status_code == 202
+    assert resp2.status_code == 202
+    assert stdio.stop.await_count == 1
+    assert stdio.start.await_count == 1
+    assert stdio.send.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_fastapi_cors_enabled(translate):
     """Test CORS middleware is properly configured."""
     ps = translate._PubSub()

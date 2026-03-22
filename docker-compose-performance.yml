@@ -21,9 +21,6 @@ volumes:                # Named volumes survive podman-compose down/up
   pgdata:
   pgreplicadata:        # PostgreSQL read replica data
   # pgdata18:  # Enable for postgres 18+
-  mariadbdata:
-  mysqldata:
-  mongodata:
   pgadmindata:
   redisinsight_data:
   nginx_cache:
@@ -31,6 +28,7 @@ volumes:                # Named volumes survive podman-compose down/up
   prometheusdata:
   lokidata:
   tempodata:
+  prometheus_token:
 
 ###############################################################################
 #  CORE SERVICE - ContextForge
@@ -117,6 +115,8 @@ services:
       - PORT=4444
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
+      # Prometheus metrics endpoint (disabled by default; requires JWT auth when enabled)
+      - ENABLE_METRICS=true
       # Database connection: Via PgBouncer (default) or direct PostgreSQL
       # PgBouncer provides connection pooling for better performance under high concurrency
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp
@@ -125,9 +125,6 @@ services:
       # SQLAlchemy query logging (useful for N+1 detection; noisy under load)
       # NOTE: SQLALCHEMY_ECHO logs at INFO; set LOG_LEVEL=INFO/DEBUG to see output.
       - SQLALCHEMY_ECHO=false
-      # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
-      # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
-      # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
       - REDIS_URL=redis://redis:6379/0
       # Redis parser: hiredis (C extension ~83x faster for large responses)
@@ -253,7 +250,7 @@ services:
       - DB_POOL_SIZE=20                # Pool size per worker
       - DB_MAX_OVERFLOW=10             # Extra connections under load
       - DB_POOL_TIMEOUT=30             # Time to wait for connection before failing
-      - DB_POOL_RECYCLE=60             # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT (half of 120s)
+      - DB_POOL_RECYCLE=60             # Recycle well before PgBouncer CLIENT_IDLE_TIMEOUT=300s (1/5 of idle timeout, safe proactive buffer)
       # Tool configuration for high-concurrency load testing
       - TOOL_TIMEOUT=60               # Seconds before tool invocation times out
       - MAX_TOOL_RETRIES=3            # Retry attempts for failed tool invocations
@@ -717,14 +714,14 @@ services:
       - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
       - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with pool_recycle)
+      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (5x DB_POOL_RECYCLE=60, large buffer for performance workloads)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
       # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=60   # Kill transactions idle > 300s (allows slow admin page rendering)
+      - IDLE_TRANSACTION_TIMEOUT=60   # Kill transactions idle > 60s (allows slow admin page rendering)
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
@@ -744,62 +741,6 @@ services:
         reservations:
           cpus: '1'
           memory: 256M
-
-  # mariadb:
-  #   image: mariadb:10.6
-  #   environment:
-  #     MARIADB_ROOT_PASSWORD: mysecretpassword
-  #     MARIADB_DATABASE: mcp
-  #     MARIADB_USER: mariadb
-  #     MARIADB_PASSWORD: mysecretpassword
-  #   volumes:
-  #     - mariadbdata:/var/lib/mysql
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "3306:3306"
-  #   healthcheck:
-  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-  #     interval: 30s
-  #     timeout: 5s
-  #     retries: 5
-  #     start_period: 20s
-
-  # mariadb:
-  #   image: mariadb:11
-  #   environment:
-  #     - MARIADB_ROOT_PASSWORD=mysecretpassword
-  #     - MARIADB_DATABASE=mcp
-  #     - MARIADB_USER=admin
-  #     - MARIADB_PASSWORD=changeme
-  #   volumes: [mariadbdata:/var/lib/mysql]
-  #   networks: [mcpnet]
-
-  # mariadb:
-  #   image: registry.redhat.io/rhel9/mariadb-106:12.0.2-ubi10
-  #   environment:
-  #     - MYSQL_ROOT_PASSWORD=mysecretpassword
-  #     - MYSQL_DATABASE=mcp
-  #     - MYSQL_USER=mysql
-  #     - MYSQL_PASSWORD=changeme
-  #   volumes: ["mariadbdata:/var/lib/mysql"]
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "3306:3306"
-  #   healthcheck:
-  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pmysecretpassword"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 5
-  #     start_period: 30s
-
-  # mongodb:
-  #   image: mongo:7
-  #   environment:
-  #     - MONGO_INITDB_ROOT_USERNAME=admin
-  #     - MONGO_INITDB_ROOT_PASSWORD=changeme
-  #     - MONGO_INITDB_DATABASE=mcp
-  #   volumes: [mongodata:/data/db]
-  #   networks: [mcpnet]
 
   # migration:
   #   #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
@@ -966,6 +907,30 @@ services:
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
+  # Prometheus scrape token - generates a JWT for Prometheus to
+  # authenticate against the gateway's /metrics/prometheus endpoint
+  # ──────────────────────────────────────────────────────────────────────
+  prometheus_token:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    restart: "no"
+    # Gateway image runs as non-root (uid 1001); named volumes are root-owned
+    # by default, so writing /tokens/gateway.jwt requires root.
+    user: "0"
+    volumes:
+      - prometheus_token:/tokens
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token \
+          --username prometheus@monitoring --exp 0 \
+          --secret my-test-key --algo HS256 2>/dev/null)
+        printf "%s" "$$TOKEN" > /tokens/gateway.jwt
+        echo "✅ Prometheus scrape token written to /tokens/gateway.jwt"
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
   # Prometheus - Metrics collection and storage
   # Scrapes: gateway, postgres, redis, nginx, cadvisor
   # Retention: 7 days (configurable via --storage.tsdb.retention.time)
@@ -979,15 +944,22 @@ services:
     volumes:
       - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheusdata:/prometheus
+      - prometheus_token:/tokens:ro
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.retention.time=7d'
       - '--web.enable-lifecycle'
     depends_on:
-      - postgres_exporter
-      - redis_exporter
-      - nginx_exporter
-      - cadvisor
+      postgres_exporter:
+        condition: service_started
+      redis_exporter:
+        condition: service_started
+      nginx_exporter:
+        condition: service_started
+      cadvisor:
+        condition: service_started
+      prometheus_token:
+        condition: service_completed_successfully
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
@@ -1150,33 +1122,6 @@ services:
   #     - RI_APP_HOST=0.0.0.0          # <- listen on all interfaces
   #     - RI_APP_PORT=5540             # <- UI port (container-side)
 
-
-  # mongo_express:         # 🔧 MongoDB GUI (works if mongodb service is enabled)
-  #   image: mongo-express:1
-  #   environment:
-  #     - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
-  #     - ME_CONFIG_MONGODB_ADMINPASSWORD=changeme
-  #     - ME_CONFIG_MONGODB_SERVER=mongodb
-  #   ports:
-  #     - "8082:8081"    # http://localhost:8082
-  #   networks: [mcpnet]
-  #   depends_on:
-  #     mongodb:
-  #       condition: service_started
-
-  # phpmyadmin:            # 🔧 MySQL / MariaDB GUI
-  #   image: phpmyadmin:latest
-  #   environment:
-  #     - PMA_HOST=mysql   # or mariadb
-  #     - PMA_USER=mysql
-  #     - PMA_PASSWORD=changeme
-  #     - PMA_ARBITRARY=1  # allow login to any host if you switch DBs
-  #   ports:
-  #     - "8083:80"      # http://localhost:8083
-  #   networks: [mcpnet]
-  #   depends_on:
-  #     mysql:
-  #       condition: service_started
 
 
 ###############################################################################

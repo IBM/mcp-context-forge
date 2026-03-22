@@ -8,12 +8,13 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 - `charts/AGENTS.md` - Helm chart operations
 - `docs/AGENTS.md` - Documentation authoring
 - `mcp-servers/AGENTS.md` - MCP server implementation
+- `tools_rust/mcp_runtime/DEVELOPING.md` - Rust MCP runtime development workflows, command matrix, and validation
 
 **Note:** The `llms/` directory contains guidance for LLMs *using* ContextForge solution (end-user runtime guidance), not for code agents working on this codebase.
 
 ## Project Overview
 
-ContextForge is a production-grade AI gateway, registry, and proxy that sits in front of any MCP, A2A, or REST/gRPC APIs, exposing a unified control plane with centralized governance, discovery, and observability. It federates tools, agents, models, and APIs (plus model/provider proxying), optimizes agent and tool calling, and supports plugins, auth/RBAC, rate-limiting, virtual servers, multi-transport protocols, and an optional Admin UI.
+ContextForge is an open source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability. It federates tools, agents, and APIs, optimizes agent and tool calling, and supports plugins, auth/RBAC, rate-limiting, virtual servers, multi-transport protocols, and an optional Admin UI.
 
 ## Project Structure
 
@@ -38,7 +39,7 @@ charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
-tools_rust/                 # Rust utilities (for example stdio wrapper tooling)
+tools_rust/                 # Rust utilities and MCP runtime (see tools_rust/mcp_runtime/DEVELOPING.md)
 llms/                       # End-user LLM guidance (not for code agents)
 ```
 
@@ -95,7 +96,7 @@ The `teams` claim in JWT tokens determines resource visibility:
 ### Security Invariants (Required)
 
 - Treat `public` as platform-public scope, not internet-anonymous scope.
-- Explicit exception: when `MCP_REQUIRE_AUTH=false`, unauthenticated `/mcp` requests are allowed with public-only visibility.
+- Explicit exception: when `MCP_REQUIRE_AUTH=false`, unauthenticated `/mcp` requests are allowed with public-only visibility — **unless** the target virtual server has `oauth_enabled=True`, in which case unauthenticated requests are rejected with 401 regardless of the global setting.
 - Keep the two-layer model on every path:
   - Layer 1: token scoping controls what a caller can see.
   - Layer 2: RBAC controls what a caller can do.
@@ -147,7 +148,7 @@ MCPGATEWAY_UI_ENABLED=false          # .env.example sets true
 MCPGATEWAY_ADMIN_API_ENABLED=false   # .env.example sets true
 MCPGATEWAY_A2A_ENABLED=true
 PLUGINS_ENABLED=false
-PLUGIN_CONFIG_FILE=plugins/config.yaml
+PLUGINS_CONFIG_FILE=plugins/config.yaml
 
 # Logging
 LOG_LEVEL=ERROR
@@ -184,6 +185,10 @@ python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 - **HTMX + Alpine.js** for admin UI
 - **SQLite** default, **PostgreSQL** support, **Redis** for caching/federation
 - **Alembic** for migrations
+
+### Synchronous SQLAlchemy in Async Handlers (Design Decision)
+
+The codebase deliberately uses synchronous SQLAlchemy sessions (e.g. `SessionLocal().begin()`) inside async FastAPI handlers and ASGI middleware, relying on FastAPI's event-loop management to handle blocking operations. Do not flag this as a bug or attempt to convert individual call sites to async without a broader migration plan. This design decision may be revisited in the future alongside a potential migration to async database drivers.
 
 ## Alembic Database Migrations
 

@@ -91,12 +91,17 @@ except ImportError:
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.logging_service import LoggingService
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+class ChatProcessingError(RuntimeError):
+    """Recoverable error wrapping tool, parsing, or model failures during chat streaming."""
 
 
 class MCPServerConfig(BaseModel):
@@ -124,7 +129,8 @@ class MCPServerConfig(BaseModel):
         >>> config.transport
         'streamable_http'
 
-        >>> # Stdio transport
+        >>> # Stdio transport (requires explicit feature flag)
+        >>> settings.mcpgateway_stdio_transport_enabled = True
         >>> config = MCPServerConfig(
         ...     command="python",
         ...     args=["server.py"],
@@ -181,64 +187,26 @@ class MCPServerConfig(BaseModel):
 
         return values
 
-    @field_validator("url")
-    @classmethod
-    def validate_url_for_transport(cls, v: Optional[str], info) -> Optional[str]:
-        """
-        Validate that URL is provided for HTTP-based transports.
-
-        Args:
-            v: The URL value to validate.
-            info: Validation context containing other field values.
+    @model_validator(mode="after")
+    def validate_transport_requirements(self):
+        """Validate transport-specific requirements and feature flags.
 
         Returns:
-            Optional[str]: The validated URL.
+            MCPServerConfig: Validated config instance.
 
         Raises:
-            ValueError: If URL is missing for streamable_http or sse transport.
-
-        Examples:
-            >>> # Valid case
-            >>> MCPServerConfig(
-            ...     url="https://example.com",
-            ...     transport="streamable_http"
-            ... ).url
-            'https://example.com'
+            ValueError: If transport requirements or feature flags are violated.
         """
-        transport = info.data.get("transport")
-        if transport in ["streamable_http", "sse"] and not v:
-            raise ValueError(f"URL is required for {transport} transport")
-        return v
+        if self.transport in ["streamable_http", "sse"] and not self.url:
+            raise ValueError(f"URL is required for {self.transport} transport")
 
-    @field_validator("command")
-    @classmethod
-    def validate_command_for_stdio(cls, v: Optional[str], info) -> Optional[str]:
-        """
-        Validate that command is provided for stdio transport.
+        if self.transport == "stdio":
+            if not settings.mcpgateway_stdio_transport_enabled:
+                raise ValueError("stdio transport is disabled by default; set MCPGATEWAY_STDIO_TRANSPORT_ENABLED=true to enable it")
+            if not self.command:
+                raise ValueError("Command is required for stdio transport")
 
-        Args:
-            v: The command value to validate.
-            info: Validation context containing other field values.
-
-        Returns:
-            Optional[str]: The validated command.
-
-        Raises:
-            ValueError: If command is missing for stdio transport.
-
-        Examples:
-            >>> config = MCPServerConfig(
-            ...     command="python",
-            ...     args=["server.py"],
-            ...     transport="stdio"
-            ... )
-            >>> config.command
-            'python'
-        """
-        transport = info.data.get("transport")
-        if transport == "stdio" and not v:
-            raise ValueError("Command is required for stdio transport")
-        return v
+        return self
 
     model_config = {
         "json_schema_extra": {
@@ -1618,14 +1586,19 @@ class GatewayProvider:
                 if not _BEDROCK_AVAILABLE:
                     raise ImportError("AWS Bedrock provider requires langchain-aws. Install with: pip install langchain-aws boto3")
 
-                region_name = config.get("region_name", "us-east-1")
+                # Map DB schema keys to boto3 kwargs.
+                # DB stores: region, access_key_id, secret_access_key, session_token, profile_name
+                # (see llm_provider_configs.AWSBedrockConfig)
+                region_name = config.get("region", "us-east-1")
                 credentials_kwargs = {}
-                if config.get("aws_access_key_id"):
-                    credentials_kwargs["aws_access_key_id"] = config["aws_access_key_id"]
-                if config.get("aws_secret_access_key"):
-                    credentials_kwargs["aws_secret_access_key"] = config["aws_secret_access_key"]
-                if config.get("aws_session_token"):
-                    credentials_kwargs["aws_session_token"] = config["aws_session_token"]
+                if config.get("access_key_id"):
+                    credentials_kwargs["aws_access_key_id"] = config["access_key_id"]
+                if config.get("secret_access_key"):
+                    credentials_kwargs["aws_secret_access_key"] = config["secret_access_key"]
+                if config.get("session_token"):
+                    credentials_kwargs["aws_session_token"] = config["session_token"]
+                if config.get("profile_name"):
+                    credentials_kwargs["credentials_profile_name"] = config["profile_name"]
 
                 model_kwargs = {
                     "temperature": temperature,
@@ -1939,10 +1912,10 @@ class ChatHistoryManager:
                     return []
                 return orjson.loads(data)
             except orjson.JSONDecodeError:
-                logger.warning(f"Failed to decode chat history for user {user_id}")
+                logger.warning(f"Failed to decode chat history for user {SecurityValidator.sanitize_log_message(user_id)}")
                 return []
             except Exception as e:
-                logger.error(f"Error retrieving chat history from Redis for user {user_id}: {e}")
+                logger.error(f"Error retrieving chat history from Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
                 return []
         else:
             return self._memory_store.get(user_id, [])
@@ -1974,7 +1947,7 @@ class ChatHistoryManager:
             try:
                 await self.redis_client.set(self._history_key(user_id), orjson.dumps(trimmed), ex=self.ttl)
             except Exception as e:
-                logger.error(f"Error saving chat history to Redis for user {user_id}: {e}")
+                logger.error(f"Error saving chat history to Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
         else:
             self._memory_store[user_id] = trimmed
 
@@ -2024,7 +1997,7 @@ class ChatHistoryManager:
             try:
                 await self.redis_client.delete(self._history_key(user_id))
             except Exception as e:
-                logger.error(f"Error clearing chat history from Redis for user {user_id}: {e}")
+                logger.error(f"Error clearing chat history from Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
         else:
             self._memory_store.pop(user_id, None)
 
@@ -2432,6 +2405,9 @@ class MCPChatService:
             logger.warning("Chat service already initialized")
             return
 
+        if not _LLMCHAT_AVAILABLE:
+            raise ImportError("LLM chat dependencies are missing. Install them with: pip install '.[llmchat]'")
+
         try:
             logger.info("Initializing chat service...")
 
@@ -2668,6 +2644,9 @@ class MCPChatService:
         Raises:
             RuntimeError: If service not initialized.
             ValueError: If message is empty or whitespace only.
+            ConnectionError: If the underlying MCP connection is lost.
+            TimeoutError: If the LLM request times out.
+            ChatProcessingError: If a tool, parsing, or model error occurs during streaming.
 
         Examples:
             >>> import asyncio
@@ -2929,9 +2908,12 @@ class MCPChatService:
                 await self.history_manager.append_message(self.user_id, "user", message)
                 await self.history_manager.append_message(self.user_id, "assistant", full_response)
 
+        except (ConnectionError, TimeoutError) as e:
+            logger.error(f"Error in chat_events: {e}")
+            raise
         except Exception as e:
             logger.error(f"Error in chat_events: {e}")
-            raise RuntimeError(f"Chat processing error: {e}") from e
+            raise ChatProcessingError(f"Chat processing error: {e}") from e
 
     async def get_conversation_history(self) -> List[Dict[str, str]]:
         """
@@ -3083,6 +3065,9 @@ class MCPChatService:
         """
         if not self._initialized:
             raise RuntimeError("Chat service not initialized")
+
+        if not _LLMCHAT_AVAILABLE:
+            raise ImportError("LLM chat dependencies are missing. Install them with: pip install '.[llmchat]'")
 
         try:
             logger.info("Reloading tools from MCP server...")

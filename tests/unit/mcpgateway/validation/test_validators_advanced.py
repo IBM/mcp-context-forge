@@ -55,7 +55,7 @@ class DummySettings:
     validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
     # Character validation patterns
-    validation_name_pattern = r"^[a-zA-Z0-9_.\-\s]+$"  # Names can have spaces
+    validation_name_pattern = r"^[a-zA-Z0-9_.\- ]+$"  # Names can have spaces (literal space, not \s to reject control chars)
     validation_identifier_pattern = r"^[a-zA-Z0-9_\-\.]+$"  # IDs cannot have spaces
     validation_safe_uri_pattern = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
     validation_unsafe_uri_pattern = r'[<>"\'\\]'
@@ -382,6 +382,20 @@ def test_validate_name_invalid():
     # Special characters not allowed - check for actual error message
     invalid_chars = ["Name!", "Name@", "Name#", "Name$", "Name%", "Name<>", "Name&"]
     for name in invalid_chars:
+        with pytest.raises(ValueError, match="can only contain letters, numbers"):
+            SecurityValidator.validate_name(name, "Name")
+
+
+def test_validate_name_rejects_control_characters():
+    """EDGE-03: Control characters (\\n, \\t, \\r) must be rejected, not treated as whitespace."""
+    control_char_names = [
+        "test\nname",   # newline
+        "test\tname",   # tab
+        "test\rname",   # carriage return
+        "test\x0bname", # vertical tab
+        "test\x0cname", # form feed
+    ]
+    for name in control_char_names:
         with pytest.raises(ValueError, match="can only contain letters, numbers"):
             SecurityValidator.validate_name(name, "Name")
 

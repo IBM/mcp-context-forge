@@ -8,7 +8,8 @@ Unit tests for request logging middleware.
 import orjson
 import pytest
 from unittest.mock import MagicMock
-from fastapi import Request, Response
+from fastapi import FastAPI, Request, Response
+from fastapi.testclient import TestClient
 from starlette.datastructures import Headers
 from starlette.types import Scope
 from mcpgateway.middleware.request_logging_middleware import (
@@ -223,6 +224,36 @@ async def test_dispatch_exception_handling(dummy_logger, mock_structured_logger,
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
     assert any("Failed to log request body" in msg for msg in dummy_logger.warnings)
+
+
+def test_middleware_does_not_consume_stream_for_form_parsing():
+    """Regression test: middleware must not consume stream before request.form()."""
+    app = FastAPI()
+    app.add_middleware(
+        RequestLoggingMiddleware,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
+        max_body_size=1024 * 1024,
+    )
+
+    @app.post("/form")
+    async def form_endpoint(request: Request):
+        form = await request.form()
+        return {
+            "name": form.get("name"),
+            "tool_count": len(form.getlist("associatedTools")),
+        }
+
+    client = TestClient(app)
+    payload = {
+        "name": "demo",
+        "associatedTools": ["tool-a", "tool-b", "tool-c"],
+    }
+
+    response = client.post("/form", data=payload)
+
+    assert response.status_code == 200
+    assert response.json() == {"name": "demo", "tool_count": 3}
 
 
 # --- mask_sensitive_data depth limit tests ---
@@ -552,6 +583,22 @@ async def test_receive_recreates_request_body_for_downstream(dummy_logger, mock_
 
     async def _call_next(req):
         assert await req.body() == original_body
+        return Response(content="OK", status_code=200)
+
+    response = await middleware.dispatch(request, _call_next)
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_dispatch_uses_original_request_for_call_next(dummy_logger, mock_structured_logger):
+    """Regression guard: middleware must pass the original Request object to call_next."""
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
+    request = make_request(body=b"name=demo", headers={"content-type": "application/x-www-form-urlencoded"})
+
+    async def _call_next(req):
+        assert req is request
+        form = await req.form()
+        assert form.get("name") == "demo"
         return Response(content="OK", status_code=200)
 
     response = await middleware.dispatch(request, _call_next)

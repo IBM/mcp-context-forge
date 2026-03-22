@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, SecretStr, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
@@ -39,7 +39,7 @@ from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
 from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -248,6 +248,68 @@ class A2AAgentMetrics(BaseModelWithConfigDict):
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent interaction")
 
 
+class A2AAgentAggregateMetrics(BaseModelWithConfigDict):
+    """
+    Represents aggregated metrics for all A2A agents in the system.
+
+    This model is used for the /metrics endpoint to provide system-wide A2A agent statistics
+    with consistent camelCase field naming.
+
+    Attributes:
+        total_agents (int): Total number of A2A agents registered.
+        active_agents (int): Number of currently active A2A agents.
+        total_interactions (int): Total number of agent interactions.
+        successful_interactions (int): Number of successful agent interactions.
+        failed_interactions (int): Number of failed agent interactions.
+        success_rate (float): Success rate as a percentage (0-100).
+        avg_response_time (float): Average response time in seconds.
+        min_response_time (float): Minimum response time in seconds.
+        max_response_time (float): Maximum response time in seconds.
+    """
+
+    total_agents: int = Field(..., description="Total number of A2A agents registered")
+    active_agents: int = Field(..., description="Number of currently active A2A agents")
+    total_interactions: int = Field(..., description="Total number of agent interactions")
+    successful_interactions: int = Field(..., description="Number of successful agent interactions")
+    failed_interactions: int = Field(..., description="Number of failed agent interactions")
+    success_rate: float = Field(..., description="Success rate as a percentage (0-100)")
+    avg_response_time: float = Field(..., description="Average response time in seconds")
+    min_response_time: float = Field(..., description="Minimum response time in seconds")
+    max_response_time: float = Field(..., description="Maximum response time in seconds")
+
+
+class MetricsResponse(BaseModelWithConfigDict):
+    """
+    Response model for the aggregated metrics endpoint.
+
+    Contains metrics for all entity types with consistent camelCase field names.
+    When A2A metrics are disabled, the a2a_agents key is omitted entirely
+    to preserve backwards compatibility with existing consumers.
+    """
+
+    tools: ToolMetrics
+    resources: ResourceMetrics
+    servers: ServerMetrics
+    prompts: PromptMetrics
+    a2a_agents: Optional[A2AAgentAggregateMetrics] = None
+
+    @model_serializer(mode="wrap")
+    def _exclude_none_a2a(self, handler):
+        """Omit the A2A metrics field when that feature is disabled.
+
+        Args:
+            handler: Pydantic serializer callback for the wrapped model.
+
+        Returns:
+            Dict[str, Any]: Serialized metrics payload without empty A2A fields.
+        """
+        result = handler(self)
+        if self.a2a_agents is None:
+            result.pop("a2aAgents", None)
+            result.pop("a2a_agents", None)
+        return result
+
+
 # --- JSON Path API modifier Schema
 
 
@@ -257,6 +319,7 @@ class JsonPathModifier(BaseModelWithConfigDict):
     Provides the structure for parsing JSONPath queries and optional mapping.
     """
 
+    model_config = ConfigDict(extra="forbid")  # ← rejects unknown fields
     jsonpath: Optional[str] = Field(None, description="JSONPath expression for querying JSON data.")
     mapping: Optional[Dict[str, str]] = Field(None, description="Mapping of fields from original data to output.")
 
@@ -268,15 +331,16 @@ class AuthenticationValues(BaseModelWithConfigDict):
     Provides the authentication values for different types of authentication.
     """
 
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers or None")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders or None")
     auth_value: Optional[str] = Field(None, description="Encoded Authentication values")
 
     # Only For tool read and view tool
     username: Optional[str] = Field("", description="Username for basic authentication")
     password: Optional[str] = Field("", description="Password for basic authentication")
     token: Optional[str] = Field("", description="Bearer token for authentication")
-    auth_header_key: Optional[str] = Field("", description="Key for custom headers authentication")
-    auth_header_value: Optional[str] = Field("", description="Value for custom headers authentication")
+    auth_header_key: Optional[str] = Field("", description="Key for custom headers authentication (legacy single header)")
+    auth_header_value: Optional[str] = Field("", description="Value for custom headers authentication (legacy single header)")
+    authHeaders: Optional[List[Dict[str, str]]] = Field(None, alias="authHeaders", description="List of custom headers for authentication (multi-header format)")  # noqa: N815
 
 
 class ToolCreate(BaseModel):
@@ -323,7 +387,7 @@ class ToolCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the tool owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
@@ -335,6 +399,24 @@ class ToolCreate(BaseModel):
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
+        """Validate visibility level.
+
+        Args:
+            v: Visibility value to validate
+
+        Returns:
+            Validated visibility value or None
+
+        Raises:
+            ValueError: If visibility is not a recognized level
+        """
+        if v is not None and v not in ("private", "team", "public"):
+            raise ValueError("Visibility must be one of: private, team, public")
+        return v
 
     @field_validator("tags")
     @classmethod
@@ -399,7 +481,7 @@ class ToolCreate(BaseModel):
         """
         if v is None:
             return v
-        return SecurityValidator.validate_url(v, "Tool URL")
+        return validate_core_url(v, "Tool URL")
 
     @field_validator("description")
     @classmethod
@@ -413,7 +495,13 @@ class ToolCreate(BaseModel):
             str: Value if validated as safe and truncated if too long
 
         Raises:
-            ValueError: When value is unsafe
+            ValueError: When value is unsafe and VALIDATION_STRICT=true (default)
+
+        Note:
+            When ``VALIDATION_STRICT=false`` the forbidden-pattern check is skipped
+            and a warning is logged instead.  This allows MCP server tools whose
+            descriptions contain Markdown syntax (e.g. ``> blockquote``,
+            ``< input``, ``cmd | grep``) to register successfully.
 
         Examples:
             >>> from mcpgateway.schemas import ToolCreate
@@ -431,11 +519,17 @@ class ToolCreate(BaseModel):
             return v
 
         # Note: backticks (`) are allowed as they are commonly used in Markdown
-        # for inline code examples in tool descriptions
+        # for inline code examples in tool descriptions.
+        # When VALIDATION_STRICT=false these patterns produce a warning only so
+        # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
+        # "< input", "cmd | grep") can register without error.
         forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
         for pat in forbidden_patterns:
             if pat in v:
-                raise ValueError(f"Description contains unsafe characters: '{pat}'")
+                if settings.validation_strict:
+                    raise ValueError(f"Description contains unsafe characters: '{pat}'")
+                logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
+                break
 
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
@@ -627,10 +721,8 @@ class ToolCreate(BaseModel):
             extra={
                 "auth_type": values.get("auth_type"),
                 "auth_username": values.get("auth_username"),
-                "auth_password": values.get("auth_password"),
-                "auth_token": values.get("auth_token"),
                 "auth_header_key": values.get("auth_header_key"),
-                "auth_header_value": values.get("auth_header_value"),
+                "auth_assembled": bool(values.get("auth_type") and str(values.get("auth_type")).lower() != "one_time_auth"),
             },
         )
 
@@ -879,7 +971,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
-    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
@@ -944,21 +1036,27 @@ class ToolUpdate(BaseModelWithConfigDict):
         """
         if v is None:
             return v
-        return SecurityValidator.validate_url(v, "Tool URL")
+        return validate_core_url(v, "Tool URL")
 
     @field_validator("description")
     @classmethod
     def validate_description(cls, v: Optional[str]) -> Optional[str]:
-        """Ensure descriptions display safely
+        """Ensure descriptions display safely, truncate if too long
 
         Args:
             v (str): Value to validate
 
         Returns:
-            str: Value if validated as safe
+            str: Value if validated as safe and truncated if too long
 
         Raises:
-            ValueError: When value is unsafe
+            ValueError: When value is unsafe and VALIDATION_STRICT=true (default)
+
+        Note:
+            When ``VALIDATION_STRICT=false`` the forbidden-pattern check is skipped
+            and a warning is logged instead.  This allows MCP server tools whose
+            descriptions contain Markdown syntax (e.g. ``> blockquote``,
+            ``< input``, ``cmd | grep``) to be updated successfully.
 
         Examples:
             >>> from mcpgateway.schemas import ToolUpdate
@@ -974,6 +1072,20 @@ class ToolUpdate(BaseModelWithConfigDict):
         """
         if v is None:
             return v
+
+        # Note: backticks (`) are allowed as they are commonly used in Markdown
+        # for inline code examples in tool descriptions.
+        # When VALIDATION_STRICT=false these patterns produce a warning only so
+        # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
+        # "< input", "cmd | grep") can be updated without error.
+        forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
+        for pat in forbidden_patterns:
+            if pat in v:
+                if settings.validation_strict:
+                    raise ValueError(f"Description contains unsafe characters: '{pat}'")
+                logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
+                break
+
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
             truncated = v[: SecurityValidator.MAX_DESCRIPTION_LENGTH]
@@ -1046,10 +1158,8 @@ class ToolUpdate(BaseModelWithConfigDict):
             extra={
                 "auth_type": values.get("auth_type"),
                 "auth_username": values.get("auth_username"),
-                "auth_password": values.get("auth_password"),
-                "auth_token": values.get("auth_token"),
                 "auth_header_key": values.get("auth_header_key"),
-                "auth_header_value": values.get("auth_header_value"),
+                "auth_assembled": bool(values.get("auth_type") and str(values.get("auth_type")).lower() != "one_time_auth"),
             },
         )
 
@@ -1538,8 +1648,26 @@ class ResourceCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the resource owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
+        """Validate visibility level.
+
+        Args:
+            v: Visibility value to validate
+
+        Returns:
+            Validated visibility value or None
+
+        Raises:
+            ValueError: If visibility is not a recognized level
+        """
+        if v is not None and v not in ("private", "team", "public"):
+            raise ValueError("Visibility must be one of: private, team, public")
+        return v
 
     @field_validator("tags")
     @classmethod
@@ -2091,8 +2219,26 @@ class PromptCreate(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
+
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
+        """Validate visibility level.
+
+        Args:
+            v: Visibility value to validate
+
+        Returns:
+            Validated visibility value or None
+
+        Raises:
+            ValueError: If visibility is not a recognized level
+        """
+        if v is not None and v not in ("private", "team", "public"):
+            raise ValueError("Visibility must be one of: private, team, public")
+        return v
 
     @field_validator("tags")
     @classmethod
@@ -2487,7 +2633,7 @@ class TransportType(str, Enum):
     STREAMABLEHTTP = "STREAMABLEHTTP"
 
 
-class GatewayCreate(BaseModel):
+class GatewayCreate(BaseModelWithConfigDict):
     """
     Schema for creating a new gateway.
 
@@ -2497,7 +2643,7 @@ class GatewayCreate(BaseModel):
         url (Union[str, AnyHttpUrl]): Gateway endpoint URL.
         description (Optional[str]): Optional description of the gateway.
         transport (str): Transport used by the MCP server, default is "SSE".
-        auth_type (Optional[str]): Type of authentication (basic, bearer, headers, or none).
+        auth_type (Optional[str]): Type of authentication (basic, bearer, authheaders, or none).
         auth_username (Optional[str]): Username for basic authentication.
         auth_password (Optional[str]): Password for basic authentication.
         auth_token (Optional[str]): Token for bearer authentication.
@@ -2516,7 +2662,7 @@ class GatewayCreate(BaseModel):
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, query_param, or none")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders, oauth, query_param, or none")
     # Fields for various types of authentication
     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
@@ -2613,7 +2759,7 @@ class GatewayCreate(BaseModel):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Gateway URL")
+        return validate_core_url(v, "Gateway URL")
 
     @field_validator("description")
     @classmethod
@@ -2776,7 +2922,7 @@ class GatewayCreate(BaseModel):
 
                 # Ensure at least one valid header
                 if not header_dict:
-                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
@@ -2793,7 +2939,7 @@ class GatewayCreate(BaseModel):
             header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
-                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+                raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
             return encode_auth({header_key: header_value})
 
@@ -2805,7 +2951,7 @@ class GatewayCreate(BaseModel):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayCreate":
@@ -2839,7 +2985,7 @@ class GatewayCreate(BaseModel):
 
             if hostname not in settings.insecure_queryparam_auth_allowed_hosts:
                 allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. " f"Allowed hosts: {allowed}")
+                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. Allowed hosts: {allowed}")
 
         return self
 
@@ -2858,7 +3004,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, authheaders or None")
     auth_username: Optional[str] = Field(None, description="username for basic authentication")
     auth_password: Optional[str] = Field(None, description="password for basic authentication")
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
@@ -2936,7 +3082,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Gateway URL")
+        return validate_core_url(v, "Gateway URL")
 
     @field_validator("description", mode="before")
     @classmethod
@@ -3073,7 +3219,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
                 # Ensure at least one valid header
                 if not header_dict:
-                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
@@ -3090,7 +3236,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
             header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
-                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+                raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
             return encode_auth({header_key: header_value})
 
@@ -3102,7 +3248,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayUpdate":
@@ -3167,7 +3313,7 @@ class GatewayRead(BaseModelWithConfigDict):
     - enabled status
     - reachable status
     - Last seen timestamp
-    - Authentication type: basic, bearer, headers, oauth
+    - Authentication type: basic, bearer, authheaders, oauth
     - Authentication value: username/password or token or custom headers
     - OAuth configuration for OAuth 2.0 authentication
 
@@ -3175,8 +3321,8 @@ class GatewayRead(BaseModelWithConfigDict):
     - Authentication username: for basic auth
     - Authentication password: for basic auth
     - Authentication token: for bearer auth
-    - Authentication header key: for headers auth
-    - Authentication header value: for headers auth
+    - Authentication header key: for authheaders auth
+    - Authentication header value: for authheaders auth
     """
 
     id: Optional[str] = Field(None, description="Unique ID of the gateway")
@@ -3194,7 +3340,7 @@ class GatewayRead(BaseModelWithConfigDict):
 
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, query_param, or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, authheaders, oauth, query_param, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
     auth_headers: Optional[List[Dict[str, str]]] = Field(default=None, description="List of custom headers for authentication")
     auth_headers_unmasked: Optional[List[Dict[str, str]]] = Field(default=None, description="Unmasked custom headers for administrative views")
@@ -3859,7 +4005,7 @@ class ServerCreate(BaseModel):
         """
         if v is None or v == "":
             return v
-        return SecurityValidator.validate_url(v, "Icon URL")
+        return validate_core_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
@@ -4038,7 +4184,7 @@ class ServerUpdate(BaseModelWithConfigDict):
         """
         if v is None or v == "":
             return v
-        return SecurityValidator.validate_url(v, "Icon URL")
+        return validate_core_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
@@ -4077,6 +4223,7 @@ class ServerRead(BaseModelWithConfigDict):
     # is_active: bool
     enabled: bool
     associated_tools: List[str] = []
+    associated_tool_ids: List[str] = []
     associated_resources: List[str] = []
     associated_prompts: List[str] = []
     associated_a2a_agents: List[str] = []
@@ -4276,7 +4423,7 @@ class A2AAgentCreate(BaseModel):
     config: Dict[str, Any] = Field(default_factory=dict, description="Agent-specific configuration parameters")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, query_param, or none")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders, oauth, query_param, or none")
     # Fields for various types of authentication
     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
@@ -4344,7 +4491,7 @@ class A2AAgentCreate(BaseModel):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Agent endpoint URL")
+        return validate_core_url(v, "Agent endpoint URL")
 
     @field_validator("description")
     @classmethod
@@ -4528,7 +4675,7 @@ class A2AAgentCreate(BaseModel):
 
                 # Ensure at least one valid header
                 if not header_dict:
-                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
@@ -4545,7 +4692,7 @@ class A2AAgentCreate(BaseModel):
             header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
-                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+                raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
             return encode_auth({header_key: header_value})
 
@@ -4558,7 +4705,7 @@ class A2AAgentCreate(BaseModel):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "A2AAgentCreate":
@@ -4592,7 +4739,7 @@ class A2AAgentCreate(BaseModel):
 
             if hostname_lower not in settings.insecure_queryparam_auth_allowed_hosts:
                 allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. " f"Allowed hosts: {allowed}")
+                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. Allowed hosts: {allowed}")
 
         return self
 
@@ -4681,7 +4828,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
         Returns:
             str: Value if validated as safe
         """
-        return SecurityValidator.validate_url(v, "Agent endpoint URL")
+        return validate_core_url(v, "Agent endpoint URL")
 
     @field_validator("description")
     @classmethod
@@ -4867,7 +5014,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
 
                 # Ensure at least one valid header
                 if not header_dict:
-                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
@@ -4884,7 +5031,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
-                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+                raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
             return encode_auth({header_key: header_value})
 
@@ -4897,7 +5044,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "A2AAgentUpdate":
@@ -4933,7 +5080,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Creation/update timestamps
     - Enabled/reachable status
     - Metrics
-    - Authentication type: basic, bearer, headers, oauth, query_param
+    - Authentication type: basic, bearer, authheaders, oauth, query_param
     - Authentication value: username/password or token or custom headers
     - OAuth configuration for OAuth 2.0 authentication
     - Query parameter authentication (key name and masked value)
@@ -4942,8 +5089,8 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Authentication username: for basic auth
     - Authentication password: for basic auth
     - Authentication token: for bearer auth
-    - Authentication header key: for headers auth
-    - Authentication header value: for headers auth
+    - Authentication header key: for authheaders auth
+    - Authentication header value: for authheaders auth
     - Query param key: for query_param auth
     - Query param value (masked): for query_param auth
     """
@@ -4966,7 +5113,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     metrics: Optional[A2AAgentMetrics] = Field(None, description="Agent metrics (may be None in list operations)")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, query_param, or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, authheaders, oauth, query_param, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
 
     # OAuth 2.0 configuration
@@ -4978,6 +5125,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
+    auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
 
     # Query Parameter Authentication (masked for security)
     auth_query_param_key: Optional[str] = Field(
@@ -5156,8 +5304,11 @@ class A2AAgentRead(BaseModelWithConfigDict):
 
         elif auth_type == "authheaders":
             # For backward compatibility, populate first header in key/value fields
-            if len(auth_value) == 0:
+            if not isinstance(auth_value, dict) or len(auth_value) == 0:
                 raise ValueError("authheaders requires at least one key/value pair")
+            # Populate auth_headers list for multi-header support
+            self.auth_headers = [{"key": str(key), "value": "" if value is None else str(value)} for key, value in auth_value.items()]
+            # Maintain backward compatibility with single header fields
             k, v = next(iter(auth_value.items()))
             self.auth_header_key, self.auth_header_value = k, v
         return self
@@ -5193,6 +5344,14 @@ class A2AAgentRead(BaseModelWithConfigDict):
         masked_data["auth_password"] = settings.masked_auth_value if masked_data.get("auth_password") else None
         masked_data["auth_token"] = settings.masked_auth_value if masked_data.get("auth_token") else None
         masked_data["auth_header_value"] = settings.masked_auth_value if masked_data.get("auth_header_value") else None
+        if masked_data.get("auth_headers"):
+            masked_data["auth_headers"] = [
+                {
+                    "key": header.get("key"),
+                    "value": settings.masked_auth_value if header.get("value") else header.get("value"),
+                }
+                for header in masked_data["auth_headers"]
+            ]
 
         # Mask sensitive keys inside oauth_config (e.g. password, client_secret)
         if masked_data.get("oauth_config"):
@@ -5481,6 +5640,7 @@ class EmailUserResponse(BaseModel):
         Returns:
             EmailUserResponse: Response schema instance
         """
+        is_locked = user.is_account_locked()
         locked_until_raw = getattr(user, "locked_until", None)
         locked_until = locked_until_raw if isinstance(locked_until_raw, datetime) else None
         failed_attempts_raw = getattr(user, "failed_login_attempts", 0)
@@ -5500,7 +5660,7 @@ class EmailUserResponse(BaseModel):
             password_change_required=user.password_change_required,
             failed_login_attempts=failed_attempts,
             locked_until=locked_until,
-            is_locked=bool(locked_until and locked_until > datetime.now(timezone.utc)),
+            is_locked=is_locked,
         )
 
 
@@ -5637,6 +5797,7 @@ class AdminUserUpdateRequest(BaseModel):
     full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
     is_admin: Optional[bool] = Field(None, description="Whether user has admin privileges")
     is_active: Optional[bool] = Field(None, description="Whether account is active")
+    email_verified: Optional[bool] = Field(None, description="Whether user's email is verified")
     password_change_required: Optional[bool] = Field(None, description="Whether user must change password on next login")
     password: Optional[str] = Field(None, min_length=8, description="New password (admin reset)")
 
@@ -6703,6 +6864,7 @@ class UserRoleResponse(BaseModel):
     granted_at: datetime = Field(..., description="When role was granted")
     expires_at: Optional[datetime] = Field(None, description="Optional expiration")
     is_active: bool = Field(..., description="Whether assignment is active")
+    grant_source: Optional[str] = Field(None, description="Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')")
 
 
 class PermissionCheckRequest(BaseModel):
@@ -7237,6 +7399,7 @@ class PaginationMeta(BaseModel):
     total_pages: int = Field(..., description="Total number of pages", ge=0)
     has_next: bool = Field(..., description="Whether there is a next page")
     has_prev: bool = Field(..., description="Whether there is a previous page")
+    page_items: Optional[int] = Field(None, description="Actual number of items on current page (after conversion failures)", ge=0)
     next_cursor: Optional[str] = Field(None, description="Cursor for next page (cursor-based only)")
     prev_cursor: Optional[str] = Field(None, description="Cursor for previous page (cursor-based only)")
 
@@ -7298,31 +7461,6 @@ class PaginatedResponse(BaseModel):
     data: List[Any] = Field(..., description="List of items")
     pagination: PaginationMeta = Field(..., description="Pagination metadata")
     links: Optional[PaginationLinks] = Field(None, description="Navigation links")
-
-
-class PaginationParams(BaseModel):
-    """Common pagination query parameters.
-
-    Attributes:
-        page: Page number (1-indexed)
-        per_page: Items per page
-        cursor: Cursor for cursor-based pagination
-        sort_by: Field to sort by
-        sort_order: Sort order (asc/desc)
-
-    Examples:
-        >>> params = PaginationParams(page=1, per_page=50)
-        >>> params.page
-        1
-        >>> params.sort_order
-        'desc'
-    """
-
-    page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
-    per_page: int = Field(default=50, ge=1, le=500, description="Items per page (max 500)")
-    cursor: Optional[str] = Field(None, description="Cursor for cursor-based pagination")
-    sort_by: Optional[str] = Field("created_at", description="Sort field")
-    sort_order: Optional[str] = Field("desc", pattern="^(asc|desc)$", description="Sort order")
 
 
 # ============================================================================
@@ -7545,21 +7683,6 @@ class ObservabilitySpanWithEvents(ObservabilitySpanRead):
     events: List[ObservabilityEventRead] = Field(default_factory=list, description="List of events in this span")
 
 
-class ObservabilityQueryParams(BaseModel):
-    """Query parameters for filtering observability data."""
-
-    start_time: Optional[datetime] = Field(None, description="Filter traces/spans/metrics after this time")
-    end_time: Optional[datetime] = Field(None, description="Filter traces/spans/metrics before this time")
-    status: Optional[str] = Field(None, description="Filter by status (ok, error, unset)")
-    http_status_code: Optional[int] = Field(None, description="Filter by HTTP status code")
-    user_email: Optional[str] = Field(None, description="Filter by user email")
-    resource_type: Optional[str] = Field(None, description="Filter by resource type")
-    resource_name: Optional[str] = Field(None, description="Filter by resource name")
-    trace_id: Optional[str] = Field(None, description="Filter by trace ID")
-    limit: int = Field(default=100, ge=1, le=1000, description="Maximum number of results")
-    offset: int = Field(default=0, ge=0, description="Result offset for pagination")
-
-
 # --- Performance Monitoring Schemas ---
 
 
@@ -7745,16 +7868,6 @@ class PerformanceDashboard(BaseModel):
     # Cluster info (for distributed mode)
     cluster_hosts: List[str] = Field(default_factory=list, description="Known cluster hosts")
     is_distributed: bool = Field(False, description="Running in distributed mode")
-
-
-class PerformanceHistoryParams(BaseModel):
-    """Query parameters for historical performance data."""
-
-    start_time: Optional[datetime] = Field(None, description="Start of time range")
-    end_time: Optional[datetime] = Field(None, description="End of time range")
-    period_type: str = Field("hourly", description="Aggregation period (hourly, daily)")
-    host: Optional[str] = Field(None, description="Filter by host")
-    limit: int = Field(default=168, ge=1, le=1000, description="Maximum results")
 
 
 class PerformanceHistoryResponse(BaseModel):

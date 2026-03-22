@@ -93,7 +93,7 @@ This diagram showcases the performance-optimized architecture of ContextForge, h
 │  │  │                              MULTI-LEVEL CACHING (80-95% DB reduction)                       │   ││
 │  │  │  ┌────────────────┐ ┌────────────────┐ ┌────────────────┐ ┌────────────────┐ ┌─────────────┐ │   ││
 │  │  │  │   JWT Cache    │ │  Auth Cache    │ │ Registry Cache │ │  Admin Stats   │ │ GlobalConfig│ │   ││
-│  │  │  │  TTL: 30s      │ │  TTL: 60s      │ │  TTL: 15-20s   │ │   TTL: 30-60s  │ │   TTL: 60s  │ │   ││
+│  │  │  │  TTL: 30s      │ │  TTL: 120-300s │ │  TTL: 20-300s  │ │   TTL: 30-120s │ │   TTL: 60s  │ │   ││
 │  │  │  │  <1ms auth     │ │  0-1 queries   │ │  95%+ hit rate │ │  Dashboard opt │ │  42K→0 qry  │ │   ││
 │  │  │  └────────────────┘ └────────────────┘ └────────────────┘ └────────────────┘ └─────────────┘ │   ││
 │  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘   ││
@@ -169,6 +169,90 @@ This diagram showcases the performance-optimized architecture of ContextForge, h
 └─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+## MCP Streamable HTTP Request Paths
+
+ContextForge now has two materially different MCP request paths, depending on
+the Rust runtime mode.
+
+### Mode summary
+
+| Mode | Public `/mcp` ingress | Session/runtime ownership |
+|------|------------------------|---------------------------|
+| `off` | Python | Python |
+| `shadow` | Python | Python (Rust sidecar present internally only) |
+| `edge` | Rust | Mixed: Rust ingress, Python still backs more MCP internals |
+| `full` | Rust | Rust ingress plus Rust session/event/resume/live-stream/affinity cores |
+
+### Python-owned public path (`off`, `shadow`)
+
+```text
+Client Request
+  -> NGINX
+  -> Python gateway middleware/auth/token scoping
+  -> Python MCP session manager + handlers
+  -> upstream MCP server
+```
+
+### Rust-owned public path (`edge`, `full`)
+
+```text
+Client Request
+  -> NGINX
+  -> Rust public MCP listener
+  -> trusted Python auth endpoint
+  -> Rust MCP routing/session/runtime logic
+  -> upstream MCP server or narrow Python internal route
+```
+
+Important current behavior:
+
+- Python remains authoritative for JWT auth, token scoping, and RBAC in all
+  modes.
+- `edge|full` remove the old public Python ingress hop by routing nginx
+  directly to Rust.
+- `full` also moves MCP session, event-store, resume, live-stream, and
+  affinity/owner-worker logic into Rust.
+- `shadow` is the safety-first fallback mode: the Rust sidecar is running, but
+  public `/mcp` stays mounted on Python.
+
+### Performance Characteristics by Layer
+
+| Layer | Typical Latency | Scaling Bottleneck | Key Tunable |
+|-------|----------------|-------------------|-------------|
+| nginx | <1ms | Not a bottleneck | `keepalive`, `worker_connections` |
+| Python auth/control path | 5-15ms | Auth DB/cache queries | `AUTH_CACHE_*`, `AUTH_CACHE_BATCH_QUERIES` |
+| Rust public ingress (`edge`, `full`) | low single-digit ms | Syscall/network overhead | keepalive, upstream reuse, request shaping |
+| Python MCP session manager (`off`, `shadow`) | 2-5ms | JSON-RPC parsing, context vars | `JSON_RESPONSE_ENABLED` |
+| RBAC check | 1-5ms | Permission DB queries | Role cache TTL (5 min internal) |
+| tools/list / resources / prompts | 5-10ms | DB and compatibility paths | cache TTLs, Rust specialized handlers |
+| tools/call (upstream) | 10-200ms | Upstream server + network | upstream session reuse, direct execution, RMCP client reuse |
+
+### Feature Flags and Middleware Overhead
+
+Every enabled feature registers middleware, routers, or background tasks that consume resources even when not actively used. ContextForge has ~90 feature flags; each disabled feature removes its middleware and background tasks from the request path.
+
+The most impactful features to disable when not needed are: admin UI, A2A protocol, LLM chat, catalog, observability, audit trail, and database-backed structured logging. See the [disable unused features](../manage/tuning.md#10---disable-unused-features) section in the tuning guide for deployment profiles.
+
+### Key Architectural Insight
+
+The important transport distinction is no longer only `/rpc` versus `/mcp`.
+It is now also **Python-owned MCP** versus **Rust-owned public MCP ingress**:
+
+- **`/rpc`** still benefits heavily from Redis-backed caches and does not follow
+  the streamable HTTP MCP session path.
+- **Python MCP (`off`, `shadow`)** still pays the full Python middleware,
+  session-manager, and handler cost on the public path.
+- **Rust MCP (`edge`, `full`)** removes the public Python ingress hop and moves
+  progressively more MCP session/runtime work to Rust, but Python auth/RBAC
+  remains part of the control plane.
+
+This means that scaling MCP throughput now depends on two different concerns:
+
+1. shrinking Python auth/control work that still happens for Rust MCP traffic
+2. minimizing per-request transport and upstream costs on the Rust side
+
+---
+
 ## Component Performance Impact Summary
 
 ### Rust-Powered Components (GIL Bypass)
@@ -192,12 +276,13 @@ This diagram showcases the performance-optimized architecture of ContextForge, h
 
 ### Caching Performance
 
-| Cache Layer | Hit Rate | Latency Reduction | DB Query Reduction |
+| Cache Layer | Hit Rate | TTL (Configurable) | DB Query Reduction |
 |-------------|----------|-------------------|---------------------|
-| **JWT Cache** | >80% | 5-12ms → <1ms | Per-request auth overhead |
-| **Auth Cache** | >90% | 8-15ms → 1-3ms | 3-4 → 0-1 queries/request |
-| **Registry Cache** | 95%+ | Variable | 50-200 → 0-1 queries |
-| **GlobalConfig Cache** | 99%+ | 1ms → 0.00001ms | 42K+ queries eliminated |
+| **JWT Cache** | >80% | 30s | Per-request HMAC verification cached |
+| **Auth Cache** | >90% | 120-300s (max) | 3-4 → 0-1 queries/request (user, team, role, revocation) |
+| **Registry Cache** | 95%+ | 20-300s | 50-200 → 0-1 queries (tools, servers, prompts, resources) |
+| **GlobalConfig Cache** | 99%+ | 60s | 42K+ queries eliminated (passthrough header config) |
+| **MCP Session Pool** | Varies | 300s pool TTL | 10-20x latency improvement for repeated upstream calls |
 
 ### Compression & Bandwidth
 
@@ -209,12 +294,15 @@ This diagram showcases the performance-optimized architecture of ContextForge, h
 
 ### Scaling Capacity
 
-| Configuration | Capacity |
-|---------------|----------|
-| Single pod (16 workers) | ~1,600 RPS |
-| 3 pods (default) | ~4,800 RPS |
-| 10 pods (HPA scaled) | ~16,000 RPS |
-| 50 pods (max) | ~80,000 RPS |
+Capacity varies by workload type. MCP Streamable HTTP requests are more resource-intensive per request than REST API calls due to additional middleware, auth, and upstream proxy overhead.
+
+| Configuration | REST API (`/rpc`) | MCP Streamable HTTP (`/mcp`) |
+|---------------|-------------------|------------------------------|
+| Single pod (16-24 workers) | ~1,600 RPS | ~250-400 RPS |
+| 3 pods (default) | ~4,800 RPS | ~750-800 RPS |
+| 10 pods (HPA scaled) | ~16,000 RPS | ~2,500-3,000 RPS |
+
+MCP throughput is lower because each request includes auth/RBAC database queries that the `/rpc` endpoint caches in Redis. With session pool enabled (`MCP_SESSION_POOL_ENABLED=true`), upstream MCP server latency is amortized across pooled connections, providing ~10% throughput improvement.
 
 ## Key Performance Features by Issue
 
@@ -323,6 +411,12 @@ Future Architecture (Python 3.14+):
 │  Performance: Near-linear scaling with CPU cores            │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+## See Also
+
+- [Gateway Tuning Guide](../manage/tuning.md) - Environment variables, MCP transport settings, session pool, connection pool tuning
+- [Performance Profiling Guide](../development/profiling.md) - py-spy, memray, PostgreSQL profiling, MCP bottleneck triage
+- [Database Performance Guide](../development/db-performance.md) - N+1 detection, query logging, DB vs transport bottleneck triage
 
 ## Quick Reference Commands
 

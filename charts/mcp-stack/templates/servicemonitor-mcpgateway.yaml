@@ -12,4 +12,11 @@ spec:
   endpoints:
     - port: http
       path: /metrics/prometheus
+      {{- with .Values.mcpContextForge.metrics.metricsToken }}
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ .secretName }}
+          key: {{ .key }}
+      {{- end }}
 {{- end }}

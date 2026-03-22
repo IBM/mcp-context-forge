@@ -25,6 +25,129 @@ def test_utc_now_returns_utc_datetime():
     assert now.tzinfo == timezone.utc
 
 
+def test_encrypted_text_bind_encrypts_plaintext(monkeypatch):
+    """EncryptedText should encrypt plaintext bind params."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = False
+    mock_encryption.encrypt_secret.return_value = "v2:{ciphertext}"
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    encrypted = db.EncryptedText().process_bind_param("plain-token", None)
+    assert encrypted == "v2:{ciphertext}"
+    mock_encryption.encrypt_secret.assert_called_once_with("plain-token")
+
+
+def test_encrypted_text_bind_preserves_pre_encrypted_values(monkeypatch):
+    """EncryptedText should avoid double-encrypting existing encrypted values."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = True
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    value = db.EncryptedText().process_bind_param("v2:{already-encrypted}", None)
+    assert value == "v2:{already-encrypted}"
+    mock_encryption.encrypt_secret.assert_not_called()
+
+
+def test_encrypted_text_bind_raises_on_encrypt_failure(monkeypatch):
+    """EncryptedText should fail closed on encryption errors when encryption is enabled."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = False
+    mock_encryption.encrypt_secret.side_effect = RuntimeError("encrypt failed")
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    with pytest.raises(db.TokenEncryptionWriteError):
+        db.EncryptedText().process_bind_param("plain-token", None)
+
+
+def test_encrypted_text_result_decrypts_encrypted_values(monkeypatch):
+    """EncryptedText should decrypt values when reading from the database."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = True
+    mock_encryption.decrypt_secret_or_plaintext.return_value = "plain-token"
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    value = db.EncryptedText().process_result_value("v2:{ciphertext}", None)
+    assert value == "plain-token"
+
+
+def test_encrypted_text_result_preserves_plaintext_values(monkeypatch):
+    """EncryptedText should leave plaintext rows unchanged for compatibility."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = False
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    value = db.EncryptedText().process_result_value("legacy-plain-token", None)
+    assert value == "legacy-plain-token"
+
+
+def test_encrypted_text_python_type_and_literal_param(monkeypatch):
+    """EncryptedText exposes str python_type and delegates literal params via bind processing."""
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: None))
+    encrypted_type = db.EncryptedText()
+    assert encrypted_type.python_type is str
+    assert encrypted_type.process_literal_param("literal-token", None) == "literal-token"
+
+
+def test_encrypted_text_get_encryption_returns_none_when_secret_missing(monkeypatch):
+    """EncryptedText should skip encryption service setup when no secret is configured."""
+    monkeypatch.setattr(db.settings, "auth_encryption_secret", "")
+    assert db.EncryptedText._get_encryption() is None
+
+
+def test_encrypted_text_get_encryption_returns_none_on_import_error(monkeypatch):
+    """EncryptedText should degrade gracefully when encryption service import fails."""
+    # Standard
+    import builtins
+
+    monkeypatch.setattr(db.settings, "auth_encryption_secret", "test-secret")
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
+        if name == "mcpgateway.services.encryption_service":
+            raise ImportError("blocked for test")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    assert db.EncryptedText._get_encryption() is None
+
+
+def test_encrypted_text_get_encryption_returns_service_when_configured(monkeypatch):
+    """EncryptedText should return a configured encryption service instance."""
+    mock_service = MagicMock()
+    monkeypatch.setattr(db.settings, "auth_encryption_secret", "test-secret")
+    with patch("mcpgateway.services.encryption_service.get_encryption_service", return_value=mock_service) as mock_get:
+        service = db.EncryptedText._get_encryption()
+    assert service is mock_service
+    mock_get.assert_called_once_with("test-secret")
+
+
+def test_encrypted_text_bind_returns_original_for_non_string_and_without_encryption(monkeypatch):
+    """EncryptedText bind path should preserve values when encryption is unavailable or value is not a string."""
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: None))
+    encrypted_type = db.EncryptedText()
+    assert encrypted_type.process_bind_param(123, None) == 123
+    assert encrypted_type.process_bind_param("plain-token", None) == "plain-token"
+
+
+def test_encrypted_text_result_returns_original_for_non_string_and_without_encryption(monkeypatch):
+    """EncryptedText result path should preserve values when decryption is unavailable or value is not a string."""
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: None))
+    encrypted_type = db.EncryptedText()
+    assert encrypted_type.process_result_value({"token": "x"}, None) == {"token": "x"}
+    assert encrypted_type.process_result_value("stored-token", None) == "stored-token"
+
+
+def test_encrypted_text_result_returns_stored_value_when_decrypt_raises(monkeypatch):
+    """EncryptedText should return stored value if decrypting an encrypted token fails."""
+    mock_encryption = MagicMock()
+    mock_encryption.is_encrypted.return_value = True
+    mock_encryption.decrypt_secret_or_plaintext.side_effect = RuntimeError("decrypt failed")
+    monkeypatch.setattr(db.EncryptedText, "_get_encryption", staticmethod(lambda: mock_encryption))
+
+    stored = "v2:{ciphertext}"
+    assert db.EncryptedText().process_result_value(stored, None) == stored
+
+
 # --- Tool metrics properties ---
 def make_tool_with_metrics(metrics):
     tool = db.Tool()
@@ -133,21 +256,13 @@ def test_tool_metrics_summary_detached():
     assert summary["failure_rate"] == 0.0
 
 
-def test_build_engine_mysql_branch(monkeypatch):
-    monkeypatch.setattr(db, "backend", "mysql")
-    monkeypatch.setattr(db.settings, "database_url", "mysql://user:pass@localhost/db")
-    monkeypatch.setattr(db.settings, "db_pool_size", 5)
-    monkeypatch.setattr(db.settings, "db_max_overflow", 10)
-    monkeypatch.setattr(db.settings, "db_pool_timeout", 30)
-    monkeypatch.setattr(db.settings, "db_pool_recycle", 300)
-    monkeypatch.setattr(db, "connect_args", {"arg": "val"})
-
-    with patch("mcpgateway.db.create_engine") as mock_create:
+@pytest.mark.parametrize("unsupported_backend", ["mysql", "mariadb", "mongodb", "oracle"])
+def test_build_engine_rejects_unsupported_backend(monkeypatch, unsupported_backend):
+    """build_engine() raises ValueError for any backend other than postgresql/sqlite."""
+    monkeypatch.setattr(db, "backend", unsupported_backend)
+    monkeypatch.setattr(db.settings, "database_url", f"{unsupported_backend}://user:pass@host/db")
+    with pytest.raises(ValueError, match="Unsupported database backend"):
         db.build_engine()
-        kwargs = mock_create.call_args.kwargs
-        assert kwargs["pool_pre_ping"] is True
-        assert kwargs["pool_size"] == 5
-        assert kwargs["max_overflow"] == 10
 
 
 def test_build_engine_null_pool_branch(monkeypatch):
@@ -209,31 +324,40 @@ def test_tool_metrics_summary_sql_path(monkeypatch):
     tool = db.Tool()
     tool.id = "test-tool-id"
 
-    # Mock the session and query result for full aggregation
-    # (count, sum_success, min_rt, max_rt, avg_rt, max_timestamp)
+    # Mock the session and query results for TWO queries (hourly + uncovered raw)
     mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [5, 3, 1.0, 5.0, 2.5, mock_timestamp][i]
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Hourly query result: (sum_total, sum_success, min_rt, max_rt, weighted_sum_rt, max_hour_start)
+    mock_hourly_result = MagicMock()
+    mock_hourly_result.__getitem__ = lambda self, i: [3, 2, 2.0, 5.0, 8.5, mock_timestamp][i]
+
+    # Raw query result (metrics after hourly coverage): (count, sum_success, min_rt, max_rt, sum_rt, max_timestamp)
+    mock_raw_result = MagicMock()
+    mock_raw_result.__getitem__ = lambda self, i: [2, 1, 1.0, 3.0, 4.0, mock_timestamp][i]
+
+    mock_hourly_query = MagicMock()
+    mock_hourly_query.filter.return_value = mock_hourly_query
+    mock_hourly_query.one.return_value = mock_hourly_result
+
+    mock_raw_query = MagicMock()
+    mock_raw_query.filter.return_value = mock_raw_query
+    mock_raw_query.one.return_value = mock_raw_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [mock_hourly_query, mock_raw_query]
 
-    # Patch object_session where it's imported (in sqlalchemy.orm)
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = tool.metrics_summary
 
+    # Expected: hourly(3,2) + raw(2,1) = total(5,3)
     assert summary["total_executions"] == 5
     assert summary["successful_executions"] == 3
     assert summary["failed_executions"] == 2
     assert summary["failure_rate"] == 0.4
-    assert summary["min_response_time"] == 1.0
-    assert summary["max_response_time"] == 5.0
-    assert summary["avg_response_time"] == 2.5
+    assert summary["min_response_time"] == 1.0  # min(2.0, 1.0)
+    assert summary["max_response_time"] == 5.0  # max(5.0, 3.0)
+    assert summary["avg_response_time"] == 2.5  # (8.5 + 4.0) / 5
     assert summary["last_execution_time"] == mock_timestamp
 
 
@@ -325,27 +449,38 @@ def test_resource_metrics_summary_sql_path(monkeypatch):
     resource.id = "test-resource-id"
 
     mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [6, 4, 0.5, 3.0, 1.5, mock_timestamp][i]
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Hourly query result: (sum_total, sum_success, min_rt, max_rt, weighted_sum_rt, max_hour_start)
+    mock_hourly_result = MagicMock()
+    mock_hourly_result.__getitem__ = lambda self, i: [4, 3, 1.0, 3.0, 6.0, mock_timestamp][i]
+
+    # Raw query result (after hourly coverage): (count, sum_success, min_rt, max_rt, sum_rt, max_timestamp)
+    mock_raw_result = MagicMock()
+    mock_raw_result.__getitem__ = lambda self, i: [2, 1, 0.5, 2.0, 3.0, mock_timestamp][i]
+
+    mock_hourly_query = MagicMock()
+    mock_hourly_query.filter.return_value = mock_hourly_query
+    mock_hourly_query.one.return_value = mock_hourly_result
+
+    mock_raw_query = MagicMock()
+    mock_raw_query.filter.return_value = mock_raw_query
+    mock_raw_query.one.return_value = mock_raw_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [mock_hourly_query, mock_raw_query]
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = resource.metrics_summary
 
+    # Expected: hourly(4,3) + raw(2,1) = total(6,4)
     assert summary["total_executions"] == 6
     assert summary["successful_executions"] == 4
     assert summary["failed_executions"] == 2
     assert summary["failure_rate"] == pytest.approx(0.333, rel=0.01)
-    assert summary["min_response_time"] == 0.5
-    assert summary["max_response_time"] == 3.0
-    assert summary["avg_response_time"] == 1.5
+    assert summary["min_response_time"] == 0.5  # min(1.0, 0.5)
+    assert summary["max_response_time"] == 3.0  # max(3.0, 2.0)
+    assert summary["avg_response_time"] == 1.5  # (6.0 + 3.0) / 6
     assert summary["last_execution_time"] == mock_timestamp
 
 
@@ -437,27 +572,38 @@ def test_prompt_metrics_summary_sql_path(monkeypatch):
     prompt.id = "test-prompt-id"
 
     mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [10, 8, 0.2, 4.0, 2.0, mock_timestamp][i]
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Hourly query result: (sum_total, sum_success, min_rt, max_rt, weighted_sum_rt, max_hour_start)
+    mock_hourly_result = MagicMock()
+    mock_hourly_result.__getitem__ = lambda self, i: [7, 6, 0.5, 4.0, 14.0, mock_timestamp][i]
+
+    # Raw query result (after hourly coverage): (count, sum_success, min_rt, max_rt, sum_rt, max_timestamp)
+    mock_raw_result = MagicMock()
+    mock_raw_result.__getitem__ = lambda self, i: [3, 2, 0.2, 3.0, 6.0, mock_timestamp][i]
+
+    mock_hourly_query = MagicMock()
+    mock_hourly_query.filter.return_value = mock_hourly_query
+    mock_hourly_query.one.return_value = mock_hourly_result
+
+    mock_raw_query = MagicMock()
+    mock_raw_query.filter.return_value = mock_raw_query
+    mock_raw_query.one.return_value = mock_raw_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [mock_hourly_query, mock_raw_query]
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = prompt.metrics_summary
 
+    # Expected: hourly(7,6) + raw(3,2) = total(10,8)
     assert summary["total_executions"] == 10
     assert summary["successful_executions"] == 8
     assert summary["failed_executions"] == 2
     assert summary["failure_rate"] == 0.2
-    assert summary["min_response_time"] == 0.2
-    assert summary["max_response_time"] == 4.0
-    assert summary["avg_response_time"] == 2.0
+    assert summary["min_response_time"] == 0.2  # min(0.5, 0.2)
+    assert summary["max_response_time"] == 4.0  # max(4.0, 3.0)
+    assert summary["avg_response_time"] == 2.0  # (14.0 + 6.0) / 10
     assert summary["last_execution_time"] == mock_timestamp
 
 
@@ -549,27 +695,38 @@ def test_server_metrics_summary_sql_path(monkeypatch):
     server.id = "test-server-id"
 
     mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [20, 18, 0.1, 6.0, 3.0, mock_timestamp][i]
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Hourly query result: (sum_total, sum_success, min_rt, max_rt, weighted_sum_rt, max_hour_start)
+    mock_hourly_result = MagicMock()
+    mock_hourly_result.__getitem__ = lambda self, i: [15, 14, 0.5, 6.0, 45.0, mock_timestamp][i]
+
+    # Raw query result (after hourly coverage): (count, sum_success, min_rt, max_rt, sum_rt, max_timestamp)
+    mock_raw_result = MagicMock()
+    mock_raw_result.__getitem__ = lambda self, i: [5, 4, 0.1, 4.0, 15.0, mock_timestamp][i]
+
+    mock_hourly_query = MagicMock()
+    mock_hourly_query.filter.return_value = mock_hourly_query
+    mock_hourly_query.one.return_value = mock_hourly_result
+
+    mock_raw_query = MagicMock()
+    mock_raw_query.filter.return_value = mock_raw_query
+    mock_raw_query.one.return_value = mock_raw_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [mock_hourly_query, mock_raw_query]
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = server.metrics_summary
 
+    # Expected: hourly(15,14) + raw(5,4) = total(20,18)
     assert summary["total_executions"] == 20
     assert summary["successful_executions"] == 18
     assert summary["failed_executions"] == 2
     assert summary["failure_rate"] == 0.1
-    assert summary["min_response_time"] == 0.1
-    assert summary["max_response_time"] == 6.0
-    assert summary["avg_response_time"] == 3.0
+    assert summary["min_response_time"] == 0.1  # min(0.5, 0.1)
+    assert summary["max_response_time"] == 6.0  # max(6.0, 4.0)
+    assert summary["avg_response_time"] == 3.0  # (45.0 + 15.0) / 20
     assert summary["last_execution_time"] == mock_timestamp
 
 
@@ -1152,6 +1309,126 @@ def test_email_user_account_helpers():
     assert user.get_display_name() == "Test User"
     user.full_name = None
     assert user.get_display_name() == "user"
+
+
+def test_email_user_is_account_locked_naive_datetime():
+    """Test is_account_locked handles naive datetime (SQLite timezone handling)."""
+    user = db.EmailUser(email="user@example.com", password_hash="hash")
+
+    # Active lock: naive future UTC datetime (simulates SQLite stripping tzinfo)
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10)
+    user.failed_login_attempts = 3
+
+    assert user.is_account_locked() is True
+    # Method must not mutate the ORM field (avoids write-on-read in GET paths)
+    assert user.locked_until.tzinfo is None
+    # Counter must not be touched while the lock is still active
+    assert user.failed_login_attempts == 3
+
+    # Expired lock: should reset counters and return False
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+    user.failed_login_attempts = 3
+
+    assert user.is_account_locked() is False
+    assert user.failed_login_attempts == 0
+    assert user.locked_until is None
+
+
+def test_email_user_is_account_locked_aware_datetime():
+    """Test is_account_locked with timezone-aware datetimes (PostgreSQL path)."""
+    user = db.EmailUser(email="user@example.com", password_hash="hash")
+
+    # Active lock: aware datetime, no mutation expected
+    user.locked_until = db.utc_now() + timedelta(minutes=10)
+    original = user.locked_until
+    user.failed_login_attempts = 3
+
+    assert user.is_account_locked() is True
+    assert user.locked_until is original  # object not replaced
+    assert user.failed_login_attempts == 3
+
+    # Expired lock: should reset counters and return False
+    user.locked_until = db.utc_now() - timedelta(minutes=1)
+    user.failed_login_attempts = 3
+
+    assert user.is_account_locked() is False
+    assert user.failed_login_attempts == 0
+    assert user.locked_until is None
+
+    # No lock at all
+    user.locked_until = None
+    assert user.is_account_locked() is False
+
+
+def test_is_account_locked_naive_datetime_render_user_card_regression():
+    """Regression: _render_user_card_html must not crash on naive locked_until (SQLite)."""
+    # First-Party
+    from mcpgateway.admin import _render_user_card_html
+
+    user = db.EmailUser(
+        email="locked@example.com",
+        password_hash="hash",
+        full_name="Locked User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="local",
+        created_at=db.utc_now(),
+        password_change_required=False,
+    )
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10)
+    user.failed_login_attempts = 5
+
+    html = _render_user_card_html(user, "other@example.com", admin_count=1, root_path="")
+    assert "Locked" in html
+    assert "locked@example.com" in html
+
+
+def test_is_account_locked_naive_datetime_email_user_response_regression():
+    """Regression: EmailUserResponse.from_email_user must not crash on naive locked_until (SQLite)."""
+    # First-Party
+    from mcpgateway.schemas import EmailUserResponse
+
+    user = db.EmailUser(
+        email="locked@example.com",
+        password_hash="hash",
+        full_name="Locked User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="local",
+        created_at=db.utc_now(),
+        password_change_required=False,
+    )
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10)
+    user.failed_login_attempts = 5
+
+    response = EmailUserResponse.from_email_user(user)
+    assert response.is_locked is True
+    assert response.failed_login_attempts == 5
+    assert response.locked_until is not None
+
+
+def test_is_account_locked_expired_naive_datetime_clears_fields():
+    """Expired naive lock: from_email_user sees cleared fields after is_account_locked()."""
+    # First-Party
+    from mcpgateway.schemas import EmailUserResponse
+
+    user = db.EmailUser(
+        email="expired@example.com",
+        password_hash="hash",
+        full_name="Expired User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="local",
+        created_at=db.utc_now(),
+        password_change_required=False,
+    )
+    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+    user.failed_login_attempts = 5
+
+    response = EmailUserResponse.from_email_user(user)
+    assert response.is_locked is False
+    assert response.failed_login_attempts == 0
+    assert response.locked_until is None
 
 
 def test_email_user_failed_attempts_flow():
@@ -2021,44 +2298,6 @@ def test_validate_prompt_schema_logs_unsupported_draft(caplog):
     assert any("Unsupported JSON Schema draft" in record.message for record in caplog.records)
 
 
-# --- MariaDB VARCHAR patching helper ---
-def test_patch_string_columns_for_mariadb_sets_varchar_length():
-    # Standard
-    from types import SimpleNamespace
-
-    # Third-Party
-    from sqlalchemy import Column, MetaData, String, Table
-    from sqlalchemy.sql.sqltypes import VARCHAR
-
-    md = MetaData()
-    tbl = Table("t", md, Column("c1", String()), Column("c2", String(10)))
-    base = SimpleNamespace(metadata=md)
-    engine_ = SimpleNamespace(dialect=SimpleNamespace(name="mariadb"))
-
-    db.patch_string_columns_for_mariadb(base, engine_)
-
-    assert isinstance(tbl.c.c1.type, VARCHAR)
-    assert tbl.c.c1.type.length == 255
-    assert tbl.c.c2.type.length == 10
-
-
-def test_patch_string_columns_for_mariadb_non_mariadb_noop():
-    # Standard
-    from types import SimpleNamespace
-
-    # Third-Party
-    from sqlalchemy import Column, MetaData, String, Table
-
-    md = MetaData()
-    tbl = Table("t", md, Column("c1", String()))
-    base = SimpleNamespace(metadata=md)
-    engine_ = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
-
-    db.patch_string_columns_for_mariadb(base, engine_)
-    assert isinstance(tbl.c.c1.type, String)
-    assert tbl.c.c1.type.length is None
-
-
 # --- EmailApiToken permissions helper ---
 def test_email_api_token_get_effective_permissions_team_token():
     team = db.EmailTeam(name="Team", slug="team", created_by="user@example.com", is_personal=False)
@@ -2583,6 +2822,18 @@ def test_llm_provider_type_helpers():
     assert "api_base" in defaults[db.LLMProviderType.OPENAI]
 
 
+def test_ollama_provider_defaults_use_native_api():
+    """Ollama defaults must point to native API, not the OpenAI-compatible /v1 shim."""
+    defaults = db.LLMProviderType.get_provider_defaults()
+    ollama = defaults[db.LLMProviderType.OLLAMA]
+
+    assert ollama["api_base"] == "http://localhost:11434", "api_base must not include /v1"
+    assert ollama["models_endpoint"] == "/api/tags", "models_endpoint must use native Ollama endpoint"
+    assert ollama["requires_api_key"] is False
+    assert ollama["supports_model_list"] is True
+    assert "OpenAI" not in ollama["description"]
+
+
 def test_slug_listeners_gateway_a2a_agent_email_team(monkeypatch):
     monkeypatch.setattr(db, "slugify", lambda s: s.lower().replace(" ", "-"))
 
@@ -2602,3 +2853,148 @@ def test_slug_listeners_gateway_a2a_agent_email_team(monkeypatch):
     team = Target("Team Name")
     db.set_email_team_slug(None, None, team)
     assert team.slug == "team-name"
+
+    # Verify guard: pre-set slug is preserved
+    team_with_slug = Target("Team Name")
+    team_with_slug.slug = "workspace-alice-example-com"
+    db.set_email_team_slug(None, None, team_with_slug)
+    assert team_with_slug.slug == "workspace-alice-example-com"
+
+
+def test_password_reset_is_expired_naive_expired():
+    """Naive datetime in the past is detected as expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        token = db.PasswordResetToken(
+            user_email="user@example.com",
+            token_hash="a" * 64,
+            expires_at=datetime(2026, 3, 8, 12, 0, 0),
+        )
+        assert token.is_expired() is True
+
+
+def test_password_reset_is_expired_naive_not_expired():
+    """Naive datetime in the future is detected as not expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        token = db.PasswordResetToken(
+            user_email="user@example.com",
+            token_hash="a" * 64,
+            expires_at=datetime(2026, 3, 10, 12, 0, 0),
+        )
+        assert token.is_expired() is False
+
+
+def test_password_reset_is_expired_aware():
+    """Aware datetime comparison works without normalization."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        token = db.PasswordResetToken(
+            user_email="user@example.com",
+            token_hash="a" * 64,
+            expires_at=datetime(2026, 3, 8, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        assert token.is_expired() is True
+
+
+def test_password_reset_is_expired_none():
+    """None expires_at is treated as not expired."""
+    token = db.PasswordResetToken(
+        user_email="user@example.com",
+        token_hash="a" * 64,
+        expires_at=None,
+    )
+    assert token.is_expired() is False
+
+
+def test_user_role_is_expired_naive_expired():
+    """Naive datetime in the past is detected as expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        user_role = db.UserRole(
+            user_email="user@example.com",
+            role_id="role_id",
+            scope="scope",
+            granted_by="user1@example.com",
+            granted_at=datetime(2026, 3, 7, 12, 0, 0),
+            expires_at=datetime(2026, 3, 8, 12, 0, 0),
+        )
+        assert user_role.is_expired() is True
+
+
+def test_user_role_is_expired_aware_not_expired():
+    """Aware datetime in the future is detected as not expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        user_role = db.UserRole(
+            user_email="user@example.com",
+            role_id="role_id",
+            scope="scope",
+            granted_by="user1@example.com",
+            granted_at=datetime(2026, 3, 7, 12, 0, 0),
+            expires_at=datetime(2026, 3, 10, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        assert user_role.is_expired() is False
+
+
+def test_user_role_is_expired_none():
+    """None expires_at means role never expires."""
+    user_role = db.UserRole(
+        user_email="user@example.com",
+        role_id="role_id",
+        scope="scope",
+        granted_by="user1@example.com",
+        granted_at=datetime(2026, 3, 7, 12, 0, 0),
+        expires_at=None,
+    )
+    assert user_role.is_expired() is False
+
+
+def test_email_api_token_is_expired_naive_expired():
+    """Naive datetime in the past is detected as expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        token = db.EmailApiToken(
+            user_email="alice@example.com",
+            name="Production API Access",
+            server_id="prod-server-123",
+            resource_scopes=["tools.read", "resources.read"],
+            description="Read-only access to production tools",
+            expires_at=datetime(2026, 3, 8, 12, 0, 0),
+        )
+        assert token.is_expired() is True
+
+
+def test_email_api_token_is_expired_naive_not_expired():
+    """Naive datetime in the future is detected as not expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        token = db.EmailApiToken(
+            user_email="alice@example.com",
+            name="Production API Access",
+            server_id="prod-server-123",
+            resource_scopes=["tools.read", "resources.read"],
+            description="Read-only access to production tools",
+            expires_at=datetime(2026, 3, 13, 12, 0, 0),
+        )
+        assert token.is_expired() is False
+
+
+def test_email_api_token_is_expired_aware_not_expired():
+    """Aware datetime in the future is detected as not expired."""
+    with patch("mcpgateway.db.utc_now", return_value=datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc)):
+        token = db.EmailApiToken(
+            user_email="alice@example.com",
+            name="Production API Access",
+            server_id="prod-server-123",
+            resource_scopes=["tools.read", "resources.read"],
+            description="Read-only access to production tools",
+            expires_at=datetime(2026, 3, 10, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        assert token.is_expired() is False
+
+
+def test_email_api_token_is_expired_none():
+    """None expires_at means token never expires."""
+    token = db.EmailApiToken(
+        user_email="alice@example.com",
+        name="Production API Access",
+        server_id="prod-server-123",
+        resource_scopes=["tools.read", "resources.read"],
+        description="Read-only access to production tools",
+        expires_at=None,
+    )
+    assert token.is_expired() is False

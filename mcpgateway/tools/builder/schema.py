@@ -7,10 +7,16 @@ Authors: Teryl Taylor
 Pydantic schemas for MCP Stack configuration validation"""
 
 # Standard
+import re
 from typing import Any, Dict, List, Literal, Optional
+from urllib.parse import urlparse
 
 # Third-Party
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+_PLUGIN_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+_GIT_REF_PATTERN = re.compile(r"^[A-Za-z0-9._/-]+$")
+_SCP_REPO_PATTERN = re.compile(r"^git@[A-Za-z0-9._-]+:[A-Za-z0-9._/-]+(?:\.git)?$")
 
 
 class OpenShiftConfig(BaseModel):
@@ -211,6 +217,78 @@ class BuildableConfig(BaseModel):
     # Registry configuration
     registry: Optional[RegistryConfig] = Field(None, description="Container registry configuration")
 
+    @field_validator("repo")
+    @classmethod
+    def validate_repo(cls, v: Optional[str]) -> Optional[str]:
+        """Validate repository URL format for git clone usage.
+
+        Args:
+            v: Repository URL value to validate.
+
+        Returns:
+            Optional[str]: Normalized repository URL.
+
+        Raises:
+            ValueError: If repository URL is malformed or uses unsafe characters.
+        """
+        if v is None:
+            return v
+
+        repo = v.strip()
+        if not repo:
+            raise ValueError("Repository URL cannot be empty")
+
+        if any(ch.isspace() for ch in repo):
+            raise ValueError("Repository URL cannot contain whitespace")
+
+        if "\\" in repo:
+            raise ValueError("Repository URL cannot contain backslashes")
+
+        if any(token in repo for token in ("`", "$", "|", ";", "&", "<", ">")):
+            raise ValueError("Repository URL contains unsupported characters")
+
+        if _SCP_REPO_PATTERN.match(repo):
+            return repo
+
+        parsed = urlparse(repo)
+        if parsed.scheme not in {"https", "http", "ssh", "git"}:
+            raise ValueError("Repository URL must use one of: https, http, ssh, git, or git@host:path syntax")
+        if not parsed.netloc:
+            raise ValueError("Repository URL must include a host")
+        if not parsed.path or parsed.path == "/":
+            raise ValueError("Repository URL must include a repository path")
+
+        return repo
+
+    @field_validator("ref")
+    @classmethod
+    def validate_ref(cls, v: Optional[str]) -> Optional[str]:
+        """Validate git ref format used by git fetch/clone commands.
+
+        Args:
+            v: Git reference value to validate.
+
+        Returns:
+            Optional[str]: Normalized git reference.
+
+        Raises:
+            ValueError: If ref contains unsafe patterns.
+        """
+        if v is None:
+            return v
+
+        ref = v.strip()
+        if not ref:
+            raise ValueError("Git ref cannot be empty")
+        if ref.startswith("-"):
+            raise ValueError("Git ref cannot start with '-'")
+        if ".." in ref or "@{" in ref or "\\" in ref or "//" in ref:
+            raise ValueError("Git ref contains unsupported sequence")
+        if not _GIT_REF_PATTERN.match(ref):
+            raise ValueError("Git ref must contain only letters, numbers, dot, underscore, dash, and slash")
+
+        return ref
+
     def model_post_init(self, _: Any) -> None:
         """Validate that either image or repo is specified
 
@@ -314,7 +392,7 @@ class PluginConfig(BuildableConfig):
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
-        """Validate plugin name is non-empty
+        """Validate plugin name format.
 
         Args:
             v: Plugin name value to validate
@@ -323,7 +401,7 @@ class PluginConfig(BuildableConfig):
             Validated plugin name
 
         Raises:
-            ValueError: If plugin name is empty or whitespace only
+            ValueError: If plugin name is empty/whitespace or contains unsupported characters.
 
         Examples:
             >>> # Test valid plugin names
@@ -350,7 +428,10 @@ class PluginConfig(BuildableConfig):
         """
         if not v or not v.strip():
             raise ValueError("Plugin name cannot be empty")
-        return v
+        name = v.strip()
+        if not _PLUGIN_NAME_PATTERN.match(name):
+            raise ValueError("Plugin name must contain only letters, numbers, underscore, and hyphen")
+        return name
 
 
 class CertificatesConfig(BaseModel):

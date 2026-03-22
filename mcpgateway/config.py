@@ -215,7 +215,7 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="sqlite:///./mcp.db",
         description=(
-            "Database connection URL. Supports SQLite, PostgreSQL, MySQL/MariaDB. "
+            "Database connection URL. Supports SQLite (dev) and PostgreSQL (production). "
             "For PostgreSQL with custom schema, use the 'options' query parameter: "
             "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "
             "(See Issue #1535 for details)"
@@ -235,6 +235,48 @@ class Settings(BaseSettings):
 
     # Protocol
     protocol_version: str = "2025-11-25"
+    experimental_rust_mcp_runtime_enabled: bool = Field(
+        default=False,
+        description="Proxy POST /mcp traffic through the experimental Rust MCP runtime sidecar.",
+    )
+    experimental_rust_mcp_runtime_url: str = Field(
+        default="http://127.0.0.1:8787",
+        description="Base URL for the experimental Rust MCP runtime sidecar.",
+    )
+    experimental_rust_mcp_runtime_uds: Optional[str] = Field(
+        default=None,
+        description="Optional Unix domain socket path for the experimental Rust MCP runtime sidecar.",
+    )
+    experimental_rust_mcp_runtime_timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=300,
+        description="Timeout in seconds for Python-to-Rust MCP runtime proxy requests.",
+    )
+    experimental_rust_mcp_session_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned MCP session metadata core while keeping Python as the fallback transport backend.",
+    )
+    experimental_rust_mcp_event_store_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned resumable MCP event-store backend for Streamable HTTP sessions.",
+    )
+    experimental_rust_mcp_resume_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned public MCP replay/resume path for GET /mcp with Last-Event-ID while keeping Python fallback available.",
+    )
+    experimental_rust_mcp_live_stream_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned public MCP live GET /mcp SSE path while keeping Python as the fallback upstream stream source.",
+    )
+    experimental_rust_mcp_affinity_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned MCP session-affinity forwarding path while keeping Python worker forwarding as the fallback.",
+    )
+    experimental_rust_mcp_session_auth_reuse_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
+    )
 
     # Authentication
     basic_auth_user: str = "admin"
@@ -502,6 +544,10 @@ class Settings(BaseSettings):
         default=False,
         description="Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",
     )
+    allow_public_visibility: bool = Field(
+        default=True,
+        description="When false, creating or updating any entity with public visibility is blocked in team scope.",
+    )
     protect_all_admins: bool = Field(
         default=True,
         description="When true (default), prevent any admin from being demoted, deactivated, or locked out via API/UI. When false, only the last active admin is protected.",
@@ -562,11 +608,16 @@ class Settings(BaseSettings):
 
     # Personal Teams Configuration
     auto_create_personal_teams: bool = Field(default=True, description="Enable automatic personal team creation for new users")
-    personal_team_prefix: str = Field(default="personal", description="Personal team naming prefix")
+    personal_team_prefix: str = Field(default="", description="Personal team naming prefix")
     max_teams_per_user: int = Field(default=50, description="Maximum number of teams a user can belong to")
     max_members_per_team: int = Field(default=100, description="Maximum number of members per team")
     invitation_expiry_days: int = Field(default=7, description="Number of days before team invitations expire")
     require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations")
+
+    # Team Governance
+    allow_team_creation: bool = Field(default=True, description="Allow users to create organizational teams. Admins can always create teams.")
+    allow_team_join_requests: bool = Field(default=True, description="Allow users to request to join public teams")
+    allow_team_invitations: bool = Field(default=True, description="Allow team owners to send invitations")
 
     # Default Role Configuration
     default_admin_role: str = Field(default="platform_admin", description="Global role assigned to admin users")
@@ -720,7 +771,26 @@ class Settings(BaseSettings):
     require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 1.0.0
 
     llmchat_enabled: bool = Field(default=True, description="Enable LLM Chat feature")
+    mcpgateway_stdio_transport_enabled: bool = Field(
+        default=False,
+        description=("Enable stdio transport for MCP chat client configuration. Disabled by default; " "set true only in trusted environments that intentionally need stdio process execution."),
+    )
     toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
+    plugins_can_override_rbac: bool = Field(
+        default=False,
+        description=("Allow HTTP_AUTH_CHECK_PERMISSION plugins to short-circuit built-in RBAC grants. " "Disabled by default so plugin grant decisions are audit-only unless explicitly enabled."),
+    )
+    plugins_can_override_auth_headers: bool = Field(
+        default=False,
+        description=(
+            "DANGEROUS: Allow pre-request plugin hooks to override auth-sensitive headers "
+            "(authorization, cookie, x-api-key, proxy-authorization) that the client already sent. "
+            "Disabled by default because a malicious or misconfigured plugin could impersonate any "
+            "user by rewriting the Authorization header. Only enable when all loaded plugins are "
+            "fully trusted and the deployment requires token exchange (e.g. WXO auth). "
+            "Requires a server restart to take effect."
+        ),
+    )
 
     # database-backed polling settings for session message delivery
     poll_interval: float = Field(default=1.0, description="Initial polling interval in seconds for checking new session messages")
@@ -807,7 +877,7 @@ class Settings(BaseSettings):
 
         # Check for default/weak secrets
         if not info.data.get("client_mode"):
-            weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]
+            weak_secrets = ["my-test-key", "my-test-key-but-now-longer-than-32-bytes", "my-test-salt", "changeme", "secret", "password"]
             if value.lower() in weak_secrets:
                 logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
 
@@ -915,7 +985,7 @@ class Settings(BaseSettings):
 
             # Warn about SQLite in production
             if v.startswith("sqlite"):
-                logger.info("Using SQLite database. Consider PostgreSQL or MySQL for production.")
+                logger.info("Using SQLite database. Consider PostgreSQL for production.")
 
         return v
 
@@ -975,7 +1045,7 @@ class Settings(BaseSettings):
 
         # Database warnings
         if self.database_url.startswith("sqlite") and not self.dev_mode:
-            warnings.append("💾 SQLite database in use - consider PostgreSQL/MySQL for production")
+            warnings.append("💾 SQLite database in use - consider PostgreSQL for production")
 
         # Rate limiting warnings
         if self.tool_rate_limit > 1000:
@@ -1006,7 +1076,8 @@ class Settings(BaseSettings):
         security_score = max(0, 100 - 10 * len(self.get_security_warnings()))
 
         return {
-            "secure_secrets": self.jwt_secret_key != "my-test-key",  # nosec B105 - checking for default value
+            "secure_secrets": (self.jwt_secret_key.get_secret_value() if isinstance(self.jwt_secret_key, SecretStr) else self.jwt_secret_key)
+            != "my-test-key",  # nosec B105 - checking for default value
             "auth_enabled": self.auth_required,
             "ssl_verification": not self.skip_ssl_verify,
             "debug_disabled": not self.debug,
@@ -1596,7 +1667,7 @@ class Settings(BaseSettings):
     default_roots: List[str] = []
 
     # Database
-    db_driver: str = "mariadb+mariadbconnector"
+    db_driver: str = "postgresql+psycopg"
     db_pool_size: int = 200
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
@@ -1693,14 +1764,6 @@ class Settings(BaseSettings):
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
     streamable_http_max_events_per_stream: int = 100  # Ring buffer capacity per stream
     streamable_http_event_ttl: int = 3600  # Event stream TTL in seconds (1 hour)
-
-    # Core plugin settings
-    plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")
-    plugin_config_file: str = Field(default="plugins/config.yaml", description="Path to main plugin configuration file")
-
-    # Plugin CLI settings
-    plugins_cli_completion: bool = Field(default=False, description="Enable auto-completion for plugins CLI")
-    plugins_cli_markup_mode: Literal["markdown", "rich", "disabled"] | None = Field(default=None, description="Set markup mode for plugins CLI")
 
     # Development
     dev_mode: bool = False
@@ -1819,6 +1882,30 @@ Disallow: /
         if info.data and "well_known_security_txt" in info.data:
             return bool(info.data["well_known_security_txt"].strip())
         return bool(v)
+
+    @field_validator("experimental_rust_mcp_runtime_uds", mode="after")
+    @classmethod
+    def _validate_experimental_rust_mcp_runtime_uds(cls, value: Optional[str]) -> Optional[str]:
+        """Validate the optional UDS path used for the Rust MCP runtime sidecar.
+
+        Args:
+            value: Candidate UDS path from configuration.
+
+        Returns:
+            The normalized absolute UDS path, or ``None`` when unset.
+
+        Raises:
+            ValueError: If the path is not absolute or its parent directory is missing.
+        """
+        if value in (None, ""):
+            return None
+
+        uds_path = Path(value).expanduser()
+        if not uds_path.is_absolute():
+            raise ValueError("experimental_rust_mcp_runtime_uds must be an absolute path")
+        if not uds_path.parent.exists():
+            raise ValueError(f"experimental_rust_mcp_runtime_uds parent directory does not exist: {uds_path.parent}")
+        return str(uds_path)
 
     # -------------------------------
     # Flexible list parsing for envs
@@ -2117,7 +2204,7 @@ Disallow: /
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
 
     # Character validation patterns
-    validation_name_pattern: str = r"^[a-zA-Z0-9_.\-\s]+$"  # Allow spaces for names
+    validation_name_pattern: str = r"^[a-zA-Z0-9_.\- ]+$"  # Allow spaces for names (literal space, not \s to reject control chars)
     validation_identifier_pattern: str = r"^[a-zA-Z0-9_\-\.]+$"  # No spaces for IDs
     validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
     validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
@@ -2377,7 +2464,7 @@ Disallow: /
         summary = self.model_dump(exclude={"database_url", "memcached_url"})
         logger.info(f"Application settings summary: {summary}")
 
-    ENABLE_METRICS: bool = Field(True, description="Enable Prometheus metrics instrumentation")
+    ENABLE_METRICS: bool = Field(False, description="Enable Prometheus metrics endpoint at /metrics/prometheus (requires authentication)")
     METRICS_EXCLUDED_HANDLERS: str = Field("", description="Comma-separated regex patterns for paths to exclude from metrics")
     METRICS_NAMESPACE: str = Field("default", description="Prometheus metrics namespace")
     METRICS_SUBSYSTEM: str = Field("", description="Prometheus metrics subsystem")
@@ -2430,6 +2517,22 @@ def generate_settings_schema() -> dict[str, Any]:
 # Lazy "instance" of settings
 class LazySettingsWrapper:
     """Lazily initialize settings singleton on getattr"""
+
+    @property
+    def plugins(self) -> Any:
+        """Access plugin framework settings via ``settings.plugins``.
+
+        Returns a ``LazySettingsWrapper`` from the plugin framework that
+        provides lightweight ``@property`` accessors for startup-critical
+        fields and a ``__getattr__`` fallback to the full ``PluginsSettings``.
+
+        Returns:
+            The plugin framework settings wrapper.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework.settings import settings as _plugin_settings  # pylint: disable=import-outside-toplevel
+
+        return _plugin_settings
 
     def __getattr__(self, key: str) -> Any:
         """Get the real settings object and forward to it

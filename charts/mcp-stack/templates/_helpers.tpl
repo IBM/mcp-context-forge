@@ -54,11 +54,17 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{- /* --------------------------------------------------------------------
-     Helper: mcp-stack.postgresConfigName
-     Returns the ConfigMap name for Postgres settings.
+     Helper: mcp-stack.redisSecretName
+     Returns the Secret name for Redis authentication.
+     If users set `redis.auth.existingSecret`, that name is used.
+     Otherwise a release-scoped name is returned.
      -------------------------------------------------------------------- */}}
-{{- define "mcp-stack.postgresConfigName" -}}
-{{- printf "%s-postgres-config" (include "mcp-stack.fullname" .) }}
+{{- define "mcp-stack.redisSecretName" -}}
+{{- if .Values.redis.auth.existingSecret }}
+{{- .Values.redis.auth.existingSecret }}
+{{- else }}
+{{- printf "%s-redis-secret" (include "mcp-stack.fullname" .) }}
+{{- end }}
 {{- end }}
 
 {{- /* --------------------------------------------------------------------

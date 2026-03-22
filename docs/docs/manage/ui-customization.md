@@ -98,7 +98,7 @@ app is mounted behind a proxy.
   `admin.html` to point to your assets, e.g.
   ```html
   <link rel="icon" href="{{ root_path }}/static/images/company-favicon.ico" />
-  <img src="{{ root_path }}/static/images/company-logo.svg" class="h-8" alt="Company" />
+  <img src="{{ root_path }}/static/images/company-logo.svg" class="h-8" alt="Company logo" />
   ```
 
 ### Colors & Tailwind
@@ -181,7 +181,7 @@ When packaging the gateway:
   docker run \
     -v $(pwd)/overrides/admin.html:/app/mcpgateway/templates/admin.html:ro \
     -v $(pwd)/overrides/static:/app/mcpgateway/static/custom:ro \
-    ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+    ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
   ```
   Then update template references to point at `static/custom/...`.
 

@@ -1,0 +1,41 @@
+[package]
+name = "contextforge_mcp_runtime"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+authors = ["Mihai Criveti"]
+description = "Experimental Rust MCP runtime edge for ContextForge"
+
+[features]
+default = []
+rmcp-upstream-client = ["dep:rmcp", "dep:reqwest-rmcp"]
+
+[dependencies]
+async-stream = "0.3.6"
+axum = "0.8.8"
+base64 = "0.22.1"
+clap = { version = "4.5.60", features = ["derive", "env"] }
+deadpool-postgres = "0.14.1"
+futures-util = "0.3.31"
+redis = { version = "0.32.7", features = ["aio", "tokio-comp", "connection-manager"] }
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "stream", "http2", "rustls-tls-native-roots"] }
+reqwest-rmcp = { package = "reqwest", version = "0.13.2", default-features = false, features = ["json", "stream", "rustls"], optional = true }
+rmcp = { version = "1.1.1", optional = true, default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
+rustls = "0.23.37"
+rustls-native-certs = "0.8.3"
+rustls-pemfile = "2.2.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+thiserror = "2.0.16"
+tokio = { version = "1.50.0", features = ["full"] }
+tokio-postgres = { version = "0.7.15", features = ["with-serde_json-1"] }
+tokio-postgres-rustls = "0.13.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+uuid = { version = "1.18.1", features = ["v4"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "stream", "http2", "rustls-tls-native-roots"] }
+tokio = { version = "1.50.0", features = ["full"] }

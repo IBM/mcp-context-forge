@@ -643,22 +643,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             logger.warning(f"Failed to log request body: {e}")
 
-        # Recreate request stream for downstream handlers
-        async def receive():
-            """Recreate request body for downstream handlers.
-
-            Returns:
-                dict: ASGI receive message with request body
-            """
-            return {"type": "http.request", "body": body, "more_body": False}
-
-        # Create new request with the body we've already read
-        new_scope = request.scope.copy()
-        new_request = Request(new_scope, receive=receive)
+        # Cache body on original request so downstream handlers can re-read safely.
+        request._body = body  # pylint: disable=protected-access
 
         # Process request
         try:
-            response: Response = await call_next(new_request)
+            response: Response = await call_next(request)
             status_code = response.status_code
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000

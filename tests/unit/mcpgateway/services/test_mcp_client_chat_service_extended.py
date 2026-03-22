@@ -409,7 +409,7 @@ def test_gateway_provider_anthropic(monkeypatch):
 
 def test_gateway_provider_bedrock(monkeypatch):
     _patch_gateway_llms(monkeypatch)
-    model, provider = _make_model_and_provider("bedrock", config={"region_name": "us-east-1"})
+    model, provider = _make_model_and_provider("bedrock", config={"region": "us-east-1"})
     _patch_gateway_session(monkeypatch, model, provider)
     monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
 
@@ -590,6 +590,7 @@ async def test_mcpclient_connect_with_headers(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mcpclient_connect_stdio_args(monkeypatch):
+    monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", True)
     cfg = svc.MCPServerConfig(command="python", args=["server.py"], transport="stdio")
     client = svc.MCPClient(cfg)
     captured = {}
@@ -695,6 +696,7 @@ async def test_chat_service_initialize_error(monkeypatch):
         llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
     )
     service = svc.MCPChatService(cfg)
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", True)
     monkeypatch.setattr(service.mcp_client, "connect", AsyncMock(side_effect=RuntimeError("boom")))
 
     with pytest.raises(RuntimeError):
@@ -783,7 +785,8 @@ def test_mcpserverconfig_invalid_url(monkeypatch):
     assert isinstance(cfg.url, str)
     assert cfg.url.startswith("ftp://")
 
-def test_mcpserverconfig_command_required_for_stdio():
+def test_mcpserverconfig_command_required_for_stdio(monkeypatch):
+    monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", True)
     cfg = svc.MCPServerConfig(command="python", args=["main.py"], transport="stdio")
     assert cfg.command == "python"
     assert isinstance(cfg.args, list)
@@ -1299,7 +1302,7 @@ def test_gateway_provider_bedrock_completion(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider(
         "bedrock",
-        config={"region_name": "eu-west-1", "aws_access_key_id": "AKID", "aws_secret_access_key": "SECRET", "aws_session_token": "TOK"},
+        config={"region": "eu-west-1", "access_key_id": "AKID", "secret_access_key": "SECRET", "session_token": "TOK"},
     )
     _patch_gateway_session(monkeypatch, model, provider)
     monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
@@ -1307,6 +1310,10 @@ def test_gateway_provider_bedrock_completion(monkeypatch):
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="completion")
     assert llm is not None
+    assert llm.kwargs["region_name"] == "eu-west-1"
+    assert llm.kwargs["aws_access_key_id"] == "AKID"
+    assert llm.kwargs["aws_secret_access_key"] == "SECRET"
+    assert llm.kwargs["aws_session_token"] == "TOK"
 
 
 def test_gateway_provider_anthropic_completion_with_helper_patches(monkeypatch):
@@ -1419,13 +1426,74 @@ def test_gateway_provider_bedrock_not_available(monkeypatch):
     """GatewayProvider raises ImportError when bedrock not available."""
     _patch_gateway_llms(monkeypatch)
     monkeypatch.setattr(svc, "_BEDROCK_AVAILABLE", False)
-    model, provider = _make_model_and_provider("bedrock", config={"region_name": "us-east-1"})
+    model, provider = _make_model_and_provider("bedrock", config={"region": "us-east-1"})
     _patch_gateway_session(monkeypatch, model, provider)
     monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     with pytest.raises(ImportError, match="langchain-aws"):
         gateway.get_llm()
+
+
+def test_gateway_provider_bedrock_credentials_forwarded(monkeypatch):
+    """GatewayProvider bedrock chat maps DB schema keys to boto3 kwargs."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider(
+        "bedrock",
+        config={"region": "ap-southeast-1", "access_key_id": "AKID", "secret_access_key": "SECRET", "session_token": "TOK"},
+    )
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm.kwargs["region_name"] == "ap-southeast-1"
+    assert llm.kwargs["aws_access_key_id"] == "AKID"
+    assert llm.kwargs["aws_secret_access_key"] == "SECRET"
+    assert llm.kwargs["aws_session_token"] == "TOK"
+
+
+def test_gateway_provider_bedrock_no_credentials(monkeypatch):
+    """GatewayProvider bedrock without explicit credentials omits boto3 credential kwargs."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("bedrock", config={"region": "us-west-2"})
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm.kwargs["region_name"] == "us-west-2"
+    assert "aws_access_key_id" not in llm.kwargs
+    assert "aws_secret_access_key" not in llm.kwargs
+    assert "aws_session_token" not in llm.kwargs
+
+
+def test_gateway_provider_bedrock_default_region(monkeypatch):
+    """GatewayProvider bedrock defaults region to us-east-1 when not in config."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("bedrock", config={})
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm.kwargs["region_name"] == "us-east-1"
+
+
+def test_gateway_provider_bedrock_profile_name(monkeypatch):
+    """GatewayProvider bedrock maps profile_name to credentials_profile_name."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider(
+        "bedrock",
+        config={"region": "us-east-1", "profile_name": "my-profile"},
+    )
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm.kwargs["credentials_profile_name"] == "my-profile"
+    assert "aws_access_key_id" not in llm.kwargs
 
 
 def test_gateway_provider_anthropic_not_available(monkeypatch):
@@ -1522,19 +1590,21 @@ def test_mcpserverconfig_auth_token_no_override():
     assert cfg.headers["Authorization"] == "Basic abc"
 
 
-def test_mcpserverconfig_stdio_no_url_required():
+def test_mcpserverconfig_stdio_no_url_required(monkeypatch):
     """stdio transport should not require URL."""
+    monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", True)
     cfg = svc.MCPServerConfig(command="python", args=["s.py"], transport="stdio")
     assert cfg.url is None
 
 
 def test_mcpserverconfig_sse_without_url():
-    """SSE transport without URL sets url=None."""
-    cfg = svc.MCPServerConfig(transport="sse")
-    assert cfg.url is None
+    """SSE transport without URL should fail validation."""
+    with pytest.raises(ValueError, match="URL is required"):
+        svc.MCPServerConfig(transport="sse")
 
 
-def test_mcpserverconfig_stdio_without_command():
-    """stdio transport without command sets command=None."""
-    cfg = svc.MCPServerConfig(transport="stdio")
-    assert cfg.command is None
+def test_mcpserverconfig_stdio_without_command(monkeypatch):
+    """stdio transport without command should fail validation."""
+    monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", True)
+    with pytest.raises(ValueError, match="Command is required"):
+        svc.MCPServerConfig(transport="stdio")

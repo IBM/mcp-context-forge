@@ -415,7 +415,7 @@ def generate_kubernetes_manifests(config: MCPStackConfig, output_dir: Path, verb
     # Enable plugins if any are configured
     if config.plugins and len(config.plugins) > 0:
         gateway_dict["env_vars"]["PLUGINS_ENABLED"] = "true"
-        gateway_dict["env_vars"]["PLUGIN_CONFIG_FILE"] = "/app/config/plugins.yaml"
+        gateway_dict["env_vars"]["PLUGINS_CONFIG_FILE"] = "/app/config/plugins.yaml"
 
     # Add init containers to wait for infrastructure services
     init_containers = []
@@ -801,8 +801,11 @@ def handle_registry_operations(component, component_name: str, image_tag: str, c
 
     # Construct registry image path
     # Format: {registry_url}/{namespace}/{image_name}:{tag}
-    base_image_name = image_tag.split(":")[0].split("/")[-1]  # Extract base name (e.g., "mcpgateway-gateway")
-    image_version = image_tag.split(":")[-1] if ":" in image_tag else "latest"  # Extract tag
+    if ":" in image_tag:
+        image_path, image_version = image_tag.rsplit(":", maxsplit=1)
+    else:
+        image_path, image_version = image_tag, "latest"
+    base_image_name = image_path.split("/")[-1]  # Extract base name (e.g., "mcpgateway-gateway")
     registry_image = f"{registry_config.url}/{registry_config.namespace}/{base_image_name}:{image_version}"
 
     # Tag image for registry

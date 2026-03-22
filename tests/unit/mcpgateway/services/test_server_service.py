@@ -23,10 +23,10 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerRead, ServerUpdate
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.server_service import (
+    _validate_server_team_assignment,
     ServerError,
     ServerNotFoundError,
     ServerService,
-    _validate_server_team_assignment,
 )
 
 
@@ -759,8 +759,54 @@ class TestServerService:
         assert "Server not found" in str(exc.value)
 
     @pytest.mark.asyncio
+    async def test_update_server_ignores_client_owner_email(self, server_service, mock_server):
+        """Client-supplied owner_email must not transfer server ownership."""
+        db = MagicMock()
+        db.execute = Mock(side_effect=[Mock(scalar_one_or_none=Mock(return_value=mock_server))])
+        db.get = Mock(return_value=None)
+        db.commit = Mock()
+        db.refresh = Mock()
+        db.rollback = Mock()
+
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="test_server",
+                description="updated",
+                icon="server-icon",
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        original_owner = mock_server.owner_email
+        update = ServerUpdate(description="updated", owner_email="attacker@example.com")
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            await server_service.update_server(db, "1", update, "user@example.com")
+
+        assert mock_server.owner_email == original_owner
+
+    @pytest.mark.asyncio
     async def test_update_server_name_conflict(self, server_service, mock_server, test_db):
+        # Standard
         import types
+
+        # First-Party
         from mcpgateway.services.server_service import ServerNameConflictError
 
         # Mock PermissionService to bypass ownership checks (this test is about name conflicts)
@@ -787,6 +833,7 @@ class TestServerService:
             test_db.refresh = Mock()
 
             # Should not raise ServerNameConflictError for private, but should raise IntegrityError for duplicate name
+            # Third-Party
             from sqlalchemy.exc import IntegrityError
 
             test_db.commit = Mock(side_effect=IntegrityError("Duplicate name", None, None))
@@ -954,6 +1001,7 @@ class TestServerService:
     @pytest.mark.asyncio
     async def test_set_server_state_with_email_team(self, server_service, mock_server, test_db):
         """Test that email_team relationship is properly loaded with selectinload."""
+        # First-Party
         from mcpgateway.db import EmailTeam
 
         mock_team = Mock(spec=EmailTeam)
@@ -1387,7 +1435,7 @@ class TestServerService:
 
         bind = MagicMock()
         bind.dialect = MagicMock()
-        bind.dialect.name = "sqlite"  # or "postgresql" or "mysql"
+        bind.dialect.name = "sqlite"  # or "postgresql"
         session.get_bind.return_value = bind
 
         with patch("mcpgateway.services.server_service.select", return_value=mock_query):
@@ -2259,7 +2307,43 @@ class TestConvertServerToReadMetrics:
         return ServerService()
 
     def _make_server(self, metrics=None):
+        # Standard
         from types import SimpleNamespace
+
+        metrics_list = metrics or []
+
+        # Calculate metrics_summary from provided metrics (matches new implementation)
+        if metrics_list:
+            total = len(metrics_list)
+            successful = sum(1 for m in metrics_list if m.is_success)
+            failed = total - successful
+            failure_rate = failed / total if total > 0 else 0.0
+            min_rt = min((m.response_time for m in metrics_list), default=None)
+            max_rt = max((m.response_time for m in metrics_list), default=None)
+            avg_rt = sum(m.response_time for m in metrics_list) / total if total > 0 else None
+            last_time = max((m.timestamp for m in metrics_list), default=None)
+
+            metrics_summary = {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failure_rate,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": avg_rt,
+                "last_execution_time": last_time,
+            }
+        else:
+            metrics_summary = {
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            }
 
         s = SimpleNamespace(
             id="srv-1",
@@ -2280,7 +2364,8 @@ class TestConvertServerToReadMetrics:
             resources=[],
             prompts=[],
             a2a_agents=[],
-            metrics=metrics or [],
+            metrics=metrics_list,
+            metrics_summary=metrics_summary,  # Add metrics_summary property
             oauth_enabled=False,
             oauth_config=None,
             created_from_ip=None,
@@ -2297,6 +2382,7 @@ class TestConvertServerToReadMetrics:
 
     def test_metrics_aggregation_with_data(self, server_service):
         """Metrics with multiple entries are aggregated correctly."""
+        # Standard
         from datetime import datetime, timezone
 
         m1 = MagicMock()
@@ -2460,6 +2546,7 @@ class TestRegisterServerBulkAssociations:
     @pytest.mark.asyncio
     async def test_bulk_a2a_agents_association(self, server_service, test_db):
         """Multiple A2A agent IDs triggers bulk query path."""
+        # First-Party
         from mcpgateway.db import A2AAgent as DbA2AAgent
 
         a1, a2 = MagicMock(spec=DbA2AAgent), MagicMock(spec=DbA2AAgent)
@@ -2502,6 +2589,7 @@ class TestRegisterServerIntegrityError:
     @pytest.mark.asyncio
     async def test_integrity_error_on_commit(self, server_service, test_db):
         """IntegrityError during commit is propagated after rollback."""
+        # Third-Party
         from sqlalchemy.exc import IntegrityError
 
         sc = ServerCreate(name="dup", description="desc")
@@ -2549,6 +2637,40 @@ class TestListServersTokenAccess:
         assert result == ["converted"]
 
     @pytest.mark.asyncio
+    async def test_list_servers_with_include_metrics_true(self, server_service, test_db):
+        """Test that list_servers eager loads metrics when include_metrics=True.
+
+        This test ensures that when include_metrics=True, the query includes
+        selectinload for both metrics and metrics_hourly relationships to prevent N+1 queries.
+        Regression test for PR #3649 performance optimization.
+        """
+        mock_server = MagicMock()
+        mock_server.team_id = None
+
+        mock_convert = MagicMock(return_value="converted_server_with_metrics")
+
+        with (
+            patch.object(server_service, "convert_server_to_read", mock_convert),
+            patch("mcpgateway.services.server_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.server_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.hash_filters = MagicMock(return_value="test-hash")
+            mock_cache_fn.return_value = mock_cache
+            mock_paginate.return_value = ([mock_server], None)
+            test_db.commit = Mock()
+
+            # Call with include_metrics=True to trigger eager loading code path
+            result, cursor = await server_service.list_servers(test_db, include_metrics=True)
+
+        assert result == ["converted_server_with_metrics"]
+        # Verify convert_server_to_read was called with include_metrics=True
+        mock_convert.assert_called_once_with(
+            mock_server, include_metrics=True
+        )
+
+    @pytest.mark.asyncio
     async def test_team_scoped_token(self, server_service, test_db):
         """token_teams=["team-1"] shows public + team servers."""
         mock_server = MagicMock()
@@ -2570,11 +2692,35 @@ class TestListServersTokenAccess:
         assert result == ["converted"]
 
     @pytest.mark.asyncio
+    async def test_team_scoped_token_owner_clause_is_private_only(self, server_service, test_db):
+        """Scoped tokens must not use owner_email as a blanket bypass for non-private visibility."""
+        with (
+            patch("mcpgateway.services.server_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.server_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.hash_filters = MagicMock(return_value="test-hash")
+            mock_cache_fn.return_value = mock_cache
+            mock_paginate.return_value = ([], None)
+            test_db.commit = Mock()
+
+            await server_service.list_servers(
+                test_db,
+                token_teams=["team-1"],
+                user_email="user@test.com",
+            )
+
+        query_arg = mock_paginate.await_args.kwargs["query"]
+        compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
+        assert "servers.owner_email = 'user@test.com' AND servers.visibility = 'private'" in compiled
+
+    @pytest.mark.asyncio
     async def test_user_email_specific_team_no_access(self, server_service, test_db):
         """User requesting specific team they don't belong to gets empty result."""
         with (
             patch("mcpgateway.services.server_service._get_registry_cache") as mock_cache_fn,
-            patch("mcpgateway.services.server_service.TeamManagementService") as MockTMS,
+            patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS,
         ):
             mock_cache = AsyncMock()
             mock_cache.get = AsyncMock(return_value=None)
@@ -2599,7 +2745,7 @@ class TestListServersTokenAccess:
         with (
             patch.object(server_service, "convert_server_to_read", return_value="converted"),
             patch("mcpgateway.services.server_service._get_registry_cache") as mock_cache_fn,
-            patch("mcpgateway.services.server_service.TeamManagementService") as MockTMS,
+            patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS,
             patch("mcpgateway.services.server_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
         ):
             mock_cache = AsyncMock()
@@ -2627,7 +2773,7 @@ class TestListServersTokenAccess:
         with (
             patch.object(server_service, "convert_server_to_read", return_value="converted"),
             patch("mcpgateway.services.server_service._get_registry_cache") as mock_cache_fn,
-            patch("mcpgateway.services.server_service.TeamManagementService") as MockTMS,
+            patch("mcpgateway.services.base_service.TeamManagementService") as MockTMS,
             patch("mcpgateway.services.server_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
         ):
             mock_cache = AsyncMock()
@@ -2659,7 +2805,10 @@ class TestSetServerStateExceptions:
     @pytest.mark.asyncio
     async def test_lock_conflict(self, server_service, test_db):
         """OperationalError during row lock raises ServerLockConflictError."""
+        # Third-Party
         from sqlalchemy.exc import OperationalError
+
+        # First-Party
         from mcpgateway.services.server_service import ServerLockConflictError
 
         test_db.execute = Mock(side_effect=OperationalError("locked", None, BaseException()))
@@ -2988,8 +3137,9 @@ class TestServerServiceCoverageMissingBranches:
 
         cached_server_read = CachedServerRead()
 
-        with patch("mcpgateway.services.server_service._get_registry_cache", return_value=mock_cache), patch(
-            "mcpgateway.services.server_service.ServerRead.model_validate", return_value=cached_server_read
+        with (
+            patch("mcpgateway.services.server_service._get_registry_cache", return_value=mock_cache),
+            patch("mcpgateway.services.server_service.ServerRead.model_validate", return_value=cached_server_read),
         ):
             servers, next_cursor = await server_service.list_servers(db, token_teams=[])
 
@@ -3001,8 +3151,9 @@ class TestServerServiceCoverageMissingBranches:
     async def test_list_servers_team_scoped_token_user_email_and_visibility_filter(self, server_service):
         db = MagicMock()
         db.commit = Mock()
-        with patch("mcpgateway.services.server_service._get_registry_cache", return_value=AsyncMock()), patch(
-            "mcpgateway.services.server_service.unified_paginate", new=AsyncMock(return_value=([], None))
+        with (
+            patch("mcpgateway.services.server_service._get_registry_cache", return_value=AsyncMock()),
+            patch("mcpgateway.services.server_service.unified_paginate", new=AsyncMock(return_value=([], None))),
         ):
             servers, next_cursor = await server_service.list_servers(
                 db,
@@ -3019,8 +3170,9 @@ class TestServerServiceCoverageMissingBranches:
         """Cover token_teams branch where user_email is falsy (807->809)."""
         db = MagicMock()
         db.commit = Mock()
-        with patch("mcpgateway.services.server_service._get_registry_cache", return_value=AsyncMock()), patch(
-            "mcpgateway.services.server_service.unified_paginate", new=AsyncMock(return_value=([], None))
+        with (
+            patch("mcpgateway.services.server_service._get_registry_cache", return_value=AsyncMock()),
+            patch("mcpgateway.services.server_service.unified_paginate", new=AsyncMock(return_value=([], None))),
         ):
             servers, next_cursor = await server_service.list_servers(db, token_teams=["t1"], user_email=None)
 
@@ -3031,10 +3183,10 @@ class TestServerServiceCoverageMissingBranches:
     async def test_list_servers_user_email_visibility_filter(self, server_service):
         db = MagicMock()
         db.commit = Mock()
-        with patch("mcpgateway.services.server_service._get_registry_cache", return_value=AsyncMock()), patch(
-            "mcpgateway.services.server_service.TeamManagementService"
-        ) as mock_team_svc, patch(
-            "mcpgateway.services.server_service.unified_paginate", new=AsyncMock(return_value=([], None))
+        with (
+            patch("mcpgateway.services.server_service._get_registry_cache", return_value=AsyncMock()),
+            patch("mcpgateway.services.server_service.TeamManagementService") as mock_team_svc,
+            patch("mcpgateway.services.server_service.unified_paginate", new=AsyncMock(return_value=([], None))),
         ):
             mock_team_svc.return_value.get_user_teams = AsyncMock(return_value=[])
             servers, next_cursor = await server_service.list_servers(db, user_email="user@example.com", visibility="public")
@@ -3054,8 +3206,9 @@ class TestServerServiceCoverageMissingBranches:
         server_read = MagicMock()
         server_read.model_dump = MagicMock(return_value={"id": "1"})
 
-        with patch("mcpgateway.services.server_service._get_registry_cache", return_value=mock_cache), patch(
-            "mcpgateway.services.server_service.unified_paginate", new=AsyncMock(return_value=([MagicMock()], None))
+        with (
+            patch("mcpgateway.services.server_service._get_registry_cache", return_value=mock_cache),
+            patch("mcpgateway.services.server_service.unified_paginate", new=AsyncMock(return_value=([MagicMock()], None))),
         ):
             server_service.convert_server_to_read = MagicMock(return_value=server_read)
             servers, _ = await server_service.list_servers(db, token_teams=[])
@@ -3084,8 +3237,9 @@ class TestServerServiceCoverageMissingBranches:
         server_service._audit_trail = MagicMock()
         server_service._notify_server_updated = AsyncMock()
 
-        with patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server), patch(
-            "mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=False)
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=False)),
         ):
             with pytest.raises(ServerError, match="Failed to update server"):
                 await server_service.update_server(db, "srv-1", ServerUpdate(description="x"), user_email="user@example.com")
@@ -3102,8 +3256,9 @@ class TestServerServiceCoverageMissingBranches:
         existing.id = "srv-other"
         existing.visibility = "team"
 
-        with patch("mcpgateway.services.server_service.get_for_update", side_effect=[mock_server, existing]), patch(
-            "mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", side_effect=[mock_server, existing]),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
         ):
             with pytest.raises(Exception):
                 await server_service.update_server(
@@ -3139,8 +3294,9 @@ class TestServerServiceCoverageMissingBranches:
         db.rollback = Mock()
         db.get = Mock(return_value=MagicMock())
 
-        with patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server), patch(
-            "mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
         ):
             with pytest.raises(ServerError, match="Failed to update server"):
                 await server_service.update_server(
@@ -3190,9 +3346,11 @@ class TestServerServiceCoverageMissingBranches:
         cache = AsyncMock()
         cache.invalidate_servers = AsyncMock()
 
-        with patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server), patch(
-            "mcpgateway.services.server_service._get_registry_cache", return_value=cache
-        ), patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache:
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
+            patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+        ):
             mock_admin_cache.invalidate_tags = AsyncMock()
             result = await server_service.update_server(db, "srv-1", ServerUpdate(team_id="t1"), user_email="")
 
@@ -3226,8 +3384,9 @@ class TestServerServiceCoverageMissingBranches:
 
         db.query.side_effect = query_side_effect
 
-        with patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server), patch(
-            "mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
         ):
             with pytest.raises(ServerError) as exc_info:
                 await server_service.update_server(db, "srv-1", ServerUpdate(team_id="team-new"), user_email="user@example.com")
@@ -3269,11 +3428,12 @@ class TestServerServiceCoverageMissingBranches:
         cache = AsyncMock()
         cache.invalidate_servers = AsyncMock()
 
-        with patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server), patch(
-            "mcpgateway.services.server_service._get_registry_cache", return_value=cache
-        ), patch(
-            "mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)
-        ), patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache:
+        with (
+            patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
+            patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+        ):
             mock_admin_cache.invalidate_tags = AsyncMock()
             result = await server_service.update_server(db, "srv-1", ServerUpdate(team_id="team-new"), user_email="owner@example.com")
 
@@ -3322,3 +3482,88 @@ class TestServerServiceCoverageMissingBranches:
             result = await server_service.set_server_state(db, "srv-1", True)
 
         assert result == "server_read"
+
+
+# --------------------------------------------------------------------------- #
+#  convert_server_to_read: associated_tool_ids                                #
+# --------------------------------------------------------------------------- #
+
+
+class TestConvertServerToReadAssociatedToolIds:
+    """Verify associated_tool_ids is populated from tool IDs in convert_server_to_read."""
+
+    @pytest.fixture
+    def server_service(self):
+        return ServerService()
+
+    def _make_server(self, tools=None, resources=None, prompts=None):
+        # Standard
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            id="srv-1",
+            name="test",
+            description="desc",
+            icon=None,
+            enabled=True,
+            created_at="2025-01-01T00:00:00",
+            updated_at="2025-01-01T00:00:00",
+            team_id=None,
+            team=None,
+            owner_email=None,
+            visibility="public",
+            created_by="admin",
+            modified_by=None,
+            tags=[],
+            tools=tools or [],
+            resources=resources or [],
+            prompts=prompts or [],
+            a2a_agents=[],
+            metrics=[],
+            oauth_enabled=False,
+            oauth_config=None,
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            modified_from_ip=None,
+            modified_via=None,
+            modified_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+            version=1,
+        )
+
+    def test_associated_tool_ids_populated(self, server_service):
+        """associated_tool_ids contains str(tool.id) for each associated tool."""
+        # Standard
+        from types import SimpleNamespace
+
+        t1 = SimpleNamespace(id="uuid-aaa", name="Tool A")
+        t2 = SimpleNamespace(id="uuid-bbb", name="Tool B")
+        server = self._make_server(tools=[t1, t2])
+
+        result = server_service.convert_server_to_read(server, include_metrics=False)
+
+        assert result.associated_tool_ids == ["uuid-aaa", "uuid-bbb"]
+        assert result.associated_tools == ["Tool A", "Tool B"]
+
+    def test_associated_tool_ids_empty_when_no_tools(self, server_service):
+        """associated_tool_ids defaults to [] when server has no tools."""
+        server = self._make_server(tools=[])
+
+        result = server_service.convert_server_to_read(server, include_metrics=False)
+
+        assert result.associated_tool_ids == []
+        assert result.associated_tools == []
+
+    def test_associated_tool_ids_converts_to_string(self, server_service):
+        """associated_tool_ids casts integer tool IDs to strings."""
+        # Standard
+        from types import SimpleNamespace
+
+        t = SimpleNamespace(id=42, name="Numeric ID Tool")
+        server = self._make_server(tools=[t])
+
+        result = server_service.convert_server_to_read(server, include_metrics=False)
+
+        assert result.associated_tool_ids == ["42"]

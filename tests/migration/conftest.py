@@ -24,9 +24,12 @@ from .utils.container_manager import ContainerManager
 from .utils.migration_runner import MigrationTestRunner
 from .version_config import VersionConfig
 
+REPORTS_DIR = Path("tests/migration/reports")
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
 # Configure logging for migration tests
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", handlers=[logging.StreamHandler(), logging.FileHandler("tests/migration/reports/migration_tests.log", mode="a")]
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", handlers=[logging.StreamHandler(), logging.FileHandler(REPORTS_DIR / "migration_tests.log", mode="a")]
 )
 
 logger = logging.getLogger(__name__)

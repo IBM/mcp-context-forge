@@ -27,6 +27,8 @@ use rmcp::{
         session::local::LocalSessionManager,
     },
 };
+use rand::Rng;
+use rand_distr::Normal;
 use serde_json::json;
 use tokio::sync::Mutex;
 use tracing::info;
@@ -44,6 +46,12 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct EchoRequest {
     /// The message to echo back
     pub message: String,
+    /// Optional delay in milliseconds before responding (default 0)
+    #[serde(default)]
+    pub delay: Option<u64>,
+    /// Optional standard deviation in milliseconds for a normal distribution around the delay mean (default 0 = no randomness)
+    #[serde(default)]
+    pub delay_stddev: Option<f64>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -73,13 +81,23 @@ impl FastTestServer {
     }
 
     /// Echo back whatever message is sent
-    #[tool(description = "Echo back the provided message. Useful for testing connectivity and latency.")]
+    #[tool(description = "Echo back the provided message. Useful for testing connectivity and
+        latency. Optionally delay the response by a specified number of milliseconds. If
+        delay_stddev is provided (and gt 0), the actual delay is sampled from a normal distribution
+        with mean=delay and the given standard deviation, clamped to  0.")]
     async fn echo(
         &self,
         rmcp::handler::server::wrapper::Parameters(req): rmcp::handler::server::wrapper::Parameters<EchoRequest>,
     ) -> Result<CallToolResult, McpError> {
         let mut count = self.request_count.lock().await;
         *count += 1;
+
+        if let Some(ms) = req.delay {
+            if ms > 0 {
+                let actual_ms = compute_delay(ms, req.delay_stddev);
+                tokio::time::sleep(std::time::Duration::from_millis(actual_ms)).await;
+            }
+        }
 
         Ok(CallToolResult::success(vec![Content::text(&req.message)]))
     }
@@ -154,6 +172,24 @@ impl ServerHandler for FastTestServer {
     ) -> Result<InitializeResult, McpError> {
         info!("Client connected to {}", APP_NAME);
         Ok(self.get_info())
+    }
+}
+
+// ============================================================================
+// Delay Helpers
+// ============================================================================
+
+/// Compute the actual delay in ms, optionally sampling from a normal distribution.
+/// Returns the mean unchanged when stddev is None, zero, or negative.
+fn compute_delay(mean_ms: u64, stddev: Option<f64>) -> u64 {
+    match stddev {
+        Some(sd) if sd > 0.0 => {
+            let dist = Normal::new(mean_ms as f64, sd).unwrap_or_else(|_| Normal::new(mean_ms as f64, 0.0).unwrap());
+            let sample = rand::thread_rng().sample(dist);
+            // Clamp to >= 0 (negative delays make no sense)
+            sample.round().max(0.0) as u64
+        }
+        _ => mean_ms,
     }
 }
 
@@ -347,6 +383,10 @@ async fn version_handler() -> axum::Json<serde_json::Value> {
 #[derive(Debug, serde::Deserialize)]
 struct RestEchoRequest {
     message: String,
+    #[serde(default)]
+    delay: Option<u64>,
+    #[serde(default)]
+    delay_stddev: Option<f64>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -359,6 +399,12 @@ struct RestTimeQuery {
 async fn rest_echo_handler(
     axum::Json(req): axum::Json<RestEchoRequest>,
 ) -> axum::Json<serde_json::Value> {
+    if let Some(ms) = req.delay {
+        if ms > 0 {
+            let actual_ms = compute_delay(ms, req.delay_stddev);
+            tokio::time::sleep(std::time::Duration::from_millis(actual_ms)).await;
+        }
+    }
     axum::Json(json!({
         "message": req.message
     }))

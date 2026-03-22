@@ -47,7 +47,7 @@ include .dockerignore
 include .flake8
 include .htmlhintrc
 include .pycodestyle
-include .pylintrc
+include .pylintrc*
 include .whitesource
 include .coveragerc
 # include .gitignore            # purely optional but many projects ship it
@@ -59,6 +59,7 @@ include .snyk
 # Runtime data that lives *inside* the package at import time
 recursive-include mcpgateway/templates *.html
 recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
+exclude mcpgateway/static/iframe-test-harness.html
 recursive-include mcpgateway *.pyi py.typed
 recursive-include mcpgateway *.ico
 recursive-include mcpgateway *.json
@@ -68,6 +69,7 @@ recursive-include alembic *.py
 
 # Infrastructure configuration (nginx, monitoring)
 recursive-include infra *.conf
+recursive-include infra *.html
 recursive-include infra *.json
 recursive-include infra *.md
 recursive-include infra *.sh
@@ -100,8 +102,12 @@ recursive-include plugins_rust *.rs
 recursive-include plugins_rust *.toml
 recursive-include plugins_rust *.md
 recursive-include plugins_rust *.py
-include plugins_rust/Makefile
+recursive-include plugins_rust *.pyi
+recursive-include plugins_rust *.json
+recursive-include plugins_rust Makefile
+include plugins_rust/*/Cargo.lock
 prune plugins_rust/target
+recursive-exclude plugins_rust/*/target *
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs

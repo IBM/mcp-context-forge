@@ -70,7 +70,7 @@ plugins:
     #
     cover_title: ContextForge AI Gateway
     cover_subtitle: A unified control plane for MCP, A2A, and REST/gRPC APIs
-    cover_logo: "theme/logo.png"
+    cover_logo: "theme/contextforge-icon_white.svg"
     #custom_template_path: TEMPLATES PATH
     #
     toc_title: Contents

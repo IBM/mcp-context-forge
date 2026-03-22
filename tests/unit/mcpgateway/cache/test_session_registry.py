@@ -206,7 +206,7 @@ async def test_broadcast_and_respond(payload, monkeypatch, registry: SessionRegi
     monkeypatch.setattr(registry, "generate_response", fake_generate_response)
 
     await registry.broadcast("B", payload)
-    await registry.respond(server_id=None, user={}, session_id="B", base_url="http://localhost")
+    await registry.respond(server_id=None, user={}, session_id="B")
 
     assert captured["transport"] is tr
     assert captured["message"] == payload
@@ -469,7 +469,7 @@ async def test_generate_response_initialize(registry: SessionRegistry):
             transport=tr,
             server_id=None,
             user={"token": "test"},
-            base_url="http://host",
+
         )
 
     # Implementation may emit 5 or 6 messages (roots/list_changed optional)
@@ -511,7 +511,7 @@ async def test_generate_response_ping(registry: SessionRegistry):
             transport=tr,
             server_id=None,
             user={"token": "test"},
-            base_url="http://host",
+
         )
 
     assert tr.sent[-1] == {"jsonrpc": "2.0", "result": {}, "id": 77}
@@ -547,7 +547,7 @@ async def test_generate_response_tools_list(registry: SessionRegistry, stub_db, 
             transport=tr,
             server_id=None,
             user={"token": "test"},
-            base_url="http://host",
+
         )
 
     reply = tr.sent[-1]
@@ -586,7 +586,7 @@ async def test_generate_response_resources_list(registry: SessionRegistry, stub_
             transport=tr,
             server_id=None,
             user={"token": "test"},
-            base_url="http://host",
+
         )
 
     reply = tr.sent[-1]
@@ -624,7 +624,7 @@ async def test_generate_response_prompts_list(registry: SessionRegistry, stub_db
             transport=tr,
             server_id=None,
             user={"token": "test"},
-            base_url="http://host",
+
         )
 
     reply = tr.sent[-1]
@@ -663,7 +663,7 @@ async def test_generate_response_tools_call(registry: SessionRegistry, stub_db, 
             transport=tr,
             server_id=None,
             user={"token": "test_token"},
-            base_url="http://host",
+
         )
 
     reply = tr.sent[-1]
@@ -701,7 +701,7 @@ async def test_generate_response_server_specific_tools_list(registry: SessionReg
             transport=tr,
             server_id="server123",
             user={"token": "test"},
-            base_url="http://host",
+
         )
 
     reply = tr.sent[-1]
@@ -739,7 +739,7 @@ async def test_generate_response_server_specific_resources_list(registry: Sessio
             transport=tr,
             server_id="server123",
             user={"token": "test"},
-            base_url="http://host",
+
         )
 
     reply = tr.sent[-1]
@@ -777,7 +777,7 @@ async def test_generate_response_server_specific_prompts_list(registry: SessionR
             transport=tr,
             server_id="server123",
             user={"token": "test"},
-            base_url="http://host",
+
         )
 
     reply = tr.sent[-1]
@@ -814,7 +814,7 @@ async def test_generate_response_unknown_method(registry: SessionRegistry, stub_
             transport=tr,
             server_id=None,
             user={"token": "test"},
-            base_url="http://host",
+
         )
 
     reply = tr.sent[-1]
@@ -835,7 +835,6 @@ async def test_generate_response_no_method_or_id(registry: SessionRegistry):
         transport=tr,
         server_id=None,
         user={},
-        base_url="http://host",
     )
 
     # Should not send any response
@@ -892,7 +891,7 @@ async def test_none_backend():
         assert not tr.disconnect_called
 
         await registry.broadcast("none_test", {"test": "message"})
-        await registry.respond(server_id=None, user={"token": "test"}, session_id="none_test", base_url="http://localhost")
+        await registry.respond(server_id=None, user={"token": "test"}, session_id="none_test")
 
         assert len(tr.sent) == 0
     finally:
@@ -1315,7 +1314,7 @@ async def test_full_memory_workflow(stub_db, stub_services):
 
         # Respond to message
         with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
-            await registry.respond(server_id=None, user={"token": "test"}, session_id="workflow_test", base_url="http://localhost")
+            await registry.respond(server_id=None, user={"token": "test"}, session_id="workflow_test")
 
         # Should have received initialize response + notifications
         assert len(transport.sent) >= 5
@@ -1457,7 +1456,7 @@ async def test_respond_memory_backend_no_message(registry: SessionRegistry):
     registry._session_message = None
 
     # The respond method should handle None _session_message gracefully
-    await registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost")
+    await registry.respond(server_id=None, user={"token": "test"}, session_id="test_session")
 
 
 @pytest.mark.asyncio
@@ -1473,7 +1472,7 @@ async def test_respond_memory_backend_with_none_message_content(registry: Sessio
     registry._session_message = {"session_id": "test_session", "message": None}
 
     with patch.object(registry, "generate_response", new_callable=AsyncMock) as mock_gen:
-        await registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost")
+        await registry.respond(server_id=None, user={"token": "test"}, session_id="test_session")
 
         # Should NOT call generate_response since message content is None
         mock_gen.assert_not_called()
@@ -1488,7 +1487,7 @@ async def test_respond_memory_backend_with_message_no_transport(registry: Sessio
     registry._session_message = {"session_id": "missing_session", "message": json.dumps({"method": "ping", "id": 1})}
 
     with patch.object(registry, "generate_response", new_callable=AsyncMock) as mock_gen:
-        await registry.respond(server_id=None, user={"token": "test"}, session_id="missing_session", base_url="http://localhost")
+        await registry.respond(server_id=None, user={"token": "test"}, session_id="missing_session")
 
         mock_gen.assert_not_called()
 
@@ -1503,7 +1502,7 @@ async def test_respond_memory_backend_with_session_message_check(registry: Sessi
     registry._session_message = {"session_id": "test_session", "message": json.dumps({"method": "ping", "id": 1})}
 
     with patch.object(registry, "generate_response", new_callable=AsyncMock) as mock_gen:
-        await registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost")
+        await registry.respond(server_id=None, user={"token": "test"}, session_id="test_session")
 
         # Should call generate_response since transport exists
         mock_gen.assert_called_once()
@@ -1535,7 +1534,7 @@ async def test_generate_response_jsonrpc_error(registry: SessionRegistry):
             return None
 
     with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
-        await registry.generate_response(message=message, transport=tr, server_id=None, user={"token": "test"}, base_url="http://localhost")
+        await registry.generate_response(message=message, transport=tr, server_id=None, user={"token": "test"})
 
     # Should have sent error response
     assert len(tr.sent) == 1
@@ -1564,7 +1563,7 @@ async def test_generate_response_general_exception(registry: SessionRegistry):
             return None
 
     with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
-        await registry.generate_response(message=message, transport=tr, server_id=None, user={"token": "test"}, base_url="http://localhost")
+        await registry.generate_response(message=message, transport=tr, server_id=None, user={"token": "test"})
 
     # Should have sent error response
     assert len(tr.sent) == 1

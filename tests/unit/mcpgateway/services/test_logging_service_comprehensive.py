@@ -22,6 +22,18 @@ from mcpgateway.common.models import LogLevel
 import mcpgateway.services.structured_logger as structured_logger
 from mcpgateway.services.logging_service import _get_file_handler, _get_text_handler, LoggingService
 
+
+@pytest.fixture(autouse=True)
+def _restore_root_logger_level():
+    """Prevent set_level() calls from leaking global root logger state into other test modules."""
+    root = logging.getLogger()
+    saved_level = root.level
+    saved_handler_levels = [(h, h.level) for h in root.handlers]
+    yield
+    root.setLevel(saved_level)
+    for handler, level in saved_handler_levels:
+        handler.setLevel(level)
+
 # ---------------------------------------------------------------------------
 # Test file handler creation
 # ---------------------------------------------------------------------------

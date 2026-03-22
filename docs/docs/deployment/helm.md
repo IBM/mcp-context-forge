@@ -291,6 +291,62 @@ flowchart TD
 
 ---
 
+## 🛡 SSRF and in-cluster testing tools
+
+???+ warning "SSRF defaults can block in-cluster tool registration"
+
+    The Helm chart defaults to strict SSRF settings (`SSRF_ALLOW_PRIVATE_NETWORKS=false`,
+    `SSRF_ALLOWED_NETWORKS=[]`). This is a good production baseline.
+
+    If you enable testing registrations for fast-time / fast-test, the registration jobs use
+    private Service URLs:
+
+    - `http://<release>-mcp-fast-time-server:80/http`
+    - `http://<release>-fast-test-server:8880/mcp`
+
+    Under strict defaults, gateway creation can fail with `422` ("private network address blocked").
+
+    === "Preferred: allow only known internal CIDRs"
+
+        ```yaml
+        mcpContextForge:
+          config:
+            SSRF_PROTECTION_ENABLED: "true"
+            SSRF_ALLOW_LOCALHOST: "false"
+            SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+            SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example Service CIDR; adjust for your cluster
+            SSRF_DNS_FAIL_CLOSED: "true"
+
+        testing:
+          enabled: true
+          fastTime:
+            register:
+              enabled: true
+              gatewayPath: /http
+          fastTest:
+            register:
+              enabled: true
+              gatewayPath: /mcp
+        ```
+
+    === "Local benchmark shortcut (broader)"
+
+        ```yaml
+        mcpContextForge:
+          config:
+            SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+        ```
+
+    === "Troubleshooting failed registration job"
+
+        ```bash
+        kubectl get jobs -n mcp-private | grep register
+        kubectl logs -n mcp-private job/mcp-stack-register-fast-time
+        kubectl logs -n mcp-private job/mcp-stack-register-fast-test
+        ```
+
+---
+
 ## 🚀 Install / Upgrade the stack
 
 ???+ info "🚀 Install or Upgrade the Stack"
@@ -402,6 +458,40 @@ flowchart TD
         ```
 
         Use `helm history mcp-stack -n mcp-private` to list available revisions before rolling back.
+
+    !!! warning "PostgreSQL upgrade safety rules"
+        Before changing PostgreSQL image/tag, take a backup and ensure single-writer semantics.
+
+        Recommended pre-upgrade backup:
+        ```bash
+        kubectl exec -n mcp-private deploy/mcp-stack-postgres -- \
+          pg_dump -U admin -d postgresdb > pg-backup-$(date +%Y%m%d-%H%M%S).sql
+        ```
+
+        Chart defaults now enforce:
+        - `Deployment.strategy.type=Recreate` for internal Postgres (no overlapping old/new DB pods)
+        - `postgres.terminationGracePeriodSeconds=120`
+        - `postgres.lifecycle.preStop.enabled=true` for clean stop before termination
+        - `postgres.persistence.useReadWriteOncePod=true` for stricter mount semantics
+
+        If your storage class does not support `ReadWriteOncePod`, set:
+        ```yaml
+        postgres:
+          persistence:
+            useReadWriteOncePod: false
+            accessModes: [ReadWriteOnce]
+        ```
+
+    !!! warning "Legacy `1.0.0-BETA-2` upgrade note"
+        If your release was originally installed from chart/app `1.0.0-BETA-2`, direct upgrade can fail on MinIO with immutable selector errors.
+
+        One-time workaround:
+        ```bash
+        kubectl delete deployment -n mcp-private mcp-stack-minio
+        helm upgrade mcp-stack . -n mcp-private -f my-values.yaml --wait --timeout 15m
+        ```
+
+        If your deployment still needs MinIO, pin `minio.enabled=true` in your values before upgrade.
 
 ---
 

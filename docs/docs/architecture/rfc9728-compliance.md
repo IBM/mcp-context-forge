@@ -111,6 +111,41 @@ The endpoint validates that `server_id` is a valid UUID using regex pattern matc
 UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 ```
 
+## Per-Server OAuth Enforcement
+
+### Overview
+
+When a virtual server has `oauth_enabled=True`, ContextForge enforces authentication for that server's MCP endpoints regardless of the global `MCP_REQUIRE_AUTH` setting. This closes the gap where OAuth capability was *advertised* via RFC 9728 metadata but never *enforced* on subsequent MCP requests.
+
+### Behavior
+
+- **Permissive mode (`MCP_REQUIRE_AUTH=false`)**: Unauthenticated requests to `oauth_enabled` servers are rejected with HTTP 401. Non-OAuth servers continue to allow unauthenticated access with public-only visibility.
+- **Strict mode (`MCP_REQUIRE_AUTH=true`)**: All unauthenticated requests are already rejected by the middleware, so per-server enforcement is not needed.
+- **Authenticated requests**: Requests with a valid Bearer token are always allowed through, regardless of the server's `oauth_enabled` flag.
+
+### WWW-Authenticate Header
+
+When an unauthenticated request is rejected, the 401 response includes a `WWW-Authenticate` header with the RFC 9728 resource metadata URL:
+
+```
+WWW-Authenticate: Bearer resource_metadata="https://gateway.example.com/.well-known/oauth-protected-resource/servers/{server_id}/mcp"
+```
+
+This enables MCP clients to discover the authorization server and initiate an OAuth flow automatically.
+
+**Deployment note:** The `resource_metadata` URL is constructed from the request's `Host` and `X-Forwarded-Proto` headers. Deployments must ensure their reverse proxy sets these headers authoritatively to prevent challenge URL poisoning by untrusted clients.
+
+### Fail-Closed on Infrastructure Errors
+
+If the database is unavailable when checking a server's `oauth_enabled` flag, the request is rejected with HTTP 503 (Service Unavailable) rather than silently allowed. This fail-closed behavior prevents unauthenticated access during infrastructure outages.
+
+### Defense-in-Depth
+
+OAuth enforcement is applied at two levels in the Streamable HTTP transport:
+
+1. **Middleware (`streamable_http_auth`)**: Primary enforcement point — checks `oauth_enabled` before allowing unauthenticated requests through in permissive mode.
+2. **MCP handlers** (`list_tools`, `call_tool`, `list_prompts`, `get_prompt`, `list_resources`, `read_resource`, `list_resource_templates`, `set_logging_level`, `complete`): Secondary enforcement — each handler re-checks per-server OAuth as a defense-in-depth guard, with results cached per-request via a `ContextVar` to avoid redundant DB lookups.
+
 ## Deprecated Endpoints
 
 ### Query Parameter Endpoint (Deprecated)

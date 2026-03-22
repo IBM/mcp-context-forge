@@ -213,6 +213,24 @@ class TestImmediateWritesWhenDisabled:
 
         mock_write.assert_called_once()
 
+    def test_tool_metric_with_duration_immediate_write_called(self):
+        """record_tool_metric_with_duration should call immediate write when disabled."""
+        service = MetricsBufferService(enabled=False)
+
+        with patch.object(service, "_write_tool_metric_with_duration_immediately") as mock_write:
+            service.record_tool_metric_with_duration("tool-1", 0.25, True, None)
+
+        mock_write.assert_called_once_with("tool-1", 0.25, True, None)
+
+    def test_server_metric_with_duration_immediate_write_called(self):
+        """record_server_metric_with_duration should call immediate write when disabled."""
+        service = MetricsBufferService(enabled=False)
+
+        with patch.object(service, "_write_server_metric_with_duration_immediately") as mock_write:
+            service.record_server_metric_with_duration("server-1", 0.25, True, None)
+
+        mock_write.assert_called_once_with("server-1", 0.25, True, None)
+
     def test_a2a_metric_immediate_write_called(self):
         """record_a2a_agent_metric should call immediate write when disabled."""
         service = MetricsBufferService(enabled=False)
@@ -334,6 +352,40 @@ class TestMetricsBufferServiceRecording:
         assert metric.is_success is True
         assert metric.response_time >= 0.25
 
+    def test_record_tool_metric_with_duration_buffers_when_enabled(self):
+        service = MetricsBufferService(enabled=True)
+
+        service.record_tool_metric_with_duration(
+            tool_id="tool-123",
+            response_time=0.75,
+            success=False,
+            error_message="boom",
+        )
+
+        assert len(service._tool_metrics) == 1
+        metric = service._tool_metrics[0]
+        assert metric.tool_id == "tool-123"
+        assert metric.response_time == 0.75
+        assert metric.is_success is False
+        assert metric.error_message == "boom"
+
+    def test_record_server_metric_with_duration_buffers_when_enabled(self):
+        service = MetricsBufferService(enabled=True)
+
+        service.record_server_metric_with_duration(
+            server_id="server-123",
+            response_time=0.75,
+            success=False,
+            error_message="boom",
+        )
+
+        assert len(service._server_metrics) == 1
+        metric = service._server_metrics[0]
+        assert metric.server_id == "server-123"
+        assert metric.response_time == 0.75
+        assert metric.is_success is False
+        assert metric.error_message == "boom"
+
     def test_record_a2a_agent_metric_with_duration_buffers_when_enabled(self):
         service = MetricsBufferService(enabled=True)
 
@@ -385,6 +437,73 @@ async def test_start_creates_flush_task(monkeypatch):
     await service.start()
 
     assert service._flush_task is not None
+    assert created["coro"] is not None
+    created["coro"].close()
+
+
+@pytest.mark.asyncio
+async def test_start_replaces_stale_flush_task_from_other_loop(monkeypatch):
+    service = MetricsBufferService(enabled=True)
+    service.recording_enabled = True
+    service._flush_loop = AsyncMock()
+
+    stale_task = MagicMock()
+    stale_task.done.return_value = False
+    stale_task.cancelled.return_value = False
+    stale_task.get_loop.return_value = SimpleNamespace(is_running=lambda: False)
+    service._flush_task = stale_task
+
+    created = {}
+
+    def _fake_create_task(coro):
+        created["coro"] = coro
+        task = MagicMock()
+        task.done.return_value = False
+        task.cancelled.return_value = False
+        task.get_loop.return_value = asyncio.get_running_loop()
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", _fake_create_task)
+
+    await service.start()
+
+    assert service._flush_task is not stale_task
+    assert created["coro"] is not None
+    created["coro"].close()
+
+
+@pytest.mark.asyncio
+async def test_record_tool_metric_restarts_stale_flush_task(monkeypatch):
+    service = MetricsBufferService(enabled=True)
+    service.recording_enabled = True
+    service._flush_loop = AsyncMock()
+
+    stale_task = MagicMock()
+    stale_task.done.return_value = False
+    stale_task.cancelled.return_value = False
+    stale_task.get_loop.return_value = SimpleNamespace(is_running=lambda: False)
+    service._flush_task = stale_task
+
+    loop = asyncio.get_running_loop()
+    original_create_task = loop.create_task
+    created = {}
+
+    def _fake_create_task(coro):
+        created["coro"] = coro
+        task = MagicMock()
+        task.done.return_value = False
+        task.cancelled.return_value = False
+        task.get_loop.return_value = loop
+        return task
+
+    monkeypatch.setattr(loop, "create_task", _fake_create_task)
+
+    try:
+        service.record_tool_metric_with_duration("tool-123", 0.25, True, None)
+    finally:
+        monkeypatch.setattr(loop, "create_task", original_create_task)
+
+    assert service._flush_task is not stale_task
     assert created["coro"] is not None
     created["coro"].close()
 
@@ -539,7 +658,8 @@ def test_flush_to_db_writes_all_metric_types(monkeypatch):
 
     service = MetricsBufferService(enabled=True)
 
-    holder = {}
+    # Track ALL sessions (server metrics use a separate transaction)
+    all_dbs = []
 
     class DummyDB:
         def __init__(self):
@@ -554,8 +674,9 @@ def test_flush_to_db_writes_all_metric_types(monkeypatch):
 
     class DummySession:
         def __enter__(self):
-            holder["db"] = DummyDB()
-            return holder["db"]
+            db = DummyDB()
+            all_dbs.append(db)
+            return db
 
         def __exit__(self, exc_type, exc, tb):
             return False
@@ -570,8 +691,12 @@ def test_flush_to_db_writes_all_metric_types(monkeypatch):
 
     service._flush_to_db([tool_metric], [resource_metric], [prompt_metric], [server_metric], [a2a_metric])
 
-    assert holder["db"].committed is True
-    models = [call[0] for call in holder["db"].bulk_calls]
+    # Two transactions: main (tool/resource/prompt/a2a) + server metrics
+    assert len(all_dbs) == 2
+    assert all(db.committed for db in all_dbs)
+
+    # Collect models across both transactions
+    models = [call[0] for db in all_dbs for call in db.bulk_calls]
     assert ToolMetric in models
     assert ResourceMetric in models
     assert PromptMetric in models
@@ -604,9 +729,7 @@ class TestMetricsSetup:
     @pytest.mark.parametrize(
         "db_url, expected_engine",
         [
-            ("mysql+pymysql://user@host/db", "mariadb"),
             ("postgresql://user@host/db", "postgresql"),
-            ("mongodb://user@host/db", "mongodb"),
             ("oracle://user@host/db", "unknown"),
         ],
     )
@@ -645,7 +768,7 @@ class TestMetricsSetup:
                 return None
 
         app = FastAPI()
-        monkeypatch.setenv("ENABLE_METRICS", "true")
+        monkeypatch.setattr(metrics_module.settings, "ENABLE_METRICS", True)
         monkeypatch.setenv("METRICS_CUSTOM_LABELS", "")
         monkeypatch.setattr(metrics_module.settings, "database_url", db_url)
         monkeypatch.setattr(metrics_module.settings, "METRICS_EXCLUDED_HANDLERS", "")
@@ -670,7 +793,7 @@ class TestMetricsSetup:
         from mcpgateway.services import metrics as metrics_module
 
         app = FastAPI()
-        monkeypatch.setenv("ENABLE_METRICS", "false")
+        monkeypatch.setattr(metrics_module.settings, "ENABLE_METRICS", False)
 
         metrics_module.setup_metrics(app)
 
@@ -710,7 +833,7 @@ class TestMetricsSetup:
                 return None
 
         app = FastAPI()
-        monkeypatch.setenv("ENABLE_METRICS", "true")
+        monkeypatch.setattr(metrics_module.settings, "ENABLE_METRICS", True)
         monkeypatch.setattr(metrics_module.settings, "database_url", "sqlite:///./test.db")
         monkeypatch.setattr(metrics_module.settings, "METRICS_EXCLUDED_HANDLERS", "")
         monkeypatch.setattr(metrics_module, "Gauge", DummyGauge)

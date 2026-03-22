@@ -272,6 +272,35 @@ def test_lookup_api_token_sync_expired(monkeypatch):
     assert auth._lookup_api_token_sync("hash") == {"expired": True}
 
 
+def test_lookup_api_token_sync_expired_naive_datetime(monkeypatch):
+    """Naive datetime from SQLite is correctly detected as expired."""
+    expired_token = SimpleNamespace(
+        expires_at=datetime(2026, 3, 8, 12, 0, 0),  # naive (no tzinfo)
+        jti="jti-1",
+        user_email="user@example.com",
+        last_used=None,
+    )
+    session = DummySession(results=[expired_token])
+    monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
+    monkeypatch.setattr("mcpgateway.db.utc_now", lambda: datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc))
+    assert auth._lookup_api_token_sync("hash") == {"expired": True}
+
+
+def test_lookup_api_token_sync_not_expired_naive_datetime(monkeypatch):
+    """Naive datetime from SQLite in the future is correctly detected as not expired."""
+    active_token = SimpleNamespace(
+        expires_at=datetime(2026, 3, 10, 12, 0, 0),  # naive, in the future
+        jti="jti-1",
+        user_email="user@example.com",
+        last_used=None,
+    )
+    session = DummySession(results=[active_token, None])
+    monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
+    monkeypatch.setattr("mcpgateway.db.utc_now", lambda: datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc))
+    result = auth._lookup_api_token_sync("hash")
+    assert result["user_email"] == "user@example.com"
+
+
 def test_lookup_api_token_sync_revoked(monkeypatch):
     api_token = SimpleNamespace(
         expires_at=None,

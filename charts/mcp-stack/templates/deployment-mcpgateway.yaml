@@ -38,10 +38,21 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: mcp-context-forge
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
           imagePullPolicy: {{ .Values.mcpContextForge.image.pullPolicy }}
+          {{- $pluginsConfigFile := default "plugins/config.yaml" .Values.mcpContextForge.config.PLUGINS_CONFIG_FILE }}
 
           # Gateway's internal port
           ports:
@@ -121,6 +132,13 @@ spec:
               value: {{ .Values.mcpContextForge.env.redis.host | default (printf "%s-redis" (include "mcp-stack.fullname" .)) | quote }}
             - name: REDIS_PORT
               value: "{{ .Values.mcpContextForge.env.redis.port }}"
+            {{- if and .Values.redis.enabled .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.redisSecretName" . | trim | quote }}
+                  key: {{ .Values.redis.auth.passwordKey | default "REDIS_PASSWORD" }}
+            {{- end }}
             {{- else }}
             - name: REDIS_HOST
               value: ""
@@ -163,8 +181,12 @@ spec:
               {{- else }}
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/{{ .Values.redis.external.db }}"
               {{- end }}
-              {{- else if or .Values.redis.enabled .Values.mcpContextForge.env.redis.host }}
+            {{- else if or .Values.redis.enabled .Values.mcpContextForge.env.redis.host }}
+              {{- if and .Values.redis.enabled .Values.redis.auth.enabled }}
+              value: "redis://:$(REDIS_PASSWORD)@$(REDIS_HOST):$(REDIS_PORT)/0"
+              {{- else }}
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
+              {{- end }}
               {{- else }}
               value: ""
               {{- end }}
@@ -173,6 +195,12 @@ spec:
             # Placed last so users can override any variable including derived URLs
             {{- if .Values.mcpContextForge.extraEnv }}
             {{- toYaml .Values.mcpContextForge.extraEnv | nindent 12 }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.pluginConfig.enabled }}
+            # Keep runtime lookup path in sync with plugin config mount path.
+            # This intentionally comes after extraEnv so it cannot drift.
+            - name: PLUGINS_CONFIG_FILE
+              value: {{ $pluginsConfigFile | quote }}
             {{- end }}
 
           ################################################################
@@ -235,7 +263,7 @@ spec:
           {{- if .Values.mcpContextForge.pluginConfig.enabled }}
           volumeMounts:
             - name: plugin-config-volume
-              mountPath: /app/{{ .Values.mcpContextForge.config.PLUGIN_CONFIG_FILE }}
+              mountPath: /app/{{ $pluginsConfigFile }}
               subPath: config.yaml
           {{- end }}
 {{- if .Values.mcpContextForge.pluginConfig.enabled }}

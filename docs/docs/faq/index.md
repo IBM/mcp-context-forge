@@ -16,7 +16,7 @@
     OCI image (Docker/Podman) - shares host network so localhost works:
 
     ```bash
-    podman run --network=host -p 4444:4444 ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+    podman run --network=host -p 4444:4444 ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
     ```
 
 ???+ example "🗂️ What URLs are available for the admin interface and API docs?"
@@ -112,15 +112,14 @@
 ???+ info "🗄️ What databases are supported for persistence?"
 
     - SQLite (default) - used for development / small deployments.
-    - PostgreSQL / MySQL / MariaDB via `DATABASE_URL`.
+    - PostgreSQL (recommended for production) via `DATABASE_URL`.
     - Redis (optional) for caching and federation.
-    - Other databases supported by SQLAlchemy.
 
 ???+ info "📦 How do I persist SQLite across container restarts?"
     Include a persistent volume with your container or Kubernetes deployment. Ex:
 
     ```bash
-    docker run -v $(pwd)/data:/app ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+    docker run -v $(pwd)/data:/app ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
     ```
 
     For production use, we recommend PostgreSQL. A Docker Compose target with PostgreSQL and Redis is provided.

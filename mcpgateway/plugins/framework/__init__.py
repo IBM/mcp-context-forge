@@ -14,7 +14,6 @@ Exposes core ContextForge plugin components:
 """
 
 # Standard
-import os
 from typing import Optional
 
 # First-Party
@@ -25,6 +24,7 @@ from mcpgateway.plugins.framework.hooks.registry import HookRegistry, get_hook_r
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.manager import PluginManager
+from mcpgateway.plugins.framework.observability import ObservabilityProvider
 from mcpgateway.plugins.framework.hooks.http import (
     HttpAuthCheckPermissionPayload,
     HttpAuthCheckPermissionResult,
@@ -67,11 +67,14 @@ from mcpgateway.plugins.framework.utils import get_attr
 _plugin_manager: Optional[PluginManager] = None
 
 
-def get_plugin_manager() -> Optional[PluginManager]:
+def get_plugin_manager(observability: Optional[ObservabilityProvider] = None) -> Optional[PluginManager]:
     """Get or initialize the plugin manager singleton.
 
     This is the public API for accessing the plugin manager from anywhere in the application.
     The plugin manager is lazily initialized on first access if plugins are enabled.
+
+    Args:
+        observability: Optional observability provider implementing ObservabilityProvider protocol.
 
     Returns:
         PluginManager instance if plugins are enabled, None otherwise.
@@ -85,12 +88,19 @@ def get_plugin_manager() -> Optional[PluginManager]:
     """
     global _plugin_manager  # pylint: disable=global-statement
     if _plugin_manager is None:
-        # Import here to avoid circular dependency
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+        # Use plugin framework's own settings instead of mcpgateway.config
+        from mcpgateway.plugins.framework.settings import settings  # pylint: disable=import-outside-toplevel
 
-        if settings.plugins_enabled:
-            config_file = os.getenv("PLUGIN_CONFIG_FILE", getattr(settings, "plugin_config_file", "plugins/config.yaml"))
-            _plugin_manager = PluginManager(config_file)
+        if settings.enabled:
+            # Import concrete policies from the gateway side
+            from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # pylint: disable=import-outside-toplevel
+
+            _plugin_manager = PluginManager(
+                settings.config_file,
+                timeout=settings.plugin_timeout,
+                observability=observability,
+                hook_policies=HOOK_PAYLOAD_POLICIES,
+            )
     return _plugin_manager
 
 
@@ -119,6 +129,7 @@ __all__ = [
     "HttpPreRequestPayload",
     "HttpPreRequestResult",
     "MCPServerConfig",
+    "ObservabilityProvider",
     "Plugin",
     "PluginCondition",
     "PluginConfig",

@@ -32,6 +32,9 @@ from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active
 
 logger = logging.getLogger(__name__)
 
+# Generic 403 message — intentionally vague to avoid leaking permission names to callers
+_ACCESS_DENIED_MSG = "Access denied"
+
 # HTTP Bearer security scheme for token extraction
 security = HTTPBearer(auto_error=False)
 
@@ -616,15 +619,57 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                 )
 
                 # If a plugin made a decision, respect it
-                if result and result.modified_payload:
-                    if result.modified_payload.granted:
-                        logger.info(f"Permission granted by plugin: user={user_context['email']}, " f"permission={permission}, reason={result.modified_payload.reason}")
-                        return await func(*args, **kwargs)
-                    logger.warning(f"Permission denied by plugin: user={user_context['email']}, " f"permission={permission}, reason={result.modified_payload.reason}")
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Insufficient permissions. Required: {permission}",
+                if result and result.modified_payload and hasattr(result.modified_payload, "granted"):
+                    decision_plugin = "unknown"
+                    decision_reason = getattr(result.modified_payload, "reason", None)
+                    result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
+                    if result_metadata.get("_decision_plugin"):
+                        decision_plugin = str(result_metadata["_decision_plugin"])
+                    for key in ("plugin_name", "plugin", "source_plugin", "handler"):
+                        if decision_plugin != "unknown":
+                            break
+                        plugin_name = result_metadata.get(key)
+                        if plugin_name:
+                            decision_plugin = str(plugin_name)
+
+                    logger.info(
+                        "Plugin permission decision: plugin=%s user=%s permission=%s granted=%s reason=%s",
+                        decision_plugin,
+                        user_context["email"],
+                        permission,
+                        result.modified_payload.granted,
+                        decision_reason,
                     )
+
+                    if result.modified_payload.granted:
+                        if settings.plugins_can_override_rbac:
+                            logger.warning(
+                                "Plugin RBAC grant override applied: plugin=%s user=%s permission=%s reason=%s",
+                                decision_plugin,
+                                user_context["email"],
+                                permission,
+                                decision_reason,
+                            )
+                            return await func(*args, **kwargs)
+
+                        logger.info(
+                            "Plugin RBAC grant decision ignored by default policy: plugin=%s user=%s permission=%s",
+                            decision_plugin,
+                            user_context["email"],
+                            permission,
+                        )
+                    else:
+                        logger.warning(
+                            "Permission denied by plugin: plugin=%s user=%s permission=%s reason=%s",
+                            decision_plugin,
+                            user_context["email"],
+                            permission,
+                            decision_reason,
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=_ACCESS_DENIED_MSG,
+                        )
 
             # No plugin handled it, fall through to standard RBAC check
             # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
@@ -637,6 +682,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     permission=permission,
                     resource_type=resource_type,
                     team_id=team_id,
+                    token_teams=user_context.get("token_teams"),
                     ip_address=user_context.get("ip_address"),
                     user_agent=user_context.get("user_agent"),
                     allow_admin_bypass=allow_admin_bypass,
@@ -651,6 +697,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                         permission=permission,
                         resource_type=resource_type,
                         team_id=team_id,
+                        token_teams=user_context.get("token_teams"),
                         ip_address=user_context.get("ip_address"),
                         user_agent=user_context.get("user_agent"),
                         allow_admin_bypass=allow_admin_bypass,
@@ -659,7 +706,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
 
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permission={permission}, resource_type={resource_type}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required: {permission}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Permission granted, execute the original function
             return await func(*args, **kwargs)
@@ -739,7 +786,7 @@ def require_admin_permission():
 
             if not has_admin_permission:
                 logger.warning(f"Admin permission denied: user={user_context['email']}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin permissions required")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Admin permission granted, execute the original function
             return await func(*args, **kwargs)
@@ -848,6 +895,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                         permission=permission,
                         resource_type=resource_type,
                         team_id=team_id,
+                        token_teams=user_context.get("token_teams"),
                         ip_address=user_context.get("ip_address"),
                         user_agent=user_context.get("user_agent"),
                         allow_admin_bypass=allow_admin_bypass,
@@ -867,6 +915,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                             permission=permission,
                             resource_type=resource_type,
                             team_id=team_id,
+                            token_teams=user_context.get("token_teams"),
                             ip_address=user_context.get("ip_address"),
                             user_agent=user_context.get("user_agent"),
                             allow_admin_bypass=allow_admin_bypass,
@@ -877,7 +926,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
 
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permissions={permissions}, resource_type={resource_type}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required one of: {', '.join(permissions)}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             # Permission granted, execute the original function
             return await func(*args, **kwargs)
@@ -908,7 +957,7 @@ class PermissionChecker:
         self.user_context = user_context
         self.db_session = user_context.get("db")
 
-    async def has_permission(self, permission: str, resource_type: Optional[str] = None, resource_id: Optional[str] = None, team_id: Optional[str] = None) -> bool:
+    async def has_permission(self, permission: str, resource_type: Optional[str] = None, resource_id: Optional[str] = None, team_id: Optional[str] = None, check_any_team: bool = False) -> bool:
         """Check if user has specific permission.
 
         Args:
@@ -916,6 +965,7 @@ class PermissionChecker:
             resource_type: Optional resource type
             resource_id: Optional resource ID
             team_id: Optional team context
+            check_any_team: If True, check across all teams the user belongs to
 
         Returns:
             bool: True if user has permission
@@ -929,8 +979,10 @@ class PermissionChecker:
                 resource_type=resource_type,
                 resource_id=resource_id,
                 team_id=team_id,
+                token_teams=self.user_context.get("token_teams"),
                 ip_address=self.user_context.get("ip_address"),
                 user_agent=self.user_context.get("user_agent"),
+                check_any_team=check_any_team,
             )
         # Create fresh db session
         with fresh_db_session() as db:
@@ -941,8 +993,10 @@ class PermissionChecker:
                 resource_type=resource_type,
                 resource_id=resource_id,
                 team_id=team_id,
+                token_teams=self.user_context.get("token_teams"),
                 ip_address=self.user_context.get("ip_address"),
                 user_agent=self.user_context.get("user_agent"),
+                check_any_team=check_any_team,
             )
 
     async def has_admin_permission(self) -> bool:
@@ -980,6 +1034,7 @@ class PermissionChecker:
                     permission=permission,
                     resource_type=resource_type,
                     team_id=team_id,
+                    token_teams=self.user_context.get("token_teams"),
                     ip_address=self.user_context.get("ip_address"),
                     user_agent=self.user_context.get("user_agent"),
                 ):
@@ -994,6 +1049,7 @@ class PermissionChecker:
                     permission=permission,
                     resource_type=resource_type,
                     team_id=team_id,
+                    token_teams=self.user_context.get("token_teams"),
                     ip_address=self.user_context.get("ip_address"),
                     user_agent=self.user_context.get("user_agent"),
                 ):
@@ -1013,4 +1069,5 @@ class PermissionChecker:
             HTTPException: If permission is not granted
         """
         if not await self.has_permission(permission, resource_type, resource_id, team_id):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required: {permission}")
+            logger.warning(f"{_ACCESS_DENIED_MSG}: user '{self.user_context.get('email')}' missing permission '{permission}'")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)

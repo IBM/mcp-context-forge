@@ -403,7 +403,7 @@ SSO_KEYCLOAK_CLIENT_ID=mcp-gateway-prod
 |----------|----------|---------|-------------|
 | `SSO_KEYCLOAK_ENABLED` | Yes | `false` | Enable Keycloak SSO provider |
 | `SSO_KEYCLOAK_BASE_URL` | Yes | - | Base URL of Keycloak instance |
-| `SSO_KEYCLOAK_PUBLIC_BASE_URL` | No | _unset_ | Browser-facing Keycloak URL used for authorization redirects when gateway uses an internal URL |
+| `SSO_KEYCLOAK_PUBLIC_BASE_URL` | No | _unset_ | Browser-facing Keycloak URL used for authorization redirects and issuer verification when gateway uses an internal URL |
 | `SSO_KEYCLOAK_REALM` | Yes | `master` | Keycloak realm name |
 | `SSO_KEYCLOAK_CLIENT_ID` | Yes | - | OAuth client ID from Keycloak |
 | `SSO_KEYCLOAK_CLIENT_SECRET` | Yes | - | OAuth client secret from Keycloak |
@@ -821,6 +821,17 @@ SSO_KEYCLOAK_BASE_URL=https://keycloak.yourcompany.com/auth
 
 # For Keycloak >= 17.0, use:
 SSO_KEYCLOAK_BASE_URL=https://keycloak.yourcompany.com
+```
+
+**Split-URL deployments** (e.g., Docker Compose with reverse proxy): When the gateway
+reaches Keycloak via an internal URL (`SSO_KEYCLOAK_BASE_URL=http://keycloak:8080`) but
+users authenticate via a different public URL, set `SSO_KEYCLOAK_PUBLIC_BASE_URL` to the
+browser-facing URL. The gateway rewrites both the authorization URL and the issuer to
+the public base so that `id_token` issuer verification succeeds:
+
+```bash
+SSO_KEYCLOAK_BASE_URL=http://keycloak:8080          # Internal (token, userinfo, JWKS)
+SSO_KEYCLOAK_PUBLIC_BASE_URL=http://localhost:8180   # Browser-facing (auth URL, issuer)
 ```
 
 ### Roles Not Appearing in JWT

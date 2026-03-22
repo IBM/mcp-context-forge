@@ -18,6 +18,7 @@ import atexit
 import logging
 import operator
 import random
+import re
 import secrets
 import signal
 import socket
@@ -437,6 +438,9 @@ async def get_agent_card(request: Request, identity: str = Depends(verify_auth))
     """A2A Discovery endpoint - returns agent capabilities."""
     scheme = request.url.scheme
     host = request.headers.get("host", "localhost")
+    # Validate Host header to prevent injection via forged headers
+    if not re.match(r"^[a-zA-Z0-9._\-:\[\]]+$", host):
+        host = "localhost"
     base_url = f"{scheme}://{host}"
 
     return {

@@ -23,7 +23,12 @@ mod comprehensive_tests {
     async fn test_complete_file_workflow() {
         let temp_dir = TempDir::new().unwrap();
         let sandbox = setup_sandbox(&temp_dir).await;
-        let root = temp_dir.path().to_string_lossy().to_string();
+        // Use canonicalized path to handle macOS /var -> /private/var symlink
+        let root = async_fs::canonicalize(temp_dir.path())
+            .await
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
 
         // 1. Create directory
         let docs_dir = format!("{}/documents", root);
@@ -110,7 +115,12 @@ mod comprehensive_tests {
     async fn test_complete_permission_and_metadata_workflow() {
         let temp_dir = TempDir::new().unwrap();
         let sandbox = setup_sandbox(&temp_dir).await;
-        let root = temp_dir.path().to_string_lossy().to_string();
+        // Use canonicalized path to handle macOS /var -> /private/var symlink
+        let root = async_fs::canonicalize(temp_dir.path())
+            .await
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
 
         // 1. Create directory and file
         let config_dir = format!("{}/config", root);
@@ -186,7 +196,12 @@ mod comprehensive_tests {
     async fn test_complete_search_and_organize_workflow() {
         let temp_dir = TempDir::new().unwrap();
         let sandbox = setup_sandbox(&temp_dir).await;
-        let root = temp_dir.path().to_string_lossy().to_string();
+        // Use canonicalized path to handle macOS /var -> /private/var symlink
+        let root = async_fs::canonicalize(temp_dir.path())
+            .await
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
 
         // 1. Create mixed directory structure
         let docs_dir = format!("{}/docs", root);

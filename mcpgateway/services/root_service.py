@@ -457,12 +457,15 @@ class RootService:
             True
 
             Test error handling with closed queue:
+            >>> import logging
+            >>> logging.disable(logging.CRITICAL)
             >>> from unittest.mock import AsyncMock
             >>> service = RootService()
             >>> bad_queue = AsyncMock()
             >>> bad_queue.put.side_effect = Exception("Queue error")
             >>> service._subscribers.append(bad_queue)
             >>> asyncio.run(service._notify_subscribers({"type": "test"}))
+            >>> logging.disable(logging.NOTSET)
         """
         for queue in self._subscribers:
             try:

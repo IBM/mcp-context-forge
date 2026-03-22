@@ -76,7 +76,20 @@ def test_client(app_with_temp_db):
     if not hasattr(PermissionService, "_original_check_permission"):
         PermissionService._original_check_permission = PermissionService.check_permission
 
-    async def mock_check_permission(self, user_email: str, permission: str, resource_type=None, resource_id=None, team_id=None, ip_address=None, user_agent=None) -> bool:
+    async def mock_check_permission(
+        self,
+        user_email: str,
+        permission: str,
+        resource_type=None,
+        resource_id=None,
+        team_id=None,
+        token_teams=None,
+        ip_address=None,
+        user_agent=None,
+        allow_admin_bypass=True,
+        check_any_team=False,
+        **_kwargs,
+    ) -> bool:
         return True
 
     PermissionService.check_permission = mock_check_permission

@@ -30,7 +30,7 @@ if should_be_admin and not user.is_admin:
 - The `is_admin` flag is a **platform-level override** that grants `["*"]` permissions via JWT scopes
 - Manual admin grants via Admin UI/API are intentional decisions by platform administrators
 - SSO should enhance access control, not unexpectedly revoke access
-- The RBAC system (`platform_admin` role) already handles group-based role revocation with proper tracking (`granted_by='sso_system'`)
+- The RBAC system (`platform_admin` role) already handles group-based role revocation with proper tracking (`grant_source='sso'`)
 - To revoke admin access, administrators should use the Admin UI/API explicitly
 
 **Trade-offs**:

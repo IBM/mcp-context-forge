@@ -83,7 +83,11 @@ mod tests {
         let sandbox = Sandbox::new(vec![path.clone()]).await.unwrap();
         let roots = sandbox.get_roots();
         assert_eq!(roots.len(), 1);
-        assert!(roots[0].ends_with(temp_dir.path().file_name().unwrap().to_str().unwrap()));
+
+        // On macOS, temp paths may be canonicalized from /var to /private/var
+        // So we compare the canonicalized version of the temp_dir path
+        let expected_canon = fs::canonicalize(temp_dir.path()).await.unwrap();
+        assert_eq!(roots[0], expected_canon.to_string_lossy().to_string());
     }
 
     #[tokio::test]
@@ -127,7 +131,11 @@ mod tests {
             .resolve_path(file_path.to_str().unwrap())
             .await
             .unwrap();
-        assert!(canon.starts_with(temp_dir.path()));
+
+        // On macOS, temp paths may be canonicalized from /var to /private/var
+        // So we compare against the canonicalized temp_dir path
+        let expected_canon = fs::canonicalize(temp_dir.path()).await.unwrap();
+        assert!(canon.starts_with(&expected_canon));
     }
 
     #[tokio::test]

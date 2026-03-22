@@ -37,6 +37,7 @@ from mcpgateway.db import ServerMetric, ServerMetricsHourly
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -166,12 +167,14 @@ class ServerNameConflictError(ServerError):
         super().__init__(message)
 
 
-class ServerService:
+class ServerService(BaseService):
     """Service for managing MCP Servers in the catalog.
 
     Provides methods to create, list, retrieve, update, set state, and delete server records.
     Also supports event notifications for changes in server data.
     """
+
+    _visibility_model_cls = DbServer
 
     def __init__(self) -> None:
         """Initialize a new ServerService instance.
@@ -296,6 +299,9 @@ class ServerService:
             ...     created_at=now, updated_at=now, enabled=True,
             ...     associated_tools=[], associated_resources=[], associated_prompts=[], associated_a2a_agents=[],
             ...     tags=[], metrics=[m1, m2],
+            ...     metrics_summary={"total_executions": 2, "successful_executions": 1, "failed_executions": 1,
+            ...                      "failure_rate": 0.5, "min_response_time": 0.2, "max_response_time": 0.4,
+            ...                      "avg_response_time": 0.3, "last_execution_time": now},
             ...     tools=[], resources=[], prompts=[], a2a_agents=[],
             ...     team_id=None, owner_email=None, visibility=None,
             ...     created_by=None, modified_by=None
@@ -338,51 +344,23 @@ class ServerService:
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
         if include_metrics:
-            total = 0
-            successful = 0
-            failed = 0
-            min_rt = None
-            max_rt = None
-            sum_rt = 0.0
-            last_time = None
-
-            if hasattr(server, "metrics") and server.metrics:
-                for m in server.metrics:
-                    total += 1
-                    if m.is_success:
-                        successful += 1
-                    else:
-                        failed += 1
-
-                    # Track min/max response times
-                    if min_rt is None or m.response_time < min_rt:
-                        min_rt = m.response_time
-                    if max_rt is None or m.response_time > max_rt:
-                        max_rt = m.response_time
-
-                    sum_rt += m.response_time
-
-                    # Track last execution time
-                    if last_time is None or m.timestamp > last_time:
-                        last_time = m.timestamp
-
-            failure_rate = (failed / total) if total > 0 else 0.0
-            avg_rt = (sum_rt / total) if total > 0 else None
-
+            # Use metrics_summary which combines raw + hourly rollup data (matches tool_service pattern)
+            metrics = server.metrics_summary
             server_dict["metrics"] = {
-                "total_executions": total,
-                "successful_executions": successful,
-                "failed_executions": failed,
-                "failure_rate": failure_rate,
-                "min_response_time": min_rt,
-                "max_response_time": max_rt,
-                "avg_response_time": avg_rt,
-                "last_execution_time": last_time,
+                "total_executions": metrics["total_executions"],
+                "successful_executions": metrics["successful_executions"],
+                "failed_executions": metrics["failed_executions"],
+                "failure_rate": metrics["failure_rate"],
+                "min_response_time": metrics["min_response_time"],
+                "max_response_time": metrics["max_response_time"],
+                "avg_response_time": metrics["avg_response_time"],
+                "last_execution_time": metrics["last_execution_time"],
             }
         else:
             server_dict["metrics"] = None
         # Add associated IDs from relationships
         server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
+        server_dict["associated_tool_ids"] = [str(tool.id) for tool in server.tools] if server.tools else []
         server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
         server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents] if server.a2a_agents else []
@@ -750,6 +728,7 @@ class ServerService:
         self,
         db: Session,
         include_inactive: bool = False,
+        include_metrics: bool = False,
         tags: Optional[List[str]] = None,
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
@@ -765,6 +744,7 @@ class ServerService:
         Args:
             db: Database session.
             include_inactive: Whether to include inactive servers.
+            include_metrics: Whether to include aggregated metrics in the results.
             tags: Filter servers by tags. If provided, only servers with at least one matching tag will be returned.
             cursor: Cursor for pagination (encoded last created_at and id).
             limit: Maximum number of servers to return. None for default, 0 for unlimited.
@@ -802,7 +782,7 @@ class ServerService:
         is_public_only = token_teams is not None and len(token_teams) == 0
         use_cache = cursor is None and user_email is None and page is None and is_public_only
         if use_cache:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility)
             cached = await cache.get("servers", filters_hash)
             if cached is not None:
                 # Reconstruct ServerRead objects from cached dicts
@@ -822,58 +802,18 @@ class ServerService:
             .order_by(desc(DbServer.created_at), desc(DbServer.id))
         )
 
+        # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
+        if include_metrics:
+            query = query.options(selectinload(DbServer.metrics), selectinload(DbServer.metrics_hourly))
+
         # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbServer.enabled)
 
-        # SECURITY: Apply token-based access control based on normalized token_teams
-        # - token_teams is None: admin bypass (is_admin=true with explicit null teams) - sees all
-        # - token_teams is []: public-only access (missing teams or explicit empty)
-        # - token_teams is [...]: access to specified teams + public + user's own
-        if token_teams is not None:
-            if len(token_teams) == 0:
-                # Public-only token: only access public servers
-                query = query.where(DbServer.visibility == "public")
-            else:
-                # Team-scoped token: public servers + servers in allowed teams + user's own
-                access_conditions = [
-                    DbServer.visibility == "public",
-                    and_(DbServer.team_id.in_(token_teams), DbServer.visibility.in_(["team", "public"])),
-                ]
-                if user_email:
-                    access_conditions.append(and_(DbServer.owner_email == user_email, DbServer.visibility == "private"))
-                query = query.where(or_(*access_conditions))
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-            if visibility:
-                query = query.where(DbServer.visibility == visibility)
-
-        # Apply team-based access control if user_email is provided (and no token_teams filtering)
-        elif user_email:
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)
-                access_conditions = [
-                    and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])),
-                    and_(DbServer.team_id == team_id, DbServer.owner_email == user_email),
-                ]
-                query = query.where(or_(*access_conditions))
-            else:
-                # General access: user's servers + public servers + team servers
-                access_conditions = [
-                    DbServer.owner_email == user_email,
-                    DbServer.visibility == "public",
-                ]
-                if team_ids:
-                    access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
-                query = query.where(or_(*access_conditions))
-
-            if visibility:
-                query = query.where(DbServer.visibility == visibility)
+        if visibility:
+            query = query.where(DbServer.visibility == visibility)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
@@ -907,7 +847,7 @@ class ServerService:
         result = []
         for s in servers_db:
             try:
-                result.append(self.convert_server_to_read(s, include_metrics=False))
+                result.append(self.convert_server_to_read(s, include_metrics=include_metrics))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                 logger.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
                 # Continue with remaining servers instead of failing completely
@@ -1251,9 +1191,6 @@ class ServerService:
                 if server_update.team_id != server.team_id:
                     _validate_server_team_assignment(db, user_email, server_update.team_id)
                 server.team_id = server_update.team_id
-
-            if server_update.owner_email is not None:
-                server.owner_email = server_update.owner_email
 
             # Update associated tools if provided using bulk query
             if server_update.associated_tools is not None:

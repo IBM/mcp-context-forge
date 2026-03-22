@@ -698,7 +698,26 @@ def _build_fastapi(
         >>> any("CORSMiddleware" in str(m) for m in app3.user_middleware)
         True
     """
+    # Standard
+    import time as _time  # pylint: disable=import-outside-toplevel
+
     app = FastAPI()
+
+    # Rate limiter: minimum interval between subprocess restarts (seconds)
+    restart_min_interval_secs = 30.0
+    last_restart_ts: dict[str, float] = {"t": 0.0}
+
+    def _restart_allowed() -> bool:
+        """Return whether enough time elapsed to allow a subprocess restart.
+
+        Returns:
+            bool: ``True`` when restart is allowed, otherwise ``False``.
+        """
+        now = _time.monotonic()
+        if now - last_restart_ts["t"] < restart_min_interval_secs:
+            return False
+        last_restart_ts["t"] = now
+        return True
 
     # Add CORS middleware if origins specified
     if cors_origins:
@@ -730,11 +749,11 @@ def _build_fastapi(
             request_headers = dict(request.headers)
             additional_env_vars = extract_env_vars_from_headers(request_headers, header_mappings)
 
-            # Restart stdio endpoint with new environment variables
-            if additional_env_vars:
+            # Restart stdio endpoint with new environment variables (rate-limited)
+            if additional_env_vars and _restart_allowed():
                 LOGGER.info(f"Restarting stdio endpoint with {len(additional_env_vars)} environment variables")
-                await stdio.stop()  # Stop existing process
-                await stdio.start(additional_env_vars)  # Start with new env vars
+                await stdio.stop()
+                await stdio.start(additional_env_vars)
 
         queue = pubsub.subscribe()
         session_id = uuid.uuid4().hex
@@ -830,11 +849,11 @@ def _build_fastapi(
             request_headers = dict(raw.headers)
             additional_env_vars = extract_env_vars_from_headers(request_headers, header_mappings)
 
-            # Restart stdio endpoint with new environment variables
-            if additional_env_vars:
+            # Restart stdio endpoint with new environment variables (rate-limited)
+            if additional_env_vars and _restart_allowed():
                 LOGGER.info(f"Restarting stdio endpoint with {len(additional_env_vars)} environment variables")
-                await stdio.stop()  # Stop existing process
-                await stdio.start(additional_env_vars)  # Start with new env vars
+                await stdio.stop()
+                await stdio.start(additional_env_vars)
                 await asyncio.sleep(0.5)  # Give process time to initialize
 
         # Ensure stdio endpoint is running
@@ -2053,10 +2072,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                 try:
                     timeout = 10.0  # seconds; tuneable
                     deadline = asyncio.get_event_loop().time() + timeout
-                    while True:
-                        remaining = max(0.0, deadline - asyncio.get_event_loop().time())
-                        if remaining == 0:
-                            break
+                    remaining = max(0.0, deadline - asyncio.get_event_loop().time())
+                    while remaining > 0:
                         try:
                             msg = await asyncio.wait_for(queue.get(), timeout=remaining)
                         except asyncio.TimeoutError:
@@ -2067,6 +2084,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                             parsed = orjson.loads(msg)
                         except (orjson.JSONDecodeError, ValueError):
                             # not JSON -> skip
+                            remaining = max(0.0, deadline - asyncio.get_event_loop().time())
                             continue
 
                         candidates = parsed if isinstance(parsed, list) else [parsed]
@@ -2074,6 +2092,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                             if isinstance(candidate, dict) and candidate.get("id") == obj.get("id"):
                                 # return the matched response as JSON
                                 return ORJSONResponse(candidate)
+
+                        remaining = max(0.0, deadline - asyncio.get_event_loop().time())
 
                     # timeout -> accept and return 202
                     return PlainTextResponse("accepted (no response yet)", status_code=status.HTTP_202_ACCEPTED)
@@ -2136,7 +2156,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     # If we have a streamable manager, start its context so it can accept ASGI /mcp
     if streamable_manager:
         streamable_context = streamable_manager.run()
-        await streamable_context.__aenter__()  # pylint: disable=unnecessary-dunder-call,no-member
+        await streamable_context.__aenter__()  # noqa: PLC2801  # pylint: disable=unnecessary-dunder-call,no-member
 
     # Log available endpoints
     endpoints = []

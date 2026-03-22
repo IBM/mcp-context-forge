@@ -75,7 +75,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import engine
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.redis_client import get_redis_client, is_redis_available
-from mcpgateway.utils.verify_credentials import require_auth
+from mcpgateway.utils.verify_credentials import require_admin_auth
 
 # Optional runtime dependencies
 try:
@@ -101,6 +101,314 @@ START_TIME = time.time()
 HOSTNAME = socket.gethostname()
 LOGIN_PATH = "/login"
 router = APIRouter(tags=["meta"])
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Read a boolean environment variable using common truthy spellings.
+
+    Args:
+        name: Environment variable name.
+        default: Default value used when the variable is unset.
+
+    Returns:
+        Parsed boolean value.
+    """
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _rust_build_included() -> bool:
+    """Return whether the current image includes Rust MCP artifacts.
+
+    Returns:
+        ``True`` when the current image contains the Rust MCP binaries/plugins.
+    """
+    return _env_flag("CONTEXTFORGE_ENABLE_RUST_BUILD", default=False)
+
+
+def _rust_runtime_managed() -> bool:
+    """Return whether the gateway expects to manage the Rust MCP sidecar locally.
+
+    Returns:
+        ``True`` when the gateway should launch and supervise the Rust sidecar.
+    """
+    return _env_flag("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", default=True)
+
+
+def _current_mcp_transport_mount() -> str:
+    """Return which public ``/mcp`` transport is currently mounted.
+
+    Returns:
+        Runtime label identifying the currently mounted public MCP transport.
+    """
+    return "rust" if _should_mount_public_rust_transport() else "python"
+
+
+def _should_mount_public_rust_transport() -> bool:
+    """Return whether public ``/mcp`` should be served directly by Rust.
+
+    Returns:
+        ``True`` only when the Rust runtime is enabled and Rust can safely own
+        steady-state public MCP session traffic.
+    """
+    return bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled)
+
+
+def _should_use_rust_public_session_stack() -> bool:
+    """Return whether Rust should own the effective public MCP session stack.
+
+    Returns:
+        ``True`` only when the public MCP transport and session semantics should
+        stay on the Rust-backed path.
+    """
+    return _should_mount_public_rust_transport()
+
+
+def _current_mcp_runtime_mode() -> str:
+    """Return the current MCP runtime mode label used for health and UI surfaces.
+
+    Returns:
+        Human-readable runtime mode label for diagnostics and UI reporting.
+    """
+    if settings.experimental_rust_mcp_runtime_enabled:
+        return "rust-managed" if _rust_runtime_managed() else "rust-external"
+    if _rust_build_included():
+        return "python-rust-built-disabled"
+    return "python"
+
+
+def _current_mcp_session_core_mode() -> str:
+    """Return which runtime currently owns MCP session metadata.
+
+    Returns:
+        ``"rust"`` when the Rust session core is enabled, otherwise ``"python"``.
+    """
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_session_core_enabled:
+        return "rust"
+    return "python"
+
+
+def _current_mcp_event_store_mode() -> str:
+    """Return which runtime currently owns MCP resumable event-store semantics.
+
+    Returns:
+        ``"rust"`` when the Rust event store is enabled, otherwise ``"python"``.
+    """
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_event_store_enabled:
+        return "rust"
+    return "python"
+
+
+def _current_mcp_resume_core_mode() -> str:
+    """Return which runtime currently owns public MCP replay/resume behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns replay/resume, otherwise ``"python"``.
+    """
+    if (
+        _should_use_rust_public_session_stack()
+        and settings.experimental_rust_mcp_session_core_enabled
+        and settings.experimental_rust_mcp_event_store_enabled
+        and settings.experimental_rust_mcp_resume_core_enabled
+    ):
+        return "rust"
+    return "python"
+
+
+def _current_mcp_live_stream_core_mode() -> str:
+    """Return which runtime currently owns non-resume public GET ``/mcp`` SSE behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns live GET ``/mcp`` streaming, otherwise ``"python"``.
+    """
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_live_stream_core_enabled:
+        return "rust"
+    return "python"
+
+
+def _current_mcp_affinity_core_mode() -> str:
+    """Return which runtime currently owns MCP multi-worker session-affinity forwarding.
+
+    Returns:
+        ``"rust"`` when Rust owns session-affinity forwarding, otherwise ``"python"``.
+    """
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_affinity_core_enabled:
+        return "rust"
+    return "python"
+
+
+def _current_mcp_session_auth_reuse_mode() -> str:
+    """Return which runtime currently owns MCP session-bound auth-context reuse.
+
+    Returns:
+        ``"rust"`` when Rust session auth reuse is enabled, otherwise ``"python"``.
+    """
+    if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled:
+        return "rust"
+    return "python"
+
+
+def _mcp_runtime_status_payload() -> Dict[str, Any]:
+    """Return MCP runtime diagnostics for health, UI, and version surfaces.
+
+    Returns:
+        Diagnostic payload describing the active MCP runtime configuration.
+    """
+    payload: Dict[str, Any] = {
+        "mode": _current_mcp_runtime_mode(),
+        "mounted": _current_mcp_transport_mount(),
+        "rust_build_included": _rust_build_included(),
+        "rust_runtime_enabled": settings.experimental_rust_mcp_runtime_enabled,
+        "session_core_mode": _current_mcp_session_core_mode(),
+        "event_store_mode": _current_mcp_event_store_mode(),
+        "resume_core_mode": _current_mcp_resume_core_mode(),
+        "live_stream_core_mode": _current_mcp_live_stream_core_mode(),
+        "affinity_core_mode": _current_mcp_affinity_core_mode(),
+        "session_auth_reuse_mode": _current_mcp_session_auth_reuse_mode(),
+        "rust_session_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_session_core_enabled),
+        "rust_event_store_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_event_store_enabled),
+        "rust_resume_core_enabled": bool(
+            _should_use_rust_public_session_stack()
+            and settings.experimental_rust_mcp_session_core_enabled
+            and settings.experimental_rust_mcp_event_store_enabled
+            and settings.experimental_rust_mcp_resume_core_enabled
+        ),
+        "rust_live_stream_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_live_stream_core_enabled),
+        "rust_affinity_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_affinity_core_enabled),
+        "rust_session_auth_reuse_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled),
+    }
+
+    if settings.experimental_rust_mcp_runtime_enabled:
+        payload["rust_runtime_managed"] = _rust_runtime_managed()
+        if settings.experimental_rust_mcp_runtime_uds:
+            payload["sidecar_transport"] = "uds"
+            payload["sidecar_target"] = settings.experimental_rust_mcp_runtime_uds
+        else:
+            payload["sidecar_transport"] = "http"
+            payload["sidecar_target"] = settings.experimental_rust_mcp_runtime_url
+
+    return payload
+
+
+def rust_build_included() -> bool:
+    """Return whether the current image includes Rust MCP artifacts.
+
+    Returns:
+        ``True`` when the current image contains the Rust MCP binaries/plugins.
+    """
+    return _rust_build_included()
+
+
+def rust_runtime_managed() -> bool:
+    """Return whether the gateway expects to manage the Rust MCP sidecar locally.
+
+    Returns:
+        ``True`` when the gateway should launch and supervise the Rust sidecar.
+    """
+    return _rust_runtime_managed()
+
+
+def current_mcp_transport_mount() -> str:
+    """Return which public ``/mcp`` transport is currently mounted.
+
+    Returns:
+        Runtime label identifying the currently mounted public MCP transport.
+    """
+    return _current_mcp_transport_mount()
+
+
+def should_mount_public_rust_transport() -> bool:
+    """Return whether public ``/mcp`` should be served directly by Rust.
+
+    Returns:
+        ``True`` only when the Rust runtime is enabled and Rust can safely own
+        steady-state public MCP session traffic.
+    """
+    return _should_mount_public_rust_transport()
+
+
+def should_use_rust_public_session_stack() -> bool:
+    """Return whether Rust should own the effective public MCP session stack.
+
+    Returns:
+        ``True`` only when the public MCP transport and session semantics should
+        stay on the Rust-backed path.
+    """
+    return _should_use_rust_public_session_stack()
+
+
+def current_mcp_runtime_mode() -> str:
+    """Return the current MCP runtime mode label used for health and UI surfaces.
+
+    Returns:
+        Human-readable runtime mode label for diagnostics and UI reporting.
+    """
+    return _current_mcp_runtime_mode()
+
+
+def current_mcp_session_core_mode() -> str:
+    """Return which runtime currently owns MCP session metadata.
+
+    Returns:
+        ``"rust"`` when the Rust session core is enabled, otherwise ``"python"``.
+    """
+    return _current_mcp_session_core_mode()
+
+
+def current_mcp_event_store_mode() -> str:
+    """Return which runtime currently owns MCP resumable event-store semantics.
+
+    Returns:
+        ``"rust"`` when the Rust event store is enabled, otherwise ``"python"``.
+    """
+    return _current_mcp_event_store_mode()
+
+
+def current_mcp_resume_core_mode() -> str:
+    """Return which runtime currently owns public MCP replay/resume behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns replay/resume, otherwise ``"python"``.
+    """
+    return _current_mcp_resume_core_mode()
+
+
+def current_mcp_live_stream_core_mode() -> str:
+    """Return which runtime currently owns non-resume public GET ``/mcp`` SSE behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns live GET ``/mcp`` streaming, otherwise ``"python"``.
+    """
+    return _current_mcp_live_stream_core_mode()
+
+
+def current_mcp_affinity_core_mode() -> str:
+    """Return which runtime currently owns MCP multi-worker session-affinity forwarding.
+
+    Returns:
+        ``"rust"`` when Rust owns session-affinity forwarding, otherwise ``"python"``.
+    """
+    return _current_mcp_affinity_core_mode()
+
+
+def current_mcp_session_auth_reuse_mode() -> str:
+    """Return which runtime currently owns MCP session-bound auth-context reuse.
+
+    Returns:
+        ``"rust"`` when Rust session auth reuse is enabled, otherwise ``"python"``.
+    """
+    return _current_mcp_session_auth_reuse_mode()
+
+
+def mcp_runtime_status_payload() -> Dict[str, Any]:
+    """Return MCP runtime diagnostics for health, UI, and version surfaces.
+
+    Returns:
+        Diagnostic payload describing the active MCP runtime configuration.
+    """
+    return _mcp_runtime_status_payload()
 
 
 def _is_secret(key: str) -> bool:
@@ -170,72 +478,76 @@ def _is_secret(key: str) -> bool:
     return key_upper in secret_vars
 
 
-def _public_env() -> Dict[str, str]:
-    """Collect environment variables excluding those that look secret.
+_PUBLIC_ENV_PREFIXES = ("MCPGATEWAY_", "MCP_")
+_PUBLIC_ENV_ALLOWLIST = frozenset(
+    {
+        "PORT",
+        "HOST",
+        "RELOAD",
+        "LOG_LEVEL",
+        "LOG_TO_FILE",
+        "PLUGINS_ENABLED",
+        "OBSERVABILITY_ENABLED",
+        "AUTH_REQUIRED",
+        "ALLOWED_ORIGINS",
+    }
+)
 
-    Filters out environment variables containing sensitive keywords or matching
-    known secret patterns to create a safe subset for display in diagnostics.
+
+def _public_env() -> Dict[str, str]:
+    """Collect application-specific environment variables for diagnostics.
+
+    Only returns variables with ``MCPGATEWAY_`` or ``MCP_`` prefixes, plus a
+    curated allowlist of safe operational variables.  Secrets are still excluded
+    via :func:`_is_secret`.
 
     Returns:
-        Dict[str, str]: A map of environment variable names to values,
-            excluding any variables identified as secrets.
+        Dict[str, str]: A map of environment variable names to values.
 
     Examples:
         >>> import os
-        >>> # Mock environment
         >>> original_env = dict(os.environ)
         >>> os.environ.clear()
         >>> os.environ.update({
         ...     "HOME": "/home/user",
         ...     "PATH": "/usr/bin:/bin",
+        ...     "PORT": "8080",
+        ...     "HOST": "0.0.0.0",
+        ...     "MCPGATEWAY_UI_ENABLED": "true",
+        ...     "MCP_REQUIRE_AUTH": "true",
         ...     "DATABASE_PASSWORD": "xxxxx",
-        ...     "API_KEY": "xxxxx",
-        ...     "DEBUG": "true",
-        ...     "BASIC_AUTH_USER": "admin",
-        ...     "BASIC_AUTH_PASSWORD": "xxxxx",
         ...     "JWT_SECRET_KEY": "xxxxx",
-        ...     "AUTH_ENCRYPTION_SECRET": "xxxxx",
         ...     "DATABASE_URL": "postgresql://user:xxxxx@localhost/db",
-        ...     "REDIS_URL": "redis://user:xxxxx@localhost:6379",
-        ...     "APP_NAME": "MyApp",
-        ...     "PORT": "8080"
         ... })
         >>>
         >>> result = _public_env()
-        >>> # Public vars should be included
-        >>> "HOME" in result
+        >>> # App-prefixed vars included
+        >>> "MCPGATEWAY_UI_ENABLED" in result
         True
-        >>> "PATH" in result
+        >>> "MCP_REQUIRE_AUTH" in result
         True
-        >>> "DEBUG" in result
-        True
-        >>> "APP_NAME" in result
-        True
+        >>> # Allowlisted vars included
         >>> "PORT" in result
         True
-        >>> # Secrets should be excluded
+        >>> "HOST" in result
+        True
+        >>> # System vars excluded
+        >>> "HOME" in result
+        False
+        >>> "PATH" in result
+        False
+        >>> # Secrets still excluded
         >>> "DATABASE_PASSWORD" in result
-        False
-        >>> "API_KEY" in result
-        False
-        >>> "BASIC_AUTH_USER" in result
-        False
-        >>> "BASIC_AUTH_PASSWORD" in result
         False
         >>> "JWT_SECRET_KEY" in result
         False
-        >>> "AUTH_ENCRYPTION_SECRET" in result
-        False
         >>> "DATABASE_URL" in result
         False
-        >>> "REDIS_URL" in result
-        False
         >>>
-        >>> # Restore original environment
         >>> os.environ.clear()
         >>> os.environ.update(original_env)
     """
-    return {k: v for k, v in os.environ.items() if not _is_secret(k)}
+    return {k: v for k, v in os.environ.items() if not _is_secret(k) and (k.upper().startswith(_PUBLIC_ENV_PREFIXES) or k.upper() in _PUBLIC_ENV_ALLOWLIST)}
 
 
 def _sanitize_url(url: Optional[str]) -> Optional[str]:
@@ -272,9 +584,6 @@ def _sanitize_url(url: Optional[str]) -> Optional[str]:
         >>> _sanitize_url("redis://:xxxxx@localhost:6379")
         'redis://localhost:6379'
 
-        >>> # Complex URL with query params
-        >>> _sanitize_url("mysql://root:xxxxx@db.local:3306/mydb?charset=utf8")
-        'mysql://root@db.local:3306/mydb?charset=utf8'
     """
     if not url:
         return None
@@ -345,7 +654,6 @@ def _database_version() -> tuple[str, bool]:
     stmts = {
         "sqlite": "SELECT sqlite_version();",
         "postgresql": "SELECT current_setting('server_version');",
-        "mysql": "SELECT version();",
     }
     stmt = stmts.get(dialect, "XXSELECT version();XX")
     try:
@@ -559,6 +867,7 @@ def _build_payload(
             "metrics_cleanup_enabled": getattr(settings, "metrics_cleanup_enabled", True),
             "metrics_rollup_enabled": getattr(settings, "metrics_rollup_enabled", True),
         },
+        "mcp_runtime": _mcp_runtime_status_payload(),
         "env": _public_env(),
         "system": _system_metrics(),
     }
@@ -625,6 +934,7 @@ def _render_html(payload: Dict[str, Any]) -> str:
         ...     "database": {"dialect": "sqlite", "reachable": True},
         ...     "redis": {"available": False},
         ...     "settings": {"cache_type": "memory"},
+        ...     "mcp_runtime": {"mode": "python", "mounted": "python"},
         ...     "system": {"cpu_count": 4},
         ...     "env": {"PATH": "/usr/bin"}
         ... }
@@ -641,6 +951,8 @@ def _render_html(payload: Dict[str, Any]) -> str:
         >>> '<h2>App</h2>' in html
         True
         >>> '<h2>Database</h2>' in html
+        True
+        >>> '<h2>MCP Runtime</h2>' in html
         True
         >>> '<style>' in html
         True
@@ -663,6 +975,7 @@ def _render_html(payload: Dict[str, Any]) -> str:
         ("Database", "database"),
         ("Redis", "redis"),
         ("Settings", "settings"),
+        ("MCP Runtime", "mcp_runtime"),
         ("System", "system"),
     ):
         sections += f"<h2>{title}</h2>{_html_table(payload[key])}"
@@ -724,17 +1037,17 @@ button{{margin-top:1rem;padding:.5rem 1rem;}}
 
 
 # Endpoint
-@router.get("/version", summary="Diagnostics (auth required)")
+@router.get("/version", summary="Diagnostics (admin only)")
 async def version_endpoint(
     request: Request,
     fmt: Optional[str] = None,
     partial: Optional[bool] = False,
-    _user=Depends(require_auth),
+    _user=Depends(require_admin_auth),
 ) -> Response:
     """Serve diagnostics as JSON, full HTML, or partial HTML.
 
     Main endpoint that gathers all diagnostic information and returns it in the
-    requested format. Requires authentication via HTTP Basic Auth or session.
+    requested format. Requires admin authentication.
 
     The endpoint supports three output formats:
     - JSON (default): Machine-readable diagnostic data
@@ -745,7 +1058,7 @@ async def version_endpoint(
         request (Request): The incoming FastAPI request object.
         fmt (Optional[str]): Query parameter to force format ('html' for HTML output).
         partial (Optional[bool]): Query parameter to request partial HTML fragment.
-        _user: Injected authenticated user from require_auth dependency.
+        _user: Injected authenticated admin user from require_admin_auth dependency.
 
     Returns:
         Response: JSONResponse with diagnostic data, or HTMLResponse with formatted page.

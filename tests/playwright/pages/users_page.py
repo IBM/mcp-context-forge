@@ -10,6 +10,7 @@ Authors: Marek Dano
 # Third-Party
 from playwright.sync_api import Locator
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import expect as pw_expect
 
 # Local
 from .base_page import BasePage
@@ -119,8 +120,8 @@ class UsersPage(BasePage):
         if is_admin:
             if not self.user_is_admin_checkbox.is_checked():
                 self.click_locator(self.user_is_admin_checkbox)
-        # Wait briefly for password validation JS to enable submit button
-        self.page.wait_for_timeout(500)
+        # Wait for password validation JS to enable submit button
+        pw_expect(self.create_user_submit_btn).to_be_enabled(timeout=5000)
         self.click_locator(self.create_user_submit_btn)
 
     # ==================== User List Operations ====================
@@ -176,11 +177,17 @@ class UsersPage(BasePage):
     def reload_and_navigate_to_users(self) -> None:
         """Reload the page so the users list is refreshed.
 
-        The HTMX in-place refresh does not update the UI reliably, so
-        we wait for any pending JS navigation, then load admin directly
-        on the users hash to force a fresh users-partial fetch.
+        Waits for any in-flight HTMX requests to settle before reloading,
+        then loads admin directly on the users hash to force a fresh
+        users-partial fetch.
         """
-        self.page.wait_for_timeout(4000)
+        try:
+            self.page.wait_for_function(
+                "() => !document.querySelector('.htmx-request')",
+                timeout=10000,
+            )
+        except PlaywrightTimeoutError:
+            pass  # Proceed with reload even if HTMX requests are still pending
         self.page.wait_for_load_state("domcontentloaded")
         self.page.goto("/admin#users", wait_until="domcontentloaded")
         self.wait_for_users_loaded()

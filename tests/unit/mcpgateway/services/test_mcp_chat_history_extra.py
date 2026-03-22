@@ -37,8 +37,11 @@ def test_mcp_server_config_validators():
     config = MCPServerConfig(url="http://example.com", transport="streamable_http", auth_token="token")
     assert config.headers["Authorization"] == "Bearer token"
 
-    MCPServerConfig(url=None, transport="streamable_http")
-    MCPServerConfig(command=None, transport="stdio")
+    with pytest.raises(ValueError, match="URL is required"):
+        MCPServerConfig(url=None, transport="streamable_http")
+
+    with pytest.raises(ValueError, match="stdio transport is disabled"):
+        MCPServerConfig(command=None, transport="stdio")
 
 
 def test_llm_provider_factory_gateway():

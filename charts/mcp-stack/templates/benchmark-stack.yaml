@@ -28,6 +28,7 @@ spec:
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
         - name: benchmark-server
           image: "{{ .Values.benchmark.server.image.repository }}:{{ .Values.benchmark.server.image.tag }}"

@@ -80,7 +80,7 @@ ContextForge includes a comprehensive RBAC system with the following default rol
    - Revokes SSO-granted roles no longer in groups
    - Assigns new roles based on current groups
    - Preserves manually assigned roles
-   - Maintains audit trail with `granted_by='sso_system'`
+   - Maintains audit trail with `grant_source='sso'` and `granted_by=<user_email>`
 
 6. **Admin Status Synchronization** (`authenticate_or_create_user()`)
 
@@ -242,7 +242,7 @@ When a new user logs in via EntraID SSO:
 2. Groups are mapped to roles via `_map_groups_to_roles()`
 3. Roles are assigned via `_sync_user_roles()`
 4. User is created with `is_admin` flag if in admin groups
-5. RBAC roles are assigned with `granted_by='sso_system'`
+5. RBAC roles are assigned with `grant_source='sso'` (self-granted by the user)
 
 ### On User Login
 
@@ -259,8 +259,8 @@ When an existing user logs in:
 ### Manual Role Management
 
 - Admins can manually assign additional roles via the Admin UI
-- Manually assigned roles (not granted by `sso_system`) are preserved
-- Only SSO-granted roles are synchronized on login
+- Manually assigned roles (without `grant_source='sso'`) are preserved
+- Only SSO-granted roles (`grant_source='sso'`) are synchronized on login
 
 ## Token Claims
 

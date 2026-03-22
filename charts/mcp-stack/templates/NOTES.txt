@@ -201,6 +201,12 @@
 {{- if .Values.redis.enabled }}
 🔑 **Redis Cache**
   - Host / Port  : {{ $redisSvc }}.{{ $ns }}.svc.cluster.local:{{ $redisPort }}
+  {{- if .Values.redis.auth.enabled }}
+  - Auth         : Enabled (password from Secret)
+      (kubectl  = `kubectl -n {{ $ns }} get secret {{ include "mcp-stack.redisSecretName" . }} -o jsonpath="{.data.{{ .Values.redis.auth.passwordKey | default "REDIS_PASSWORD" }}}" | base64 -d`)
+  {{- else }}
+  - Auth         : Disabled
+  {{- end }}
   - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $redisSvc }} 6379:{{ $redisPort }}`
 {{- end }}
 

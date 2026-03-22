@@ -1101,21 +1101,93 @@ class TestMultiWorkerSessionAffinityE2E:
     async def test_execute_forwarded_request_returns_error_when_no_server(self):
         """Verify _execute_forwarded_request returns error when internal HTTP call fails.
 
-        Since _execute_forwarded_request now makes an internal HTTP call to /rpc,
-        it will fail with a connection error when no server is running.
+        Mocks httpx to simulate a connection error so the test is deterministic
+        regardless of whether a local server is running.
         """
+        import httpx as httpx_mod
+
         pool = MCPSessionPool()
 
         try:
-            result = await pool._execute_forwarded_request({
-                "method": "unknown/method",
-                "params": {},
-                "headers": {},
-            })
+            with patch.object(httpx_mod.AsyncClient, "post", side_effect=httpx_mod.ConnectError("Connection refused")):
+                result = await pool._execute_forwarded_request({
+                    "method": "unknown/method",
+                    "params": {},
+                    "headers": {},
+                })
 
             assert "error" in result
             # -32603 is the internal error code returned when HTTP call fails
             assert result["error"]["code"] == -32603
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_returns_error_on_non_2xx_non_jsonrpc(self):
+        """Verify _execute_forwarded_request maps non-2xx non-JSON-RPC responses to error."""
+        pool = MCPSessionPool()
+
+        try:
+            # Mock httpx to return 401 with non-JSON-RPC body
+            mock_response = MagicMock()
+            mock_response.status_code = 401
+            mock_response.is_success = False
+            mock_response.json.return_value = {"detail": "Authorization token required"}
+            mock_response.text = '{"detail": "Authorization token required"}'
+
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+                result = await pool._execute_forwarded_request(
+                    {
+                        "method": "tools/call",
+                        "params": {},
+                        "headers": {},
+                    }
+                )
+
+            assert "error" in result
+            assert result["error"]["code"] == -32603
+            assert "401" in result["error"]["message"]
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_propagates_jsonrpc_error_on_non_2xx(self):
+        """Verify _execute_forwarded_request propagates JSON-RPC errors from non-2xx responses."""
+        pool = MCPSessionPool()
+
+        try:
+            # Mock httpx to return 403 with JSON-RPC error body
+            mock_response = MagicMock()
+            mock_response.status_code = 403
+            mock_response.is_success = False
+            mock_response.json.return_value = {
+                "jsonrpc": "2.0",
+                "error": {"code": -32003, "message": "Token not authorized for server: abc"},
+                "id": 1,
+            }
+
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=mock_client):
+                result = await pool._execute_forwarded_request(
+                    {
+                        "method": "tools/call",
+                        "params": {},
+                        "headers": {},
+                    }
+                )
+
+            assert "error" in result
+            assert result["error"]["code"] == -32003
+            assert "Token not authorized" in result["error"]["message"]
         finally:
             await pool.close_all()
 
@@ -1295,24 +1367,30 @@ class TestMultiWorkerSessionAffinityE2E:
 
     @pytest.mark.asyncio
     async def test_affinity_logs_when_executing_forwarded_request(self, caplog):
-        """Verify [AFFINITY] logs are emitted when executing a forwarded request."""
+        """Verify [AFFINITY] logs are emitted when executing a forwarded request.
+
+        Mocks httpx to simulate a connection error so the test is deterministic
+        regardless of whether a local server is running.
+        """
         import logging
+
+        import httpx as httpx_mod
+
         from mcpgateway.services.mcp_session_pool import WORKER_ID
 
         pool = MCPSessionPool()
 
         try:
             with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
-                # This will fail with connection error since no server is running,
-                # but should still emit the log before attempting the HTTP call
-                result = await pool._execute_forwarded_request({
-                    "method": "tools/call",
-                    "params": {"name": "test_tool"},
-                    "mcp_session_id": "test-session-forwarded",
-                    "req_id": 1
-                })
+                with patch.object(httpx_mod.AsyncClient, "post", side_effect=httpx_mod.ConnectError("Connection refused")):
+                    result = await pool._execute_forwarded_request({
+                        "method": "tools/call",
+                        "params": {"name": "test_tool"},
+                        "mcp_session_id": "test-session-forwarded",
+                        "req_id": 1
+                    })
 
-                # Should return error (no server running)
+                # Should return error (connection refused)
                 assert "error" in result
 
                 # Verify affinity logs were emitted
