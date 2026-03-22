@@ -1,4 +1,4 @@
-# plugins/config.yaml - Main plugin configuration file
+# plugins/config-pii-guardian-policy.yaml - Plugin config with PII, Granite Guardian, and UnifiedPDP enabled
 
 # Plugin directories to scan
 plugin_dirs:

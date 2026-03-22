@@ -19,7 +19,6 @@ from typing import Any, Dict, List, Optional, Pattern
 
 # Third-Party
 import httpx
-import orjson
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # First-Party
@@ -40,7 +39,6 @@ from mcpgateway.plugins.framework import (
 logger = logging.getLogger(__name__)
 
 # Precompiled regex patterns for performance
-_CATEGORY_PATTERN_RE = re.compile(r'"(\w+)":\s*([\d.]+)')
 _PROFANITY_FILTER_RE = re.compile(r"\b(damn|hell|crap)\b", flags=re.IGNORECASE)
 
 
