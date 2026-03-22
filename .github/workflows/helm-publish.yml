@@ -1,0 +1,153 @@
+# ======================================================================
+# ⎈  Helm Chart – Lint, Package, and Publish to GHCR OCI
+# ======================================================================
+#
+# Validates the mcp-stack Helm chart on every push / PR that touches
+# chart files.  On a published GitHub Release the chart is packaged and
+# pushed to oci://ghcr.io/ibm/mcp-context-forge/mcp-stack.
+#
+# ➤ Lint trigger:    push / pull_request on chart changes
+# ➤ Publish trigger: release published (non-draft, non-prerelease, v* tag)
+# ➤ Manual trigger:  workflow_dispatch (lint + publish, or lint-only with dry_run)
+# ➤ OCI target:      oci://ghcr.io/ibm/mcp-context-forge/mcp-stack
+#
+# ======================================================================
+
+name: "Helm chart - lint and publish"
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "charts/mcp-stack/**"
+      - ".github/workflows/helm-publish.yml"
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main"]
+    paths:
+      - "charts/mcp-stack/**"
+      - ".github/workflows/helm-publish.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Lint only — skip publish"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Lint – always runs to catch chart issues early
+  # -----------------------------------------------------------------------
+  lint:
+    name: Lint chart
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: ⬇️  Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 🛠️  Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: 🔍  Lint chart (strict)
+        run: helm lint charts/mcp-stack --strict
+
+      - name: 📄  Render default templates
+        run: helm template mcp-stack charts/mcp-stack --debug > /dev/null
+
+  # -----------------------------------------------------------------------
+  # Publish – runs only on GitHub Release or manual dispatch
+  # -----------------------------------------------------------------------
+  publish:
+    name: Package and publish to GHCR
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      (
+        github.event_name == 'release' &&
+        github.event.release.draft == false &&
+        github.event.release.prerelease == false &&
+        startsWith(github.event.release.tag_name, 'v')
+      ) ||
+      (
+        github.event_name == 'workflow_dispatch' &&
+        github.event.inputs.dry_run != 'true'
+      )
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: ⬇️  Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 🛠️  Install Helm
+        uses: azure/setup-helm@v4
+
+      # ----------------------------------------------------------------
+      # Read the canonical chart version from Chart.yaml so the packaged
+      # filename and OCI tag always match what the chart declares.
+      # ----------------------------------------------------------------
+      - name: 🏷️  Read chart version
+        id: chart
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(grep '^version:' charts/mcp-stack/Chart.yaml | awk '{print $2}' | tr -d '"'"'")
+          if [[ -z "${VERSION}" ]]; then
+            echo "::error::Could not read chart version from charts/mcp-stack/Chart.yaml"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Chart version: ${VERSION}"
+
+      - name: 📦  Package chart
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          helm package charts/mcp-stack \
+            --destination dist
+          ls -lh dist/
+
+      - name: 🔐  Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ----------------------------------------------------------------
+      # helm push <chart.tgz> oci://registry/org/repo
+      # Helm appends the chart name automatically, yielding:
+      #   ghcr.io/ibm/mcp-context-forge/mcp-stack:<version>
+      # ----------------------------------------------------------------
+      - name: 🚀  Push chart to OCI registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          REGISTRY="oci://ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          helm push "dist/mcp-stack-${{ steps.chart.outputs.version }}.tgz" "${REGISTRY}"
+          echo "Published ${REGISTRY}/mcp-stack:${{ steps.chart.outputs.version }}"
+
+      - name: 🔍  Verify published chart
+        shell: bash
+        run: |
+          set -euo pipefail
+          REGISTRY="oci://ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          helm show chart "${REGISTRY}/mcp-stack" \
+            --version "${{ steps.chart.outputs.version }}"
