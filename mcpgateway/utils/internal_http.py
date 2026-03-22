@@ -1,4 +1,10 @@
-"""Helpers for gateway-internal loopback HTTP calls.
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/utils/internal_http.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Helpers for gateway-internal loopback HTTP calls.
 
 These helpers centralize protocol and TLS verification behavior for
 self-calls to local endpoints like /rpc.
