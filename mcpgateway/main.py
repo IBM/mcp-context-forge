@@ -2152,6 +2152,16 @@ async def database_exception_handler(_request: Request, exc: IntegrityError):
     return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
 
 
+@app.exception_handler(ContentSizeError)
+async def content_size_exception_handler(_request: Request, exc: ContentSizeError):
+    """Handle content size limit violations globally.
+
+    Returns 413 Payload Too Large with structured error details including
+    actual size, maximum allowed size, and a human-readable message.
+    """
+    return ORJSONResponse(status_code=413, content={"error": f"{exc.content_type} size limit exceeded", "message": str(exc), "actual_size": exc.actual_size, "max_size": exc.max_size})
+
+
 # RFC 9110 §5.6.2 'token' pattern for header field names:
 #   token = 1*tchar
 #   tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*"

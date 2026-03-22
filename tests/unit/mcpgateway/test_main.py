@@ -1089,6 +1089,9 @@ class TestResourceEndpoints:
         data = response.json()
         # Default response is a plain list (include_pagination=False by default)
         assert isinstance(data, list)
+        assert len(data) == 1 and data[0]["name"] == "Test Resource"
+        mock_list_resources.assert_called_once()
+
     @patch("mcpgateway.main.resource_service.update_resource")
     def test_update_resource_content_size_error(self, mock_update, test_client, auth_headers):
         """Test update_resource returns 413 for content size limit exceeded."""
@@ -1113,6 +1116,8 @@ class TestResourceEndpoints:
         response = test_client.post("/resources/", json=req, headers=auth_headers)
 
         assert response.status_code == 200  # route returns 200 on success
+        mock_create.assert_called_once()
+
     @patch("mcpgateway.main.resource_service.register_resource")
     def test_create_resource_content_size_error(self, mock_create, test_client, auth_headers):
         """Test create_resource returns 413 for content size limit exceeded."""
@@ -1307,6 +1312,10 @@ class TestPromptEndpoints:
     def test_update_prompt_validation_and_integrity_errors(self, mock_update, exc, status_code, test_client, auth_headers):
         """Test update_prompt error branches for validation/integrity errors."""
         mock_update.side_effect = exc
+        req = {"description": "Updated description"}
+        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
+        assert response.status_code == status_code
+
     @patch("mcpgateway.main.prompt_service.register_prompt")
     def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
         """Test create_prompt returns 413 for content size limit exceeded."""

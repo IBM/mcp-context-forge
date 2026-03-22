@@ -235,3 +235,13 @@ def get_content_security_service() -> ContentSecurityService:
                 _content_security_service = ContentSecurityService()
 
     return _content_security_service
+
+
+def reset_content_security_service() -> None:
+    """Reset the singleton instance so it re-reads settings on next access.
+
+    Intended for test teardown when monkeypatching size limits.
+    """
+    global _content_security_service  # pylint: disable=global-statement
+    with _content_security_service_lock:
+        _content_security_service = None
