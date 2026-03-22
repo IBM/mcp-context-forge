@@ -234,9 +234,9 @@ def test_validate_template_valid():
 
 
 def test_validate_template_too_long():
-    with pytest.raises(ValueError):
-        SecurityValidator.validate_template("a" * 101)
-    SecurityValidator.validate_template("a" * 100)
+    """Template length is now enforced at service layer, not schema validator."""
+    assert SecurityValidator.validate_template("a" * 101) == "a" * 101
+    assert SecurityValidator.validate_template("a" * 100) == "a" * 100
 
 
 def test_validate_template_dangerous_tag():

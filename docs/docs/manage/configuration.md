@@ -669,6 +669,31 @@ mcpContextForge:
     (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
     Keep production deployments on strict SSRF values unless you explicitly need internal destination access.
 
+### Content Security - Size Limits
+
+Content size limits prevent DoS attacks and resource exhaustion from oversized content submissions. Validation occurs at the service layer before database writes and returns **HTTP 413 Payload Too Large** with structured error details.
+
+| Setting                      | Description                                      | Default   | Range           |
+| ---------------------------- | ------------------------------------------------ | --------- | --------------- |
+| `CONTENT_MAX_RESOURCE_SIZE`  | Maximum resource content size (bytes)            | `102400` (100KB) | 1KB – 10MB |
+| `CONTENT_MAX_PROMPT_SIZE`    | Maximum prompt template size (bytes)             | `10240` (10KB)   | 512B – 1MB |
+
+!!! note "Scope"
+    Size limits apply only to new create and update operations. Existing content is not retroactively validated.
+
+!!! example "Error Response"
+    Oversized content returns a structured 413 response:
+    ```json
+    {
+      "detail": {
+        "error": "Resource content size limit exceeded",
+        "message": "Resource content size (195.3 KB) exceeds maximum allowed size (100.0 KB)",
+        "actual_size": 200000,
+        "max_size": 102400
+      }
+    }
+    ```
+
 ### Ed25519 Certificate Signing
 
 ContextForge supports **Ed25519 digital signatures** for certificate validation and integrity verification.
