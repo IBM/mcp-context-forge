@@ -1557,6 +1557,10 @@ class Settings(BaseSettings):
     tool_rate_limit: int = 100  # requests per minute
     tool_concurrent_limit: int = 10
 
+    # Content Security - Size Limits
+    content_max_resource_size: int = Field(default=102400, ge=1024, le=10485760, description="Maximum size in bytes for resource content (default: 100KB)")  # 100KB  # Minimum 1KB  # Maximum 10MB
+    content_max_prompt_size: int = Field(default=10240, ge=512, le=1048576, description="Maximum size in bytes for prompt templates (default: 10KB)")  # 10KB  # Minimum 512 bytes  # Maximum 1MB
+
     # MCP Session Pool - reduces per-request latency from ~20ms to ~1-2ms
     # Disabled by default for safety. Enable explicitly in production after testing.
     mcp_session_pool_enabled: bool = False

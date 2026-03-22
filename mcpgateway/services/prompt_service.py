@@ -47,6 +47,7 @@ from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, Plug
 from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.content_security import ContentSizeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
@@ -636,6 +637,7 @@ class PromptService(BaseService):
             IntegrityError: If a database integrity error occurs.
             PromptNameConflictError: If a prompt with the same name already exists.
             PromptError: For other prompt registration errors
+            ContentSizeError: For template size exceed
 
         Examples:
             >>> import logging
@@ -664,6 +666,14 @@ class PromptService(BaseService):
             >>> logging.disable(logging.NOTSET)
         """
         try:
+            content_security = get_content_security_service()
+            content_security.validate_prompt_size(
+                template=prompt.template,
+                name=prompt.name,
+                user_email=created_by or owner_email,
+                ip_address=created_from_ip,
+            )
+
             # Validate template syntax
             self._validate_template(prompt.template)
 
@@ -831,6 +841,19 @@ class PromptService(BaseService):
                 custom_fields={"prompt_name": prompt.name, "visibility": visibility},
             )
             raise se
+        except ContentSizeError as cse:
+            db.rollback()
+
+            structured_logger.log(
+                level="ERROR",
+                message=f"Prompt template size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)",
+                event_type="prompt_size_exceed",
+                component="prompt_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={"prompt_name": prompt.name, "visibility": visibility},
+            )
+            raise cse
         except Exception as e:
             db.rollback()
 
@@ -976,6 +999,10 @@ class PromptService(BaseService):
 
                 for prompt in chunk:
                     try:
+                        # Validate template size BEFORE any processing
+                        content_security = get_content_security_service()
+                        content_security.validate_prompt_size(template=prompt.template, name=prompt.name, user_email=created_by, ip_address=created_from_ip)
+
                         # Validate template syntax
                         self._validate_template(prompt.template)
 
@@ -2004,6 +2031,7 @@ class PromptService(BaseService):
             IntegrityError: If a database integrity error occurs.
             PromptNameConflictError: If a prompt with the same name already exists.
             PromptError: For other update errors
+            ContentSizeError: For template size exceed
 
         Examples:
             >>> import logging
@@ -2093,6 +2121,14 @@ class PromptService(BaseService):
             if prompt_update.description is not None:
                 prompt.description = prompt_update.description
             if prompt_update.template is not None:
+                # Validate template size before updating
+                content_security = get_content_security_service()
+                content_security.validate_prompt_size(
+                    template=prompt_update.template,
+                    name=prompt.name,
+                    user_email=modified_by or user_email,
+                    ip_address=modified_from_ip,
+                )
                 prompt.template = prompt_update.template
                 self._validate_template(prompt.template)
                 # Clear template cache to reduce memory growth
@@ -2239,6 +2275,20 @@ class PromptService(BaseService):
                 error=pnce,
             )
             raise pnce
+        except ContentSizeError as cse:
+            db.rollback()
+            logger.error(f"Prompt template size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)")
+            structured_logger.log(
+                level="ERROR",
+                message="Prompt update failed - Template size exceeded",
+                event_type="prompt_update_failed",
+                component="prompt_service",
+                user_email=user_email,
+                resource_type="prompt",
+                resource_id=str(prompt_id),
+                error=cse,
+            )
+            raise cse
         except Exception as e:
             db.rollback()
 
