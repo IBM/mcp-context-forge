@@ -1,36 +1,54 @@
-name: Wrapper CI/CD
+name: Wrapper E2E
 
 on:
     push:
         branches: [main]
+        paths:
+            - "tools_rust/wrapper/**"
+            - "mcp-servers/go/fast-time-server/**"
+            - ".github/workflows/wrapper.yml"
     pull_request:
         branches: [main]
         types: [opened, synchronize, reopened]
+        paths:
+            - "tools_rust/wrapper/**"
+            - "mcp-servers/go/fast-time-server/**"
+            - ".github/workflows/wrapper.yml"
     workflow_dispatch:
 
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
 env:
-    CARGO_TERM_COLOR: never
+    CARGO_TERM_COLOR: always
     RUST_BACKTRACE: 1
 
 jobs:
-    rust-checks:
-        name: Rust Checks
+    wrapper-e2e:
+        if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+        name: Wrapper E2E
         runs-on: ubuntu-latest
+        timeout-minutes: 30
+
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v4
 
             - name: Setup Python
-              uses: actions/setup-python@v6
+              uses: actions/setup-python@v5
               with:
                   python-version: "3.12"
 
             - name: Install uv
-              uses: astral-sh/setup-uv@v7
+              uses: astral-sh/setup-uv@v5
               with:
                   enable-cache: true
 
             - name: Cache uv virtual environment
-              uses: actions/cache@v5
+              uses: actions/cache@v4
               with:
                   path: .venv
                   key: venv-${{ runner.os }}-python-3.12-${{ hashFiles('uv.lock') }}
@@ -38,46 +56,38 @@ jobs:
                       venv-${{ runner.os }}-python-3.12-
                       venv-${{ runner.os }}-
 
-            - name: Cache Rust Toolchain
-              uses: actions/cache@v5
+            - name: Install Rust stable
+              run: |
+                  rustup toolchain install stable
+                  rustup default stable
+
+            - name: Cache Cargo
+              uses: actions/cache@v4
               with:
                   path: |
-                      ~/.cargo/bin/
-                      ~/.cargo/registry/index/
-                      ~/.cargo/registry/cache/
-                      ~/.cargo/git/db/
-                      ~/.rustup/
-                  key: ${{ runner.os }}-rust-stable-${{ hashFiles('**/Cargo.lock') }}
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      tools_rust/wrapper/target
+                  key: ${{ runner.os }}-cargo-wrapper-${{ hashFiles('tools_rust/wrapper/Cargo.lock') }}
                   restore-keys: |
-                      ${{ runner.os }}-rust-stable-
+                      ${{ runner.os }}-cargo-wrapper-
 
-            - name: Install Rust Toolchain (Manual)
-              run: |
-                  if [ ! -f "$HOME/.cargo/bin/rustc" ]; then
-                    echo "Rustc not found, installing..."
-                    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path
-                  else
-                    echo "Rustc found in cache: $(rustc --version)"
-                  fi
-                  echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-            - name: Secrets
+            - name: Generate JWT secret
               run: |
                   SECRET=$(openssl rand -base64 32)
                   echo "DYNAMIC_JWT_SECRET=$SECRET" >> $GITHUB_ENV
 
-            - name: Run gateway
+            - name: Start gateway
               env:
                   GUNICORN_WORKERS: 1
                   MCPGATEWAY_UI_ENABLED: true
                   MCPGATEWAY_ADMIN_API_ENABLED: true
+                  # Disabled: localhost-only test, no external requests
                   SSRF_PROTECTION_ENABLED: false
                   JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
                   ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: false
                   PASSWORD_CHANGE_ENFORCEMENT_ENABLED: false
-
               run: |
-
                   make venv
                   make install
                   make stop-serve
@@ -93,23 +103,29 @@ jobs:
                     sleep 1
                   done
 
-            - name: Generate JWT Token
+                  if ! curl -s http://localhost:4444 >/dev/null 2>&1; then
+                    echo "ERROR: gateway failed to start"
+                    exit 1
+                  fi
+
+            - name: Generate JWT token
               id: generate_jwt
               env:
                   JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
               run: |
                   TOKEN=$(uv run --no-dev python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
+                  echo "::add-mask::$TOKEN"
                   echo "token=$TOKEN" >> $GITHUB_OUTPUT
-                  echo "JWT Token generated successfully"
+                  echo "JWT token generated successfully"
 
-            - name: Fetch Version Info
+            - name: Verify gateway is responding
               run: |
-                  curl -v -X GET http://localhost:4444/version \
-                  -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
-                  -H "Content-Type: application/json"
+                  curl -sf -X GET http://localhost:4444/version \
+                    -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
+                    -H "Content-Type: application/json"
 
             - name: Setup Go
-              uses: actions/setup-go@v6
+              uses: actions/setup-go@v5
               with:
                   go-version: "1.23"
                   cache-dependency-path: mcp-servers/go/fast-time-server/go.sum
@@ -121,21 +137,16 @@ jobs:
                   go build -o fast-time-server .
                   chmod +x fast-time-server
 
-            - name: Start Fast Time Server as Background Service
+            - name: Start fast-time-server
               run: |
-                  # Kill any existing fast-time-server processes (container reuse cleanup)
-                  echo "Cleaning up any existing fast-time-server processes..."
                   pkill -9 -f "fast-time-server" 2>/dev/null || true
                   sleep 1
 
-                  # Start fast-time-server as a background service using nohup
-                  echo "Starting fast-time-server as background service..."
                   nohup mcp-servers/go/fast-time-server/fast-time-server \
                     -transport=dual -listen=0.0.0.0 -port=8080 -log-level=info \
                     > fast-time-server.log 2>&1 &
                   echo $! > fast-time-server.pid
 
-                  # Wait for fast-time-server to be ready
                   echo "Waiting for fast-time-server..."
                   for i in {1..30}; do
                     if curl -s http://localhost:8080/health >/dev/null 2>&1; then
@@ -146,7 +157,6 @@ jobs:
                     sleep 2
                   done
 
-                  # Verify server is running
                   if ! curl -s http://localhost:8080/health >/dev/null 2>&1; then
                     echo "ERROR: fast-time-server failed to start"
                     cat fast-time-server.log
@@ -154,17 +164,15 @@ jobs:
                   fi
                   echo "fast-time-server PID: $(cat fast-time-server.pid)"
 
-            - name: Register Fast Time Gateway and Create Tools
+            - name: Register gateway and create virtual server
               run: |
                   TOKEN="${{ steps.generate_jwt.outputs.token }}"
 
-                  # Verify fast-time-server is still running
                   if ! curl -s http://localhost:8080/health >/dev/null 2>&1; then
                     echo "ERROR: fast-time-server is not running"
                     cat fast-time-server.log
                     exit 1
                   fi
-                  echo "fast-time-server is running (PID: $(cat fast-time-server.pid))"
 
                   # Register gateway
                   echo "Registering fast_time gateway..."
@@ -204,11 +212,15 @@ jobs:
                     sleep 2
                   done
 
-                  # Get tool IDs
                   TOOLS=$(curl -s http://localhost:4444/tools \
                     -H "Authorization: Bearer $TOKEN")
                   TOOL_IDS=$(echo "$TOOLS" | jq --arg gid "$GATEWAY_ID" -c '[.[] | select(.gatewayId==$gid) | .id]')
                   echo "Tool IDs: $TOOL_IDS"
+
+                  if [ "$TOOL_IDS" = "[]" ] || [ -z "$TOOL_IDS" ]; then
+                    echo "ERROR: no tools synced from gateway"
+                    exit 1
+                  fi
 
                   # Create virtual server
                   echo "Creating virtual server..."
@@ -227,39 +239,30 @@ jobs:
                     }")
                   echo "Server response: $SERVER_RESPONSE"
 
-                  # Keep server running for wrapper test - no cleanup needed (container is ephemeral)
-
-            - name: Test Wrapper with Fast Time Server
+            - name: Build and test wrapper
               run: |
-                  echo "Building Rust wrapper..."
                   cd tools_rust/wrapper
-                  cargo build --release
+                  cargo build --release --features integration-test
                   cd -
-                  set -x
-                  pwd 
-                  stat ./tools_rust/wrapper/target/release/wrapper_integration
+
                   TOKEN="${{ steps.generate_jwt.outputs.token }}"
                   SERVER_ID="9779b6698cbd4b4995ee04a4fab38737"
-                  PORT="4444"
-                  URL="http://localhost:${PORT}/servers/${SERVER_ID}/mcp" 
-                  AUTH="Bearer $TOKEN" 
-                  WRAPPER_BIN="tools_rust/wrapper/target/release/mcp_stdio_wrapper"  
-                  URL="$URL" AUTH="$AUTH" WRAPPER_BIN="$WRAPPER_BIN" ./tools_rust/wrapper/target/release/wrapper_integration
+                  URL="http://localhost:4444/servers/${SERVER_ID}/mcp"
+                  AUTH="Bearer $TOKEN"
+                  WRAPPER_BIN="tools_rust/wrapper/target/release/mcp_stdio_wrapper"
+
+                  URL="$URL" AUTH="$AUTH" WRAPPER_BIN="$WRAPPER_BIN" \
+                    ./tools_rust/wrapper/target/release/wrapper_integration
+
                   echo "All wrapper tests passed!"
 
-            - name: Upload Wrapper Test Artifacts
+            - name: Upload logs on failure
               if: failure()
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@v4
               with:
                   name: wrapper-test-logs
                   path: |
+                      fast-time-server.log
                       wrapper_output.json
                       wrapper_test.log
                   retention-days: 7
-
-            - name: Keep server running for debug - set true
-              if: false
-              run: |
-                  echo "Keeping server running for debugging..."
-                  sleep 3600
-                  echo "Debug period ended"
