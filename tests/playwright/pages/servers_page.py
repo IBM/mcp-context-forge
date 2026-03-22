@@ -302,7 +302,7 @@ class ServersPage(BasePage):
         except PlaywrightTimeoutError:
             # Fallback: explicitly trigger the server-side reload for the catalog panel.
             self.page.evaluate(
-                "(q) => { const el = document.getElementById('catalog-search-input'); if (el) { el.value = q; } if (window.loadSearchablePanel) { window.loadSearchablePanel('catalog'); } }",
+                "(q) => { const el = document.getElementById('servers-search-input'); if (el) { el.value = q; } if (window.loadSearchablePanel) { window.loadSearchablePanel('catalog'); } }",
                 query,
             )
             try:
@@ -368,7 +368,7 @@ class ServersPage(BasePage):
                 # Last-resort best effort: force a reload call even if request
                 # observation missed due timing.
                 self.page.evaluate(
-                    "() => { const el = document.getElementById('catalog-search-input'); if (el) { el.value = ''; } if (window.loadSearchablePanel) { window.loadSearchablePanel('catalog'); } }",
+                    "() => { const el = document.getElementById('servers-search-input'); if (el) { el.value = ''; } if (window.loadSearchablePanel) { window.loadSearchablePanel('catalog'); } }",
                 )
 
         self.page.wait_for_function(
