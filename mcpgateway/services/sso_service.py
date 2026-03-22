@@ -1252,6 +1252,15 @@ class SSOService:
                     if claim in keycloak_id_token_claims and claim not in user_data:
                         user_data[claim] = keycloak_id_token_claims[claim]
 
+            # For generic OIDC providers, merge the configured groups claim from the
+            # verified id_token when the userinfo response did not include it.  Some
+            # providers (e.g. JumpCloud) only emit groups in the id_token.
+            if provider.id not in ("github", "google", "ibm_verify", "okta", "keycloak", "entra") and verified_id_token_claims:
+                metadata = provider.provider_metadata or {}
+                groups_claim = metadata.get("groups_claim", "groups")
+                if groups_claim in verified_id_token_claims and groups_claim not in user_data:
+                    user_data[groups_claim] = verified_id_token_claims[groups_claim]
+
             # Normalize user info across providers
             return self._normalize_user_info(provider, user_data)
 
@@ -1450,7 +1459,7 @@ class SSOService:
         if groups_claim in user_data:
             gc = user_data.get(groups_claim, [])
             if isinstance(gc, list):
-                groups = gc
+                groups = [g for g in gc if isinstance(g, str)]
             elif isinstance(gc, str):
                 groups = [gc]
         generic_normalized: Dict[str, Any] = {

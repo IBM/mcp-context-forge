@@ -945,6 +945,20 @@ class TestGenericOIDCNormalization:
 
         assert normalized["groups"] == []
 
+    def test_generic_oidc_groups_nested_structures_filtered(self, sso_service):
+        """Nested structures (dicts, lists) in the groups list are filtered to strings only."""
+        provider = SSOProvider(id="custom_oidc", name="custom_oidc", display_name="Custom OIDC", provider_type="oidc")
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "user-123",
+            "groups": ["Engineering", {"nested": "value"}, 42, "Platform", None],
+        }
+
+        normalized = sso_service._normalize_user_info(provider, user_data)
+
+        assert normalized["groups"] == ["Engineering", "Platform"]
+
     def test_generic_oidc_groups_with_email_verified(self, sso_service):
         """Groups extraction works alongside email_verified handling."""
         provider = SSOProvider(id="custom_oidc", name="custom_oidc", display_name="Custom OIDC", provider_type="oidc", provider_metadata={"groups_claim": "team_memberships"})
