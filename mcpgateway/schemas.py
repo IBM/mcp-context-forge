@@ -400,24 +400,6 @@ class ToolCreate(BaseModel):
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
 
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value or None
-
-        Raises:
-            ValueError: If visibility is not a recognized level
-        """
-        if v is not None and v not in ("private", "team", "public"):
-            raise ValueError("Visibility must be one of: private, team, public")
-        return v
-
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -1651,24 +1633,6 @@ class ResourceCreate(BaseModel):
     visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
 
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value or None
-
-        Raises:
-            ValueError: If visibility is not a recognized level
-        """
-        if v is not None and v not in ("private", "team", "public"):
-            raise ValueError("Visibility must be one of: private, team, public")
-        return v
-
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -2227,24 +2191,6 @@ class PromptCreate(BaseModelWithConfigDict):
     owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
     visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
-
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value or None
-
-        Raises:
-            ValueError: If visibility is not a recognized level
-        """
-        if v is not None and v not in ("private", "team", "public"):
-            raise ValueError("Visibility must be one of: private, team, public")
-        return v
 
     @field_validator("tags")
     @classmethod
