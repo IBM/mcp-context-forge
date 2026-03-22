@@ -15180,6 +15180,10 @@ async def admin_test_a2a_agent(
         user_email = get_user_email(user)
         is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
         token_teams = user.get("token_teams") if isinstance(user, dict) else None
+        # Missing token_teams key for non-admin = public-only (per normalize_token_teams rules).
+        # Only admin users retain None (admin bypass); all others default to [].
+        if not is_admin and token_teams is None:
+            token_teams = []
         # Admin users with unrestricted tokens get full bypass (both None);
         # non-admin users pass their actual email and team scoping.
         invoke_user_email = None if (is_admin and token_teams is None) else user_email

@@ -4874,12 +4874,13 @@ class TestA2AAgentManagement:
         body = json.loads(result.body)
         assert body["success"] is True
         assert "result" in body
-        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email="test-user", token_teams=None)
+        # Non-admin user without token_teams key → normalized to [] (public-only)
+        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email="test-user", token_teams=[])
         mock_invoke_agent.assert_called_once()
         # Verify invoke_agent receives correct user context
         invoke_kwargs = mock_invoke_agent.call_args.kwargs
         assert invoke_kwargs["user_email"] == "test-user"
-        assert invoke_kwargs["token_teams"] is None
+        assert invoke_kwargs["token_teams"] == []
 
     @patch.object(A2AAgentService, "get_agent")
     @patch.object(A2AAgentService, "invoke_agent")
@@ -4931,6 +4932,29 @@ class TestA2AAgentManagement:
         invoke_kwargs = mock_invoke_agent.call_args.kwargs
         assert invoke_kwargs["user_email"] == "dev@example.com"
         assert invoke_kwargs["token_teams"] == ["team-1"]
+
+    @patch.object(A2AAgentService, "get_agent")
+    @patch.object(A2AAgentService, "invoke_agent")
+    async def test_admin_test_a2a_agent_proxy_auth_no_token_teams_key(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
+        """Proxy-auth user without token_teams key gets public-only scope, not admin bypass."""
+        mock_agent = MagicMock()
+        mock_agent.name = "Test Agent"
+        mock_get_agent.return_value = mock_agent
+        mock_invoke_agent.return_value = {"result": "success"}
+
+        mock_request.form = AsyncMock(return_value=FakeForm({"test_message": "Hello"}))
+
+        # Proxy auth: is_admin=False, no token_teams key at all
+        result = await admin_test_a2a_agent(
+            "agent-1", mock_request, mock_db,
+            user={"email": "proxy@example.com", "is_admin": False, "db": mock_db},
+        )
+
+        assert isinstance(result, JSONResponse)
+        # Missing token_teams key normalizes to [] (public-only), not None (admin bypass)
+        mock_get_agent.assert_called_with(mock_db, "agent-1", user_email="proxy@example.com", token_teams=[])
+        invoke_kwargs = mock_invoke_agent.call_args.kwargs
+        assert invoke_kwargs["token_teams"] == []
 
     @pytest.mark.asyncio
     async def test_admin_test_a2a_agent_disabled(self, monkeypatch, mock_request, mock_db, allow_permission):
