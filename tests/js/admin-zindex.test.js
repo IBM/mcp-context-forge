@@ -80,24 +80,39 @@ describe("modal z-index hierarchy", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tooltip setup uses z-30 (below modals, above sidebar)
+// Status badge tooltips must use z-30 (below modals, above sidebar)
 // ---------------------------------------------------------------------------
-describe("tooltip z-index hierarchy", () => {
-    test("setupTooltipsWithAlpine creates tooltip elements with z-30", () => {
-        const trigger = doc.createElement("span");
-        trigger.setAttribute("data-tooltip", "Helpful tip");
-        doc.body.appendChild(trigger);
+describe("status badge tooltip z-index hierarchy", () => {
+    function parseBadgeHtml(html) {
+        // Use DOMParser to safely parse the generated markup (test-only).
+        const parsed = new win.DOMParser().parseFromString(html, "text/html");
+        return parsed.body;
+    }
 
-        win.setupTooltipsWithAlpine();
+    test("inactive badge tooltip uses z-30", () => {
+        const body = parseBadgeHtml(
+            win.generateStatusBadgeHtml(false, true, "gateway"),
+        );
+        const tooltip = body.querySelector(".group-hover\\:block");
+        expect(tooltip).not.toBeNull();
+        expect(tooltip.classList.contains("z-30")).toBe(true);
+    });
 
-        // Simulate mouseenter to create the tooltip
-        const mouseenterEvent = new win.Event("mouseenter");
-        trigger.dispatchEvent(mouseenterEvent);
+    test("offline badge tooltip uses z-30", () => {
+        const body = parseBadgeHtml(
+            win.generateStatusBadgeHtml(true, false, "gateway"),
+        );
+        const tooltip = body.querySelector(".group-hover\\:block");
+        expect(tooltip).not.toBeNull();
+        expect(tooltip.classList.contains("z-30")).toBe(true);
+    });
 
-        const tooltip = doc.querySelector('[role="tooltip"]');
-        if (tooltip) {
-            expect(tooltip.classList.contains("z-30")).toBe(true);
-            expect(tooltip.classList.contains("z-50")).toBe(false);
-        }
+    test("active badge tooltip uses z-30", () => {
+        const body = parseBadgeHtml(
+            win.generateStatusBadgeHtml(true, true, "gateway"),
+        );
+        const tooltip = body.querySelector(".group-hover\\:block");
+        expect(tooltip).not.toBeNull();
+        expect(tooltip.classList.contains("z-30")).toBe(true);
     });
 });
