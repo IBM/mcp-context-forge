@@ -1247,13 +1247,14 @@ def test_visibility_literal_enum_validation():
         with pytest.raises(ValidationError):
             ToolUpdate(visibility=v)
 
-    # ToolCreate — default is "public"
+    # ToolCreate — default is None (inherits from gateway during MCP discovery)
     for v in valid_values:
         obj = ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST", visibility=v)
         assert obj.visibility == v
     for v in invalid_values:
         with pytest.raises(ValidationError):
             ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST", visibility=v)
+    assert ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST").visibility is None
 
     # ResourceUpdate
     for v in valid_values:
@@ -1287,21 +1288,23 @@ def test_visibility_literal_enum_validation():
         with pytest.raises(ValidationError):
             GrpcServiceCreate(name="svc", target="localhost:50051", visibility=v)
 
-    # ResourceCreate — required fields: uri, name, content
+    # ResourceCreate — default is None (inherits from gateway during MCP discovery)
     for v in valid_values:
         obj = ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data", visibility=v)
         assert obj.visibility == v
     for v in invalid_values:
         with pytest.raises(ValidationError):
             ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data", visibility=v)
+    assert ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data").visibility is None
 
-    # PromptCreate — required fields: name, template
+    # PromptCreate — default is None (inherits from gateway during MCP discovery)
     for v in valid_values:
         obj = PromptCreate(name="p", template="hello", visibility=v)
         assert obj.visibility == v
     for v in invalid_values:
         with pytest.raises(ValidationError):
             PromptCreate(name="p", template="hello", visibility=v)
+    assert PromptCreate(name="p", template="hello").visibility is None
 
     # ServerCreate — required field: name
     for v in valid_values:
