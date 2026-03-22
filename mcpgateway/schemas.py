@@ -7463,31 +7463,6 @@ class PaginatedResponse(BaseModel):
     links: Optional[PaginationLinks] = Field(None, description="Navigation links")
 
 
-class PaginationParams(BaseModel):
-    """Common pagination query parameters.
-
-    Attributes:
-        page: Page number (1-indexed)
-        per_page: Items per page
-        cursor: Cursor for cursor-based pagination
-        sort_by: Field to sort by
-        sort_order: Sort order (asc/desc)
-
-    Examples:
-        >>> params = PaginationParams(page=1, per_page=50)
-        >>> params.page
-        1
-        >>> params.sort_order
-        'desc'
-    """
-
-    page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
-    per_page: int = Field(default=50, ge=1, le=500, description="Items per page (max 500)")
-    cursor: Optional[str] = Field(None, description="Cursor for cursor-based pagination")
-    sort_by: Optional[str] = Field("created_at", description="Sort field")
-    sort_order: Optional[str] = Field("desc", pattern="^(asc|desc)$", description="Sort order")
-
-
 # ============================================================================
 # Cursor Pagination Response Schemas (for main API endpoints)
 # ============================================================================
@@ -7708,21 +7683,6 @@ class ObservabilitySpanWithEvents(ObservabilitySpanRead):
     events: List[ObservabilityEventRead] = Field(default_factory=list, description="List of events in this span")
 
 
-class ObservabilityQueryParams(BaseModel):
-    """Query parameters for filtering observability data."""
-
-    start_time: Optional[datetime] = Field(None, description="Filter traces/spans/metrics after this time")
-    end_time: Optional[datetime] = Field(None, description="Filter traces/spans/metrics before this time")
-    status: Optional[str] = Field(None, description="Filter by status (ok, error, unset)")
-    http_status_code: Optional[int] = Field(None, description="Filter by HTTP status code")
-    user_email: Optional[str] = Field(None, description="Filter by user email")
-    resource_type: Optional[str] = Field(None, description="Filter by resource type")
-    resource_name: Optional[str] = Field(None, description="Filter by resource name")
-    trace_id: Optional[str] = Field(None, description="Filter by trace ID")
-    limit: int = Field(default=100, ge=1, le=1000, description="Maximum number of results")
-    offset: int = Field(default=0, ge=0, description="Result offset for pagination")
-
-
 # --- Performance Monitoring Schemas ---
 
 
@@ -7908,16 +7868,6 @@ class PerformanceDashboard(BaseModel):
     # Cluster info (for distributed mode)
     cluster_hosts: List[str] = Field(default_factory=list, description="Known cluster hosts")
     is_distributed: bool = Field(False, description="Running in distributed mode")
-
-
-class PerformanceHistoryParams(BaseModel):
-    """Query parameters for historical performance data."""
-
-    start_time: Optional[datetime] = Field(None, description="Start of time range")
-    end_time: Optional[datetime] = Field(None, description="End of time range")
-    period_type: str = Field("hourly", description="Aggregation period (hourly, daily)")
-    host: Optional[str] = Field(None, description="Filter by host")
-    limit: int = Field(default=168, ge=1, le=1000, description="Maximum results")
 
 
 class PerformanceHistoryResponse(BaseModel):

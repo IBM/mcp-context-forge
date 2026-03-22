@@ -8,25 +8,21 @@ SPDX-License-Identifier: Apache-2.0
 # Standard
 from datetime import datetime, timezone
 
-# Third-Party
-import pytest
-
 # First-Party
 from mcpgateway.schemas import (
-    WorkerMetrics,
-    SystemMetricsSchema,
-    RequestMetricsSchema,
-    DatabaseMetricsSchema,
     CacheMetricsSchema,
+    DatabaseMetricsSchema,
     GunicornMetricsSchema,
-    PerformanceSnapshotCreate,
-    PerformanceSnapshotRead,
     PerformanceAggregateBase,
     PerformanceAggregateCreate,
     PerformanceAggregateRead,
     PerformanceDashboard,
-    PerformanceHistoryParams,
     PerformanceHistoryResponse,
+    PerformanceSnapshotCreate,
+    PerformanceSnapshotRead,
+    RequestMetricsSchema,
+    SystemMetricsSchema,
+    WorkerMetrics,
 )
 
 
@@ -388,27 +384,6 @@ class TestPerformanceDashboard:
 
 class TestPerformanceHistorySchemas:
     """Tests for PerformanceHistory schemas."""
-
-    def test_history_params_defaults(self):
-        """Test PerformanceHistoryParams with defaults."""
-        params = PerformanceHistoryParams()
-        assert params.period_type == "hourly"
-        assert params.limit == 168
-        assert params.start_time is None
-
-    def test_history_params_custom(self):
-        """Test PerformanceHistoryParams with custom values."""
-        now = datetime.now(timezone.utc)
-        params = PerformanceHistoryParams(
-            start_time=now,
-            end_time=now,
-            period_type="daily",
-            host="test-host",
-            limit=100,
-        )
-        assert params.period_type == "daily"
-        assert params.limit == 100
-        assert params.host == "test-host"
 
     def test_history_response_empty(self):
         """Test PerformanceHistoryResponse with no data."""
