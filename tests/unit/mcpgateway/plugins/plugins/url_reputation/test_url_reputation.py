@@ -333,6 +333,30 @@ async def test_python_whitelist_bypasses_blocked_domain():
 
 
 @pytest.mark.asyncio
+async def test_python_whitelisted_subdomain():
+    """Python path: subdomains of a whitelisted domain should be allowed."""
+    config = PluginConfig(
+        name="urlrep",
+        kind="plugins.url_reputation.url_reputation.URLReputationPlugin",
+        hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
+        config={
+            "whitelist_domains": ["example.com"],
+            "allowed_patterns": [],
+            "blocked_domains": [],
+            "blocked_patterns": [],
+            "use_heuristic_check": False,
+            "entropy_threshold": 3.5,
+            "block_non_secure_http": True,
+        },
+    )
+    with patch(f"{_PLUGIN_MODULE}._RUST_AVAILABLE", False):
+        plugin = URLReputationPlugin(config)
+        res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://sub.example.com/path"), None)
+    assert res.continue_processing
+    assert res.violation is None
+
+
+@pytest.mark.asyncio
 async def test_python_http_allowed_when_not_enforced():
     """Python path: HTTP URLs are allowed when block_non_secure_http is False."""
     config = PluginConfig(

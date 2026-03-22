@@ -65,8 +65,8 @@ impl URLReputationPlugin {
 
     pub fn validate_url(&self, url: &str) -> URLPluginResult {
         // Parse the original URL; the `url` crate normalises scheme and host to lowercase.
-        // A separate lowercased copy is used for pattern matching so comparisons are
-        // case-insensitive without corrupting case-sensitive path/query components.
+        // Pattern matching runs against the trimmed (but otherwise unmodified) URL so
+        // that path/query comparisons remain case-sensitive per RFC 3986.
         let url_trimmed = url.trim();
         let parsed_url = match Url::parse(url_trimmed) {
             Ok(url) => url,

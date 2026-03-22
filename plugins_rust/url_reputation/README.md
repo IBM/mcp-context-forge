@@ -87,7 +87,7 @@ flowchart LR
 ## Logic workflow
 
 1. **Parse & Normalize URL**
-   - Trim and lowercase the input URL, then parse it.
+   - Trim the input URL, then parse it (scheme and host are normalised to lowercase by the URL parser per RFC 3986; path and query retain original casing).
    - **Fail → Violation:** `"Could not parse url"`.
 
 2. **Extract Domain**

@@ -138,7 +138,7 @@ class URLReputationPlugin(Plugin):
         parsed = urlparse(payload.uri)
         host = parsed.hostname or ""
 
-        if host in self._cfg.whitelist_domains:
+        if host and (host in self._cfg.whitelist_domains or any(host.endswith("." + d) for d in self._cfg.whitelist_domains)):
             return ResourcePreFetchResult(continue_processing=True)
 
         # Block non-secure HTTP
