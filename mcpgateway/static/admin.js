@@ -688,7 +688,7 @@ function makeCopyIdButton(id) {
     btn.type = "button";
     btn.title = "Copy ID to clipboard";
     btn.className =
-        "ml-2 inline-flex items-center px-3 py-2 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors";
+        "ml-2 inline-flex items-center px-1.5 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors";
     btn.textContent = "📋 Copy";
     btn.addEventListener("click", () => {
         const idStr = String(id);
@@ -20131,7 +20131,7 @@ function updateAvailableTags(entityType) {
         const tagButton = document.createElement("button");
         tagButton.type = "button";
         tagButton.className =
-            "inline-flex items-center px-3 py-2 text-xs font-medium rounded-full text-blue-700 bg-blue-100 hover:bg-blue-200 cursor-pointer";
+            "inline-flex items-center px-2 py-1 text-xs font-medium rounded-full text-blue-700 bg-blue-100 hover:bg-blue-200 cursor-pointer";
         tagButton.textContent = tag;
         tagButton.title = `Click to filter by "${tag}"`;
         tagButton.onclick = () => addTagToFilter(entityType, tag);
@@ -26366,8 +26366,8 @@ async function loadVirtualServersForChat() {
                             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${toolCount} tool${toolCount !== 1 ? "s" : ""}</p>
                         </div>
                         <div class="flex flex-col items-end gap-1">
-                            ${!isActive ? '<span class="inline-flex items-center px-3 py-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Inactive</span>' : ""}
-                            ${requiresToken ? '<span class="inline-flex items-center px-3 py-2 py-0.5 rounded text-[10px] font-medium bg-yellow-100 text-yellow-800">Requires Token</span>' : ""}
+                            ${!isActive ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Inactive</span>' : ""}
+                            ${requiresToken ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-100 text-yellow-800">Requires Token</span>' : ""}
                         </div>
                     </div>
                     ${server.description ? `<p class="text-xs text-gray-600 dark:text-gray-400 mt-2 line-clamp-2">${escapeHtml(server.description)}</p>` : ""}
